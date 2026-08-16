@@ -1,0 +1,4 @@
+documents/*
+!documents/.gitkeep
+db/*
+!db/.gitkeep

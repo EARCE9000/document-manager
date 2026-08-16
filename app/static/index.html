@@ -1,0 +1,2961 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Document Manager</title>
+<style>
+	* { box-sizing: border-box; }
+	html, body {
+		height: 100%;
+		margin: 0;
+		font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+		background: #f4f5f7;
+		color: #24292f;
+	}
+
+	#loginArea { display: none; height: 100%; align-items: center; justify-content: center; }
+	#appShell { display: none; height: 100%; flex-direction: column; }
+	#appShell.visible { display: flex; }
+	#loginArea.visible { display: flex; }
+	.messageCard {
+		background: #fff;
+		border-radius: 10px;
+		box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+		padding: 40px 36px;
+		max-width: 360px;
+		width: 90%;
+		text-align: center;
+	}
+	.messageCard .messageIcon { width: 40px; height: 40px; margin: 0 auto 16px; color: #9cc2ff; display: block; }
+	.messageCard p { font-size: 0.9em; color: #555; line-height: 1.6; margin: 0 0 4px; }
+	.messageCard .messageSub { font-size: 0.8em; color: #999; margin-top: 10px; }
+	.messageCard a { color: #1a56db; text-decoration: none; }
+	.messageCard a:hover { text-decoration: underline; }
+	.loginSpinner {
+		width: 30px;
+		height: 30px;
+		margin: 0 auto 16px;
+		border: 3px solid #e2e8f0;
+		border-top-color: #1a56db;
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin { to { transform: rotate(360deg); } }
+
+	#topBar {
+		height: 44px;
+		min-height: 44px;
+		background: #16160e;
+		color: #eee;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0 16px;
+		font-size: 0.85em;
+	}
+	#topBar a { text-decoration: none; }
+	.topBarTitle { font-weight: 700; font-size: 1.05em; letter-spacing: 0.02em; color: #fff; }
+	#topBarActions { display: flex; align-items: center; gap: 6px; }
+	#userIdentifier { margin-right: 4px; color: #cccccc; }
+	.topBarIconButton {
+		border: 1px solid rgba(255, 255, 255, 0.25);
+		background: transparent;
+		border-radius: 4px;
+		width: 34px;
+		height: 34px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		color: #cccccc;
+		text-decoration: none;
+		flex-shrink: 0;
+	}
+	.topBarIconButton:hover { background: rgba(238, 120, 0, 0.18); border-color: #ee7800; color: #ee7800; }
+	.topBarIconButton svg { width: 18px; height: 18px; display: block; }
+
+	#breadcrumbBar {
+		background: #2b2b2b;
+		display: flex;
+		align-items: center;
+		font-size: 1em;
+		font-weight: 700;
+	}
+	#breadcrumbBar .menuLink {
+		color: #fff;
+		text-decoration: none;
+		cursor: pointer;
+		padding: 11px 18px;
+	}
+	#breadcrumbBar .menuLink:hover { color: #ee7800; }
+	#breadcrumbBar .menuLink.active { color: #ee7800; box-shadow: inset 0 -3px 0 #ee7800; }
+
+	#mainArea { flex: 1; display: flex; min-height: 0; }
+
+	#appFooter {
+		flex-shrink: 0;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 5px 16px;
+		background: #16160e;
+		color: #7a8390;
+		font-size: 0.72em;
+	}
+
+	#sideBar {
+		width: 360px;
+		min-width: 360px;
+		background: #fff;
+		border-right: 1px solid #ddd;
+		display: flex;
+		flex-direction: column;
+	}
+
+	#sideBarToolbar {
+		padding: 10px 12px;
+		border-bottom: 1px solid #eee;
+	}
+	#sideBarToolbar .toolbarRow {
+		display: flex;
+		align-items: center;
+		gap: 0.6em;
+		margin-bottom: 0.6em;
+	}
+	.iconButton {
+		border: 1px solid #ccc;
+		background: #f8f9fa;
+		border-radius: 4px;
+		width: 28px;
+		height: 28px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		color: #444;
+		flex-shrink: 0;
+	}
+	.iconButton:hover { background: #eee; }
+	.iconButton svg { width: 14px; height: 14px; display: block; }
+	.iconButton:disabled { cursor: not-allowed; opacity: 0.4; }
+	.iconButton:disabled:hover { background: #f8f9fa; }
+	#docCountChip {
+		background: #e8f0fe;
+		color: #1a56db;
+		border-radius: 999px;
+		padding: 2px 10px;
+		font-size: 0.8em;
+		font-weight: 600;
+	}
+	#filterInput {
+		width: 100%;
+		padding: 6px 10px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-size: 0.9em;
+	}
+	#dateRangeRow { gap: 0.4em; }
+	#dateRangeRow span { color: #888; font-size: 0.85em; }
+	#fromDateInput, #toDateInput {
+		flex: 1;
+		min-width: 0;
+		padding: 5px 6px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-size: 0.82em;
+	}
+	#uploadDropZone {
+		border: 2px dashed #bbb;
+		border-radius: 6px;
+		padding: 14px 8px;
+		text-align: center;
+		font-size: 0.8em;
+		color: #666;
+		cursor: pointer;
+		background: #fafafa;
+	}
+	#uploadDropZone:hover { border-color: #1a56db; color: #1a56db; }
+	#uploadDropZone.dragging { border-color: #1a56db; background: #eef3ff; color: #1a56db; }
+	#uploadDropZone .uploadHint { pointer-events: none; }
+	#uploadDropZone .uploadExt { font-size: 0.85em; color: #999; margin-top: 2px; }
+
+	/* 閲覧のみ(readonly)ロールでは書き込み系のUIを非表示にする */
+	#appShell.readOnlyMode #uploadDropZone,
+	#appShell.readOnlyMode .archiveButton,
+	#appShell.readOnlyMode .tagEditButton,
+	#appShell.readOnlyMode .removeTagButton,
+	#appShell.readOnlyMode #menuArchiveLink { display: none !important; }
+
+	/* アーカイブ表示中はアップロードできない(通常一覧に戻ってから行う) */
+	#appShell.archiveMode #uploadDropZone { display: none !important; }
+
+	/* タグ体系表示中は検索・日付絞り込み・アップロードを出さず、体系表示に専念させる。
+	   管理ボタン(並び順の編集)はadminロールのみ表示する */
+	#appShell.tagTreeMode #filterRow,
+	#appShell.tagTreeMode #dateRangeRow,
+	#appShell.tagTreeMode #uploadDropZone { display: none !important; }
+	#sideBarToolbar #tagTreeManageRow { display: none; }
+	#appShell.tagTreeMode.adminMode #tagTreeManageRow { display: flex; }
+
+	/* プロジェクト機能: プロジェクト切替行(スイッチャー) + ツリー表示ペイン。
+	   表示モードではツリー+プレビューの2ペイン、編集モードではツリー+文書一覧(既存の#sideBarを再利用)+プレビューの3ペインにする */
+	#projectSwitcherBar { display: none; align-items: center; gap: 8px; padding: 8px 16px; background: #f4f5f7; border-bottom: 1px solid #ddd; overflow-x: auto; }
+	#appShell.projectsMode #projectSwitcherBar { display: flex; }
+	.projectTab {
+		display: inline-block;
+		border: 1px solid #ccc;
+		background: #fff;
+		border-radius: 999px;
+		padding: 4px 14px;
+		font-size: 0.85em;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.projectTab:hover { border-color: #1a56db; color: #1a56db; }
+	.projectTab.active { background: #1a56db; border-color: #1a56db; color: #fff; }
+	#projectTabs { display: flex; gap: 6px; flex-wrap: wrap; }
+	#projectSwitcherActions { display: flex; gap: 6px; margin-left: auto; flex-shrink: 0; }
+	#projectSwitcherActions .modalButton { white-space: nowrap; font-size: 0.85em; padding: 6px 14px; }
+
+	#projectTreePane { display: none; width: 300px; min-width: 300px; background: #fff; border-right: 1px solid #ddd; flex-direction: column; }
+	#appShell.projectsMode #projectTreePane { display: flex; }
+	#appShell.projectsMode:not(.projectsEditMode) #sideBar { display: none; }
+	#projectTreeToolbar { padding: 10px 12px; border-bottom: 1px solid #eee; }
+	#projectTreeHeaderRow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+	#projectTreeTitle { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#projectEditToggleRow { display: flex; align-items: center; gap: 6px; }
+	#projectEditToggleRow .modalButton { font-size: 0.82em; padding: 5px 12px; }
+	#projectTreeList { list-style: none; margin: 0; padding: 8px; flex: 1; overflow-y: auto; }
+	#projectTreeList ul.treeChildren { list-style: none; margin: 0; padding-left: 1.1em; }
+	#projectTreeList .treeFolderRow, #projectTreeList .treeDocRow {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 5px 6px;
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 0.85em;
+	}
+	#projectTreeList .treeFolderRow:hover, #projectTreeList .treeDocRow:hover { background: #f1f3f5; }
+	#projectTreeList .treeDocRow.selected { background: #eef3ff; color: #1a56db; }
+	#projectTreeList .treeDocRow.treeDocArchived .treeDocName { color: #999; font-style: italic; }
+	#projectTreeList .treeToggleIcon { width: 1.1em; flex-shrink: 0; color: #888; font-size: 0.85em; text-align: center; }
+	#projectTreeList .treeFolderName, #projectTreeList .treeDocName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#projectTreeList .treeRowActions { display: none; align-items: center; gap: 2px; flex-shrink: 0; }
+	#appShell.projectsEditMode #projectTreeList .treeRowActions { display: flex; }
+	#projectTreeList .treeMiniButton {
+		border: none;
+		background: none;
+		cursor: pointer;
+		color: #888;
+		padding: 2px 3px;
+		font-size: 0.85em;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+	#projectTreeList .treeMiniButton:hover { color: #1a56db; }
+	#projectTreeList .treeMiniButton:disabled { color: #ccc; cursor: not-allowed; }
+	#projectTreeList .treeMiniButton svg { width: 13px; height: 13px; display: block; }
+	#projectTreeList .treeDropTarget { outline: 2px dashed #1a56db; outline-offset: -2px; background: #eaf2ff; }
+	#projectTreeList .treeDocRow.treeDropBefore { box-shadow: inset 0 2px 0 #1a56db; }
+	#projectTreeList .treeDocRow.treeDropAfter { box-shadow: inset 0 -2px 0 #1a56db; }
+	#projectTreeList .treeEmptyHint { color: #aaa; font-size: 0.8em; padding: 2px 6px 6px; cursor: default; }
+	#appShell.readOnlyMode #projectAddButton,
+	#appShell.readOnlyMode #projectEditToggleButton,
+	#appShell.readOnlyMode #projectRenameButton,
+	#appShell.readOnlyMode #projectDeleteButton,
+	#appShell.readOnlyMode #projectAddRootFolderButton { display: none !important; }
+
+	/* プロジェクトのアーカイブ表示中は編集系の操作を隠し、元に戻すボタンのみ表示する。
+	   新規プロジェクトの作成・編集モードへの切り替えも不可(表示専用) */
+	#projectRestoreButton { display: none; }
+	#appShell.projectsArchiveMode #projectAddButton,
+	#appShell.projectsArchiveMode #projectRenameButton,
+	#appShell.projectsArchiveMode #projectDeleteButton,
+	#appShell.projectsArchiveMode #projectEditToggleButton,
+	#appShell.projectsArchiveMode #projectAddRootFolderButton { display: none !important; }
+	#appShell.projectsArchiveMode #projectRestoreButton { display: inline-flex; }
+	#appShell.projectsArchiveMode #sideBar { display: none !important; }
+
+	#documentList { flex: 1; overflow-y: auto; margin: 0; padding: 10px; list-style: none; }
+	#documentList li {
+		border: 1px solid #e2e2e2;
+		border-radius: 6px;
+		padding: 10px 12px;
+		margin-bottom: 8px;
+		cursor: pointer;
+		background: #fff;
+		transition: box-shadow 0.1s, border-color 0.1s;
+	}
+	#documentList li:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.12); border-color: #bbb; }
+	#documentList li.selected { border-color: #1a56db; background: #eef3ff; }
+	#documentList li.weekHeader {
+		border: none;
+		background: transparent;
+		cursor: default;
+		padding: 10px 4px 4px;
+		margin-bottom: 4px;
+		font-size: 0.75em;
+		font-weight: 700;
+		color: #888;
+	}
+	#documentList li.weekHeader:first-child { padding-top: 0; }
+	#documentList li.weekHeader:hover { box-shadow: none; border-color: transparent; }
+	#documentList li.tagGroupHeader { cursor: pointer; user-select: none; }
+	#documentList li.tagGroupHeader:hover { color: #1a56db; }
+	#documentList .groupToggleIcon { display: inline-block; width: 1.2em; font-size: 0.9em; }
+	#documentList .docRow { display: flex; justify-content: space-between; align-items: center; gap: 0.5em; }
+	#documentList .docName { font-weight: 600; word-break: break-all; margin-top: 3px; }
+	#documentList .docTag {
+		display: inline-block;
+		font-size: 0.72em;
+		font-weight: 700;
+		border-radius: 999px;
+		padding: 1px 8px;
+		color: #fff;
+	}
+	#documentList .docTag.html { background: #2f9e44; }
+	#documentList .docTag.mhtml { background: #7048e8; }
+	#documentList .docTag.md { background: #1c7ed6; }
+	#documentList .docTag.pdf { background: #e03131; }
+	#documentList .docTag.image { background: #0c8599; }
+	#documentList .docTag.csv { background: #f08c00; }
+	#documentList .docTag.json { background: #495057; }
+	#documentList .docTag.text { background: #868e96; }
+	#documentList .docTag.none { background: #999; }
+	#documentList .docMeta { font-size: 0.75em; color: #777; margin-top: 4px; }
+	#documentList .userTags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+	.userTagChip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		background: #f1f3f5;
+		color: #444;
+		border: 1px solid #ddd;
+		border-radius: 999px;
+		padding: 1px 8px;
+		font-size: 0.72em;
+	}
+	.userTagChip .removeTagButton {
+		border: none;
+		background: none;
+		cursor: pointer;
+		color: #888;
+		font-size: 1em;
+		line-height: 1;
+		padding: 0;
+	}
+	.userTagChip .removeTagButton:hover { color: #e03131; }
+	#documentList .itemButtons { display: flex; flex-direction: row; align-items: center; gap: 4px; flex-shrink: 0; }
+	#documentList .openButton:hover { background: #eaf2ff; border-color: #1a56db; color: #1a56db; }
+	/* 誤クリック防止のため、他の操作ボタンから間隔と区切り線を空けて配置する
+	   (ワンクリックで即アーカイブされるため、隣接ボタンとの誤操作を避けたい) */
+	#documentList .archiveButton { margin-left: 10px; position: relative; border-color: #e8b74d; color: #b8860b; }
+	#documentList .archiveButton::before {
+		content: "";
+		position: absolute;
+		left: -6px;
+		top: 4px;
+		bottom: 4px;
+		width: 1px;
+		background: #ddd;
+	}
+	#documentList .archiveButton:hover { background: #fff3cd; border-color: #d9a300; color: #b8860b; }
+	#documentList .restoreButton:hover { background: #eaf7ea; border-color: #2f9e44; color: #2f9e44; }
+	#documentList .emptyMessage { color: #888; font-size: 0.85em; padding: 1em 0.4em; }
+
+	#previewArea { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+	#previewToolbar {
+		padding: 10px 16px;
+		border-bottom: 1px solid #ddd;
+		background: #fff;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.9em;
+	}
+	#previewToolbarActions { display: flex; align-items: center; gap: 8px; }
+	.previewActionButton {
+		border: 1px solid #ccc;
+		background: #f8f9fa;
+		border-radius: 4px;
+		width: 34px;
+		height: 34px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		color: #1a56db;
+		text-decoration: none;
+		flex-shrink: 0;
+	}
+	.previewActionButton:hover { background: #eaf2ff; border-color: #1a56db; }
+	.previewActionButton svg { width: 18px; height: 18px; display: block; }
+	.previewActionButton:disabled { cursor: not-allowed; opacity: 0.5; }
+	/* アーカイブは即時実行(確認なし)のため、誤クリック防止に間隔と区切り線を空けて配置する */
+	.previewArchiveAction { margin-left: 10px; position: relative; border-color: #e8b74d; color: #b8860b; }
+	.previewArchiveAction::before {
+		content: "";
+		position: absolute;
+		left: -6px;
+		top: 6px;
+		bottom: 6px;
+		width: 1px;
+		background: #ddd;
+	}
+	.previewArchiveAction:hover { background: #fff3cd; border-color: #d9a300; color: #b8860b; }
+	.previewRestoreAction:hover { background: #eaf7ea; border-color: #2f9e44; color: #2f9e44; }
+	#similarFilesRow {
+		padding: 8px 16px;
+		border-bottom: 1px solid #ddd;
+		background: #fafbfc;
+		display: none;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.8em;
+	}
+	.similarFilesLabel { color: #888; margin-right: 2px; }
+	.similarFileChip {
+		background: #fff;
+		color: #1a56db;
+		border: 1px solid #9cc2ff;
+		border-radius: 999px;
+		padding: 2px 10px;
+		font-size: 0.95em;
+		cursor: pointer;
+	}
+	.similarFileChip:hover { background: #eaf2ff; }
+	#previewFrame { flex: 1; border: none; width: 100%; background: #fff; }
+	#previewPlaceholder { padding: 2em; color: #888; }
+	#previewOpenExternalBox {
+		flex: 1;
+		display: none;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		background: #fff;
+		color: #888;
+	}
+	#previewOpenExternalBox svg { width: 56px; height: 56px; color: #ccc; }
+	#previewOpenExternalBox p { margin: 0; font-size: 0.9em; }
+	#previewOpenExternalButton {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.95em;
+		padding: 8px 20px;
+	}
+	#previewOpenExternalButton svg { width: 16px; height: 16px; }
+
+	#memoArea {
+		flex-shrink: 0;
+		border-top: 1px solid #ddd;
+		background: #fff;
+		padding: 8px 16px 10px;
+		display: flex;
+		flex-direction: column;
+	}
+	#memoHeader {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-bottom: 6px;
+		font-size: 0.85em;
+		color: #555;
+	}
+	#memoHeader .modalButton { padding: 3px 14px; font-size: 0.95em; margin-left: auto; }
+	#memoHeader .previewActionButton { margin-left: auto; }
+	#memoSavedIndicator { color: #2f9e44; }
+	#memoTextarea {
+		width: 100%;
+		height: 4.6em;
+		resize: none;
+		padding: 6px 10px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-size: 0.85em;
+		font-family: inherit;
+		line-height: 1.5;
+	}
+	#memoTextarea:disabled { background: #f8f9fa; color: #666; }
+	#appShell.readOnlyMode #memoHeader .previewActionButton { display: none; }
+	#appShell.readOnlyMode .previewWriteAction { display: none !important; }
+
+	.modalOverlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.45);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+	}
+	/* 確認ダイアログは他のモーダル(APIキー管理/アクセス許可ユーザー等)の内側から
+	   呼ばれることがあるため、常に最前面に表示されるようz-indexを高くする */
+	#confirmOverlay { z-index: 1100; }
+	.modalBox {
+		background: #fff;
+		border-radius: 8px;
+		padding: 20px 24px;
+		width: 90%;
+		max-width: 360px;
+		box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+	}
+	.modalBox p { margin: 0 0 18px; font-size: 0.95em; color: #24292f; line-height: 1.5; }
+	.modalButtons { display: flex; justify-content: flex-end; gap: 8px; }
+	.modalButton {
+		border: 1px solid #ccc;
+		background: #f8f9fa;
+		border-radius: 4px;
+		padding: 6px 18px;
+		cursor: pointer;
+		font-size: 0.9em;
+	}
+	.modalButton:hover { background: #eee; }
+	.modalButton.primary { background: #e03131; border-color: #e03131; color: #fff; }
+	.modalButton.primary:hover { background: #c92a2a; }
+	.modalButton.save { background: #1a56db; border-color: #1a56db; color: #fff; }
+	.modalButton.save:hover { background: #1544ad; }
+
+	#tagModalBox { max-width: 400px; }
+	#tagEditChips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; min-height: 24px; }
+	#tagEditInput {
+		width: 100%;
+		padding: 6px 10px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-size: 0.9em;
+	}
+	#tagEditInput:disabled { background: #f1f3f5; }
+	#tagSuggestionsLabel { margin-top: 10px; }
+	#tagSuggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; margin-bottom: 16px; }
+	.tagSuggestionChip {
+		background: #fff;
+		color: #1a56db;
+		border: 1px dashed #9cc2ff;
+		border-radius: 999px;
+		padding: 1px 10px;
+		font-size: 0.75em;
+		cursor: pointer;
+	}
+	.tagSuggestionChip:hover { background: #eaf2ff; }
+
+	#apiKeyModalBox { max-width: 620px; width: 92%; }
+	#apiKeyModalBox code { background: #f1f3f5; padding: 1px 4px; border-radius: 3px; }
+	.apiKeyCreateRow { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
+	.apiKeyCreateRow input,
+	.apiKeyCreateRow select,
+	.apiKeyCreateRow button {
+		height: 36px;
+		font-size: 0.9em;
+		box-sizing: border-box;
+	}
+	.apiKeyCreateRow select { border: 1px solid #ccc; border-radius: 4px; background: #fff; padding: 0 6px; }
+	#apiKeyRoleInput { flex: 0 0 auto; width: 96px; }
+	#apiKeyCreateButton { padding: 0 18px; white-space: nowrap; }
+
+	.apiKeyExpirySummaryButton {
+		display: inline-flex;
+		align-items: center;
+		justify-content: flex-start;
+		gap: 6px;
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		background: #f8f9fa;
+		border: 1px solid #ccc;
+		border-radius: 999px;
+		padding: 0 12px;
+		font-size: 0.82em;
+		color: #333;
+		cursor: pointer;
+	}
+	.apiKeyExpirySummaryButton:hover { background: #eee; }
+	.apiKeyExpirySummaryButton .chev { color: #888; font-size: 0.9em; flex-shrink: 0; }
+	.apiKeyExpiryOptionsRow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+	.expiryRadioPill {
+		display: inline-flex;
+		align-items: center;
+		border: 1px solid #ccc;
+		border-radius: 999px;
+		padding: 5px 14px;
+		font-size: 0.82em;
+		cursor: pointer;
+		background: #fff;
+		color: #444;
+	}
+	.expiryRadioPill:hover { border-color: #9cc2ff; }
+	.expiryRadioPill.selected { background: #1a56db; border-color: #1a56db; color: #fff; }
+	.expiryRadioPill input { display: none; }
+
+	#allowedUsersModalBox { max-width: 760px; width: 94%; }
+	#allowedUsersModalBox .docMeta ul { margin: 6px 0 0; padding-left: 1.3em; }
+	#allowedUsersModalBox .docMeta li { margin-bottom: 3px; }
+	.allowedUserAddRow { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
+	.allowedUserAddRow input,
+	.allowedUserAddRow select,
+	.allowedUserAddRow button {
+		height: 36px;
+		font-size: 1em;
+		box-sizing: border-box;
+	}
+	#allowedUserEmailInput {
+		flex: 1;
+		min-width: 0;
+		padding: 0 10px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+	}
+	#allowedUserRoleInput {
+		padding: 0 8px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		background: #fff;
+	}
+	#allowedUserAddButton { padding: 0 18px; white-space: nowrap; }
+
+	#helpModalBox { max-width: 720px; width: 94%; }
+	#helpMarkdownText {
+		width: 100%;
+		height: 380px;
+		margin-top: 10px;
+		padding: 10px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace;
+		font-size: 0.78em;
+		line-height: 1.5;
+		white-space: pre;
+		resize: vertical;
+	}
+
+	/* 10人分程度を目安の高さとし、それを超えたらヘッダー固定でスクロールさせる */
+	#allowedUserTableWrap {
+		max-height: 400px;
+		overflow-y: auto;
+		border: 1px solid #e2e2e2;
+		border-radius: 6px;
+	}
+	#allowedUserTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.85em; }
+	#allowedUserTable col.colEmail { width: 34%; }
+	#allowedUserTable col.colDate { width: 15%; }
+	#allowedUserTable col.colRole { width: 14%; }
+	#allowedUserTable col.colAction { width: 50px; }
+	#allowedUserTable th, #allowedUserTable td {
+		text-align: left;
+		padding: 8px 10px;
+		border-bottom: 1px solid #eee;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	#allowedUserTable th:last-child, #allowedUserTable td:last-child { overflow: visible; text-overflow: clip; }
+	#allowedUserTable th {
+		position: sticky;
+		top: 0;
+		background: #f8f9fa;
+		font-weight: 600;
+		color: #555;
+		z-index: 1;
+	}
+	#allowedUserTable tbody tr:last-child td { border-bottom: none; }
+	#allowedUserTable .apiKeyMeta { color: #777; }
+	.allowedUserRoleSelect { height: 30px; font-size: 0.85em; }
+
+	#tagOrderModalBox { max-width: 560px; width: 94%; }
+	#tagOrderModalBox .toolbarRow { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
+	#tagOrderAddInput { flex: 1; min-width: 0; padding: 0 10px; border: 1px solid #ccc; border-radius: 4px; height: 36px; box-sizing: border-box; }
+	#tagOrderSuggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; margin-bottom: 4px; }
+	#tagOrderList { list-style: none; margin: 10px 0 0; padding: 0; max-height: 320px; overflow-y: auto; }
+	#tagOrderList li {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 10px;
+		border: 1px solid #e2e2e2;
+		border-radius: 6px;
+		margin-bottom: 6px;
+		background: #fff;
+	}
+	.tagOrderName { flex: 1; font-weight: 600; word-break: break-all; }
+	.tagOrderActions { display: flex; gap: 4px; flex-shrink: 0; }
+
+	#apiKeyLabelInput {
+		flex: 1;
+		padding: 6px 10px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-size: 0.9em;
+	}
+	#apiKeyNewBox {
+		background: #eaf7ea;
+		border: 1px solid #2f9e44;
+		border-radius: 6px;
+		padding: 10px;
+		margin-top: 10px;
+		font-size: 0.85em;
+	}
+	#apiKeyNewBox .apiKeyValue {
+		display: block;
+		word-break: break-all;
+		background: #fff;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		padding: 6px;
+		margin-top: 6px;
+		font-family: monospace;
+	}
+	.apiKeyNewBoxButtons { display: flex; gap: 8px; margin-top: 10px; }
+	.apiKeyNewBoxButtons .modalButton { font-size: 0.95em; padding: 6px 14px; }
+	#apiKeyList { list-style: none; margin: 10px 0; padding: 0; max-height: 240px; overflow-y: auto; }
+	#apiKeyList li {
+		border: 1px solid #e2e2e2;
+		border-radius: 6px;
+		padding: 8px 10px;
+		margin-bottom: 6px;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.5em;
+	}
+	#apiKeyList .apiKeyInfo { font-size: 0.8em; }
+	#apiKeyList .apiKeyLabel { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+	#apiKeyList .apiKeyMeta { color: #777; font-size: 0.85em; }
+	#apiKeyList .apiKeyRoleBadge {
+		display: inline-block;
+		font-size: 0.75em;
+		font-weight: 600;
+		padding: 1px 8px;
+		border-radius: 999px;
+		background: #e8f0fe;
+		color: #1a56db;
+	}
+	#apiKeyList .apiKeyRoleBadge.readwrite { background: #fff3cd; color: #b8860b; }
+	#apiKeyList .apiKeyExpiry { margin-top: 2px; }
+	#apiKeyList .apiKeyExpiry.warnSoon { color: #d9480f; font-weight: 600; }
+	#apiKeyList li.apiKeyExpired { background: #f4f5f7; border-color: #e2e2e2; opacity: 0.75; }
+	#apiKeyList li.apiKeyExpired .apiKeyLabel { color: #888; }
+	#apiKeyList .apiKeyExpiredBadge {
+		display: inline-block;
+		font-size: 0.75em;
+		font-weight: 600;
+		padding: 1px 8px;
+		border-radius: 999px;
+		background: #e2e2e2;
+		color: #666;
+	}
+</style>
+</head>
+<body>
+
+<div id="loginArea">
+	<div class="messageCard">
+		<div class="loginSpinner"></div>
+		<p>ログイン画面へ移動しています...</p>
+		<p class="messageSub"><a href="./login">移動しない場合はこちらをクリック</a></p>
+	</div>
+</div>
+
+<div id="appShell">
+	<header id="topBar">
+		<div class="topBarTitle">Document Manager</div>
+		<div id="topBarActions">
+			<span id="userIdentifier"></span>
+			<button type="button" id="helpButton" class="topBarIconButton" title="ヘルプ(AIからの利用方法)" aria-label="ヘルプ">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+			</button>
+			<button type="button" id="allowedUsersManageLink" class="topBarIconButton" title="アクセス許可ユーザー" aria-label="アクセス許可ユーザー">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+			</button>
+			<button type="button" id="apiKeyManageLink" class="topBarIconButton" title="APIキー管理" aria-label="APIキー管理">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+			</button>
+			<a href="./logout" id="logoutLink" class="topBarIconButton" title="ログアウト" aria-label="ログアウト">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+			</a>
+		</div>
+	</header>
+	<nav id="breadcrumbBar">
+		<a href="#" id="menuDocumentsLink" class="menuLink active">文書一覧</a><a href="#" id="menuTagTreeLink" class="menuLink">タグ体系</a><a href="#" id="menuProjectsLink" class="menuLink">プロジェクト</a><a href="#" id="menuArchiveLink" class="menuLink">アーカイブ</a>
+	</nav>
+	<div id="projectSwitcherBar">
+		<div id="projectTabs"></div>
+		<div id="projectSwitcherActions">
+			<button type="button" id="projectArchiveToggleButton" class="modalButton">アーカイブ済み</button>
+			<button type="button" id="projectAddButton" class="modalButton save">＋ 新規プロジェクト</button>
+		</div>
+	</div>
+	<div id="mainArea">
+		<aside id="projectTreePane">
+			<div id="projectTreeToolbar">
+				<div class="toolbarRow" id="projectTreeHeaderRow">
+					<span id="projectTreeTitle"></span>
+					<button type="button" id="projectRenameButton" class="iconButton" title="プロジェクト名を変更" aria-label="プロジェクト名を変更">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .622.622l4.353-1.32a2 2 0 0 0 .83-.497Z"/><path d="m15 5 4 4"/></svg>
+					</button>
+					<button type="button" id="projectDeleteButton" class="iconButton" title="アーカイブ" aria-label="アーカイブ">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+					</button>
+					<button type="button" id="projectRestoreButton" class="iconButton" title="元に戻す" aria-label="元に戻す">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+					</button>
+				</div>
+				<div class="toolbarRow" id="projectEditToggleRow">
+					<button type="button" id="projectEditToggleButton" class="modalButton">編集モードへ</button>
+					<button type="button" id="projectAddRootFolderButton" class="modalButton" style="display:none;">＋ フォルダ追加</button>
+				</div>
+			</div>
+			<ul id="projectTreeList"></ul>
+		</aside>
+		<aside id="sideBar">
+			<div id="sideBarToolbar">
+				<div class="toolbarRow">
+					<button id="refreshButton" class="iconButton" type="button" title="更新" aria-label="更新">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+					</button>
+					<span id="docCountChip">0件</span>
+				</div>
+				<div class="toolbarRow" id="filterRow">
+					<input type="text" id="filterInput" placeholder="ファイル名・タグ・本文で検索...">
+				</div>
+				<div class="toolbarRow" id="dateRangeRow">
+					<input type="date" id="fromDateInput" title="登録日(From)">
+					<span>〜</span>
+					<input type="date" id="toDateInput" title="登録日(To)">
+				</div>
+				<div class="toolbarRow" id="tagTreeManageRow">
+					<button type="button" id="tagOrderManageButton" class="modalButton">タグ体系を管理</button>
+				</div>
+				<div id="uploadDropZone">
+					<div class="uploadHint">ここにファイルをドラッグ&amp;ドロップ<br>またはクリックして選択</div>
+					<div class="uploadExt">.html / .htm / .mhtml / .mht / .md / .markdown / .pdf / .svg / .png / .jpg / .jpeg / .csv / .tsv / .txt / .log / .json</div>
+					<input type="file" id="uploadfile" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json" style="display:none;">
+				</div>
+			</div>
+			<ul id="documentList"></ul>
+		</aside>
+		<main id="previewArea">
+			<div id="previewToolbar">
+				<span id="previewTitle">左の一覧から文書を選択してください。</span>
+				<div id="previewToolbarActions">
+					<button type="button" id="copyLinkButton" class="previewActionButton" title="リンクをコピー" aria-label="リンクをコピー" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+					</button>
+					<a id="downloadLink" href="#" class="previewActionButton" title="ダウンロード" aria-label="ダウンロード" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+					</a>
+					<button type="button" id="previewTagEditButton" class="previewActionButton previewWriteAction" title="タグを編集" aria-label="タグを編集" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.59a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+					</button>
+					<button type="button" id="previewArchiveButton" class="previewActionButton previewArchiveAction previewWriteAction" title="アーカイブ" aria-label="アーカイブ" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+					</button>
+					<button type="button" id="previewRestoreButton" class="previewActionButton previewRestoreAction" title="元に戻す" aria-label="元に戻す" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+					</button>
+				</div>
+			</div>
+			<div id="similarFilesRow"></div>
+			<iframe id="previewFrame" style="display:none;" sandbox="allow-same-origin"></iframe>
+			<div id="previewOpenExternalBox" style="display:none;">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+				<p id="previewOpenExternalMessage"></p>
+				<button type="button" id="previewOpenExternalButton" class="modalButton save">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+					別ウィンドウで開く
+				</button>
+			</div>
+			<div id="memoArea" style="display:none;">
+				<div id="memoHeader">
+					<span>メモ</span>
+					<span id="memoSavedIndicator" style="display:none;">保存しました</span>
+					<button id="memoSaveButton" type="button" class="previewActionButton" title="メモを保存" aria-label="メモを保存">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+					</button>
+				</div>
+				<textarea id="memoTextarea" rows="3" placeholder="このドキュメントについての備忘録を入力..."></textarea>
+			</div>
+		</main>
+	</div>
+	<footer id="appFooter">
+		<span>© <span id="footerYear"></span> EARCE.NET</span>
+		<span id="footerVersion"></span>
+	</footer>
+</div>
+
+<div id="confirmOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox">
+		<p id="confirmMessage"></p>
+		<div class="modalButtons">
+			<button id="confirmNoButton" type="button" class="modalButton">いいえ</button>
+			<button id="confirmYesButton" type="button" class="modalButton primary">はい</button>
+		</div>
+	</div>
+</div>
+
+<div id="promptOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox">
+		<p id="promptMessage"></p>
+		<input type="text" id="promptInput" style="width:100%; padding:6px 10px; border:1px solid #ccc; border-radius:4px; font-size:0.9em; margin-bottom:14px; box-sizing:border-box;">
+		<div class="modalButtons">
+			<button id="promptCancelButton" type="button" class="modalButton">キャンセル</button>
+			<button id="promptOkButton" type="button" class="modalButton save">OK</button>
+		</div>
+	</div>
+</div>
+
+<div id="tagEditOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="tagModalBox">
+		<p>タグを編集 <span id="tagEditCount" class="docMeta"></span></p>
+		<div id="tagEditChips"></div>
+		<input type="text" id="tagEditInput" placeholder="タグを入力してEnter">
+		<div id="tagSuggestionsLabel" class="docMeta" style="display:none;">既存のタグから選択:</div>
+		<div id="tagSuggestions"></div>
+		<div class="modalButtons">
+			<button id="tagCancelButton" type="button" class="modalButton">キャンセル</button>
+			<button id="tagSaveButton" type="button" class="modalButton save">保存</button>
+		</div>
+	</div>
+</div>
+
+<div id="apiKeyOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="apiKeyModalBox">
+		<p>APIキー管理</p>
+		<div class="docMeta">Claude Desktop等の自動化クライアントから、ブラウザログインなしでapiを呼び出すためのキーです。<code>Authorization: Bearer &lt;キー&gt;</code> ヘッダーで送信してください。キーには必ず有効期限があり、権限は発行時に選んだロールに固定されます(後から自分のロールが変わっても既存キーには影響しません)。</div>
+		<div id="apiKeyNewBox" style="display:none;"></div>
+		<div class="toolbarRow apiKeyCreateRow" style="margin: 10px 0 0;">
+			<button type="button" id="apiKeyExpirySummaryButton" class="apiKeyExpirySummaryButton"></button>
+			<select id="apiKeyRoleInput"></select>
+			<button id="apiKeyCreateButton" type="button" class="modalButton save">発行</button>
+		</div>
+		<div id="apiKeyExpiryOptions" class="apiKeyExpiryOptionsRow" style="display:none;"></div>
+		<div class="toolbarRow" style="margin: 8px 0 10px;">
+			<input type="text" id="apiKeyLabelInput" placeholder="用途メモ(任意)" style="width:100%;">
+		</div>
+		<ul id="apiKeyList"></ul>
+		<div class="modalButtons">
+			<button id="apiKeyCloseButton" type="button" class="modalButton">閉じる</button>
+		</div>
+	</div>
+</div>
+
+<div id="allowedUsersOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="allowedUsersModalBox">
+		<p>アクセス許可ユーザー</p>
+		<div class="docMeta">
+			登録したメールアドレスのユーザーのみログインできます<br>(未登録のメールアドレスは常にログイン不可)。
+			<ul>
+				<li><strong>管理者</strong>: ホワイトリストの管理(追加・削除・ロール変更)が可能</li>
+				<li><strong>編集可</strong>: 文書の追加・削除・タグ編集が可能</li>
+				<li><strong>閲覧のみ</strong>: 文書の閲覧のみ可能</li>
+			</ul>
+		</div>
+		<div class="toolbarRow allowedUserAddRow" style="margin: 10px 0;">
+			<input type="text" id="allowedUserEmailInput" placeholder="メールアドレス">
+			<select id="allowedUserRoleInput">
+				<option value="readwrite">編集可</option>
+				<option value="readonly">閲覧のみ</option>
+				<option value="admin">管理者</option>
+			</select>
+			<button id="allowedUserAddButton" type="button" class="modalButton save">追加</button>
+		</div>
+		<div id="allowedUserTableWrap">
+			<table id="allowedUserTable">
+				<colgroup>
+					<col class="colEmail">
+					<col class="colDate">
+					<col class="colEmail">
+					<col class="colRole">
+					<col class="colAction">
+				</colgroup>
+				<thead>
+					<tr>
+						<th>メールアドレス</th>
+						<th>追加日時</th>
+						<th>追加者</th>
+						<th>ロール</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody id="allowedUserList"></tbody>
+			</table>
+		</div>
+		<div id="allowedUserEmptyMessage" class="emptyMessage" style="display:none;">未登録です(登録されるまで誰もログインできません)。</div>
+		<div class="modalButtons">
+			<button id="allowedUserCloseButton" type="button" class="modalButton">閉じる</button>
+		</div>
+	</div>
+</div>
+
+<div id="tagOrderOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="tagOrderModalBox">
+		<p>タグ体系の管理</p>
+		<div class="docMeta">
+			ここで登録した順番で、タグ体系ビューの左側にタグごとのグループとして表示されます。<br>
+			複数のタグを持つ文書は該当する全グループに表示され、ここに登録していないタグしか持たない文書は「未分類」としてまとめられます。
+		</div>
+		<div class="toolbarRow" style="margin: 10px 0;">
+			<input type="text" id="tagOrderAddInput" placeholder="タグ名を入力">
+			<button id="tagOrderAddButton" type="button" class="modalButton save">追加</button>
+		</div>
+		<div id="tagOrderSuggestionsLabel" class="docMeta" style="display:none;">既存のタグから選択:</div>
+		<div id="tagOrderSuggestions"></div>
+		<ul id="tagOrderList"></ul>
+		<div id="tagOrderEmptyMessage" class="emptyMessage" style="display:none;">タグが登録されていません。</div>
+		<div class="modalButtons">
+			<button id="tagOrderSaveButton" type="button" class="modalButton save">保存</button>
+			<button id="tagOrderCloseButton" type="button" class="modalButton">閉じる</button>
+		</div>
+	</div>
+</div>
+
+<div id="helpOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="helpModalBox">
+		<p>ヘルプ</p>
+		<div class="docMeta">Claude Desktop・Antigravity等のデスクトップAIからこのサービスを直接操作したい場合は、下記のMarkdownをコピーしてAIへの指示(カスタム指示・プロジェクトのナレッジ等)として渡してください。AIがAPIの呼び出し方を理解できるようになります。</div>
+		<textarea id="helpMarkdownText" readonly></textarea>
+		<div class="modalButtons" style="justify-content: space-between;">
+			<button id="helpCopyButton" type="button" class="modalButton save">Markdownをコピー</button>
+			<button id="helpCloseButton" type="button" class="modalButton">閉じる</button>
+		</div>
+	</div>
+</div>
+
+<script>
+const loginArea = document.getElementById("loginArea");
+const appShell = document.getElementById("appShell");
+const documentList = document.getElementById("documentList");
+const userIdentifier = document.getElementById("userIdentifier");
+const previewFrame = document.getElementById("previewFrame");
+const previewTitle = document.getElementById("previewTitle");
+const downloadLink = document.getElementById("downloadLink");
+const copyLinkButton = document.getElementById("copyLinkButton");
+const previewTagEditButton = document.getElementById("previewTagEditButton");
+const previewArchiveButton = document.getElementById("previewArchiveButton");
+const previewRestoreButton = document.getElementById("previewRestoreButton");
+const previewOpenExternalBox = document.getElementById("previewOpenExternalBox");
+const previewOpenExternalMessage = document.getElementById("previewOpenExternalMessage");
+const previewOpenExternalButton = document.getElementById("previewOpenExternalButton");
+const similarFilesRow = document.getElementById("similarFilesRow");
+const memoArea = document.getElementById("memoArea");
+const memoTextarea = document.getElementById("memoTextarea");
+const memoSaveButton = document.getElementById("memoSaveButton");
+const memoSavedIndicator = document.getElementById("memoSavedIndicator");
+const docCountChip = document.getElementById("docCountChip");
+const filterInput = document.getElementById("filterInput");
+const fromDateInput = document.getElementById("fromDateInput");
+const toDateInput = document.getElementById("toDateInput");
+const confirmOverlay = document.getElementById("confirmOverlay");
+const confirmMessage = document.getElementById("confirmMessage");
+const confirmYesButton = document.getElementById("confirmYesButton");
+const confirmNoButton = document.getElementById("confirmNoButton");
+const uploadDropZone = document.getElementById("uploadDropZone");
+const menuDocumentsLink = document.getElementById("menuDocumentsLink");
+const menuTagTreeLink = document.getElementById("menuTagTreeLink");
+const menuProjectsLink = document.getElementById("menuProjectsLink");
+const menuArchiveLink = document.getElementById("menuArchiveLink");
+const projectSwitcherBar = document.getElementById("projectSwitcherBar");
+const projectTabsEl = document.getElementById("projectTabs");
+const projectAddButton = document.getElementById("projectAddButton");
+const projectTreePane = document.getElementById("projectTreePane");
+const projectTreeTitle = document.getElementById("projectTreeTitle");
+const projectRenameButton = document.getElementById("projectRenameButton");
+const projectDeleteButton = document.getElementById("projectDeleteButton");
+const projectRestoreButton = document.getElementById("projectRestoreButton");
+const projectArchiveToggleButton = document.getElementById("projectArchiveToggleButton");
+const projectEditToggleButton = document.getElementById("projectEditToggleButton");
+const projectAddRootFolderButton = document.getElementById("projectAddRootFolderButton");
+const projectTreeList = document.getElementById("projectTreeList");
+
+let allDocuments = [];
+let selectedId = null;
+// "active" = 通常の文書一覧 / "archive" = アーカイブ(削除済み)一覧 / "tagTree" = タグ体系表示 / "projects" = プロジェクト表示
+let currentView = "active";
+// APIキー発行フォームで、自分のロール以下しか選べないようにするために使う
+let currentUserRole = null;
+
+// プロジェクト機能の状態
+let currentProjects = [];
+let currentProjectId = null;
+let currentProjectTree = null; // {folders:[...], documents:[...]} (直近取得したツリー)
+let projectsEditMode = false;
+let projectsArchiveMode = false; // true = アーカイブ済みプロジェクトの一覧・ツリーを表示中(表示専用)
+// フォルダは既定で開いた状態にしたいので、「開いているID」ではなく「閉じたID」を記録する
+// (未登録=既定どおり開いている、として扱う。新規作成したフォルダも自動的に開いた状態になる)
+let collapsedFolderIds = new Set();
+
+// 画面中央のモーダルで はい/いいえ 確認を行う (window.confirm の代替)
+const showConfirmDialog = (message) => new Promise((resolve) => {
+	confirmMessage.textContent = message;
+	confirmOverlay.style.display = "flex";
+
+	const cleanup = (result) => {
+		confirmOverlay.style.display = "none";
+		confirmYesButton.removeEventListener("click", onYes);
+		confirmNoButton.removeEventListener("click", onNo);
+		confirmOverlay.removeEventListener("click", onOverlayClick);
+		resolve(result);
+	};
+	const onYes = () => cleanup(true);
+	const onNo = () => cleanup(false);
+	const onOverlayClick = (ev) => { if (ev.target === confirmOverlay) cleanup(false); };
+
+	confirmYesButton.addEventListener("click", onYes);
+	confirmNoButton.addEventListener("click", onNo);
+	confirmOverlay.addEventListener("click", onOverlayClick);
+});
+
+// 画面中央のモーダルで1行テキスト入力を行う (window.prompt の代替)。
+// キャンセル時はnull、OK時は前後空白を除いた文字列を返す
+const promptOverlay = document.getElementById("promptOverlay");
+const promptMessage = document.getElementById("promptMessage");
+const promptInput = document.getElementById("promptInput");
+const promptOkButton = document.getElementById("promptOkButton");
+const promptCancelButton = document.getElementById("promptCancelButton");
+
+const showPromptDialog = (message, defaultValue = "") => new Promise((resolve) => {
+	promptMessage.textContent = message;
+	promptInput.value = defaultValue;
+	promptOverlay.style.display = "flex";
+	promptInput.focus();
+	promptInput.select();
+
+	const cleanup = (result) => {
+		promptOverlay.style.display = "none";
+		promptOkButton.removeEventListener("click", onOk);
+		promptCancelButton.removeEventListener("click", onCancel);
+		promptOverlay.removeEventListener("click", onOverlayClick);
+		promptInput.removeEventListener("keydown", onKeydown);
+		resolve(result);
+	};
+	const onOk = () => cleanup(promptInput.value.trim());
+	const onCancel = () => cleanup(null);
+	const onOverlayClick = (ev) => { if (ev.target === promptOverlay) cleanup(null); };
+	const onKeydown = (ev) => {
+		if (ev.key === "Enter") { ev.preventDefault(); onOk(); }
+		if (ev.key === "Escape") { ev.preventDefault(); onCancel(); }
+	};
+
+	promptOkButton.addEventListener("click", onOk);
+	promptCancelButton.addEventListener("click", onCancel);
+	promptOverlay.addEventListener("click", onOverlayClick);
+	promptInput.addEventListener("keydown", onKeydown);
+});
+
+// 汎用クリップボードコピー(Clipboard API優先、失敗時は非表示textarea経由でフォールバック)。
+// コピー後、渡したボタンの文字を一時的に「コピーしました」に変えて視覚フィードバックする
+const writeToClipboard = async (text) => {
+	try {
+		await navigator.clipboard.writeText(text);
+	} catch (err) {
+		const tmp = document.createElement("textarea");
+		tmp.value = text;
+		tmp.style.position = "fixed";
+		tmp.style.opacity = "0";
+		document.body.appendChild(tmp);
+		tmp.select();
+		document.execCommand("copy");
+		document.body.removeChild(tmp);
+	}
+};
+
+const copyTextWithFeedback = async (text, buttonEl) => {
+	await writeToClipboard(text);
+	const original = buttonEl.textContent;
+	buttonEl.textContent = "コピーしました";
+	buttonEl.disabled = true;
+	setTimeout(() => {
+		buttonEl.textContent = original;
+		buttonEl.disabled = false;
+	}, 1500);
+};
+
+// アイコンのみのボタン用: テキストの代わりにチェックマークアイコンへ一時的に差し替える
+const COPY_CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const copyTextWithIconFeedback = async (text, buttonEl) => {
+	await writeToClipboard(text);
+	const originalHtml = buttonEl.innerHTML;
+	const originalTitle = buttonEl.title;
+	buttonEl.innerHTML = COPY_CHECK_ICON;
+	buttonEl.title = "コピーしました";
+	buttonEl.disabled = true;
+	setTimeout(() => {
+		buttonEl.innerHTML = originalHtml;
+		buttonEl.title = originalTitle;
+		buttonEl.disabled = false;
+	}, 1500);
+};
+
+const tagClassFor = (entryFile) => {
+	if (entryFile == null) return "none";
+	const ext = entryFile.split(".").pop().toLowerCase();
+	if (ext === "mhtml" || ext === "mht") return "mhtml";
+	if (ext === "md" || ext === "markdown") return "md";
+	if (ext === "pdf") return "pdf";
+	if (ext === "svg" || ext === "png" || ext === "jpg" || ext === "jpeg") return "image";
+	if (ext === "csv" || ext === "tsv") return "csv";
+	if (ext === "json") return "json";
+	if (ext === "txt" || ext === "log") return "text";
+	return "html";
+};
+
+const formatDateTime = (isoString) => {
+	if (!isoString) return "";
+	const d = new Date(isoString);
+	if (isNaN(d.getTime())) return isoString;
+	return d.toLocaleString();
+};
+
+// ファイル名・タグ・メールアドレス・APIキーラベル等、書き込み権限を持つ利用者が
+// 自由に入力できる値をinnerHTML経由で表示する箇所は、必ずこれを通してから埋め込むこと
+// (HTMLタグとしての解釈も、属性値からのエスケープも両方防ぐ)
+const escapeHtml = (value) => String(value ?? "")
+	.replace(/&/g, "&amp;")
+	.replace(/</g, "&lt;")
+	.replace(/>/g, "&gt;")
+	.replace(/"/g, "&quot;")
+	.replace(/'/g, "&#39;");
+
+// <input type="date"> 用 (ブラウザのローカル日付) の YYYY-MM-DD 文字列を返す
+const formatDateInputValue = (date) => {
+	const pad = (n) => String(n).padStart(2, "0");
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+// その週の日曜日 (0時) を返す
+const startOfWeek = (date) => {
+	const d = new Date(date);
+	d.setHours(0, 0, 0, 0);
+	d.setDate(d.getDate() - d.getDay());
+	return d;
+};
+
+const weekLabel = (sunday) => {
+	const pad = (n) => String(n).padStart(2, "0");
+	return `${sunday.getFullYear()}-${pad(sunday.getMonth() + 1)}-${pad(sunday.getDate())} ~`;
+};
+
+// ファイル名の類似度判定(トリグラムのDice係数)。日本語ファイル名でも単語分割不要で
+// 動くよう文字3-gramの集合同士の重なりで比較する(サーバー側のFTS5 trigramと同じ考え方)。
+const SIMILAR_FILES_THRESHOLD = 0.3;
+const SIMILAR_FILES_MAX = 5;
+
+const stripExtension = (name) => (name || "").replace(/\.[^.]+$/, "");
+
+const toTrigramSet = (str) => {
+	const padded = `  ${String(str).toLowerCase()}  `;
+	const set = new Set();
+	for (let i = 0; i < padded.length - 2; i++) set.add(padded.slice(i, i + 3));
+	return set;
+};
+
+const trigramSimilarity = (a, b) => {
+	const setA = toTrigramSet(a);
+	const setB = toTrigramSet(b);
+	if (setA.size === 0 || setB.size === 0) return 0;
+	let intersection = 0;
+	for (const trigram of setA) {
+		if (setB.has(trigram)) intersection++;
+	}
+	return (2 * intersection) / (setA.size + setB.size);
+};
+
+// 現在表示中の一覧(allDocuments)の中から、ファイル名が似ている文書を上位数件表示する
+const renderSimilarFiles = (doc) => {
+	if (doc.entryFile == null) {
+		similarFilesRow.style.display = "none";
+		return;
+	}
+	const baseName = stripExtension(doc.entryFile);
+	const candidates = allDocuments
+		.filter((other) => other.id !== doc.id && other.entryFile != null)
+		.map((other) => ({doc: other, score: trigramSimilarity(baseName, stripExtension(other.entryFile))}))
+		.filter((entry) => entry.score >= SIMILAR_FILES_THRESHOLD)
+		.sort((a, b) => b.score - a.score)
+		.slice(0, SIMILAR_FILES_MAX);
+
+	if (candidates.length === 0) {
+		similarFilesRow.style.display = "none";
+		return;
+	}
+	similarFilesRow.style.display = "flex";
+	similarFilesRow.innerHTML = `
+		<span class="similarFilesLabel">似ているファイル名:</span>
+		${candidates.map(({doc: other}) => `<button type="button" class="similarFileChip" data-id="${escapeHtml(other.id)}">${escapeHtml(other.entryFile)}</button>`).join("")}
+	`;
+	similarFilesRow.querySelectorAll(".similarFileChip").forEach((btn) => {
+		btn.addEventListener("click", () => {
+			const target = allDocuments.find((d) => d.id === btn.dataset.id);
+			if (target) showPreview(target);
+		});
+	});
+};
+
+const clearPreview = () => {
+	selectedId = null;
+	projectTreeList.querySelectorAll(".treeDocRow.selected").forEach((li) => li.classList.remove("selected"));
+	previewFrame.style.display = "none";
+	previewFrame.removeAttribute("src");
+	previewOpenExternalBox.style.display = "none";
+	downloadLink.style.display = "none";
+	copyLinkButton.style.display = "none";
+	previewTagEditButton.style.display = "none";
+	previewArchiveButton.style.display = "none";
+	previewRestoreButton.style.display = "none";
+	previewTitle.textContent = "左の一覧から文書を選択してください。";
+	similarFilesRow.style.display = "none";
+	memoArea.style.display = "none";
+	memoTextarea.value = "";
+};
+
+const showPreview = (doc) => {
+	selectedId = doc.id;
+	documentList.querySelectorAll("li").forEach((li) => {
+		li.classList.toggle("selected", li.dataset.id === doc.id);
+	});
+	projectTreeList.querySelectorAll(".treeDocRow").forEach((li) => {
+		li.classList.toggle("selected", li.dataset.documentId === doc.id);
+	});
+
+	downloadLink.href = `./api/documents/${encodeURIComponent(doc.id)}/file?download=1`;
+	downloadLink.style.display = "inline-flex";
+	copyLinkButton.style.display = "inline-flex";
+	copyLinkButton.onclick = () => {
+		// ダウンロード用リンク(api/documents/:id/file)はAPIキー連携クライアント向けで、
+		// 未ログイン状態で開くとJSONの401が出るだけで復帰できない。人にURLを共有する場合は
+		// 未ログイン時にログイン画面へ迂回できるviewerのリンクをコピーする
+		const viewerUrl = new URL(`./api/documents/${encodeURIComponent(doc.id)}/viewer`, window.location.href).href;
+		copyTextWithIconFeedback(viewerUrl, copyLinkButton);
+	};
+
+	// タグ編集・アーカイブは通常表示の文書のみ、元に戻すはアーカイブ表示の文書のみ対象。
+	// いずれも一覧行の同名ボタンと同じ挙動(アーカイブ/復元とも確認なしの即時実行)をプレビューからも行えるようにする。
+	// プロジェクトのツリー経由でアーカイブ済み文書を開いた場合(doc.archived)も同様に扱う
+	const isArchived = currentView === "archive" || doc.archived === true;
+	previewTagEditButton.style.display = isArchived ? "none" : "inline-flex";
+	previewTagEditButton.onclick = () => openTagEditor(doc);
+	previewArchiveButton.style.display = isArchived ? "none" : "inline-flex";
+	previewArchiveButton.onclick = async () => {
+		await fetch("./api/documents/" + encodeURIComponent(doc.id), {method: "DELETE"});
+		clearPreview();
+		loadDocuments();
+		if (currentView === "projects") loadProjectTree();
+	};
+	previewRestoreButton.style.display = isArchived ? "inline-flex" : "none";
+	previewRestoreButton.onclick = async () => {
+		await fetch("./api/documents/" + encodeURIComponent(doc.id) + "/restore", {method: "POST"});
+		clearPreview();
+		loadDocuments();
+		if (currentView === "projects") loadProjectTree();
+	};
+
+	renderSimilarFiles(doc);
+
+	memoArea.style.display = "flex";
+	memoTextarea.value = doc.memo || "";
+	memoTextarea.disabled = isArchived;
+	memoSavedIndicator.style.display = "none";
+
+	previewOpenExternalBox.style.display = "none";
+
+	if (doc.previewFile == null) {
+		previewFrame.style.display = "none";
+		previewFrame.removeAttribute("src");
+		previewTitle.textContent = `${doc.entryFile} (プレビュー不可。ダウンロードして確認してください)`;
+		return;
+	}
+
+	previewTitle.textContent = doc.entryFile;
+	const previewExt = doc.previewFile.split(".").pop().toLowerCase();
+
+	// PDFはiframe埋め込みにせず、中央のボタンから別ウィンドウで開かせる。
+	// Chromeはsandbox付きiframe内での内蔵PDFビューアの読み込み自体をnet::ERR_BLOCKED_BY_CLIENTと
+	// してブロックすることがあり(sandboxを外せば読み込めるが)、素直に新しいタブ・ウィンドウで
+	// 開いたほうがズーム・印刷・ページ送り等ネイティブのPDF体験がそのまま使えて確実。
+	if (previewExt === "pdf") {
+		previewFrame.style.display = "none";
+		previewFrame.removeAttribute("src");
+		previewOpenExternalMessage.textContent = `${doc.entryFile} は別ウィンドウで開いて確認してください。`;
+		previewOpenExternalButton.onclick = () => {
+			window.open(`./api/documents/${encodeURIComponent(doc.id)}/viewer`, "_blank");
+		};
+		previewOpenExternalBox.style.display = "flex";
+		return;
+	}
+
+	previewFrame.style.display = "block";
+	previewFrame.setAttribute("sandbox", "allow-same-origin");
+	previewFrame.src = `./api/documents/${encodeURIComponent(doc.id)}/file`;
+};
+
+memoSaveButton.addEventListener("click", async () => {
+	if (selectedId == null) return;
+	const memo = memoTextarea.value;
+	const res = await fetch(`./api/documents/${encodeURIComponent(selectedId)}/memo`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({memo})
+	});
+	if (res.status !== 200) return;
+	const doc = allDocuments.find((d) => d.id === selectedId);
+	if (doc) doc.memo = memo;
+	memoSavedIndicator.style.display = "inline";
+	setTimeout(() => { memoSavedIndicator.style.display = "none"; }, 2000);
+});
+
+const renderDocumentList = () => {
+	// キーワード(ファイル名・タグ・本文)検索はサーバー側で実施済みのallDocumentsに対し、
+	// 日付範囲のみクライアント側で絞り込む
+	const fromValue = fromDateInput.value;
+	const toValue = toDateInput.value;
+	const filtered = allDocuments.filter((doc) => {
+		if (fromValue || toValue) {
+			const docDateValue = doc.modified ? formatDateInputValue(new Date(doc.modified)) : null;
+			if (docDateValue == null) return false;
+			if (fromValue && docDateValue < fromValue) return false;
+			if (toValue && docDateValue > toValue) return false;
+		}
+		return true;
+	});
+
+	docCountChip.textContent = `${filtered.length}件`;
+	documentList.innerHTML = "";
+
+	if (filtered.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "emptyMessage";
+		empty.textContent = currentView === "archive" ? "アーカイブされた文書はありません。" : "文書がありません。";
+		documentList.appendChild(empty);
+		return;
+	}
+
+	let currentWeekKey = null;
+	for (const doc of filtered) {
+		const sunday = startOfWeek(doc.modified ? new Date(doc.modified) : new Date());
+		const weekKey = sunday.getTime();
+		if (weekKey !== currentWeekKey) {
+			currentWeekKey = weekKey;
+			const header = document.createElement("li");
+			header.className = "weekHeader";
+			header.textContent = weekLabel(sunday);
+			documentList.appendChild(header);
+		}
+
+		const li = document.createElement("li");
+		li.dataset.id = doc.id;
+		li.title = doc.id;
+		if (doc.id === selectedId) li.classList.add("selected");
+		const tagClass = tagClassFor(doc.entryFile);
+		const isArchive = currentView === "archive";
+		const tagsHtml = (doc.tags || []).map((tag) => isArchive
+			? `<span class="userTagChip">${escapeHtml(tag)}</span>`
+			: `<span class="userTagChip">${escapeHtml(tag)}<button type="button" class="removeTagButton" data-id="${escapeHtml(doc.id)}" data-tag="${escapeHtml(tag)}" title="タグを削除" aria-label="タグを削除">&times;</button></span>`
+		).join("");
+		const actionButtonsHtml = isArchive ? `
+				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${doc.previewFile == null ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+				</button>
+				<button data-id="${doc.id}" class="iconButton restoreButton" type="button" title="元に戻す" aria-label="元に戻す">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+				</button>
+			` : `
+				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${doc.previewFile == null ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+				</button>
+				<button data-id="${doc.id}" class="iconButton tagEditButton" type="button" title="タグを編集" aria-label="タグを編集">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.59a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+				</button>
+				<button data-id="${doc.id}" data-name="${escapeHtml(doc.entryFile || doc.id)}" class="iconButton archiveButton" type="button" title="アーカイブ" aria-label="アーカイブ">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+				</button>
+			`;
+		const archiveMetaHtml = isArchive
+			? `<div class="docMeta">アーカイブ日時: ${formatDateTime(doc.deletedAt)} / アーカイブ者: ${escapeHtml(doc.deletedBy || "-")}</div>`
+			: "";
+		li.innerHTML = `
+			<div class="docRow">
+				<span class="docTag ${tagClass}">${tagClass.toUpperCase()}</span>
+				<div class="itemButtons">
+					${actionButtonsHtml}
+				</div>
+			</div>
+			<div class="docName">${escapeHtml(doc.entryFile || "(入口ファイルなし)")}</div>
+			<div class="docMeta">${formatDateTime(doc.modified)}</div>
+			<div class="docMeta">アップロード者: ${escapeHtml(doc.uploadedBy || "-")}</div>
+			${archiveMetaHtml}
+			<div class="userTags">
+				${tagsHtml}
+			</div>
+		`;
+		li.addEventListener("click", (ev) => {
+			if (ev.target.closest(".itemButtons") || ev.target.closest(".userTags")) return;
+			showPreview(doc);
+		});
+		documentList.appendChild(li);
+	}
+	documentList.querySelectorAll(".openButton").forEach((btn) => {
+		btn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			window.open(`./api/documents/${encodeURIComponent(btn.dataset.id)}/viewer`, "_blank");
+		});
+	});
+	documentList.querySelectorAll(".tagEditButton").forEach((btn) => {
+		btn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			const doc = allDocuments.find((d) => d.id === btn.dataset.id);
+			if (doc) openTagEditor(doc);
+		});
+	});
+	documentList.querySelectorAll(".removeTagButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			if (!(await showConfirmDialog(`タグ「${btn.dataset.tag}」を削除します。よろしいですか?`))) return;
+			const doc = allDocuments.find((d) => d.id === btn.dataset.id);
+			if (!doc) return;
+			const nextTags = (doc.tags || []).filter((tag) => tag !== btn.dataset.tag);
+			await saveTags(doc.id, nextTags);
+		});
+	});
+	documentList.querySelectorAll(".archiveButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			await fetch("./api/documents/" + encodeURIComponent(btn.dataset.id), {method: "DELETE"});
+			if (selectedId === btn.dataset.id) clearPreview();
+			loadDocuments();
+			if (currentView === "projects") loadProjectTree();
+		});
+	});
+	documentList.querySelectorAll(".restoreButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			await fetch("./api/documents/" + encodeURIComponent(btn.dataset.id) + "/restore", {method: "POST"});
+			if (selectedId === btn.dataset.id) clearPreview();
+			loadDocuments();
+			if (currentView === "projects") loadProjectTree();
+		});
+	});
+
+	applyProjectDragSource(documentList);
+};
+
+// プロジェクト編集モード中、文書一覧(#documentList / タグ体系ビュー)のカードを
+// 左のツリーへドラッグドロップで登録できるようにする(編集モードでなければ何もしない)
+const applyProjectDragSource = (container) => {
+	if (currentView !== "projects" || !projectsEditMode) return;
+	container.querySelectorAll("li[data-id]").forEach((li) => {
+		li.draggable = true;
+		li.addEventListener("dragstart", (ev) => {
+			ev.dataTransfer.setData("text/plain", JSON.stringify({documentId: li.dataset.id}));
+			ev.dataTransfer.effectAllowed = "move";
+		});
+	});
+};
+
+// 通常の文書一覧(active)用の1件分のカードを組み立てる。タグ体系表示でも同じ見た目・
+// 操作(別ウィンドウ/タグ編集/アーカイブ)を使い回すための共通処理
+const buildDocumentListItem = (doc) => {
+	const li = document.createElement("li");
+	li.dataset.id = doc.id;
+	li.title = doc.id;
+	if (doc.id === selectedId) li.classList.add("selected");
+	const tagClass = tagClassFor(doc.entryFile);
+	const tagsHtml = (doc.tags || []).map((tag) =>
+		`<span class="userTagChip">${escapeHtml(tag)}<button type="button" class="removeTagButton" data-id="${escapeHtml(doc.id)}" data-tag="${escapeHtml(tag)}" title="タグを削除" aria-label="タグを削除">&times;</button></span>`
+	).join("");
+	li.innerHTML = `
+		<div class="docRow">
+			<span class="docTag ${tagClass}">${tagClass.toUpperCase()}</span>
+			<div class="itemButtons">
+				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${doc.previewFile == null ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+				</button>
+				<button data-id="${doc.id}" class="iconButton tagEditButton" type="button" title="タグを編集" aria-label="タグを編集">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.59a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+				</button>
+				<button data-id="${doc.id}" data-name="${escapeHtml(doc.entryFile || doc.id)}" class="iconButton archiveButton" type="button" title="アーカイブ" aria-label="アーカイブ">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+				</button>
+			</div>
+		</div>
+		<div class="docName">${escapeHtml(doc.entryFile || "(入口ファイルなし)")}</div>
+		<div class="docMeta">${formatDateTime(doc.modified)}</div>
+		<div class="docMeta">アップロード者: ${escapeHtml(doc.uploadedBy || "-")}</div>
+		<div class="userTags">
+			${tagsHtml}
+		</div>
+	`;
+	li.addEventListener("click", (ev) => {
+		if (ev.target.closest(".itemButtons") || ev.target.closest(".userTags")) return;
+		showPreview(doc);
+	});
+	return li;
+};
+
+// buildDocumentListItemが作るボタン群(openButton/tagEditButton/removeTagButton/archiveButton)
+// のイベントを、渡されたコンテナ配下でまとめて配線する(#documentListの通常表示・タグ体系表示で共用)
+const wireDocumentListItemButtons = (container) => {
+	container.querySelectorAll(".openButton").forEach((btn) => {
+		btn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			window.open(`./api/documents/${encodeURIComponent(btn.dataset.id)}/viewer`, "_blank");
+		});
+	});
+	container.querySelectorAll(".tagEditButton").forEach((btn) => {
+		btn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			const doc = allDocuments.find((d) => d.id === btn.dataset.id);
+			if (doc) openTagEditor(doc);
+		});
+	});
+	container.querySelectorAll(".removeTagButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			if (!(await showConfirmDialog(`タグ「${btn.dataset.tag}」を削除します。よろしいですか?`))) return;
+			const doc = allDocuments.find((d) => d.id === btn.dataset.id);
+			if (!doc) return;
+			const nextTags = (doc.tags || []).filter((tag) => tag !== btn.dataset.tag);
+			await saveTags(doc.id, nextTags);
+		});
+	});
+	container.querySelectorAll(".archiveButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			await fetch("./api/documents/" + encodeURIComponent(btn.dataset.id), {method: "DELETE"});
+			if (selectedId === btn.dataset.id) clearPreview();
+			loadDocuments();
+		});
+	});
+};
+
+// タグ体系表示: tag_orderの並び順でタグ名を見出しにグループ表示する。
+// 複数タグを持つ文書は該当する全グループに重複表示し、管理対象外タグしか持たない
+// 文書は「未分類」として末尾にまとめる
+const renderTagTreeList = (tagOrderRows) => {
+	documentList.innerHTML = "";
+	docCountChip.textContent = `${allDocuments.length}件`;
+
+	if (allDocuments.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "emptyMessage";
+		empty.textContent = "文書がありません。";
+		documentList.appendChild(empty);
+		return;
+	}
+
+	const managedTags = tagOrderRows.map((row) => row.tag);
+	const managedSet = new Set(managedTags);
+
+	// 各グループはヘッダー(▼)クリックで開閉できる。既定は全グループ展開だが、
+	// 「未分類」だけは目立たせすぎないよう既定で閉じておく
+	const appendGroup = (label, docs, {collapsedByDefault = false} = {}) => {
+		if (docs.length === 0) return;
+		const header = document.createElement("li");
+		header.className = "weekHeader tagGroupHeader";
+		if (collapsedByDefault) header.classList.add("collapsed");
+		header.dataset.group = label;
+		header.innerHTML = `<span class="groupToggleIcon">${collapsedByDefault ? "▶" : "▼"}</span>${escapeHtml(label)} (${docs.length})`;
+		documentList.appendChild(header);
+		docs.forEach((doc) => {
+			const li = buildDocumentListItem(doc);
+			li.dataset.group = label;
+			if (collapsedByDefault) li.style.display = "none";
+			documentList.appendChild(li);
+		});
+	};
+
+	for (const tag of managedTags) {
+		appendGroup(tag, allDocuments.filter((doc) => (doc.tags || []).includes(tag)));
+	}
+	appendGroup("未分類", allDocuments.filter((doc) => !(doc.tags || []).some((tag) => managedSet.has(tag))), {collapsedByDefault: true});
+
+	documentList.querySelectorAll(".tagGroupHeader").forEach((header) => {
+		header.addEventListener("click", () => {
+			const collapsed = header.classList.toggle("collapsed");
+			header.querySelector(".groupToggleIcon").textContent = collapsed ? "▶" : "▼";
+			documentList.querySelectorAll(`li[data-group="${CSS.escape(header.dataset.group)}"]`).forEach((li) => {
+				if (li === header) return;
+				li.style.display = collapsed ? "none" : "";
+			});
+		});
+	});
+
+	wireDocumentListItemButtons(documentList);
+};
+
+const loadDocuments = async () => {
+	if (currentView === "tagTree") {
+		const [docsRes, tagOrderRes] = await Promise.all([fetch("./api/documents"), fetch("./api/tag_order")]);
+		if (docsRes.status !== 200) return;
+		allDocuments = await docsRes.json();
+		const tagOrderRows = tagOrderRes.status === 200 ? await tagOrderRes.json() : [];
+		renderTagTreeList(tagOrderRows);
+		return;
+	}
+	const q = filterInput.value.trim();
+	const basePath = currentView === "archive" ? "./api/documents/trash" : "./api/documents";
+	const url = q === "" ? basePath : `${basePath}?q=${encodeURIComponent(q)}`;
+	const res = await fetch(url);
+	if (res.status !== 200) return;
+	allDocuments = await res.json();
+	renderDocumentList();
+};
+
+// 文書一覧 <-> アーカイブ <-> タグ体系 <-> プロジェクト の表示切り替え
+const setView = (view) => {
+	currentView = view;
+	appShell.classList.toggle("archiveMode", view === "archive");
+	appShell.classList.toggle("tagTreeMode", view === "tagTree");
+	appShell.classList.toggle("projectsMode", view === "projects");
+	if (view !== "projects") {
+		projectsEditMode = false;
+		appShell.classList.remove("projectsEditMode");
+		projectEditToggleButton.textContent = "編集モードへ";
+		projectAddRootFolderButton.style.display = "none";
+		projectsArchiveMode = false;
+		appShell.classList.remove("projectsArchiveMode");
+		projectArchiveToggleButton.textContent = "アーカイブ済み";
+	}
+	menuDocumentsLink.classList.toggle("active", view === "active");
+	menuTagTreeLink.classList.toggle("active", view === "tagTree");
+	menuProjectsLink.classList.toggle("active", view === "projects");
+	menuArchiveLink.classList.toggle("active", view === "archive");
+	clearPreview();
+	loadDocuments();
+	if (view === "projects") loadProjects();
+};
+
+menuDocumentsLink.addEventListener("click", (ev) => {
+	ev.preventDefault();
+	setView("active");
+});
+menuTagTreeLink.addEventListener("click", (ev) => {
+	ev.preventDefault();
+	setView("tagTree");
+});
+menuProjectsLink.addEventListener("click", (ev) => {
+	ev.preventDefault();
+	setView("projects");
+});
+menuArchiveLink.addEventListener("click", (ev) => {
+	ev.preventDefault();
+	setView("archive");
+});
+
+// ==== プロジェクト機能 ====
+// プロジェクト一覧を取得し、スイッチャー(ピルタブ)を描画したうえで、
+// 選択中プロジェクト(未選択なら先頭)のツリーを読み込む
+const loadProjects = async () => {
+	const res = await fetch(projectsArchiveMode ? "./api/projects/archived" : "./api/projects");
+	if (res.status !== 200) return;
+	currentProjects = await res.json();
+	if (currentProjectId == null || !currentProjects.some((p) => p.id === currentProjectId)) {
+		currentProjectId = currentProjects.length > 0 ? currentProjects[0].id : null;
+	}
+	renderProjectTabs();
+	await loadProjectTree();
+};
+
+const renderProjectTabs = () => {
+	projectTabsEl.innerHTML = currentProjects.map((p) =>
+		`<span class="projectTab ${p.id === currentProjectId ? "active" : ""}" data-id="${escapeHtml(p.id)}">${escapeHtml(p.name)}</span>`
+	).join("");
+	projectTabsEl.querySelectorAll(".projectTab").forEach((tab) => {
+		tab.addEventListener("click", async () => {
+			if (tab.dataset.id === currentProjectId) return;
+			currentProjectId = tab.dataset.id;
+			clearPreview();
+			renderProjectTabs();
+			await loadProjectTree();
+		});
+	});
+};
+
+const loadProjectTree = async () => {
+	if (currentProjectId == null) {
+		currentProjectTree = null;
+		projectTreeTitle.textContent = "";
+		renderProjectTree();
+		return;
+	}
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/tree`);
+	if (res.status !== 200) {
+		currentProjectTree = null;
+		renderProjectTree();
+		return;
+	}
+	currentProjectTree = await res.json();
+	const project = currentProjects.find((p) => p.id === currentProjectId);
+	projectTreeTitle.textContent = project ? project.name : "";
+	renderProjectTree();
+};
+
+// フォルダ(またはルート)へのドラッグ&ドロップ受け入れを配線する。
+// folderIdはnullでプロジェクト直下を表す。編集モードでなければ何もしない
+const wireTreeDropTarget = (el, folderId) => {
+	if (!projectsEditMode) return;
+	el.addEventListener("dragover", (ev) => {
+		ev.preventDefault();
+		ev.stopPropagation();
+		ev.dataTransfer.dropEffect = "move";
+		el.classList.add("treeDropTarget");
+	});
+	el.addEventListener("dragleave", (ev) => {
+		ev.stopPropagation();
+		el.classList.remove("treeDropTarget");
+	});
+	el.addEventListener("drop", async (ev) => {
+		ev.preventDefault();
+		ev.stopPropagation();
+		el.classList.remove("treeDropTarget");
+		const raw = ev.dataTransfer.getData("text/plain");
+		if (!raw) return;
+		let payload;
+		try { payload = JSON.parse(raw); } catch { return; }
+		if (!payload.documentId) return;
+		await placeDocumentInProject(payload.documentId, folderId);
+	});
+};
+
+// ツリー上の文書行(placement)自体へのドラッグ&ドロップを配線する。
+// 行の上半分にドロップすればその手前、下半分にドロップすればその後ろに割り込む形で並び替える。
+// wireTreeDropTarget(親フォルダ全体への「末尾に追加」)より優先させるためstopPropagationする
+const wireTreeDocDropTarget = (li, placement, parentKey) => {
+	if (!projectsEditMode) return;
+	li.addEventListener("dragover", (ev) => {
+		ev.preventDefault();
+		ev.stopPropagation();
+		ev.dataTransfer.dropEffect = "move";
+		const rect = li.getBoundingClientRect();
+		const before = (ev.clientY - rect.top) < rect.height / 2;
+		li.classList.toggle("treeDropBefore", before);
+		li.classList.toggle("treeDropAfter", !before);
+	});
+	li.addEventListener("dragleave", (ev) => {
+		ev.stopPropagation();
+		li.classList.remove("treeDropBefore", "treeDropAfter");
+	});
+	li.addEventListener("drop", async (ev) => {
+		ev.preventDefault();
+		ev.stopPropagation();
+		const before = li.classList.contains("treeDropBefore");
+		li.classList.remove("treeDropBefore", "treeDropAfter");
+		const raw = ev.dataTransfer.getData("text/plain");
+		if (!raw) return;
+		let payload;
+		try { payload = JSON.parse(raw); } catch { return; }
+		if (!payload.documentId || payload.documentId === placement.documentId) return;
+		await reorderDropOnDoc(payload.documentId, parentKey, placement.documentId, before);
+	});
+};
+
+// ドラッグした文書(draggedId)を、targetDocIdの直前/直後(insertBefore)へ挿入する形で
+// フォルダ(folderKey)内に配置する。別フォルダ(または一覧)からのドラッグの場合は、
+// 先にそのフォルダへ登録してから並び順を計算し直す
+const reorderDropOnDoc = async (draggedId, folderKey, targetDocId, insertBefore) => {
+	const folderId = folderKey === "root" ? null : folderKey;
+	const draggedPlacement = currentProjectTree.documents.find((d) => d.documentId === draggedId);
+	const currentFolderKey = draggedPlacement ? (draggedPlacement.folderId ?? "root") : null;
+
+	if (currentFolderKey !== folderKey) {
+		const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/documents/${encodeURIComponent(draggedId)}`, {
+			method: "PUT",
+			headers: {"Content-Type": "application/json"},
+			body: JSON.stringify({folderId})
+		});
+		if (res.status !== 200) {
+			const body = await res.json().catch(() => ({}));
+			alert(body.error || "登録に失敗しました");
+			return;
+		}
+		await loadProjectTree();
+	}
+
+	const siblings = currentProjectTree.documents
+		.filter((d) => (d.folderId ?? "root") === folderKey)
+		.sort((a, b) => a.sortOrder - b.sortOrder)
+		.map((d) => d.documentId)
+		.filter((id) => id !== draggedId);
+	const targetIndex = siblings.indexOf(targetDocId);
+	const insertIndex = targetIndex < 0 ? siblings.length : (insertBefore ? targetIndex : targetIndex + 1);
+	siblings.splice(insertIndex, 0, draggedId);
+
+	await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/reorder`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({folderId, documentIds: siblings})
+	});
+	await loadProjectTree();
+};
+
+// プロジェクトのフォルダ階層+文書配置(currentProjectTree)を左のツリーへ再描画する
+const renderProjectTree = () => {
+	projectTreeList.innerHTML = "";
+	if (currentProjectTree == null) return;
+
+	const foldersByParent = new Map();
+	for (const f of currentProjectTree.folders) {
+		const key = f.parentFolderId ?? "root";
+		if (!foldersByParent.has(key)) foldersByParent.set(key, []);
+		foldersByParent.get(key).push(f);
+	}
+	const docsByFolder = new Map();
+	for (const d of currentProjectTree.documents) {
+		const key = d.folderId ?? "root";
+		if (!docsByFolder.has(key)) docsByFolder.set(key, []);
+		docsByFolder.get(key).push(d);
+	}
+
+	const buildDocNode = (placement, parentKey, index, total) => {
+		// allDocuments(通常の文書一覧API)にはアーカイブ済み文書が含まれないため、そこに無ければ
+		// ツリーAPIがJOINして返すplacement側の情報(entryFile/previewFile/memo等)からdoc相当を
+		// 組み立てる。これによりアーカイブ済み文書も他と同じく右側にインラインプレビューできる
+		const activeDoc = allDocuments.find((d) => d.id === placement.documentId);
+		const doc = activeDoc || (placement.entryFile != null ? {
+			id: placement.documentId,
+			entryFile: placement.entryFile,
+			previewFile: placement.previewFile,
+			memo: placement.memo,
+			uploadedBy: placement.uploadedBy,
+			modified: placement.modified,
+			archived: placement.archived === true,
+			tags: []
+		} : null);
+		const displayName = doc ? (doc.entryFile || "(入口ファイルなし)") : "(不明な文書)";
+		const isArchivedOnly = !activeDoc && !!(doc && doc.archived);
+		const li = document.createElement("li");
+		li.className = "treeDocRow" + (isArchivedOnly ? " treeDocArchived" : "");
+		li.dataset.documentId = placement.documentId;
+		if (placement.documentId === selectedId) li.classList.add("selected");
+		const folderIdAttr = parentKey === "root" ? "" : parentKey;
+		li.innerHTML = `
+			<span class="treeToggleIcon"></span>
+			<span class="treeDocName" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}${isArchivedOnly ? " (アーカイブ済み)" : ""}</span>
+			<div class="treeRowActions">
+				<button type="button" class="treeMiniButton treeDocUpButton" data-document-id="${placement.documentId}" data-folder-id="${folderIdAttr}" title="上へ" aria-label="上へ" ${index === 0 ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+				</button>
+				<button type="button" class="treeMiniButton treeDocDownButton" data-document-id="${placement.documentId}" data-folder-id="${folderIdAttr}" title="下へ" aria-label="下へ" ${index === total - 1 ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+				</button>
+				<button type="button" class="treeMiniButton removeDocButton" data-document-id="${placement.documentId}" title="プロジェクトから外す" aria-label="プロジェクトから外す">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+				</button>
+			</div>
+		`;
+		li.addEventListener("click", (ev) => {
+			if (ev.target.closest(".treeRowActions")) return;
+			if (doc) showPreview(doc);
+		});
+		if (projectsEditMode) {
+			li.draggable = true;
+			li.addEventListener("dragstart", (ev) => {
+				ev.stopPropagation();
+				ev.dataTransfer.setData("text/plain", JSON.stringify({documentId: placement.documentId}));
+				ev.dataTransfer.effectAllowed = "move";
+			});
+		}
+		wireTreeDocDropTarget(li, placement, parentKey);
+		return li;
+	};
+
+	const buildFolderNode = (folder) => {
+		const li = document.createElement("li");
+		const expanded = !collapsedFolderIds.has(folder.id);
+		const row = document.createElement("div");
+		row.className = "treeFolderRow";
+		row.innerHTML = `
+			<span class="treeToggleIcon">${expanded ? "▼" : "▶"}</span>
+			<span class="treeFolderName" title="${escapeHtml(folder.name)}">📁 ${escapeHtml(folder.name)}</span>
+			<div class="treeRowActions">
+				<button type="button" class="treeMiniButton addSubfolderButton" data-folder-id="${folder.id}" title="サブフォルダ追加" aria-label="サブフォルダ追加">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+				</button>
+				<button type="button" class="treeMiniButton renameFolderButton" data-folder-id="${folder.id}" data-name="${escapeHtml(folder.name)}" title="名前を変更" aria-label="名前を変更">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .622.622l4.353-1.32a2 2 0 0 0 .83-.497Z"/><path d="m15 5 4 4"/></svg>
+				</button>
+				<button type="button" class="treeMiniButton deleteFolderButton" data-folder-id="${folder.id}" title="削除" aria-label="削除">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+				</button>
+			</div>
+		`;
+		row.addEventListener("click", (ev) => {
+			if (ev.target.closest(".treeRowActions")) return;
+			if (collapsedFolderIds.has(folder.id)) collapsedFolderIds.delete(folder.id); else collapsedFolderIds.add(folder.id);
+			renderProjectTree();
+		});
+		li.appendChild(row);
+		if (expanded) li.appendChild(buildList(folder.id));
+		wireTreeDropTarget(row, folder.id);
+		return li;
+	};
+
+	const buildList = (parentKey) => {
+		const ul = document.createElement("ul");
+		ul.className = "treeChildren";
+		const folders = foldersByParent.get(parentKey) || [];
+		const docs = docsByFolder.get(parentKey) || [];
+		for (const folder of folders) ul.appendChild(buildFolderNode(folder));
+		docs.forEach((placement, idx) => ul.appendChild(buildDocNode(placement, parentKey, idx, docs.length)));
+		if (folders.length === 0 && docs.length === 0) {
+			const hint = document.createElement("li");
+			hint.className = "treeEmptyHint";
+			hint.textContent = "(空)";
+			ul.appendChild(hint);
+		}
+		wireTreeDropTarget(ul, parentKey === "root" ? null : parentKey);
+		return ul;
+	};
+
+	projectTreeList.appendChild(buildList("root"));
+
+	projectTreeList.querySelectorAll(".addSubfolderButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			const name = await showPromptDialog("サブフォルダ名を入力してください");
+			if (!name) return;
+			collapsedFolderIds.delete(btn.dataset.folderId);
+			await createProjectFolder(name, btn.dataset.folderId);
+		});
+	});
+	projectTreeList.querySelectorAll(".renameFolderButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			const name = await showPromptDialog("新しいフォルダ名を入力してください", btn.dataset.name);
+			if (!name) return;
+			await renameProjectFolder(btn.dataset.folderId, name);
+		});
+	});
+	projectTreeList.querySelectorAll(".deleteFolderButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			if (!(await showConfirmDialog("このフォルダを削除しますか?(中身が空の場合のみ削除できます)"))) return;
+			await deleteProjectFolder(btn.dataset.folderId);
+		});
+	});
+	projectTreeList.querySelectorAll(".removeDocButton").forEach((btn) => {
+		btn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			if (!(await showConfirmDialog("このプロジェクトから外しますか?(文書自体は削除されません)"))) return;
+			await removeDocumentFromProject(btn.dataset.documentId);
+		});
+	});
+	projectTreeList.querySelectorAll(".treeDocUpButton").forEach((btn) => {
+		btn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			if (btn.disabled) return;
+			moveDocumentInFolder(btn.dataset.documentId, btn.dataset.folderId || null, "up");
+		});
+	});
+	projectTreeList.querySelectorAll(".treeDocDownButton").forEach((btn) => {
+		btn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			if (btn.disabled) return;
+			moveDocumentInFolder(btn.dataset.documentId, btn.dataset.folderId || null, "down");
+		});
+	});
+};
+
+const createProjectFolder = async (name, parentFolderId) => {
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/folders`, {
+		method: "POST",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({name, parentFolderId: parentFolderId || null})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "フォルダの作成に失敗しました");
+		return;
+	}
+	await loadProjectTree();
+};
+
+const renameProjectFolder = async (folderId, name) => {
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/folders/${encodeURIComponent(folderId)}`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({name})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "名前の変更に失敗しました");
+		return;
+	}
+	await loadProjectTree();
+};
+
+const deleteProjectFolder = async (folderId) => {
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/folders/${encodeURIComponent(folderId)}`, {method: "DELETE"});
+	if (res.status !== 204) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "削除に失敗しました");
+		return;
+	}
+	collapsedFolderIds.delete(folderId);
+	await loadProjectTree();
+};
+
+// folderIdと、そのすべての親フォルダをcollapsedFolderIdsから外す(=開いた状態にする)。
+// 閉じたフォルダへドラッグ&ドロップで登録した際、登録先を確認できるよう自動的に展開するために使う
+const expandFolderAndAncestors = (folderId) => {
+	let current = folderId;
+	while (current != null) {
+		collapsedFolderIds.delete(current);
+		const folder = currentProjectTree ? currentProjectTree.folders.find((f) => f.id === current) : null;
+		current = folder ? folder.parentFolderId : null;
+	}
+};
+
+const placeDocumentInProject = async (documentId, folderId) => {
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/documents/${encodeURIComponent(documentId)}`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({folderId: folderId || null})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "登録に失敗しました");
+		return;
+	}
+	if (folderId) expandFolderAndAncestors(folderId);
+	await loadProjectTree();
+};
+
+const removeDocumentFromProject = async (documentId) => {
+	await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/documents/${encodeURIComponent(documentId)}`, {method: "DELETE"});
+	await loadProjectTree();
+};
+
+const moveDocumentInFolder = async (documentId, folderId, direction) => {
+	const key = folderId ?? "root";
+	const siblings = currentProjectTree.documents
+		.filter((d) => (d.folderId ?? "root") === key)
+		.sort((a, b) => a.sortOrder - b.sortOrder)
+		.map((d) => d.documentId);
+	const i = siblings.indexOf(documentId);
+	if (i < 0) return;
+	const j = direction === "up" ? i - 1 : i + 1;
+	if (j < 0 || j >= siblings.length) return;
+	[siblings[i], siblings[j]] = [siblings[j], siblings[i]];
+	await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/reorder`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({folderId, documentIds: siblings})
+	});
+	await loadProjectTree();
+};
+
+projectAddButton.addEventListener("click", async () => {
+	const name = await showPromptDialog("プロジェクト名を入力してください");
+	if (!name) return;
+	const res = await fetch("./api/projects", {
+		method: "POST",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({name})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "作成に失敗しました");
+		return;
+	}
+	const created = await res.json();
+	currentProjectId = created.id;
+	await loadProjects();
+});
+
+projectRenameButton.addEventListener("click", async () => {
+	if (currentProjectId == null) return;
+	const project = currentProjects.find((p) => p.id === currentProjectId);
+	const name = await showPromptDialog("プロジェクト名を入力してください", project ? project.name : "");
+	if (!name) return;
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({name})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "名前の変更に失敗しました");
+		return;
+	}
+	await loadProjects();
+});
+
+projectDeleteButton.addEventListener("click", async () => {
+	if (currentProjectId == null) return;
+	const project = currentProjects.find((p) => p.id === currentProjectId);
+	if (!(await showConfirmDialog(`プロジェクト「${project ? project.name : ""}」をアーカイブします。フォルダ構成・登録情報は保持され、後で元に戻せます。よろしいですか?`))) return;
+	await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/archive`, {method: "POST"});
+	currentProjectId = null;
+	clearPreview();
+	await loadProjects();
+});
+
+projectRestoreButton.addEventListener("click", async () => {
+	if (currentProjectId == null) return;
+	await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/restore`, {method: "POST"});
+	currentProjectId = null;
+	clearPreview();
+	await loadProjects();
+});
+
+projectArchiveToggleButton.addEventListener("click", async () => {
+	projectsArchiveMode = !projectsArchiveMode;
+	appShell.classList.toggle("projectsArchiveMode", projectsArchiveMode);
+	projectArchiveToggleButton.textContent = projectsArchiveMode ? "戻る" : "アーカイブ済み";
+	projectsEditMode = false;
+	appShell.classList.remove("projectsEditMode");
+	projectEditToggleButton.textContent = "編集";
+	projectAddRootFolderButton.style.display = "none";
+	currentProjectId = null;
+	clearPreview();
+	await loadProjects();
+});
+
+projectEditToggleButton.addEventListener("click", () => {
+	projectsEditMode = !projectsEditMode;
+	appShell.classList.toggle("projectsEditMode", projectsEditMode);
+	projectEditToggleButton.textContent = projectsEditMode ? "表示モードへ" : "編集モードへ";
+	projectAddRootFolderButton.style.display = projectsEditMode ? "inline-flex" : "none";
+	renderProjectTree();
+	renderDocumentList();
+});
+
+projectAddRootFolderButton.addEventListener("click", async () => {
+	const name = await showPromptDialog("フォルダ名を入力してください");
+	if (!name) return;
+	await createProjectFolder(name, null);
+});
+
+const saveTags = async (id, tags) => {
+	await fetch(`./api/documents/${encodeURIComponent(id)}/tags`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({tags})
+	});
+	loadDocuments();
+};
+
+// タグ編集モーダル
+const tagEditOverlay = document.getElementById("tagEditOverlay");
+const tagEditChips = document.getElementById("tagEditChips");
+const tagEditInput = document.getElementById("tagEditInput");
+const tagSaveButton = document.getElementById("tagSaveButton");
+const tagCancelButton = document.getElementById("tagCancelButton");
+const tagEditCount = document.getElementById("tagEditCount");
+const tagSuggestions = document.getElementById("tagSuggestions");
+const tagSuggestionsLabel = document.getElementById("tagSuggestionsLabel");
+
+let editingTags = [];
+let editingDocId = null;
+
+// 全文書で既に使われているタグのうち、編集中の文書にまだ付いていないものを候補表示する
+const renderTagSuggestions = () => {
+	const allKnownTags = [...new Set(allDocuments.flatMap((doc) => doc.tags || []))].sort();
+	const candidates = allKnownTags.filter((tag) => !editingTags.includes(tag));
+	tagSuggestionsLabel.style.display = candidates.length > 0 ? "block" : "none";
+	tagSuggestions.innerHTML = candidates.map((tag) => `<span class="tagSuggestionChip" data-tag="${escapeHtml(tag)}">+ ${escapeHtml(tag)}</span>`).join("");
+	tagSuggestions.querySelectorAll(".tagSuggestionChip").forEach((chip) => {
+		chip.addEventListener("click", () => {
+			editingTags.push(chip.dataset.tag);
+			renderTagEditChips();
+		});
+	});
+};
+
+const renderTagEditChips = () => {
+	tagEditCount.textContent = editingTags.length > 0 ? `(${editingTags.length})` : "";
+	tagEditChips.innerHTML = editingTags.map((tag) => `
+		<span class="userTagChip">${escapeHtml(tag)}<button type="button" class="removeTagButton" data-tag="${escapeHtml(tag)}" title="削除" aria-label="削除">&times;</button></span>
+	`).join("");
+	tagEditChips.querySelectorAll(".removeTagButton").forEach((btn) => {
+		btn.addEventListener("click", () => {
+			editingTags = editingTags.filter((tag) => tag !== btn.dataset.tag);
+			renderTagEditChips();
+		});
+	});
+	renderTagSuggestions();
+};
+
+const addEditingTag = () => {
+	const value = tagEditInput.value.trim();
+	tagEditInput.value = "";
+	if (value === "" || editingTags.includes(value)) return;
+	editingTags.push(value);
+	renderTagEditChips();
+};
+
+const openTagEditor = (doc) => {
+	editingDocId = doc.id;
+	editingTags = [...(doc.tags || [])];
+	renderTagEditChips();
+	tagEditInput.value = "";
+	tagEditOverlay.style.display = "flex";
+	tagEditInput.focus();
+};
+
+const closeTagEditor = () => {
+	tagEditOverlay.style.display = "none";
+	editingDocId = null;
+};
+
+tagEditInput.addEventListener("keydown", (ev) => {
+	if (ev.key === "Enter") {
+		ev.preventDefault();
+		addEditingTag();
+	}
+});
+tagSaveButton.addEventListener("click", async () => {
+	addEditingTag();
+	const id = editingDocId;
+	closeTagEditor();
+	if (id != null) await saveTags(id, editingTags);
+});
+tagCancelButton.addEventListener("click", closeTagEditor);
+tagEditOverlay.addEventListener("click", (ev) => {
+	if (ev.target === tagEditOverlay) closeTagEditor();
+});
+
+// キーワード検索(ファイル名・タグ・本文)はサーバー側にLIKE検索を投げるため、
+// 打鍵のたびに問い合わせしないようデバウンスする
+let filterDebounceTimer = null;
+filterInput.addEventListener("input", () => {
+	clearTimeout(filterDebounceTimer);
+	filterDebounceTimer = setTimeout(loadDocuments, 300);
+});
+fromDateInput.addEventListener("change", renderDocumentList);
+toDateInput.addEventListener("change", renderDocumentList);
+document.getElementById("refreshButton").addEventListener("click", loadDocuments);
+
+// 検索条件の初期値: 登録日 2か月前 〜 (Toは空白)
+const defaultFromDate = new Date();
+defaultFromDate.setMonth(defaultFromDate.getMonth() - 2);
+fromDateInput.value = formatDateInputValue(defaultFromDate);
+
+const uploadFileInput = document.getElementById("uploadfile");
+
+const uploadFile = async (file) => {
+	if (!file) return;
+	const formData = new FormData();
+	formData.append("uploadfile", file);
+	const res = await fetch("./api/documents", {method: "POST", body: formData});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "アップロードに失敗しました");
+		return;
+	}
+	loadDocuments();
+};
+
+uploadDropZone.addEventListener("click", () => uploadFileInput.click());
+uploadFileInput.addEventListener("change", () => {
+	uploadFile(uploadFileInput.files[0]);
+	uploadFileInput.value = "";
+});
+
+["dragenter", "dragover"].forEach((eventName) => {
+	uploadDropZone.addEventListener(eventName, (ev) => {
+		ev.preventDefault();
+		ev.stopPropagation();
+		uploadDropZone.classList.add("dragging");
+	});
+});
+["dragleave", "drop"].forEach((eventName) => {
+	uploadDropZone.addEventListener(eventName, (ev) => {
+		ev.preventDefault();
+		ev.stopPropagation();
+		uploadDropZone.classList.remove("dragging");
+	});
+});
+uploadDropZone.addEventListener("drop", (ev) => {
+	const file = ev.dataTransfer.files[0];
+	uploadFile(file);
+});
+
+// APIキー管理モーダル
+const apiKeyOverlay = document.getElementById("apiKeyOverlay");
+const apiKeyList = document.getElementById("apiKeyList");
+const apiKeyLabelInput = document.getElementById("apiKeyLabelInput");
+const apiKeyRoleInput = document.getElementById("apiKeyRoleInput");
+const apiKeyExpirySummaryButton = document.getElementById("apiKeyExpirySummaryButton");
+const apiKeyExpiryOptions = document.getElementById("apiKeyExpiryOptions");
+const apiKeyCreateButton = document.getElementById("apiKeyCreateButton");
+const apiKeyCloseButton = document.getElementById("apiKeyCloseButton");
+const apiKeyNewBox = document.getElementById("apiKeyNewBox");
+
+// APIキーの有効期限計算(サーバー側 lib/api-keys.js の calculateExpiresAt と同じロジック。
+// 発行前のラベル表示用にブラウザ側でも同じ値を再現する。ブラウザのタイムゾーン設定に
+// 依存させないよう、UTC+9を明示的に計算する)
+const API_KEY_JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const apiKeyNextDay2amJstAsUtcDate = (now) => {
+	const jst = new Date(now.getTime() + API_KEY_JST_OFFSET_MS);
+	const year = jst.getUTCFullYear();
+	const month = jst.getUTCMonth();
+	const date = jst.getUTCDate();
+	return new Date(Date.UTC(year, month, date + 1, 2, 0, 0) - API_KEY_JST_OFFSET_MS);
+};
+const API_KEY_EXPIRY_OPTIONS = [
+	{
+		value: "today",
+		label: "当日限り",
+		calc: (now) => new Date(Math.min(
+			now.getTime() + 12 * 60 * 60 * 1000,
+			apiKeyNextDay2amJstAsUtcDate(now).getTime()
+		))
+	},
+	{value: "30d", label: "30日", calc: (now) => new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)},
+	{value: "90d", label: "90日", calc: (now) => new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000)}
+];
+
+// 選択中の有効期限オプション。デフォルトは「当日限り」で、通常はこのまま発行する想定
+let selectedApiKeyExpiryOption = "today";
+
+const populateApiKeyRoleOptions = () => {
+	// readwrite/adminユーザーはreadwriteをデフォルトにする(readonlyしか選べないユーザーは
+	// 当然readonly一択)。自動化クライアント用途では書き込みも行うことが多いための既定値
+	const options = currentUserRole === "readonly" ? ["readonly"] : ["readwrite", "readonly"];
+	apiKeyRoleInput.innerHTML = options.map((r, i) => `<option value="${r}" ${i === 0 ? "selected" : ""}>${r}</option>`).join("");
+};
+
+const apiKeyExpiryOptionLabel = (option) => {
+	const opt = API_KEY_EXPIRY_OPTIONS.find((o) => o.value === option);
+	const expiresAt = opt.calc(new Date());
+	return `${opt.label}(${formatDateTime(expiresAt.toISOString())}に失効)`;
+};
+
+const updateApiKeyExpirySummary = () => {
+	apiKeyExpirySummaryButton.innerHTML = `${apiKeyExpiryOptionLabel(selectedApiKeyExpiryOption)} <span class="chev">▾</span>`;
+};
+
+// 普段は「当日限り」の要約表示だけを見せ、▾クリックで初めてトグルボタン風の
+// ラジオボタン(当日限り/30日/90日)が開いて選び直せるようにする
+const renderApiKeyExpiryOptions = () => {
+	apiKeyExpiryOptions.innerHTML = API_KEY_EXPIRY_OPTIONS.map((opt) => `
+		<label class="expiryRadioPill ${opt.value === selectedApiKeyExpiryOption ? "selected" : ""}" data-value="${opt.value}">
+			<input type="radio" name="apiKeyExpiryRadio" value="${opt.value}" ${opt.value === selectedApiKeyExpiryOption ? "checked" : ""}>
+			${opt.label}
+		</label>
+	`).join("");
+	apiKeyExpiryOptions.querySelectorAll(".expiryRadioPill").forEach((pill) => {
+		pill.addEventListener("click", () => {
+			selectedApiKeyExpiryOption = pill.dataset.value;
+			apiKeyExpiryOptions.querySelectorAll(".expiryRadioPill").forEach((p) => {
+				p.classList.toggle("selected", p.dataset.value === selectedApiKeyExpiryOption);
+				p.querySelector("input").checked = p.dataset.value === selectedApiKeyExpiryOption;
+			});
+			updateApiKeyExpirySummary();
+			apiKeyExpiryOptions.style.display = "none";
+		});
+	});
+};
+
+apiKeyExpirySummaryButton.addEventListener("click", () => {
+	const isOpen = apiKeyExpiryOptions.style.display !== "none";
+	apiKeyExpiryOptions.style.display = isOpen ? "none" : "flex";
+});
+
+// ミリ秒差を「あとN分/N時間/N日」の文字列にする(期限切れならnull)
+const formatRemainingTime = (expiresAtIso) => {
+	const diffMs = new Date(expiresAtIso).getTime() - Date.now();
+	if (diffMs <= 0) return null;
+	const diffMinutes = Math.floor(diffMs / 60000);
+	if (diffMinutes < 60) return `あと ${diffMinutes}分`;
+	const diffHours = Math.floor(diffMinutes / 60);
+	if (diffHours < 24) return `あと ${diffHours}時間`;
+	return `あと ${Math.floor(diffHours / 24)}日`;
+};
+
+const loadApiKeys = async () => {
+	const res = await fetch("./api/apikeys");
+	if (res.status !== 200) return;
+	const keys = await res.json();
+	const now = Date.now();
+	// 有効なキーを上、失効済みを下に。同じ状態内では発行日時が新しい順
+	const sorted = [...keys].sort((a, b) => {
+		const aExpired = new Date(a.expiresAt).getTime() <= now;
+		const bExpired = new Date(b.expiresAt).getTime() <= now;
+		if (aExpired !== bExpired) return aExpired ? 1 : -1;
+		return new Date(b.createdAt) - new Date(a.createdAt);
+	});
+	apiKeyList.innerHTML = sorted.length === 0
+		? `<div class="emptyMessage">APIキーはまだありません。</div>`
+		: sorted.map((row) => {
+			const expiresAtMs = new Date(row.expiresAt).getTime();
+			const isExpired = expiresAtMs <= now;
+			const warnSoon = !isExpired && (expiresAtMs - now) < 60 * 60 * 1000;
+			const expiryHtml = isExpired
+				? `<span class="apiKeyExpiredBadge">失効済み</span>`
+				: `<div class="apiKeyExpiry ${warnSoon ? "warnSoon" : ""}">有効期限: ${formatDateTime(row.expiresAt)}(${formatRemainingTime(row.expiresAt)})</div>`;
+			// 発行日時を主見出しにし、用途(label)は入力されていれば備考として下に添える
+			const noteHtml = row.label ? `<div class="apiKeyMeta">${escapeHtml(row.label)}</div>` : "";
+			return `
+				<li class="${isExpired ? "apiKeyExpired" : ""}">
+					<div class="apiKeyInfo">
+						<div class="apiKeyLabel">発行: ${formatDateTime(row.createdAt)} <span class="apiKeyRoleBadge ${row.role}">${row.role}</span></div>
+						${noteHtml}
+						<div class="apiKeyMeta">${row.lastUsedAt ? `最終使用: ${formatDateTime(row.lastUsedAt)}` : "未使用"}</div>
+						${expiryHtml}
+					</div>
+					<button type="button" class="iconButton apiKeyRevokeButton" data-id="${row.id}" data-label="${escapeHtml(row.label || formatDateTime(row.createdAt))}" title="失効" aria-label="失効">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+					</button>
+				</li>
+			`;
+		}).join("");
+	apiKeyList.querySelectorAll(".apiKeyRevokeButton").forEach((btn) => {
+		btn.addEventListener("click", async () => {
+			if (!(await showConfirmDialog(`APIキー「${btn.dataset.label}」を失効させますか?`))) return;
+			await fetch("./api/apikeys/" + encodeURIComponent(btn.dataset.id), {method: "DELETE"});
+			loadApiKeys();
+		});
+	});
+};
+
+const openApiKeyManager = () => {
+	apiKeyNewBox.style.display = "none";
+	apiKeyLabelInput.value = "";
+	selectedApiKeyExpiryOption = "today";
+	populateApiKeyRoleOptions();
+	updateApiKeyExpirySummary();
+	renderApiKeyExpiryOptions();
+	apiKeyExpiryOptions.style.display = "none";
+	apiKeyOverlay.style.display = "flex";
+	loadApiKeys();
+};
+
+document.getElementById("apiKeyManageLink").addEventListener("click", (ev) => {
+	ev.preventDefault();
+	openApiKeyManager();
+});
+apiKeyCloseButton.addEventListener("click", () => { apiKeyOverlay.style.display = "none"; });
+apiKeyOverlay.addEventListener("click", (ev) => {
+	if (ev.target === apiKeyOverlay) apiKeyOverlay.style.display = "none";
+});
+// 発行直後のAIチャット貼り付け用テキストを組み立てる。buildAiUsageMarkdown()の
+// <APIキー>プレースホルダーを実際の値に差し替え、ロール・有効期限の注意書きを添える
+// (buildAiUsageMarkdownはこのファイルの後方[ヘルプ機能]で定義されるが、この関数自体は
+// クリックハンドラ内でしか呼ばれないため、スクリプト読み込み完了後であれば宣言順は問題ない)。
+const buildApiKeyChatSnippet = (apiKey, role, expiresAt) => {
+	const roleNote = role === "readonly" ? "閲覧のみ可能(アップロード・削除・タグ編集等の書き込み系APIは403になります)" : "閲覧・アップロード・削除・タグ編集が可能";
+	// 既にキーそのものを渡しているので、「APIキーを自分で発行してください」という
+	// 案内行だけは不要(かえって紛らわしい)ため取り除く
+	const guide = buildAiUsageMarkdown()
+		.replaceAll("<APIキー>", apiKey)
+		.replace(/\n {2}- APIキーは画面右上の.*発行してもらってください\)\n/, "\n");
+	return `Document ManagerのAPIキーを発行しました。以下の情報でAPIを直接呼び出してください。
+
+- ロール: ${role}(${roleNote})
+- 有効期限: ${formatDateTime(expiresAt)}(これを過ぎると使えなくなります。再度必要な場合は新しいキーを発行してください)
+
+${guide}`;
+};
+
+apiKeyCreateButton.addEventListener("click", async () => {
+	const label = apiKeyLabelInput.value.trim();
+	const res = await fetch("./api/apikeys", {
+		method: "POST",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({label, role: apiKeyRoleInput.value, expiryOption: selectedApiKeyExpiryOption})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "発行に失敗しました");
+		return;
+	}
+	const created = await res.json();
+	apiKeyLabelInput.value = "";
+	apiKeyNewBox.style.display = "block";
+	apiKeyNewBox.innerHTML = `
+		発行しました。このキーは二度と表示されないので、必ずコピーしてください。
+		<code class="apiKeyValue">${created.apiKey}</code>
+		<div style="margin-top:6px;">ロール: <strong>${created.role}</strong> / 有効期限: <strong>${formatDateTime(created.expiresAt)}</strong></div>
+		<div class="apiKeyNewBoxButtons">
+			<button type="button" class="modalButton" id="apiKeyCopyRawButton">APIキーをコピー</button>
+			<button type="button" class="modalButton save" id="apiKeyCopyChatButton">AIチャット貼り付け用にコピー</button>
+		</div>
+	`;
+	document.getElementById("apiKeyCopyRawButton").addEventListener("click", (ev) => {
+		copyTextWithFeedback(created.apiKey, ev.currentTarget);
+	});
+	document.getElementById("apiKeyCopyChatButton").addEventListener("click", (ev) => {
+		copyTextWithFeedback(buildApiKeyChatSnippet(created.apiKey, created.role, created.expiresAt), ev.currentTarget);
+	});
+	loadApiKeys();
+});
+
+// アクセス許可ユーザー(ホワイトリスト)管理モーダル
+const allowedUsersOverlay = document.getElementById("allowedUsersOverlay");
+const allowedUserTableWrap = document.getElementById("allowedUserTableWrap");
+const allowedUserList = document.getElementById("allowedUserList");
+const emptyAllowedUserMessage = document.getElementById("allowedUserEmptyMessage");
+const allowedUserEmailInput = document.getElementById("allowedUserEmailInput");
+const allowedUserRoleInput = document.getElementById("allowedUserRoleInput");
+const allowedUserAddButton = document.getElementById("allowedUserAddButton");
+const allowedUserCloseButton = document.getElementById("allowedUserCloseButton");
+
+const ROLE_LABELS = {admin: "管理者", readwrite: "編集可", readonly: "閲覧のみ"};
+const roleOptionsHtml = (selected) => Object.entries(ROLE_LABELS)
+	.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
+
+const loadAllowedUsers = async () => {
+	const res = await fetch("./api/allowed_users");
+	if (res.status !== 200) return;
+	const users = await res.json();
+	allowedUserTableWrap.style.display = users.length === 0 ? "none" : "block";
+	allowedUserList.innerHTML = users.length === 0
+		? ""
+		: users.map((row) => `
+			<tr>
+				<td title="${escapeHtml(row.email)}">${escapeHtml(row.email)}</td>
+				<td>${formatDateTime(row.addedAt)}</td>
+				<td title="${escapeHtml(row.addedBy || "")}">${escapeHtml(row.addedBy || "-")}</td>
+				<td><select class="allowedUserRoleSelect" data-email="${escapeHtml(row.email)}">${roleOptionsHtml(row.role)}</select></td>
+				<td>
+					<button type="button" class="iconButton allowedUserRemoveButton" data-email="${escapeHtml(row.email)}" title="削除" aria-label="削除">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+					</button>
+				</td>
+			</tr>
+		`).join("");
+	emptyAllowedUserMessage.style.display = users.length === 0 ? "block" : "none";
+	allowedUserList.querySelectorAll(".allowedUserRoleSelect").forEach((select) => {
+		select.addEventListener("change", async () => {
+			await fetch("./api/allowed_users/" + encodeURIComponent(select.dataset.email), {
+				method: "PUT",
+				headers: {"Content-Type": "application/json"},
+				body: JSON.stringify({role: select.value})
+			});
+			loadAllowedUsers();
+		});
+	});
+	allowedUserList.querySelectorAll(".allowedUserRemoveButton").forEach((btn) => {
+		btn.addEventListener("click", async () => {
+			if (!(await showConfirmDialog(`「${btn.dataset.email}」をホワイトリストから削除しますか?`))) return;
+			await fetch("./api/allowed_users/" + encodeURIComponent(btn.dataset.email), {method: "DELETE"});
+			loadAllowedUsers();
+		});
+	});
+};
+
+document.getElementById("allowedUsersManageLink").addEventListener("click", (ev) => {
+	ev.preventDefault();
+	allowedUserEmailInput.value = "";
+	allowedUsersOverlay.style.display = "flex";
+	loadAllowedUsers();
+});
+allowedUserCloseButton.addEventListener("click", () => { allowedUsersOverlay.style.display = "none"; });
+allowedUsersOverlay.addEventListener("click", (ev) => {
+	if (ev.target === allowedUsersOverlay) allowedUsersOverlay.style.display = "none";
+});
+allowedUserAddButton.addEventListener("click", async () => {
+	const email = allowedUserEmailInput.value.trim();
+	if (email === "") return;
+	await fetch("./api/allowed_users", {
+		method: "POST",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({email, role: allowedUserRoleInput.value})
+	});
+	allowedUserEmailInput.value = "";
+	loadAllowedUsers();
+});
+
+// タグ体系の並び順管理(管理者のみ)。保存を押すまではローカルの配列(tagOrderDraft)だけを
+// 編集し、サーバーには反映しない(全件置き換えのPUTで一括保存する)
+const tagOrderOverlay = document.getElementById("tagOrderOverlay");
+const tagOrderAddInput = document.getElementById("tagOrderAddInput");
+const tagOrderAddButton = document.getElementById("tagOrderAddButton");
+const tagOrderSuggestions = document.getElementById("tagOrderSuggestions");
+const tagOrderSuggestionsLabel = document.getElementById("tagOrderSuggestionsLabel");
+const tagOrderListEl = document.getElementById("tagOrderList");
+const tagOrderEmptyMessage = document.getElementById("tagOrderEmptyMessage");
+const tagOrderSaveButton = document.getElementById("tagOrderSaveButton");
+const tagOrderCloseButton = document.getElementById("tagOrderCloseButton");
+
+let tagOrderDraft = [];
+
+const renderTagOrderSuggestions = () => {
+	const allKnownTags = [...new Set(allDocuments.flatMap((doc) => doc.tags || []))].sort();
+	const candidates = allKnownTags.filter((tag) => !tagOrderDraft.includes(tag));
+	tagOrderSuggestionsLabel.style.display = candidates.length > 0 ? "block" : "none";
+	tagOrderSuggestions.innerHTML = candidates.map((tag) => `<span class="tagSuggestionChip" data-tag="${escapeHtml(tag)}">+ ${escapeHtml(tag)}</span>`).join("");
+	tagOrderSuggestions.querySelectorAll(".tagSuggestionChip").forEach((chip) => {
+		chip.addEventListener("click", () => {
+			tagOrderDraft.push(chip.dataset.tag);
+			renderTagOrderList();
+		});
+	});
+};
+
+const renderTagOrderList = () => {
+	tagOrderListEl.innerHTML = tagOrderDraft.map((tag, index) => `
+		<li>
+			<span class="tagOrderName">${escapeHtml(tag)}</span>
+			<div class="tagOrderActions">
+				<button type="button" class="iconButton tagOrderUpButton" data-index="${index}" title="上へ" aria-label="上へ" ${index === 0 ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+				</button>
+				<button type="button" class="iconButton tagOrderDownButton" data-index="${index}" title="下へ" aria-label="下へ" ${index === tagOrderDraft.length - 1 ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+				</button>
+				<button type="button" class="iconButton tagOrderRemoveButton" data-index="${index}" title="削除" aria-label="削除">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+				</button>
+			</div>
+		</li>
+	`).join("");
+	tagOrderEmptyMessage.style.display = tagOrderDraft.length === 0 ? "block" : "none";
+	renderTagOrderSuggestions();
+
+	tagOrderListEl.querySelectorAll(".tagOrderUpButton").forEach((btn) => {
+		btn.addEventListener("click", () => {
+			const i = Number(btn.dataset.index);
+			if (i <= 0) return;
+			[tagOrderDraft[i - 1], tagOrderDraft[i]] = [tagOrderDraft[i], tagOrderDraft[i - 1]];
+			renderTagOrderList();
+		});
+	});
+	tagOrderListEl.querySelectorAll(".tagOrderDownButton").forEach((btn) => {
+		btn.addEventListener("click", () => {
+			const i = Number(btn.dataset.index);
+			if (i >= tagOrderDraft.length - 1) return;
+			[tagOrderDraft[i + 1], tagOrderDraft[i]] = [tagOrderDraft[i], tagOrderDraft[i + 1]];
+			renderTagOrderList();
+		});
+	});
+	tagOrderListEl.querySelectorAll(".tagOrderRemoveButton").forEach((btn) => {
+		btn.addEventListener("click", () => {
+			tagOrderDraft.splice(Number(btn.dataset.index), 1);
+			renderTagOrderList();
+		});
+	});
+};
+
+document.getElementById("tagOrderManageButton").addEventListener("click", async () => {
+	const res = await fetch("./api/tag_order");
+	const rows = res.status === 200 ? await res.json() : [];
+	tagOrderDraft = rows.map((row) => row.tag);
+	tagOrderAddInput.value = "";
+	tagOrderOverlay.style.display = "flex";
+	renderTagOrderList();
+});
+tagOrderCloseButton.addEventListener("click", () => { tagOrderOverlay.style.display = "none"; });
+tagOrderOverlay.addEventListener("click", (ev) => {
+	if (ev.target === tagOrderOverlay) tagOrderOverlay.style.display = "none";
+});
+const addTagOrderDraftEntry = () => {
+	const tag = tagOrderAddInput.value.trim();
+	if (tag === "" || tagOrderDraft.includes(tag)) return;
+	tagOrderDraft.push(tag);
+	tagOrderAddInput.value = "";
+	renderTagOrderList();
+};
+tagOrderAddButton.addEventListener("click", addTagOrderDraftEntry);
+tagOrderAddInput.addEventListener("keydown", (ev) => {
+	if (ev.key === "Enter") {
+		ev.preventDefault();
+		addTagOrderDraftEntry();
+	}
+});
+tagOrderSaveButton.addEventListener("click", async () => {
+	const res = await fetch("./api/tag_order", {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({tags: tagOrderDraft})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "保存に失敗しました");
+		return;
+	}
+	tagOrderOverlay.style.display = "none";
+	if (currentView === "tagTree") loadDocuments();
+});
+
+
+// ヘルプ(Claude Desktop等のデスクトップAIからの利用方法)モーダル
+const helpOverlay = document.getElementById("helpOverlay");
+const helpMarkdownText = document.getElementById("helpMarkdownText");
+const helpCopyButton = document.getElementById("helpCopyButton");
+const helpCloseButton = document.getElementById("helpCloseButton");
+
+// Claude Desktop / Antigravity 等のデスクトップAIに、このAPIの使い方をそのまま
+// 覚えさせられるようMarkdownとして組み立てる(ベースURLは実際のアクセス元から算出する)
+const buildAiUsageMarkdown = () => {
+	const baseUrl = new URL(".", window.location.href).href.replace(/\/$/, "");
+	return `# Document Manager API 利用ガイド (AI向け)
+
+このサービスは HTML / MHTML / Markdown / PDF (単一ファイル)を管理するドキュメント管理APIです。
+以下の情報をもとに、Bearerトークン認証でAPIを直接呼び出してください。
+
+## 接続情報
+
+- ベースURL: \`${baseUrl}\`
+- 認証: HTTPヘッダー \`Authorization: Bearer <APIキー>\`
+  - APIキーは画面右上の「APIキー管理」からユーザー自身が発行する(このAIに渡す用に1つ発行してもらってください)
+  - APIキーは発行者本人のロール(admin/readwrite/readonly)をそのまま引き継ぐ。readonlyのキーでは書き込み系APIは403になる
+
+## エンドポイント一覧
+
+### 文書一覧・検索
+\`GET ${baseUrl}/api/documents?q=<検索語>\`
+- \`q\`省略時は全件(論理削除済みを除く)を返す
+- ファイル名・タグ・本文(抽出済みプレーンテキスト)を対象に部分一致検索する
+
+### 文書アップロード (要 admin/readwrite ロール)
+\`POST ${baseUrl}/api/documents\`
+- \`multipart/form-data\`、フィールド名は \`uploadfile\`
+- 対応拡張子: \`.html\` \`.htm\` \`.mhtml\` \`.mht\` \`.md\` \`.markdown\` \`.pdf\` \`.svg\` \`.png\` \`.jpg\` \`.jpeg\` \`.csv\` \`.tsv\` \`.txt\` \`.log\` \`.json\` (単一ファイルのみ)
+
+### 文書のプレビュー/ダウンロード
+\`GET ${baseUrl}/api/documents/:id/file\`
+- \`?download=1\`を付けると添付ファイルとしてダウンロードされる(付けない場合はプレビュー用ファイルを返す)
+
+### 文書削除 (要 admin/readwrite ロール、論理削除)
+\`DELETE ${baseUrl}/api/documents/:id\`
+
+### タグ更新 (要 admin/readwrite ロール、タグ一式を置き換える)
+\`PUT ${baseUrl}/api/documents/:id/tags\`
+- JSONボディ: \`{"tags": ["tag1", "tag2"]}\`
+
+### プロジェクト一覧・アーカイブ済み一覧
+\`GET ${baseUrl}/api/projects\`
+\`GET ${baseUrl}/api/projects/archived\`
+
+### プロジェクト作成・名前変更 (要 admin/readwrite ロール)
+\`POST ${baseUrl}/api/projects\` - JSONボディ: \`{"name": "プロジェクト名"}\`
+\`PUT ${baseUrl}/api/projects/:id\` - JSONボディ: \`{"name": "新しい名前"}\`
+
+### プロジェクトのアーカイブ・復元・完全削除 (要 admin/readwrite ロール)
+\`POST ${baseUrl}/api/projects/:id/archive\` - 一覧から隠す(復元可能)
+\`POST ${baseUrl}/api/projects/:id/restore\` - アーカイブから戻す
+\`DELETE ${baseUrl}/api/projects/:id\` - フォルダ構成・登録情報ごと完全削除(文書自体は削除されない)
+
+### プロジェクトのツリー取得(フォルダ階層+文書の配置)
+\`GET ${baseUrl}/api/projects/:id/tree\`
+- \`folders\`: \`{id, parentFolderId, name, sortOrder}\` の配列
+- \`documents\`: \`{documentId, folderId, sortOrder}\` の配列(\`folderId\` が \`null\` はプロジェクト直下)
+
+### フォルダの作成・名前変更・削除 (要 admin/readwrite ロール)
+\`POST ${baseUrl}/api/projects/:id/folders\` - JSONボディ: \`{"name": "フォルダ名", "parentFolderId": null}\`(\`parentFolderId\`省略でプロジェクト直下に作成)
+\`PUT ${baseUrl}/api/projects/:id/folders/:folderId\` - JSONボディ: \`{"name": "新しい名前"}\`
+\`DELETE ${baseUrl}/api/projects/:id/folders/:folderId\` - 中身(サブフォルダ・文書)が空の場合のみ削除可(空でなければ409)
+
+### 文書をプロジェクトへ登録・移動/プロジェクトから外す (要 admin/readwrite ロール)
+\`PUT ${baseUrl}/api/projects/:id/documents/:documentId\` - JSONボディ: \`{"folderId": "<フォルダID>"}\`(省略・nullでプロジェクト直下。既に登録済みなら移動として扱われる)
+\`DELETE ${baseUrl}/api/projects/:id/documents/:documentId\` - プロジェクトから外す(文書自体は削除されない)
+- 同じ文書を複数のプロジェクトへ登録できるが、1プロジェクト内では1箇所にしか置けない
+
+### フォルダ内の文書の並び替え (要 admin/readwrite ロール)
+\`PUT ${baseUrl}/api/projects/:id/reorder\`
+- JSONボディ: \`{"folderId": null, "documentIds": ["docId1", "docId2", ...]}\`(\`folderId\`省略・nullはプロジェクト直下が対象)
+- 渡した配列の順番どおりに並び替える
+
+## 使用例 (curl)
+
+\`\`\`bash
+# 一覧・検索
+curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/documents?q=請求書"
+
+# アップロード
+curl -X POST "${baseUrl}/api/documents" \\
+  -H "Authorization: Bearer <APIキー>" \\
+  -F "uploadfile=@./report.md"
+
+# タグ更新
+curl -X PUT "${baseUrl}/api/documents/<id>/tags" \\
+  -H "Authorization: Bearer <APIキー>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"tags": ["経理", "2026年度"]}'
+
+# 削除
+curl -X DELETE "${baseUrl}/api/documents/<id>" \\
+  -H "Authorization: Bearer <APIキー>"
+
+# プロジェクト作成
+curl -X POST "${baseUrl}/api/projects" \\
+  -H "Authorization: Bearer <APIキー>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name": "顧客管理システム再構築"}'
+
+# 文書をプロジェクトのフォルダへ登録
+curl -X PUT "${baseUrl}/api/projects/<projectId>/documents/<documentId>" \\
+  -H "Authorization: Bearer <APIキー>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"folderId": "<folderId>"}'
+\`\`\`
+
+## AIへの指示
+
+今後、ユーザーから以下のような依頼があったら、それぞれ対応するAPIを使って応答してください。
+
+### 「アップして」「これ登録して」「保存しておいて」「アップロードして」
+直前にあなたが作成・提示した文書(Markdown/HTMLなど)を単一ファイルとして保存し、
+上記の「文書アップロード」APIを使ってこのDocument Managerへ登録してください。
+アップロードが完了したら、登録されたファイル名と文書IDをユーザーに報告してください
+(readonlyロールのキーの場合はアップロードできないので、その旨をユーザーに伝えてください)。
+
+### 「探して」「検索して」「〜の資料ある?」「〜についての文書見せて」
+上記の「文書一覧・検索」APIの \`q\` パラメータに検索キーワードを渡して検索し、
+見つかった文書のファイル名・タグ・文書ID(必要ならプレビュー/ダウンロードURL)を
+一覧にしてユーザーに報告してください。見つからない場合はその旨を伝えてください。
+
+この指示を読んだら、Document Managerとの連携準備が整ったことと、「アップして」「探して」のように
+話しかければ操作できることをユーザーに一言伝えてください。
+`;
+};
+
+document.getElementById("helpButton").addEventListener("click", () => {
+	helpMarkdownText.value = buildAiUsageMarkdown();
+	helpOverlay.style.display = "flex";
+});
+helpCloseButton.addEventListener("click", () => { helpOverlay.style.display = "none"; });
+helpOverlay.addEventListener("click", (ev) => {
+	if (ev.target === helpOverlay) helpOverlay.style.display = "none";
+});
+helpCopyButton.addEventListener("click", () => {
+	copyTextWithFeedback(helpMarkdownText.value, helpCopyButton);
+});
+
+// 他クライアントによるアップロード/削除をSSEで受け取り、一覧を自動更新する
+const subscribeDocumentEvents = () => {
+	const eventSource = new EventSource("./api/documents/events");
+	eventSource.addEventListener("documents-changed", () => {
+		loadDocuments();
+	});
+};
+
+// ヘッダーに小さく表示するバージョン(認証不要のエンドポイントなので、ログイン状態を待たずに取得する)
+fetch("./api/version").then((res) => res.json()).then(({version}) => {
+	if (version) document.getElementById("footerVersion").textContent = `Ver.${version}`;
+}).catch(() => {});
+
+document.getElementById("footerYear").textContent = new Date().getFullYear();
+
+(async () => {
+	const res = await fetch("./api/check_access_token");
+	if (res.status === 200) {
+		const authData = await res.json();
+		currentUserRole = authData.role;
+		userIdentifier.textContent = authData.user_identifier + (authData.isAdmin ? "" : ` (${ROLE_LABELS[authData.role] || authData.role})`);
+		if (!authData.isAdmin) {
+			document.getElementById("allowedUsersManageLink").style.display = "none";
+		}
+		if (authData.role === "readonly") {
+			appShell.classList.add("readOnlyMode");
+		}
+		appShell.classList.toggle("adminMode", !!authData.isAdmin);
+		appShell.classList.add("visible");
+		loadDocuments();
+		subscribeDocumentEvents();
+	} else {
+		loginArea.classList.add("visible");
+		window.location.href = "./login";
+	}
+})();
+</script>
+</body>
+</html>

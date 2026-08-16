@@ -1,0 +1,6 @@
+app/node_modules
+app/package-lock.json
+data
+.git
+.vscode
+*.log
