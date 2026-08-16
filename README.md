@@ -58,10 +58,8 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
 ## ディレクトリ構成
 
 ```
-WebService_DocumentManager/
+document-manager/
 ├── Dockerfile              # 単一ステージ (node:22-alpine, npm install)
-├── 10.buildDocker.sh        # イメージビルド + プライベートレジストリへpush
-├── 20.startDocker.sh        # コンテナ起動 (環境変数の例つき)
 ├── app/                     # アプリケーション本体 (Dockerイメージにコピーされる)
 │   ├── server.js             # エントリポイント
 │   ├── lib/
@@ -118,8 +116,21 @@ AUTH_DISABLED=true DATA_DIR=../data node server.js
 ## Dockerビルド・起動
 
 ```bash
-./10.buildDocker.sh   # イメージビルド + プライベートレジストリへpush
-./20.startDocker.sh   # コンテナ起動 (環境変数は事前にスクリプト内を編集すること)
+docker build -t document-manager .
+
+docker run -d \
+  --name document-manager \
+  -p 8080:8080 \
+  -v "$(pwd)/data:/data" \
+  -e OIDC_ISSUER="https://login.microsoftonline.com/<TENANT_ID>/v2.0" \
+  -e OIDC_CLIENT_ID="<CLIENT_ID>" \
+  -e OIDC_CLIENT_SECRET="<CLIENT_SECRET>" \
+  -e OIDC_REDIRECT_URI="https://your-domain.example.com/document_management/login" \
+  -e ADMIN_EMAIL="admin@example.com" \
+  -e SESSION_SECRET="<ランダムな文字列>" \
+  document-manager
 ```
+
+環境変数の詳細は上記「環境変数」の表を参照。`OIDC_*`系は利用するIDプロバイダ(EntraID/Cognito/Google等)の値に置き換えること。
 
 `Dockerfile` は `node:22-alpine` ベースの単一ステージ構成。`better-sqlite3` はprebuiltバイナリを同梱しているため、ビルドツール(python3/make/g++)は不要。**npmでインストールすること**(yarn classicはprebuiltバイナリの検出ロジックを持たず、常にソースビルドを試みて失敗する)。
