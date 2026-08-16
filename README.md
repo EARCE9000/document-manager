@@ -133,4 +133,24 @@ docker run -d \
 
 環境変数の詳細は上記「環境変数」の表を参照。`OIDC_*`系は利用するIDプロバイダ(EntraID/Cognito/Google等)の値に置き換えること。
 
+## DockerHubから利用する
+
+ビルド済みイメージは [earce9000/document-manager](https://hub.docker.com/r/earce9000/document-manager) として公開している(`linux/amd64`/`linux/arm64`対応)。`main`ブランチへのpushで`latest`、`vX.Y.Z`タグのpushでセマンティックバージョンタグが自動的にビルド・公開される([.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml))。
+
+```bash
+docker pull earce9000/document-manager:latest
+
+docker run -d \
+  --name document-manager \
+  -p 8080:8080 \
+  -v "$(pwd)/data:/data" \
+  -e OIDC_ISSUER="https://login.microsoftonline.com/<TENANT_ID>/v2.0" \
+  -e OIDC_CLIENT_ID="<CLIENT_ID>" \
+  -e OIDC_CLIENT_SECRET="<CLIENT_SECRET>" \
+  -e OIDC_REDIRECT_URI="https://your-domain.example.com/document_management/login" \
+  -e ADMIN_EMAIL="admin@example.com" \
+  -e SESSION_SECRET="<ランダムな文字列>" \
+  earce9000/document-manager:latest
+```
+
 `Dockerfile` は `node:22-alpine` ベースの単一ステージ構成。`better-sqlite3` はprebuiltバイナリを同梱しているため、ビルドツール(python3/make/g++)は不要。**npmでインストールすること**(yarn classicはprebuiltバイナリの検出ロジックを持たず、常にソースビルドを試みて失敗する)。
