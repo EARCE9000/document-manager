@@ -129,6 +129,7 @@ class S3Storage {
 	// (Chromeの内蔵PDFビューアはRangeでの部分取得を前提に動作する)
 	async streamToResponse(documentId, filename, res) {
 		const {GetObjectCommand} = require("@aws-sdk/client-s3");
+		const {pipeline} = require("stream/promises");
 
 		// res.reqはExpressが設定する元のリクエスト。共通インターフェースを変えずに
 		// Rangeヘッダーを参照するために使う
@@ -159,11 +160,9 @@ class S3Storage {
 			res.status(206);
 		}
 
-		await new Promise((resolve, reject) => {
-			result.Body.pipe(res);
-			result.Body.on("error", reject);
-			res.on("finish", resolve);
-		});
+		// pipelineはクライアント切断時に上流(S3のストリーム)を破棄した上でrejectする。
+		// 旧実装のres.on("finish")は中断時に発火せず、Promiseがpendingのまま残っていた
+		await pipeline(result.Body, res);
 	}
 }
 

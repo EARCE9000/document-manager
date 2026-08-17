@@ -971,6 +971,26 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 });
 
 /**
+ * ファイル配信中に発生した例外の共通ハンドリング。
+ * 転送を開始した後にクライアントが切断する(タブを閉じる・ダウンロード中断・
+ * PDFビューアがRangeでの再取得のために接続を切る)のは異常ではないため、
+ * 500を返そうとせずログをinfoに留める。ヘッダー送信後はステータスを上書き
+ * できず、ここで res.status() を呼ぶと ERR_HTTP_HEADERS_SENT になる。
+ */
+const handleServeFileError = (err, req, res, label) => {
+	if (err.code === "ERR_STREAM_PREMATURE_CLOSE" || req.destroyed || res.writableEnded) {
+		logger.info({documentId: req.params.id}, `${label}: client disconnected`);
+		return;
+	}
+	logger.error(err, label);
+	if (res.headersSent) {
+		res.destroy();
+		return;
+	}
+	res.status(500).json({error: "Internal Error"});
+};
+
+/**
  * 文書プレビュー/ダウンロードの実体(api/documents/:id/file と api/documents/:id/viewer で共用)
  * ?download=1 を付けると添付ファイルとしてダウンロードさせる
  * アーカイブ(論理削除)済み文書も、復元前に内容を確認できるよう対象に含める
@@ -1013,8 +1033,7 @@ app.get(BASE_URL_PATH + 'api/documents/:id/file', requireAuth, async (req, res) 
 	try {
 		await serveDocumentFile(req, res);
 	} catch (err) {
-		logger.error(err, "::api/documents/:id/file");
-		res.status(500).json({error: "Internal Error"});
+		handleServeFileError(err, req, res, "::api/documents/:id/file");
 	}
 });
 
@@ -1040,8 +1059,7 @@ app.get(BASE_URL_PATH + 'api/documents/:id/viewer', async (req, res) => {
 		}
 		await serveDocumentFile(req, res);
 	} catch (err) {
-		logger.error(err, "::api/documents/:id/viewer");
-		res.status(500).json({error: "Internal Error"});
+		handleServeFileError(err, req, res, "::api/documents/:id/viewer");
 	}
 });
 
