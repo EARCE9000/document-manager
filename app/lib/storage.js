@@ -82,7 +82,16 @@ class S3Storage {
 		this.prefix = prefix;
 		this.client = new S3Client({
 			region,
-			...(endpoint ? {endpoint, forcePathStyle: true} : {})
+			...(endpoint ? {
+				endpoint,
+				forcePathStyle: true,
+				// AWS SDK v3はPutObjectに既定でCRC32チェックサムをaws-chunkedで付与するが、
+				// S3互換サービス(MinIO/GCS/R2等)には解釈できないものがあり400になる。
+				// AWS S3本家では既定のままで問題ない(転送エラーの検出に有効)ため、
+				// endpointが指定されている場合、つまりS3互換サービス接続時のみ抑止する
+				requestChecksumCalculation: "WHEN_REQUIRED",
+				responseChecksumValidation: "WHEN_REQUIRED"
+			} : {})
 		});
 	}
 
