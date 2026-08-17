@@ -135,7 +135,7 @@ docker run -d \
 
 ## DockerHubから利用する
 
-ビルド済みイメージは [earce9000/document-manager](https://hub.docker.com/r/earce9000/document-manager) として公開している(`linux/amd64`/`linux/arm64`対応)。`main`ブランチへのpushで`latest`、`vX.Y.Z`タグのpushでセマンティックバージョンタグが自動的にビルド・公開される([.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml))。
+ビルド済みイメージは [earce9000/document-manager](https://hub.docker.com/r/earce9000/document-manager) として公開している(`linux/amd64`/`linux/arm64`対応)。`main`ブランチへのpushのたびに、`latest`と`YYYYMMDD_HHmmss`(JST、ビルド日時)タグが自動的にビルド・公開される([.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml))。特定時点のビルドに固定したい場合は日時タグでpullする。
 
 ```bash
 docker pull earce9000/document-manager:latest
