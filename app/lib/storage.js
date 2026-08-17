@@ -124,12 +124,41 @@ class S3Storage {
 		}
 	}
 
+	// ローカルディスク実装(res.sendFile)ではExpressがRange/Content-Length/ETagを
+	// 自動処理するため、S3側でも同等の応答を返してバックエンド間の挙動差をなくす
+	// (Chromeの内蔵PDFビューアはRangeでの部分取得を前提に動作する)
 	async streamToResponse(documentId, filename, res) {
 		const {GetObjectCommand} = require("@aws-sdk/client-s3");
-		const result = await this.client.send(new GetObjectCommand({
-			Bucket: this.bucket,
-			Key: this._key(documentId, filename)
-		}));
+
+		// res.reqはExpressが設定する元のリクエスト。共通インターフェースを変えずに
+		// Rangeヘッダーを参照するために使う
+		const range = res.req?.headers?.range;
+
+		let result;
+		try {
+			result = await this.client.send(new GetObjectCommand({
+				Bucket: this.bucket,
+				Key: this._key(documentId, filename),
+				...(range ? {Range: range} : {})
+			}));
+		} catch (err) {
+			// 範囲外のRangeを要求された場合
+			if (err.name === "InvalidRange" || err.$metadata?.httpStatusCode === 416) {
+				res.status(416).end();
+				return;
+			}
+			throw err;
+		}
+
+		res.setHeader("Accept-Ranges", "bytes");
+		if (result.ContentLength != null) res.setHeader("Content-Length", String(result.ContentLength));
+		if (result.ETag) res.setHeader("ETag", result.ETag);
+		if (result.LastModified) res.setHeader("Last-Modified", result.LastModified.toUTCString());
+		if (result.ContentRange) {
+			res.setHeader("Content-Range", result.ContentRange);
+			res.status(206);
+		}
+
 		await new Promise((resolve, reject) => {
 			result.Body.pipe(res);
 			result.Body.on("error", reject);
