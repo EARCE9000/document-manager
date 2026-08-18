@@ -3,6 +3,16 @@
 HTML / MHTML / Markdown / PDF / 画像(SVG/PNG/JPEG) / CSV・TSV / テキスト・ログ / JSON をアップロードして一覧・プレビューできる社内向けドキュメント管理Webサービス。
 Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLiteに、文書ファイルはローカルディスクまたはS3に保存する。
 
+## スクリーンショット
+
+| 文書一覧・プレビュー | タグ体系 |
+|---|---|
+| ![文書一覧](docs/screenshots/document-list.png) | ![タグ体系](docs/screenshots/tag-tree.png) |
+
+| プロジェクト | 操作履歴 |
+|---|---|
+| ![プロジェクト](docs/screenshots/projects.png) | ![操作履歴](docs/screenshots/history.png) |
+
 ## 主な機能
 
 ### 文書管理
