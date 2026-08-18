@@ -1,3 +1,7 @@
+# Dockerfile : Document Manager
+# Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
+# MIT Licensed
+#
 # runtime image
 # better-sqlite3 v13+ ships prebuilt binaries (incl. linuxmusl-x64), so no
 # python3/make/g++ toolchain or separate build stage is needed.
