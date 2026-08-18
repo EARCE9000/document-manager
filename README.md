@@ -157,3 +157,9 @@ docker run -d \
 ```
 
 `Dockerfile` は `node:22-alpine` ベースの単一ステージ構成。`better-sqlite3` はprebuiltバイナリを同梱しているため、ビルドツール(python3/make/g++)は不要。**npmでインストールすること**(yarn classicはprebuiltバイナリの検出ロジックを持たず、常にソースビルドを試みて失敗する)。
+
+## License
+
+[MIT License](LICENSE)
+
+依存パッケージ(直接依存・間接依存を含む)は MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause / ISC / 0BSD / BlueOak-1.0.0 のみで構成されており、コピーレフト系ライセンス(GPL/AGPL/LGPL等)は含まれない。
