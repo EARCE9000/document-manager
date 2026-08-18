@@ -106,7 +106,7 @@ const createSchema = (targetDb) => {
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			archived_by TEXT,
 			archived_at TEXT,
-			locked INTEGER NOT NULL DEFAULT 1
+			locked INTEGER NOT NULL DEFAULT 0
 		)
 	`);
 
@@ -316,8 +316,7 @@ const MIGRATIONS = {
 				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
 				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
 			`);
-			// projects.lockedはv5に存在しないため対象外(既定値1=施錠として移行される。
-			// 過去のプロジェクトを不用意に編集可能な状態で復活させないための安全側デフォルト)
+			// projects.lockedはv5に存在しないため対象外(既定値0=解錠として移行される)
 		} finally {
 			newDb.exec("DETACH DATABASE old");
 		}
