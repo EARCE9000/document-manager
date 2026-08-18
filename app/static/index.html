@@ -676,9 +676,20 @@
 		margin-top: 10px;
 	}
 	#historyTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.85em; }
-	#historyTable col.colDate { width: 30%; }
-	#historyTable col.colAction { width: 24%; }
-	#historyTable col.colTarget { width: 46%; }
+	#historyTable col.colDate { width: 26%; }
+	#historyTable col.colTarget { width: 32%; }
+	#historyTable col.colAction { width: 18%; }
+	#historyTable col.colNote { width: 24%; }
+	#historyTable .historyTargetLink {
+		background: none;
+		border: none;
+		padding: 0;
+		font: inherit;
+		color: #1a56db;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	#historyTable .historyTargetLink:hover { color: #0d3a9c; }
 	#historyTable th, #historyTable td {
 		text-align: left;
 		padding: 8px 10px;
@@ -708,7 +719,6 @@
 	#historyTable .historyActionBadge.delete { background: #fff3cd; color: #b8860b; }
 	#historyTable .historyActionBadge.restore { background: #eaf7ea; color: #2f9e44; }
 	#historyTable .historyActionBadge.project_unassign { background: #f4f5f7; color: #666; }
-	#historyTable .historyTargetProject { color: #777; }
 
 	#tagOrderModalBox { max-width: 560px; width: 94%; }
 	#tagOrderModalBox .toolbarRow { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
@@ -998,14 +1008,16 @@
 			<table id="historyTable">
 				<colgroup>
 					<col class="colDate">
-					<col class="colAction">
 					<col class="colTarget">
+					<col class="colAction">
+					<col class="colNote">
 				</colgroup>
 				<thead>
 					<tr>
 						<th>日時</th>
-						<th>操作</th>
 						<th>対象</th>
+						<th>操作</th>
+						<th>備考</th>
 					</tr>
 				</thead>
 				<tbody id="historyList"></tbody>
@@ -2752,6 +2764,32 @@ const HISTORY_ACTION_LABELS = {
 	project_unassign: "プロジェクトから解除"
 };
 
+// 履歴の対象ファイル名をクリックしたら、文書一覧(必要ならアーカイブ側)でその文書に
+// フォーカスする。検索語・登録日絞り込みが残っていると対象が見つからないことがあるため、
+// いったんクリアしてから探す
+const jumpToDocumentFromHistory = async (documentId) => {
+	if (documentId == null) return;
+	historyOverlay.style.display = "none";
+	filterInput.value = "";
+	fromDateInput.value = "";
+	toDateInput.value = "";
+	setView("active");
+	await loadDocuments();
+	let doc = allDocuments.find((d) => d.id === documentId);
+	if (doc == null) {
+		setView("archive");
+		await loadDocuments();
+		doc = allDocuments.find((d) => d.id === documentId);
+	}
+	if (doc == null) {
+		alert("対象の文書が見つかりませんでした。");
+		return;
+	}
+	showPreview(doc);
+	const li = documentList.querySelector(`li[data-id="${doc.id}"]`);
+	if (li) li.scrollIntoView({block: "center"});
+};
+
 const loadHistory = async () => {
 	const res = await fetch("./api/history");
 	if (res.status !== 200) return;
@@ -2761,12 +2799,16 @@ const loadHistory = async () => {
 	historyList.innerHTML = rows.map((row) => `
 		<tr>
 			<td>${formatDateTime(row.createdAt)}</td>
-			<td><span class="historyActionBadge ${escapeHtml(row.action)}">${escapeHtml(HISTORY_ACTION_LABELS[row.action] || row.action)}</span></td>
-			<td title="${escapeHtml([row.entryFile, row.projectName].filter(Boolean).join(" / "))}">
-				${escapeHtml(row.entryFile || "-")}${row.projectName ? `<span class="historyTargetProject"> / ${escapeHtml(row.projectName)}</span>` : ""}
+			<td title="${escapeHtml(row.entryFile || "")}">
+				${row.entryFile == null ? "-" : `<button type="button" class="historyTargetLink" data-id="${escapeHtml(row.documentId)}">${escapeHtml(row.entryFile)}</button>`}
 			</td>
+			<td><span class="historyActionBadge ${escapeHtml(row.action)}">${escapeHtml(HISTORY_ACTION_LABELS[row.action] || row.action)}</span></td>
+			<td title="${escapeHtml(row.projectName || "")}">${row.projectName ? escapeHtml(row.projectName) : ""}</td>
 		</tr>
 	`).join("");
+	historyList.querySelectorAll(".historyTargetLink").forEach((btn) => {
+		btn.addEventListener("click", () => jumpToDocumentFromHistory(btn.dataset.id));
+	});
 };
 
 document.getElementById("historyManageLink").addEventListener("click", () => {
