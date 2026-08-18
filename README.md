@@ -31,6 +31,7 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
 - **タグ体系(タグツリー表示)**: 「タグ体系」メニューで、通常の週単位一覧とは別に、タグ名を見出しにしたグループ表示へ切り替えられる(検索・日付絞り込み・アップロードはこの画面では行わない)。表示対象のタグと並び順は`tag_order`テーブルで管理し(`GET/PUT api/tag_order`。並び順の変更はadminロール限定)、画面内の「タグ体系を管理」ボタンから追加・並び替え(上下ボタン)・削除ができる。複数のタグを持つ文書は該当する全グループに重複表示され、登録していないタグしか持たない文書は「未分類」として末尾にまとめられる
 - **リアルタイム更新**: SSE (`GET api/documents/events`) で他クライアントのアップロード/削除を検知し、一覧を自動更新する
 - **アクセスログ・監査ログ**: 標準出力に、全リクエストのアクセスログ(method/url/status/所要時間/接続元IP/ログイン中ユーザー)と、アップロード/ダウンロード/削除を行った実行者を記録する監査ログ(`"msg":"audit"`)を出力する
+- **操作履歴**: 画面右上の履歴アイコンから、自分自身が行った操作(登録/アーカイブ/復元/プロジェクトへの登録・解除)を直近30日分モーダルで確認できる(`GET api/history`)。他の利用者の操作は見えない。標準出力の監査ログとは別に`audit_log`テーブルに保存し、対象の文書名・プロジェクト名は記録時点の値をスナップショットとして残すため、後から文書やプロジェクトが変更・削除されても履歴自体は読める
 
 ### 認証・アクセス制御
 - **OIDC (OpenID Connect)**: `openid-client` によるDiscoveryベースの実装。`OIDC_ISSUER` を差し替えるだけで、EntraID / AWS Cognito / Synology SSO Server など標準的なOIDCプロバイダに対応できる(同時に使えるのはどれか1つ)
@@ -63,11 +64,13 @@ document-manager/
 ├── app/                     # アプリケーション本体 (Dockerイメージにコピーされる)
 │   ├── server.js             # エントリポイント
 │   ├── lib/
-│   │   ├── db.js              # SQLite初期化・スキーマバージョン管理 (documents/document_tags/api_keys/allowed_users/tag_order)
+│   │   ├── db.js              # SQLite初期化・スキーマバージョン管理 (documents/document_tags/api_keys/allowed_users/tag_order/projects/project_folders/project_documents/audit_log)
 │   │   ├── oidc-client.js     # OIDC Discovery + Configuration初期化
 │   │   ├── api-keys.js        # APIキーの発行/検証/失効
 │   │   ├── allowed-users.js   # ログイン許可ユーザーのホワイトリスト管理
 │   │   ├── tag-order.js       # タグ体系(タグツリー表示)の並び順管理
+│   │   ├── projects.js        # プロジェクト(フォルダ階層による文書整理)の管理
+│   │   ├── audit-log.js       # 操作履歴(自分の登録/アーカイブ/復元/プロジェクト操作)の記録・参照
 │   │   ├── storage.js         # 文書ファイルの保存先抽象化 (ローカルディスク/S3。STORAGE_BACKENDで切替)
 │   │   └── logger.js          # 共通ロガー (標準出力のみ)
 │   └── static/index.html     # フロントエンド(単一HTML)

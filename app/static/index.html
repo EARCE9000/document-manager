@@ -667,6 +667,49 @@
 	#allowedUserTable .apiKeyMeta { color: #777; }
 	.allowedUserRoleSelect { height: 30px; font-size: 0.85em; }
 
+	#historyModalBox { max-width: 780px; width: 94%; }
+	#historyTableWrap {
+		max-height: 420px;
+		overflow-y: auto;
+		border: 1px solid #e2e2e2;
+		border-radius: 6px;
+		margin-top: 10px;
+	}
+	#historyTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.85em; }
+	#historyTable col.colDate { width: 30%; }
+	#historyTable col.colAction { width: 24%; }
+	#historyTable col.colTarget { width: 46%; }
+	#historyTable th, #historyTable td {
+		text-align: left;
+		padding: 8px 10px;
+		border-bottom: 1px solid #eee;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	#historyTable th {
+		position: sticky;
+		top: 0;
+		background: #f8f9fa;
+		font-weight: 600;
+		color: #555;
+		z-index: 1;
+	}
+	#historyTable tbody tr:last-child td { border-bottom: none; }
+	#historyTable .historyActionBadge {
+		display: inline-block;
+		font-size: 0.85em;
+		font-weight: 600;
+		padding: 1px 8px;
+		border-radius: 999px;
+		background: #e8f0fe;
+		color: #1a56db;
+	}
+	#historyTable .historyActionBadge.delete { background: #fff3cd; color: #b8860b; }
+	#historyTable .historyActionBadge.restore { background: #eaf7ea; color: #2f9e44; }
+	#historyTable .historyActionBadge.project_unassign { background: #f4f5f7; color: #666; }
+	#historyTable .historyTargetProject { color: #777; }
+
 	#tagOrderModalBox { max-width: 560px; width: 94%; }
 	#tagOrderModalBox .toolbarRow { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
 	#tagOrderAddInput { flex: 1; min-width: 0; padding: 0 10px; border: 1px solid #ccc; border-radius: 4px; height: 36px; box-sizing: border-box; }
@@ -774,6 +817,9 @@
 			</button>
 			<button type="button" id="apiKeyManageLink" class="topBarIconButton" title="APIキー管理" aria-label="APIキー管理">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+			</button>
+			<button type="button" id="historyManageLink" class="topBarIconButton" title="操作履歴(直近30日、自分の操作のみ)" aria-label="操作履歴">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
 			</button>
 			<a href="./logout" id="logoutLink" class="topBarIconButton" title="ログアウト" aria-label="ログアウト">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -940,6 +986,34 @@
 		<ul id="apiKeyList"></ul>
 		<div class="modalButtons">
 			<button id="apiKeyCloseButton" type="button" class="modalButton">閉じる</button>
+		</div>
+	</div>
+</div>
+
+<div id="historyOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="historyModalBox">
+		<p>操作履歴</p>
+		<div class="docMeta">自分がこのサービス上で行った操作(直近30日分)です。他の利用者の操作は表示されません。</div>
+		<div id="historyTableWrap">
+			<table id="historyTable">
+				<colgroup>
+					<col class="colDate">
+					<col class="colAction">
+					<col class="colTarget">
+				</colgroup>
+				<thead>
+					<tr>
+						<th>日時</th>
+						<th>操作</th>
+						<th>対象</th>
+					</tr>
+				</thead>
+				<tbody id="historyList"></tbody>
+			</table>
+		</div>
+		<div id="historyEmptyMessage" class="emptyMessage" style="display:none;">直近30日の操作履歴はありません。</div>
+		<div class="modalButtons">
+			<button id="historyCloseButton" type="button" class="modalButton">閉じる</button>
 		</div>
 	</div>
 </div>
@@ -2661,6 +2735,47 @@ allowedUserAddButton.addEventListener("click", async () => {
 	});
 	allowedUserEmailInput.value = "";
 	loadAllowedUsers();
+});
+
+// 操作履歴モーダル(自分の操作のみ、直近30日)
+const historyOverlay = document.getElementById("historyOverlay");
+const historyList = document.getElementById("historyList");
+const historyTableWrap = document.getElementById("historyTableWrap");
+const historyEmptyMessage = document.getElementById("historyEmptyMessage");
+const historyCloseButton = document.getElementById("historyCloseButton");
+
+const HISTORY_ACTION_LABELS = {
+	upload: "登録",
+	delete: "アーカイブ",
+	restore: "復元",
+	project_assign: "プロジェクトへ登録",
+	project_unassign: "プロジェクトから解除"
+};
+
+const loadHistory = async () => {
+	const res = await fetch("./api/history");
+	if (res.status !== 200) return;
+	const rows = await res.json();
+	historyTableWrap.style.display = rows.length === 0 ? "none" : "block";
+	historyEmptyMessage.style.display = rows.length === 0 ? "block" : "none";
+	historyList.innerHTML = rows.map((row) => `
+		<tr>
+			<td>${formatDateTime(row.createdAt)}</td>
+			<td><span class="historyActionBadge ${escapeHtml(row.action)}">${escapeHtml(HISTORY_ACTION_LABELS[row.action] || row.action)}</span></td>
+			<td title="${escapeHtml([row.entryFile, row.projectName].filter(Boolean).join(" / "))}">
+				${escapeHtml(row.entryFile || "-")}${row.projectName ? `<span class="historyTargetProject"> / ${escapeHtml(row.projectName)}</span>` : ""}
+			</td>
+		</tr>
+	`).join("");
+};
+
+document.getElementById("historyManageLink").addEventListener("click", () => {
+	historyOverlay.style.display = "flex";
+	loadHistory();
+});
+historyCloseButton.addEventListener("click", () => { historyOverlay.style.display = "none"; });
+historyOverlay.addEventListener("click", (ev) => {
+	if (ev.target === historyOverlay) historyOverlay.style.display = "none";
 });
 
 // タグ体系の並び順管理(管理者のみ)。保存を押すまではローカルの配列(tagOrderDraft)だけを

@@ -260,6 +260,7 @@ const ApiKeys = require("./lib/api-keys.js");
 const AllowedUsers = require("./lib/allowed-users.js");
 const TagOrder = require("./lib/tag-order.js");
 const Projects = require("./lib/projects.js");
+const AuditLog = require("./lib/audit-log.js");
 
 const OIDC_REDIRECT_URI = process.env.OIDC_REDIRECT_URI || "";
 const OIDC_SCOPE = process.env.OIDC_SCOPE || "openid profile email";
@@ -961,6 +962,7 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 			documentId: id,
 			entryFile: originalName
 		}, "audit");
+		AuditLog.record({userIdentifier: req.authData.user_identifier, action: "upload", documentId: id, entryFile: originalName});
 		broadcastDocumentsChanged();
 
 		res.status(200).json(toDocumentResponse(row));
@@ -1083,6 +1085,12 @@ app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async
 			user: req.authData.user_identifier,
 			documentId: req.params.id
 		}, "audit");
+		AuditLog.record({
+			userIdentifier: req.authData.user_identifier,
+			action: "delete",
+			documentId: req.params.id,
+			entryFile: selectDocumentById.get(req.params.id)?.entry_file ?? null
+		});
 		broadcastDocumentsChanged();
 		res.status(204).end();
 	} catch (err) {
@@ -1122,6 +1130,12 @@ app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite,
 			user: req.authData.user_identifier,
 			documentId: req.params.id
 		}, "audit");
+		AuditLog.record({
+			userIdentifier: req.authData.user_identifier,
+			action: "restore",
+			documentId: req.params.id,
+			entryFile: selectDocumentById.get(req.params.id)?.entry_file ?? null
+		});
 		broadcastDocumentsChanged();
 		res.status(200).json({id: req.params.id});
 	} catch (err) {
@@ -1173,6 +1187,27 @@ app.put(BASE_URL_PATH + 'api/documents/:id/memo', requireAuth, requireWrite, asy
 	}
 });
 
+
+/* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+/*
+	操作履歴
+	ユーザー自身が「自分が何をしたか」を確認できるようにする(直近30日分)。
+	他人の履歴は見えない(常に自分自身のuser_identifierだけで絞り込む)。
+*/
+/* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+
+/**
+ * 自分自身の操作履歴一覧(直近30日、最大500件、新しい順)
+ */
+app.get(BASE_URL_PATH + 'api/history', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(AuditLog.listMine(req.authData.user_identifier));
+	} catch (err) {
+		logger.error(err, "::api/history");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
 
 /* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
 /*
@@ -1601,15 +1636,25 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, re
 app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		if (Projects.getProject(req.params.id) == null) {
+		const project = Projects.getProject(req.params.id);
+		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		if (selectDocumentById.get(req.params.documentId) == null) {
+		const document = selectDocumentById.get(req.params.documentId);
+		if (document == null) {
 			res.status(404).json({error: "document not found"});
 			return;
 		}
 		const placement = Projects.placeDocument(req.params.id, req.params.documentId, req.body.folderId || null, req.authData.user_identifier);
+		AuditLog.record({
+			userIdentifier: req.authData.user_identifier,
+			action: "project_assign",
+			documentId: req.params.documentId,
+			entryFile: document.entry_file,
+			projectId: req.params.id,
+			projectName: project.name
+		});
 		res.status(200).json(placement);
 	} catch (err) {
 		if (err.message === "folder not found") {
@@ -1627,11 +1672,21 @@ app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, r
 app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
+		const project = Projects.getProject(req.params.id);
+		const document = selectDocumentById.get(req.params.documentId);
 		const removed = Projects.removeDocument(req.params.id, req.params.documentId);
 		if (!removed) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		AuditLog.record({
+			userIdentifier: req.authData.user_identifier,
+			action: "project_unassign",
+			documentId: req.params.documentId,
+			entryFile: document?.entry_file ?? null,
+			projectId: req.params.id,
+			projectName: project?.name ?? null
+		});
 		res.status(204).end();
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/documents/:documentId:remove");

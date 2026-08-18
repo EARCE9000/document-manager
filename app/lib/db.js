@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -133,6 +133,27 @@ const createSchema = (targetDb) => {
 		)
 	`);
 
+	// 操作履歴(v5で追加): ユーザーが「自分が何をしたか」を後から確認できるようにするための
+	// 監査ログ。標準出力の監査ログ("msg":"audit")とは別に、画面から検索・一覧できるよう
+	// DBにも残す。document_id/project_idはそれぞれのレコードが後から削除されても参照が
+	// 残るよう、表示に必要な情報(entry_file/project_name)をスナップショットとして
+	// 一緒に保存する(JOIN不要にし、対象が消えても履歴自体は読めるようにするため)
+	targetDb.exec(`
+		CREATE TABLE IF NOT EXISTS audit_log (
+			id TEXT PRIMARY KEY,
+			user_identifier TEXT NOT NULL,
+			action TEXT NOT NULL,
+			document_id TEXT,
+			entry_file TEXT,
+			project_id TEXT,
+			project_name TEXT,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)
+	`);
+	targetDb.exec(`
+		CREATE INDEX IF NOT EXISTS idx_audit_log_user_created ON audit_log (user_identifier, created_at)
+	`);
+
 	// 全文検索用のFTS5仮想テーブル (trigramトークナイザ: 日本語等CJKでも単語分割不要で
 	// 部分一致検索できるが、3文字未満のクエリはヒットしない制約があるため、
 	// 短いクエリはアプリ側でLIKE検索にフォールバックする)。
@@ -226,6 +247,39 @@ const MIGRATIONS = {
 				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at FROM old.project_documents;
 			`);
 			// projects.archived_by/archived_atはv3に存在しないため対象外(NULLのまま=未アーカイブとして移行される)
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
+	},
+	5: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at FROM old.project_documents;
+			`);
+			// audit_logはv4に存在しないため対象外(createSchema()で空のまま作られたものをそのまま使う)
 		} finally {
 			newDb.exec("DETACH DATABASE old");
 		}
