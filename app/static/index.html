@@ -223,8 +223,6 @@
 	#projectTreeToolbar { padding: 10px 12px; border-bottom: 1px solid #eee; }
 	#projectTreeHeaderRow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
 	#projectTreeTitle { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	#projectEditToggleRow { display: flex; align-items: center; gap: 6px; }
-	#projectEditToggleRow .modalButton { font-size: 0.82em; padding: 5px 12px; }
 	#projectTreeList { list-style: none; margin: 0; padding: 8px; flex: 1; overflow-y: auto; }
 	#projectTreeList ul.treeChildren { list-style: none; margin: 0; padding-left: 1.1em; }
 	#projectTreeList .treeFolderRow, #projectTreeList .treeDocRow {
@@ -860,10 +858,12 @@
 					<button type="button" id="projectRestoreButton" class="iconButton" title="元に戻す" aria-label="元に戻す">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
 					</button>
-				</div>
-				<div class="toolbarRow" id="projectEditToggleRow">
-					<button type="button" id="projectEditToggleButton" class="modalButton">編集モードへ</button>
-					<button type="button" id="projectAddRootFolderButton" class="modalButton" style="display:none;">＋ フォルダ追加</button>
+					<button type="button" id="projectAddRootFolderButton" class="iconButton" title="フォルダ追加" aria-label="フォルダ追加" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+					</button>
+					<button type="button" id="projectEditToggleButton" class="iconButton" title="編集モードへ切り替え" aria-label="編集モードへ切り替え">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+					</button>
 				</div>
 			</div>
 			<ul id="projectTreeList"></ul>
@@ -1157,6 +1157,17 @@ const projectArchiveToggleButton = document.getElementById("projectArchiveToggle
 const projectEditToggleButton = document.getElementById("projectEditToggleButton");
 const projectAddRootFolderButton = document.getElementById("projectAddRootFolderButton");
 const projectTreeList = document.getElementById("projectTreeList");
+
+// 編集モード切り替え(南京錠アイコン): 表示モード=施錠、編集モード=解錠
+const PROJECT_LOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+const PROJECT_UNLOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
+const applyProjectEditToggleState = (isEditMode) => {
+	projectEditToggleButton.innerHTML = isEditMode ? PROJECT_UNLOCK_ICON : PROJECT_LOCK_ICON;
+	const label = isEditMode ? "表示モードへ切り替え" : "編集モードへ切り替え";
+	projectEditToggleButton.title = label;
+	projectEditToggleButton.setAttribute("aria-label", label);
+	projectAddRootFolderButton.style.display = isEditMode ? "inline-flex" : "none";
+};
 
 let allDocuments = [];
 let selectedId = null;
@@ -1800,8 +1811,7 @@ const setView = (view) => {
 	if (view !== "projects") {
 		projectsEditMode = false;
 		appShell.classList.remove("projectsEditMode");
-		projectEditToggleButton.textContent = "編集モードへ";
-		projectAddRootFolderButton.style.display = "none";
+		applyProjectEditToggleState(false);
 		projectsArchiveMode = false;
 		appShell.classList.remove("projectsArchiveMode");
 		projectArchiveToggleButton.textContent = "アーカイブ済み";
@@ -2295,8 +2305,7 @@ projectArchiveToggleButton.addEventListener("click", async () => {
 	projectArchiveToggleButton.textContent = projectsArchiveMode ? "戻る" : "アーカイブ済み";
 	projectsEditMode = false;
 	appShell.classList.remove("projectsEditMode");
-	projectEditToggleButton.textContent = "編集";
-	projectAddRootFolderButton.style.display = "none";
+	applyProjectEditToggleState(false);
 	currentProjectId = null;
 	clearPreview();
 	await loadProjects();
@@ -2305,8 +2314,7 @@ projectArchiveToggleButton.addEventListener("click", async () => {
 projectEditToggleButton.addEventListener("click", () => {
 	projectsEditMode = !projectsEditMode;
 	appShell.classList.toggle("projectsEditMode", projectsEditMode);
-	projectEditToggleButton.textContent = projectsEditMode ? "表示モードへ" : "編集モードへ";
-	projectAddRootFolderButton.style.display = projectsEditMode ? "inline-flex" : "none";
+	applyProjectEditToggleState(projectsEditMode);
 	renderProjectTree();
 	renderDocumentList();
 });
