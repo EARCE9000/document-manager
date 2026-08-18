@@ -871,6 +871,14 @@ const broadcastDocumentsChanged = () => {
 	}
 };
 
+// プロジェクトの施錠/解錠・構成変更(フォルダ/文書の登録・並び替え等)を同じSSE接続で通知する。
+// 全利用者で共有される状態のため、他クライアントが変更していても画面が古いままにならないようにする
+const broadcastProjectsChanged = () => {
+	for (const client of sseClients) {
+		client.write("event: projects-changed\ndata: {}\n\n");
+	}
+};
+
 /**
  * 文書一覧変更通知 (SSE)
  */
@@ -1425,6 +1433,13 @@ app.put(BASE_URL_PATH + 'api/tag_order', requireAuth, requireAdmin, async (req, 
 	}
 });
 
+// プロジェクトが施錠中の場合に、構成を変更するAPI(名前変更/フォルダ操作/文書登録・解除/並び替え)を
+// 一律で拒否するためのエラー応答。排他制御(誰かのロック)ではなく全利用者共有の状態で、
+// 「誰でも編集できる/誰も編集できない」を切り替えるだけ(423 Locked)
+const respondProjectLocked = (res) => {
+	res.status(423).json({error: "このプロジェクトは施錠されています。編集するには鍵を解錠してください。"});
+};
+
 /**
  * プロジェクト一覧
  */
@@ -1475,11 +1490,17 @@ app.post(BASE_URL_PATH + 'api/projects', requireAuth, requireWrite, async (req, 
 app.put(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const updated = Projects.renameProject(req.params.id, req.body.name);
-		if (!updated) {
+		const project = Projects.getProject(req.params.id);
+		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
+		Projects.renameProject(req.params.id, req.body.name);
+		broadcastProjectsChanged();
 		res.status(200).json(Projects.getProject(req.params.id));
 	} catch (err) {
 		if (err.message === "project name is required") {
@@ -1528,6 +1549,47 @@ app.post(BASE_URL_PATH + 'api/projects/:id/restore', requireAuth, requireWrite, 
 });
 
 /**
+ * プロジェクトを解錠する(admin/readwrite。全利用者で共有される状態で、解錠中は誰でも
+ * 構成を編集できる。排他制御ではないため同時編集の競合防止にはならない。明示的に施錠
+ * するまで解錠状態を維持し、タイムアウトによる自動施錠はしない)
+ */
+app.post(BASE_URL_PATH + 'api/projects/:id/unlock', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const updated = Projects.setProjectLocked(req.params.id, false);
+		if (!updated) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		broadcastProjectsChanged();
+		res.status(200).json(Projects.getProject(req.params.id));
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/unlock");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * プロジェクトを施錠する(admin/readwrite)。施錠中は名前変更・フォルダ操作・文書の
+ * 登録/解除/並び替えがすべて423で拒否される
+ */
+app.post(BASE_URL_PATH + 'api/projects/:id/lock', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const updated = Projects.setProjectLocked(req.params.id, true);
+		if (!updated) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		broadcastProjectsChanged();
+		res.status(200).json(Projects.getProject(req.params.id));
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/lock");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * プロジェクト削除 (admin/readwrite。フォルダ・文書の登録もまとめて削除するが、文書自体は消えない)
  */
 app.delete(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (req, res) => {
@@ -1569,11 +1631,17 @@ app.get(BASE_URL_PATH + 'api/projects/:id/tree', requireAuth, async (req, res) =
 app.post(BASE_URL_PATH + 'api/projects/:id/folders', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		if (Projects.getProject(req.params.id) == null) {
+		const project = Projects.getProject(req.params.id);
+		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
 		const folder = Projects.createFolder(req.params.id, req.body.name, req.body.parentFolderId || null, req.authData.user_identifier);
+		broadcastProjectsChanged();
 		res.status(200).json(folder);
 	} catch (err) {
 		if (err.message === "folder name is required" || err.message === "parent folder not found") {
@@ -1591,11 +1659,21 @@ app.post(BASE_URL_PATH + 'api/projects/:id/folders', requireAuth, requireWrite, 
 app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
+		const project = Projects.getProject(req.params.id);
+		if (project == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
 		const updated = Projects.renameFolder(req.params.id, req.params.folderId, req.body.name);
 		if (!updated) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		broadcastProjectsChanged();
 		res.status(200).json({id: req.params.folderId, name: req.body.name});
 	} catch (err) {
 		if (err.message === "folder name is required") {
@@ -1613,6 +1691,15 @@ app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, requi
 app.delete(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
+		const project = Projects.getProject(req.params.id);
+		if (project == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
 		const result = Projects.deleteFolder(req.params.id, req.params.folderId);
 		if (result === "not_found") {
 			res.status(404).json({error: "not found"});
@@ -1622,6 +1709,7 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, re
 			res.status(409).json({error: "フォルダの中身(サブフォルダ・文書)を空にしてから削除してください"});
 			return;
 		}
+		broadcastProjectsChanged();
 		res.status(204).end();
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/folders/:folderId:delete");
@@ -1641,6 +1729,10 @@ app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, r
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
 		const document = selectDocumentById.get(req.params.documentId);
 		if (document == null) {
 			res.status(404).json({error: "document not found"});
@@ -1655,6 +1747,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, r
 			projectId: req.params.id,
 			projectName: project.name
 		});
+		broadcastProjectsChanged();
 		res.status(200).json(placement);
 	} catch (err) {
 		if (err.message === "folder not found") {
@@ -1673,6 +1766,14 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth
 	try {
 		setHTTPHeaders(res);
 		const project = Projects.getProject(req.params.id);
+		if (project == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
 		const document = selectDocumentById.get(req.params.documentId);
 		const removed = Projects.removeDocument(req.params.id, req.params.documentId);
 		if (!removed) {
@@ -1687,6 +1788,7 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth
 			projectId: req.params.id,
 			projectName: project?.name ?? null
 		});
+		broadcastProjectsChanged();
 		res.status(204).end();
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/documents/:documentId:remove");
@@ -1701,8 +1803,13 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth
 app.put(BASE_URL_PATH + 'api/projects/:id/reorder', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		if (Projects.getProject(req.params.id) == null) {
+		const project = Projects.getProject(req.params.id);
+		if (project == null) {
 			res.status(404).json({error: "not found"});
+			return;
+		}
+		if (project.locked) {
+			respondProjectLocked(res);
 			return;
 		}
 		if (!Array.isArray(req.body.documentIds)) {
@@ -1710,6 +1817,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/reorder', requireAuth, requireWrite, a
 			return;
 		}
 		Projects.reorderDocuments(req.params.id, req.body.folderId || null, req.body.documentIds);
+		broadcastProjectsChanged();
 		res.status(200).json(Projects.getProjectTree(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/reorder");

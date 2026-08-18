@@ -1890,6 +1890,9 @@ const loadProjectTree = async () => {
 	if (currentProjectId == null) {
 		currentProjectTree = null;
 		projectTreeTitle.textContent = "";
+		projectsEditMode = false;
+		appShell.classList.remove("projectsEditMode");
+		applyProjectEditToggleState(false);
 		renderProjectTree();
 		return;
 	}
@@ -1902,6 +1905,11 @@ const loadProjectTree = async () => {
 	currentProjectTree = await res.json();
 	const project = currentProjects.find((p) => p.id === currentProjectId);
 	projectTreeTitle.textContent = project ? project.name : "";
+	// 施錠状態は全利用者で共有されるサーバー側の値なので、プロジェクト切り替え・SSE通知の
+	// たびにここで同期する(ローカルでの独自トグルは持たない)
+	projectsEditMode = project ? !project.locked : false;
+	appShell.classList.toggle("projectsEditMode", projectsEditMode);
+	applyProjectEditToggleState(projectsEditMode);
 	renderProjectTree();
 };
 
@@ -2326,8 +2334,17 @@ projectArchiveToggleButton.addEventListener("click", async () => {
 	await loadProjects();
 });
 
-projectEditToggleButton.addEventListener("click", () => {
-	projectsEditMode = !projectsEditMode;
+// 施錠/解錠は全利用者で共有される状態のため、サーバーに保存してSSEで他クライアントにも通知する
+// (ここでの変更は自分の画面ではAPIレスポンスを使って即時反映し、SSE通知の到着は待たない)
+projectEditToggleButton.addEventListener("click", async () => {
+	if (currentProjectId == null) return;
+	const endpoint = projectsEditMode ? "lock" : "unlock";
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/${endpoint}`, {method: "POST"});
+	if (res.status !== 200) return;
+	const project = await res.json();
+	const cached = currentProjects.find((p) => p.id === project.id);
+	if (cached) cached.locked = project.locked;
+	projectsEditMode = !project.locked;
 	appShell.classList.toggle("projectsEditMode", projectsEditMode);
 	applyProjectEditToggleState(projectsEditMode);
 	renderProjectTree();
@@ -3100,11 +3117,15 @@ helpCopyButton.addEventListener("click", () => {
 	copyTextWithFeedback(helpMarkdownText.value, helpCopyButton);
 });
 
-// 他クライアントによるアップロード/削除をSSEで受け取り、一覧を自動更新する
+// 他クライアントによるアップロード/削除・プロジェクトの施錠/解錠や構成変更をSSEで受け取り、
+// 表示中の画面を自動更新する(施錠状態は全利用者で共有されるため、他の人が変更したら反映する)
 const subscribeDocumentEvents = () => {
 	const eventSource = new EventSource("./api/documents/events");
 	eventSource.addEventListener("documents-changed", () => {
 		loadDocuments();
+	});
+	eventSource.addEventListener("projects-changed", () => {
+		if (currentView === "projects") loadProjects();
 	});
 };
 

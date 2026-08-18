@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const logger = require("./logger.js")(path.basename(__filename));
 const db = require("./db.js");
 
-const PROJECT_COLUMNS = "id, name, created_by, created_at, sort_order, archived_by, archived_at";
+const PROJECT_COLUMNS = "id, name, created_by, created_at, sort_order, archived_by, archived_at, locked";
 const selectProjects = db.prepare(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE archived_at IS NULL ORDER BY sort_order ASC, created_at ASC`);
 const selectArchivedProjects = db.prepare(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE archived_at IS NOT NULL ORDER BY archived_at DESC`);
 const selectProjectById = db.prepare(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE id = ?`);
@@ -24,6 +24,7 @@ const insertProject = db.prepare(`
 const updateProjectName = db.prepare(`UPDATE projects SET name = ? WHERE id = ?`);
 const archiveProjectRow = db.prepare(`UPDATE projects SET archived_by = ?, archived_at = ? WHERE id = ? AND archived_at IS NULL`);
 const restoreProjectRow = db.prepare(`UPDATE projects SET archived_by = NULL, archived_at = NULL WHERE id = ? AND archived_at IS NOT NULL`);
+const updateProjectLocked = db.prepare(`UPDATE projects SET locked = ? WHERE id = ?`);
 const deleteProjectRow = db.prepare(`DELETE FROM projects WHERE id = ?`);
 const deleteFoldersByProject = db.prepare(`DELETE FROM project_folders WHERE project_id = ?`);
 const deleteDocumentsByProject = db.prepare(`DELETE FROM project_documents WHERE project_id = ?`);
@@ -77,7 +78,8 @@ const toProjectResponse = (row) => ({
 	createdAt: row.created_at,
 	sortOrder: row.sort_order,
 	archivedBy: row.archived_by,
-	archivedAt: row.archived_at
+	archivedAt: row.archived_at,
+	locked: row.locked === 1
 });
 
 const toFolderResponse = (row) => ({
@@ -121,6 +123,16 @@ module.exports.archiveProject = (id, archivedBy) => {
 
 module.exports.restoreProject = (id) => {
 	const result = restoreProjectRow.run(id);
+	return result.changes > 0;
+};
+
+/**
+ * プロジェクトの施錠/解錠を切り替える。全利用者で共有される状態で、排他制御ではない
+ * (解錠中は書き込み権限を持つ誰でも編集できる)。タイムアウトによる自動施錠はせず、
+ * 明示的にlockされるまで解錠状態を維持する
+ */
+module.exports.setProjectLocked = (id, locked) => {
+	const result = updateProjectLocked.run(locked ? 1 : 0, id);
 	return result.changes > 0;
 };
 
