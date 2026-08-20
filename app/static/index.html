@@ -3358,6 +3358,20 @@ const buildAiUsageMarkdown = () => {
 - キーワードの部分一致ではなく、言い換え・表記ゆれを含めて意味的に近い文書を返す(スコアの良い順)
 - サーバー側でベクトル検索が未設定の場合は503が返る(その場合は通常の「文書一覧・検索」を使うこと)
 - レスポンスの各要素は通常の文書一覧と同じ形式に加え、\`snippet\`(ヒットした本文の抜粋)・\`distance\`(小さいほど類似度が高い)を含む
+- 認証さえ通ればreadonly/readwrite/adminどのロールのAPIキーでも利用できる(閲覧系のため)
+
+### ベクトル索引の状態確認・再実行 (要 admin/readwrite ロール。readonlyキーは403)
+\`GET ${baseUrl}/api/documents/vector-index/status\`
+- セマンティック検索の索引付けに成功/失敗/未処理の文書一覧を返す(\`{enabled, documents: [{id, entryFile, status, error, indexedAt}]}\`)
+- \`enabled: false\`の場合はベクトル検索自体が未設定(WEAVIATE_URL未設定)
+
+\`POST ${baseUrl}/api/documents/:id/vector-index/retry\`
+- 指定した1文書の索引付けを再実行する。Weaviate未設定の場合は503
+
+**チャンク分割設定(サイズ・オーバーラップ)の変更は含まれない**: これはadminロール限定の操作だが、
+APIキーはreadonly/readwriteでしか発行できない仕様のため(adminロールのAPIキーは発行不可)、
+このAI(APIキー経由)からは変更できない。変更したい場合は、ユーザー本人がブラウザにログインし、
+「ベクトル索引」画面から行う必要がある旨を伝えること。
 
 ### 文書アップロード (要 admin/readwrite ロール)
 \`POST ${baseUrl}/api/documents\`
@@ -3417,6 +3431,13 @@ curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/documents?q=請求�
 # セマンティック検索(意味検索。Weaviate未設定の場合は503が返る)
 curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/documents/search/vector?q=経費精算のルールについて"
 
+# ベクトル索引の状態確認(要 admin/readwrite ロール)
+curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/documents/vector-index/status"
+
+# ベクトル索引の再実行(要 admin/readwrite ロール)
+curl -X POST "${baseUrl}/api/documents/<id>/vector-index/retry" \\
+  -H "Authorization: Bearer <APIキー>"
+
 # アップロード
 curl -X POST "${baseUrl}/api/documents" \\
   -H "Authorization: Bearer <APIキー>" \\
@@ -3464,6 +3485,17 @@ curl -X PUT "${baseUrl}/api/projects/<projectId>/documents/<documentId>" \\
 上記の「セマンティック検索」APIの \`q\` パラメータに探したい内容を渡して検索してください。
 キーワードの部分一致では見つからない、表記ゆれ・言い換えを含む検索をしたい場合にも使えます。
 503が返った場合はこの機能が未設定であることをユーザーに伝え、通常の「文書一覧・検索」で代替してください。
+
+### 「索引に失敗してる文書ある?」「ベクトル索引の状況見せて」「索引を直して」「再実行して」
+上記の「ベクトル索引の状態確認・再実行」APIを使ってください。まず\`GET .../vector-index/status\`で
+一覧を取得し、\`status\`が\`"error"\`の文書をユーザーに報告してください(ファイル名・\`error\`の内容)。
+「直して」「再実行して」と言われたら、対象文書のIDに対して\`POST .../vector-index/retry\`を呼び、
+結果(成功したか、まだ失敗しているか)を報告してください。
+- \`enabled: false\`の場合はベクトル検索自体が未設定であることを伝えてください
+- 403が返った場合は、このAPIキーがreadonlyロールのため実行できないことを伝えてください
+- チャンク分割設定(サイズ・オーバーラップ)を変更してほしいと言われた場合、これはAPIキー経由では
+  変更できない(adminロールのAPIキーが発行できない仕様のため)ことを伝え、ブラウザにログインして
+  「ベクトル索引」画面から行うようユーザーに案内してください
 
 この指示を読んだら、Document Managerとの連携準備が整ったことと、「アップして」「探して」のように
 話しかければ操作できることをユーザーに一言伝えてください。
