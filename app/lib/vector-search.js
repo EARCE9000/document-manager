@@ -5,8 +5,13 @@
  *
  * FTS5によるキーワード全文検索(db.js)を置き換えるものではなく、別コンテナで動く
  * Weaviate(OSS)を使った意味検索を追加の検索手段として提供する。Embeddingの計算は
- * Weaviate側のtext2vec-transformersモジュール(さらに別コンテナの推論サーバー)に
- * 任せるため、このモジュールはテキストの登録・削除・検索の仲介のみを行う。
+ * Weaviate側のベクトライザーモジュールに任せるため、このモジュールはテキストの
+ * 登録・削除・検索の仲介のみを行う。既定は自己ホストのtext2vec-transformers
+ * (さらに別コンテナの推論サーバー、外部APIキー不要)だが、WEAVIATE_VECTORIZER環境変数で
+ * text2vec-cohere/text2vec-openai等の外部API方式にも切り替えられる(下記VECTORIZERS参照)。
+ * 切り替えは新規作成するWeaviateコレクションにのみ反映される。既に文書が索引済みの状態で
+ * 切り替えた場合は、Weaviate側でコレクションを削除してから起動し直し、「ベクトル索引」画面の
+ * 「全件を再索引」で作り直すこと(異なるベクトライザーのベクトルは互換性が無いため)。
  *
  * WEAVIATE_URL環境変数が未設定の間は完全に無効化される(任意機能)。既存の単一コンテナ
  * 運用(docker run)には影響を与えず、Weaviateが導入されていない/落ちている場合でも
@@ -26,8 +31,57 @@ const WEAVIATE_URL = process.env.WEAVIATE_URL || "";
 // WeaviateはREST(WEAVIATE_URLのポート)とは別にgRPCポートを持つ(v3クライアントは
 // バッチ登録・検索にgRPCを使う)。docker-compose.yml側のweaviateサービスの既定ポートに合わせる
 const WEAVIATE_GRPC_PORT = Number(process.env.WEAVIATE_GRPC_PORT || 50051);
+// 使用するベクトライザーモジュール名(Weaviate側でENABLE_MODULESに含めておく必要がある)。
+// 未知の値が指定された場合はtext2vec-transformers(既定)にフォールバックする
+const WEAVIATE_VECTORIZER = process.env.WEAVIATE_VECTORIZER || "text2vec-transformers";
 
 const COLLECTION_NAME = "DocumentChunk";
+
+// サポートするベクトライザーと、対応する設定の組み立て方・APIキーのヘッダー名。
+// 外部API方式(cohere/openai)はWeaviateコンテナ自体にAPIキーを持たせず、
+// このアプリのプロセス側の環境変数からリクエストヘッダーとして都度渡す
+// (シークレットの置き場所をこのアプリ1箇所に集約するため)
+const VECTORIZERS = {
+	"text2vec-transformers": {
+		configure: (weaviate) => weaviate.configure.vectorizer.text2VecTransformers({vectorizeCollectionName: false}),
+		apiKeyEnv: null,
+		apiKeyHeader: null
+	},
+	"text2vec-cohere": {
+		configure: (weaviate) => weaviate.configure.vectorizer.text2VecCohere({vectorizeCollectionName: false}),
+		apiKeyEnv: "COHERE_APIKEY",
+		apiKeyHeader: "X-Cohere-Api-Key"
+	},
+	"text2vec-openai": {
+		configure: (weaviate) => weaviate.configure.vectorizer.text2VecOpenAI({vectorizeCollectionName: false}),
+		apiKeyEnv: "OPENAI_APIKEY",
+		apiKeyHeader: "X-OpenAI-Api-Key"
+	}
+};
+
+const resolveVectorizer = () => {
+	const vectorizer = VECTORIZERS[WEAVIATE_VECTORIZER];
+	if (vectorizer == null) {
+		logger.warn({WEAVIATE_VECTORIZER}, "::resolveVectorizer: 未知のWEAVIATE_VECTORIZERが指定されたため、text2vec-transformersにフォールバックします");
+		return VECTORIZERS["text2vec-transformers"];
+	}
+	return vectorizer;
+};
+
+// 外部API方式のベクトライザー用に、APIキーをリクエストヘッダーとして組み立てる
+// (text2vec-transformersのようにAPIキー不要な方式ではapiKeyEnvがnullのため何もしない)
+const buildConnectionHeaders = () => {
+	const vectorizer = resolveVectorizer();
+	if (vectorizer.apiKeyEnv == null) {
+		return {};
+	}
+	const apiKey = process.env[vectorizer.apiKeyEnv] || "";
+	if (apiKey === "") {
+		logger.warn({WEAVIATE_VECTORIZER, apiKeyEnv: vectorizer.apiKeyEnv}, "::buildConnectionHeaders: APIキーが未設定です");
+		return {};
+	}
+	return {[vectorizer.apiKeyHeader]: apiKey};
+};
 
 // 多言語text2vec-transformersモデルの最大シーケンス長を超えて意味が失われないよう、
 // 本文をチャンク単位で登録・検索する(文字数ベースの簡易分割。厳密なトークン数ではない)
@@ -66,14 +120,14 @@ const ensureCollection = async (weaviate, client) => {
 	}
 	await client.collections.create({
 		name: COLLECTION_NAME,
-		vectorizers: weaviate.configure.vectorizer.text2VecTransformers({vectorizeCollectionName: false}),
+		vectorizers: resolveVectorizer().configure(weaviate),
 		properties: [
 			{name: "documentId", dataType: weaviate.dataType.TEXT, skipVectorization: true, indexFilterable: true},
 			{name: "chunkIndex", dataType: weaviate.dataType.INT, skipVectorization: true},
 			{name: "text", dataType: weaviate.dataType.TEXT}
 		]
 	});
-	logger.info({collection: COLLECTION_NAME}, "::ensureCollection: Weaviateコレクションを作成しました");
+	logger.info({collection: COLLECTION_NAME, vectorizer: WEAVIATE_VECTORIZER}, "::ensureCollection: Weaviateコレクションを作成しました");
 };
 
 // Weaviateクライアントの初期化(初回呼び出し時のみ接続・コレクション確認を行い、以降は使い回す)。
@@ -91,6 +145,7 @@ const getClient = () => {
 				grpcHost: url.hostname,
 				grpcPort: WEAVIATE_GRPC_PORT,
 				grpcSecure: httpSecure,
+				headers: buildConnectionHeaders(),
 				skipInitChecks: true
 			});
 			await ensureCollection(weaviate, client);

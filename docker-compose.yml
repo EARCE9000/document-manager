@@ -6,6 +6,13 @@
 # `docker build` + `docker run` で app サービス単体を起動すればよい(README参照)。
 # WEAVIATE_URL を設定した場合のみ有効化される(app/lib/vector-search.js参照)。
 #
+# Embedding計算の方式(WEAVIATE_VECTORIZER)は既定で自己ホストのtext2vec-transformers
+# (外部APIキー不要、t2v-transformersコンテナを使用)。Cohere/OpenAI等の外部APIに
+# 切り替える場合は、appサービスの環境変数(WEAVIATE_VECTORIZER・各種APIKEY)を
+# .env等で上書きすればよく、このファイル自体の編集は不要(t2v-transformersコンテナは
+# 未使用になるだけで、動かしたままでも害はない。不要なら`docker compose up -d app weaviate`
+# のようにサービスを指定して起動すれば省略できる)。
+#
 # weaviate/t2v-transformersのイメージタグは:latestにしている。自己ホスト運用では
 # 動作確認後に具体的なバージョンへ固定することを推奨する。
 
@@ -21,6 +28,12 @@ services:
     environment:
       - WEAVIATE_URL=http://weaviate:8080
       - WEAVIATE_GRPC_PORT=50051
+      # 既定はtext2vec-transformers(外部APIキー不要)。Cohere/OpenAIを使う場合は
+      # .env等でWEAVIATE_VECTORIZER=text2vec-cohere(またはtext2vec-openai)と
+      # 対応するAPIキーを設定する(COHERE_APIKEY / OPENAI_APIKEY)
+      - WEAVIATE_VECTORIZER=${WEAVIATE_VECTORIZER:-text2vec-transformers}
+      - COHERE_APIKEY=${COHERE_APIKEY:-}
+      - OPENAI_APIKEY=${OPENAI_APIKEY:-}
       # OIDC_*/SESSION_SECRET等、既存の必須環境変数はREADMEの「環境変数」表を参照して別途指定すること
       - AUTH_DISABLED=${AUTH_DISABLED:-}
     depends_on:
@@ -37,7 +50,10 @@ services:
       - QUERY_DEFAULTS_LIMIT=25
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
       - PERSISTENCE_DATA_PATH=/var/lib/weaviate
-      - ENABLE_MODULES=text2vec-transformers
+      # text2vec-cohere/text2vec-openaiは追加コンテナ不要(Weaviate本体に組み込み済みで
+      # 外部APIを呼ぶだけ)なため、appのWEAVIATE_VECTORIZERをいつでも切り替えられるよう
+      # 3方式ともまとめて有効化しておく(未使用の方式はAPIキー等が無ければ単に呼ばれない)
+      - ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai
       - DEFAULT_VECTORIZER_MODULE=text2vec-transformers
       - TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080
       - CLUSTER_HOSTNAME=node1
@@ -46,8 +62,9 @@ services:
     depends_on:
       - t2v-transformers
 
-  # Embedding推論サーバー(Weaviate公式のOSSコンテナ)。日本語を含む多言語文書のため
-  # 多言語sentence-transformersモデルを使用する。外部APIキーは不要
+  # Embedding推論サーバー(Weaviate公式のOSSコンテナ)。WEAVIATE_VECTORIZER=text2vec-transformers
+  # (既定)の場合のみ使われる。日本語を含む多言語文書のため多言語sentence-transformers
+  # モデルを使用する。外部APIキーは不要
   t2v-transformers:
     image: semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2
     restart: unless-stopped
