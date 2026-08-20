@@ -34,7 +34,7 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
 - **全文検索**: ファイル名・本文(抽出済みプレーンテキスト)はFTS5(`trigram`トークナイザ)で部分一致検索する。単語分割不要で日本語等CJKにも強いが、3文字未満のクエリはヒットしない制約があるため、その場合は自動的に `LIKE` 検索にフォールバックする。タグ・メモは元々短い文字列のため常に `LIKE` で検索する
 - **セマンティック検索(任意機能)**: `WEAVIATE_URL`環境変数を設定すると、キーワードの部分一致ではなく言い換え・表記ゆれを含めて意味的に近い文書を検索できるようになる(`GET api/documents/search/vector?q=...`)。ベクトルDBには[Weaviate](https://weaviate.io/)(OSS)を別コンテナで使用し、Embedding計算はWeaviate公式の`text2vec-transformers`推論コンテナ(多言語sentence-transformersモデル)に任せるため、外部APIキーは不要。`WEAVIATE_URL`未設定の間はこの機能自体が無効化され、既存のキーワード検索・文書管理には一切影響しない。文書一覧画面の「セマンティック検索」チェックボックス、またはAPI(`api/documents/search/vector`)から利用できる。詳細は[docker-compose.yml](docker-compose.yml)を参照
   - **既存文書のバックフィル**: `WEAVIATE_URL`を設定してサーバーを起動すると、この機能を導入する前にアップロード済みだった文書も自動的に差分索引付けされる(既にWeaviate側に登録済みの文書は再処理しない)
-  - **索引失敗の再実行**: 画面右上の「ベクトル索引」アイコン(要 admin/readwrite ロール)から、索引付けに失敗した文書の一覧確認・個別/一括での再実行ができる(`GET api/documents/vector-index/failed` / `POST api/documents/:id/vector-index/retry`)
+  - **索引状態の確認・再実行**: 画面右上の「ベクトル索引」アイコン(要 admin/readwrite ロール)から、索引付けに失敗した文書の一覧確認・個別/一括での再実行ができる。チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」から一括で再実行できる(`GET api/documents/vector-index/status` / `POST api/documents/:id/vector-index/retry`)
 - **タグ**: 文書ごとに自由入力のタグを付与できる。他の文書に付けた既存タグを候補として選択することも可能(個数上限なし)
 - **メモ**: プレビュー下部に、文書ごとの備忘録として自由記述メモを入力・保存できる(要 admin/readwrite ロール。アーカイブ表示では閲覧のみ)。検索対象にも含まれる
 - **登録日検索**: アップロード日時のFrom〜Toで絞り込み。初期表示は「2か月前 〜 (Toは空欄)」

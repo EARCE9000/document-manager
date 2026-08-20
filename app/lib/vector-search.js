@@ -41,10 +41,12 @@ const CHUNK_OVERLAP = 50;
 const updateVectorIndexStatus = db.prepare(`
 	UPDATE documents SET vector_index_status = @status, vector_index_error = @error, vector_indexed_at = @indexed_at WHERE id = @id
 `);
-const selectFailedDocuments = db.prepare(`
-	SELECT id, entry_file, vector_index_error, vector_indexed_at
+// チャンク分割方法・埋め込みモデルの変更後は、既に'ok'で成功している文書も含めて
+// 再索引が必要になり得るため、失敗した文書だけでなくアクティブな全文書の状態を返せるようにする
+const selectAllDocumentStatuses = db.prepare(`
+	SELECT id, entry_file, vector_index_status, vector_index_error, vector_indexed_at
 	FROM documents
-	WHERE deleted_at IS NULL AND vector_index_status = 'error'
+	WHERE deleted_at IS NULL
 	ORDER BY entry_file
 `);
 const selectDocumentForIndexing = db.prepare(`
@@ -268,12 +270,15 @@ const backfillMissingDocuments = async (documents) => {
 };
 
 /**
- * 索引付けに失敗した(vector_index_status = 'error')アクティブな文書の一覧を返す。
- * 「失敗した文書の再実行」画面(index.html)から呼ばれる
+ * アクティブな全文書の索引状態(status: null=未処理 / 'ok' / 'error')を返す。
+ * 「ベクトル索引」画面(index.html)から呼ばれる。失敗した文書の再実行だけでなく、
+ * チャンク分割方法や埋め込みモデルを変更した際に成功済みの文書も含めて
+ * 再索引したいケースに対応するため、'ok'の文書も返す
  */
-const listFailedDocuments = () => selectFailedDocuments.all().map((row) => ({
+const listIndexStatuses = () => selectAllDocumentStatuses.all().map((row) => ({
 	id: row.id,
 	entryFile: row.entry_file,
+	status: row.vector_index_status,
 	error: row.vector_index_error,
 	indexedAt: row.vector_indexed_at
 }));
@@ -297,4 +302,4 @@ const retryDocument = async (documentId) => {
 	};
 };
 
-module.exports = {isEnabled, indexDocument, removeDocument, search, chunkText, backfillMissingDocuments, listFailedDocuments, retryDocument};
+module.exports = {isEnabled, indexDocument, removeDocument, search, chunkText, backfillMissingDocuments, listIndexStatuses, retryDocument};

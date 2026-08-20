@@ -958,19 +958,20 @@ app.get(BASE_URL_PATH + 'api/documents/search/vector', requireAuth, async (req, 
 });
 
 /**
- * ベクトル検索の索引付けに失敗した文書の一覧(要 admin/readwrite ロール)。
- * 「失敗した文書を再実行する」画面(index.html)から呼ばれる。Weaviate未設定の場合も
- * エラーにはせず enabled:false を返す(その場合 documents は常に空)
+ * ベクトル検索のアクティブな全文書の索引状態(要 admin/readwrite ロール)。
+ * 「ベクトル索引」画面(index.html)から呼ばれる。失敗した文書の再実行だけでなく、
+ * チャンク分割方法や埋め込みモデルの変更後に成功済みの文書を再索引したい場合にも使う。
+ * Weaviate未設定の場合もエラーにはせず enabled:false を返す(その場合 documents は常に空)
  */
-app.get(BASE_URL_PATH + 'api/documents/vector-index/failed', requireAuth, requireWrite, async (req, res) => {
+app.get(BASE_URL_PATH + 'api/documents/vector-index/status', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		res.status(200).json({
 			enabled: VectorSearch.isEnabled(),
-			documents: VectorSearch.isEnabled() ? VectorSearch.listFailedDocuments() : []
+			documents: VectorSearch.isEnabled() ? VectorSearch.listIndexStatuses() : []
 		});
 	} catch (err) {
-		logger.error(err, "::api/documents/vector-index/failed");
+		logger.error(err, "::api/documents/vector-index/status");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

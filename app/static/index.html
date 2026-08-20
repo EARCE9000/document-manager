@@ -754,6 +754,17 @@
 	#historyTable .historyActionBadge.project_unassign { background: #f4f5f7; color: #666; }
 
 	#vectorIndexModalBox { max-width: 780px; width: 94%; }
+	#vectorIndexShowAllLabel {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.85em;
+		color: #555;
+		margin: 8px 0 0;
+		cursor: pointer;
+		user-select: none;
+	}
+	#vectorIndexShowAllLabel input { margin: 0; cursor: pointer; }
 	#vectorIndexTableWrap {
 		max-height: 420px;
 		overflow-y: auto;
@@ -762,9 +773,10 @@
 		margin-top: 10px;
 	}
 	#vectorIndexTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.85em; }
-	#vectorIndexTable col.colTarget { width: 26%; }
-	#vectorIndexTable col.colNote { width: 40%; }
-	#vectorIndexTable col.colDate { width: 20%; }
+	#vectorIndexTable col.colTarget { width: 22%; }
+	#vectorIndexTable col.colStatus { width: 12%; }
+	#vectorIndexTable col.colNote { width: 34%; }
+	#vectorIndexTable col.colDate { width: 18%; }
 	#vectorIndexTable col.colAction { width: 14%; }
 	#vectorIndexTable th, #vectorIndexTable td {
 		text-align: left;
@@ -784,6 +796,17 @@
 	}
 	#vectorIndexTable tbody tr:last-child td { border-bottom: none; }
 	#vectorIndexTable .vectorIndexRetryButton { padding: 3px 10px; font-size: 0.9em; }
+	#vectorIndexTable .vectorIndexStatusBadge {
+		display: inline-block;
+		font-size: 0.85em;
+		font-weight: 600;
+		padding: 1px 8px;
+		border-radius: 999px;
+		background: #f4f5f7;
+		color: #666;
+	}
+	#vectorIndexTable .vectorIndexStatusBadge.ok { background: #eaf7ea; color: #2f9e44; }
+	#vectorIndexTable .vectorIndexStatusBadge.error { background: #fdecea; color: #c92a2a; }
 
 	#tagOrderModalBox { max-width: 560px; width: 94%; }
 	#tagOrderModalBox .toolbarRow { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
@@ -1107,12 +1130,20 @@
 <div id="vectorIndexOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="vectorIndexModalBox">
 		<p>ベクトル索引</p>
-		<div class="docMeta">セマンティック検索(意味検索)の索引付けに失敗した文書の一覧です。Weaviateが一時的に落ちていた場合などにここから再実行できます。</div>
+		<div class="docMeta">
+			セマンティック検索(意味検索)の索引状況です。索引付けに失敗した文書はここから再実行できます。<br>
+			チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」を使ってください(文書数が多いと時間がかかります)。
+		</div>
 		<div id="vectorIndexDisabledMessage" class="emptyMessage" style="display:none;">ベクトル検索は設定されていません(WEAVIATE_URL未設定)。</div>
+		<label id="vectorIndexShowAllLabel">
+			<input type="checkbox" id="vectorIndexShowAllToggle">
+			成功・未処理の文書も表示する
+		</label>
 		<div id="vectorIndexTableWrap">
 			<table id="vectorIndexTable">
 				<colgroup>
 					<col class="colTarget">
+					<col class="colStatus">
 					<col class="colNote">
 					<col class="colDate">
 					<col class="colAction">
@@ -1120,8 +1151,9 @@
 				<thead>
 					<tr>
 						<th>ファイル名</th>
+						<th>状態</th>
 						<th>エラー内容</th>
-						<th>最終試行</th>
+						<th>最終成功</th>
 						<th></th>
 					</tr>
 				</thead>
@@ -1130,7 +1162,8 @@
 		</div>
 		<div id="vectorIndexEmptyMessage" class="emptyMessage" style="display:none;">索引付けに失敗している文書はありません。</div>
 		<div class="modalButtons">
-			<button id="vectorIndexRetryAllButton" type="button" class="modalButton save">すべて再実行</button>
+			<button id="vectorIndexReindexAllButton" type="button" class="modalButton">全件を再索引</button>
+			<button id="vectorIndexRetryFailedButton" type="button" class="modalButton save">失敗を再実行</button>
 			<button id="vectorIndexCloseButton" type="button" class="modalButton">閉じる</button>
 		</div>
 	</div>
@@ -2965,14 +2998,23 @@ historyOverlay.addEventListener("click", (ev) => {
 	if (ev.target === historyOverlay) historyOverlay.style.display = "none";
 });
 
-// ベクトル索引(セマンティック検索)モーダル: 索引付けに失敗した文書の一覧・個別/一括の再実行
+// ベクトル索引(セマンティック検索)モーダル: 索引状態の一覧・個別/一括の再実行。
+// 既定では失敗した文書だけを表示するが、チャンク分割方法や埋め込みモデルを変更した際は
+// 成功済み(status: 'ok')の文書も含めて再索引したくなるため、トグルで全件表示に切り替えられる
 const vectorIndexOverlay = document.getElementById("vectorIndexOverlay");
 const vectorIndexList = document.getElementById("vectorIndexList");
 const vectorIndexTableWrap = document.getElementById("vectorIndexTableWrap");
 const vectorIndexEmptyMessage = document.getElementById("vectorIndexEmptyMessage");
 const vectorIndexDisabledMessage = document.getElementById("vectorIndexDisabledMessage");
-const vectorIndexRetryAllButton = document.getElementById("vectorIndexRetryAllButton");
+const vectorIndexShowAllToggle = document.getElementById("vectorIndexShowAllToggle");
+const vectorIndexShowAllLabel = document.getElementById("vectorIndexShowAllLabel");
+const vectorIndexReindexAllButton = document.getElementById("vectorIndexReindexAllButton");
+const vectorIndexRetryFailedButton = document.getElementById("vectorIndexRetryFailedButton");
 const vectorIndexCloseButton = document.getElementById("vectorIndexCloseButton");
+
+const VECTOR_INDEX_STATUS_LABELS = {ok: "成功", error: "失敗"};
+
+let vectorIndexDocuments = [];
 
 const retryVectorIndex = async (id) => {
 	const res = await fetch(`./api/documents/${encodeURIComponent(id)}/vector-index/retry`, {method: "POST"});
@@ -2982,13 +3024,31 @@ const retryVectorIndex = async (id) => {
 	}
 };
 
-const loadVectorIndexFailures = async () => {
-	const res = await fetch("./api/documents/vector-index/failed");
+// 複数件をまとめて再索引する。逐次実行にしてWeaviate/推論サーバーへの同時リクエストが
+// 大量に飛ばないようにする(件数が多いと時間がかかる旨をボタンのテキストで示す)
+const retryVectorIndexMany = async (ids, button, runningLabel) => {
+	if (ids.length === 0) return;
+	button.disabled = true;
+	const originalLabel = button.textContent;
+	for (let i = 0; i < ids.length; i++) {
+		button.textContent = `${runningLabel} (${i + 1}/${ids.length})`;
+		await retryVectorIndex(ids[i]);
+	}
+	button.disabled = false;
+	button.textContent = originalLabel;
+	await loadVectorIndexStatuses();
+};
+
+const loadVectorIndexStatuses = async () => {
+	const res = await fetch("./api/documents/vector-index/status");
 	if (res.status !== 200) return;
 	const {enabled, documents} = await res.json();
+	vectorIndexDocuments = documents;
 
 	vectorIndexDisabledMessage.style.display = enabled ? "none" : "block";
-	vectorIndexRetryAllButton.style.display = enabled ? "" : "none";
+	vectorIndexShowAllLabel.style.display = enabled ? "flex" : "none";
+	vectorIndexReindexAllButton.style.display = enabled ? "" : "none";
+	vectorIndexRetryFailedButton.style.display = enabled ? "" : "none";
 	if (!enabled) {
 		vectorIndexTableWrap.style.display = "none";
 		vectorIndexEmptyMessage.style.display = "none";
@@ -2996,11 +3056,16 @@ const loadVectorIndexFailures = async () => {
 		return;
 	}
 
-	vectorIndexTableWrap.style.display = documents.length === 0 ? "none" : "block";
-	vectorIndexEmptyMessage.style.display = documents.length === 0 ? "block" : "none";
-	vectorIndexList.innerHTML = documents.map((doc) => `
+	const showAll = vectorIndexShowAllToggle.checked;
+	const rows = showAll ? documents : documents.filter((doc) => doc.status === "error");
+
+	vectorIndexTableWrap.style.display = rows.length === 0 ? "none" : "block";
+	vectorIndexEmptyMessage.style.display = rows.length === 0 ? "block" : "none";
+	vectorIndexEmptyMessage.textContent = showAll ? "対象の文書はありません。" : "索引付けに失敗している文書はありません。";
+	vectorIndexList.innerHTML = rows.map((doc) => `
 		<tr data-id="${escapeHtml(doc.id)}">
 			<td title="${escapeHtml(doc.entryFile)}">${escapeHtml(doc.entryFile)}</td>
+			<td><span class="vectorIndexStatusBadge ${escapeHtml(doc.status || "")}">${escapeHtml(VECTOR_INDEX_STATUS_LABELS[doc.status] || "未処理")}</span></td>
 			<td title="${escapeHtml(doc.error || "")}">${escapeHtml(doc.error || "")}</td>
 			<td>${doc.indexedAt ? formatDateTime(doc.indexedAt) : "-"}</td>
 			<td><button type="button" class="modalButton vectorIndexRetryButton" data-id="${escapeHtml(doc.id)}">再実行</button></td>
@@ -3011,30 +3076,42 @@ const loadVectorIndexFailures = async () => {
 			btn.disabled = true;
 			btn.textContent = "実行中...";
 			await retryVectorIndex(btn.dataset.id);
-			await loadVectorIndexFailures();
+			await loadVectorIndexStatuses();
 		});
 	});
 };
 
 document.getElementById("vectorIndexManageLink").addEventListener("click", () => {
 	vectorIndexOverlay.style.display = "flex";
-	loadVectorIndexFailures();
+	loadVectorIndexStatuses();
 });
 vectorIndexCloseButton.addEventListener("click", () => { vectorIndexOverlay.style.display = "none"; });
 vectorIndexOverlay.addEventListener("click", (ev) => {
 	if (ev.target === vectorIndexOverlay) vectorIndexOverlay.style.display = "none";
 });
-vectorIndexRetryAllButton.addEventListener("click", async () => {
-	const ids = [...vectorIndexList.querySelectorAll("tr")].map((tr) => tr.dataset.id);
-	if (ids.length === 0) return;
-	vectorIndexRetryAllButton.disabled = true;
-	vectorIndexRetryAllButton.textContent = "実行中...";
-	for (const id of ids) {
-		await retryVectorIndex(id);
+vectorIndexShowAllToggle.addEventListener("change", loadVectorIndexStatuses);
+
+// 失敗している文書だけを再実行する(表示中のフィルタに関わらず、失敗している全件が対象)
+vectorIndexRetryFailedButton.addEventListener("click", async () => {
+	const ids = vectorIndexDocuments.filter((doc) => doc.status === "error").map((doc) => doc.id);
+	if (ids.length === 0) {
+		alert("索引付けに失敗している文書はありません。");
+		return;
 	}
-	vectorIndexRetryAllButton.disabled = false;
-	vectorIndexRetryAllButton.textContent = "すべて再実行";
-	await loadVectorIndexFailures();
+	await retryVectorIndexMany(ids, vectorIndexRetryFailedButton, "実行中");
+});
+
+// チャンク分割方法・埋め込みモデルの変更後などに、成功済みの文書も含めて全件作り直す
+vectorIndexReindexAllButton.addEventListener("click", async () => {
+	const ids = vectorIndexDocuments.map((doc) => doc.id);
+	if (ids.length === 0) {
+		alert("対象の文書がありません。");
+		return;
+	}
+	if (!(await showConfirmDialog(`成功済みの文書も含め、全${ids.length}件のベクトル索引を作り直します。文書数によっては時間がかかりますがよろしいですか?`))) {
+		return;
+	}
+	await retryVectorIndexMany(ids, vectorIndexReindexAllButton, "実行中");
 });
 
 // タグ体系の並び順管理(管理者のみ)。保存を押すまではローカルの配列(tagOrderDraft)だけを
