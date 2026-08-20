@@ -779,6 +779,27 @@
 		user-select: none;
 	}
 	#vectorIndexShowAllLabel input { margin: 0; cursor: pointer; }
+	#vectorIndexSettingsRow {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		flex-wrap: wrap;
+		margin-top: 10px;
+		padding-top: 10px;
+		border-top: 1px solid #eee;
+	}
+	#vectorIndexSettingsSummary { font-size: 0.85em; color: #555; }
+	#vectorIndexSettingsEdit { display: none; align-items: center; gap: 10px; flex-wrap: wrap; }
+	#appShell.adminMode #vectorIndexSettingsEdit { display: flex; }
+	#vectorIndexSettingsEdit label { display: flex; align-items: center; gap: 5px; font-size: 0.85em; color: #555; }
+	#vectorIndexSettingsEdit input {
+		width: 70px;
+		padding: 4px 6px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-size: 0.9em;
+	}
+	#chunkSettingsSaveButton, #chunkSettingsResetButton { padding: 4px 12px; font-size: 0.85em; }
 	#vectorIndexDisabledMessage,
 	#vectorIndexEmptyMessage { margin: 16px 20px; color: #888; font-size: 0.9em; }
 	#vectorIndexTableWrap { flex: 1; overflow-y: auto; }
@@ -1058,6 +1079,15 @@
 					<div id="vectorIndexActions">
 						<button id="vectorIndexReindexAllButton" type="button" class="modalButton">全件を再索引</button>
 						<button id="vectorIndexRetryFailedButton" type="button" class="modalButton save">失敗を再実行</button>
+					</div>
+				</div>
+				<div id="vectorIndexSettingsRow">
+					<span id="vectorIndexSettingsSummary">チャンク分割設定: -</span>
+					<div id="vectorIndexSettingsEdit">
+						<label>サイズ<input type="number" id="chunkSizeInput" min="50" max="4000" step="1"></label>
+						<label>オーバーラップ<input type="number" id="chunkOverlapInput" min="0" step="1"></label>
+						<button id="chunkSettingsSaveButton" type="button" class="modalButton save">保存</button>
+						<button id="chunkSettingsResetButton" type="button" class="modalButton">既定値に戻す</button>
 					</div>
 				</div>
 			</div>
@@ -1945,7 +1975,7 @@ const loadDocuments = async () => {
 		return;
 	}
 	if (currentView === "vectorIndex") {
-		await loadVectorIndexStatuses();
+		await Promise.all([loadVectorIndexStatuses(), loadVectorIndexSettings()]);
 		return;
 	}
 	const q = filterInput.value.trim();
@@ -3123,6 +3153,62 @@ vectorIndexReindexAllButton.addEventListener("click", async () => {
 		return;
 	}
 	await retryVectorIndexMany(ids, vectorIndexReindexAllButton, "実行中");
+});
+
+// チャンク分割設定(サイズ・オーバーラップ)。閲覧はrequireWrite全員、変更はadminロール限定
+// (システム全体の索引付けに影響するため)。入力欄・保存/リセットボタン自体もadminMode時のみ
+// CSSで表示する(#vectorIndexSettingsEdit参照)
+const vectorIndexSettingsSummary = document.getElementById("vectorIndexSettingsSummary");
+const chunkSizeInput = document.getElementById("chunkSizeInput");
+const chunkOverlapInput = document.getElementById("chunkOverlapInput");
+const chunkSettingsSaveButton = document.getElementById("chunkSettingsSaveButton");
+const chunkSettingsResetButton = document.getElementById("chunkSettingsResetButton");
+
+const renderChunkSettingsSummary = (settings) => {
+	chunkSizeInput.value = settings.chunkSize;
+	chunkOverlapInput.value = settings.chunkOverlap;
+	const base = `チャンク分割設定: ${settings.chunkSize}文字 / オーバーラップ${settings.chunkOverlap}文字`;
+	vectorIndexSettingsSummary.textContent = settings.isCustom
+		? `${base}(カスタム設定${settings.updatedAt ? ` ・ ${formatDateTime(settings.updatedAt)}` : ""}${settings.updatedBy ? ` ${settings.updatedBy}` : ""})`
+		: `${base}(既定値)`;
+};
+
+const loadVectorIndexSettings = async () => {
+	const res = await fetch("./api/vector-index/settings");
+	if (res.status !== 200) return;
+	renderChunkSettingsSummary(await res.json());
+};
+
+chunkSettingsSaveButton.addEventListener("click", async () => {
+	const chunkSize = Number(chunkSizeInput.value);
+	const chunkOverlap = Number(chunkOverlapInput.value);
+	if (!(await showConfirmDialog("チャンク分割設定を保存します。この変更は新規に索引付けする文書からのみ反映されます。既存の文書にも適用したい場合は、保存後に「全件を再索引」を行ってください。よろしいですか?"))) {
+		return;
+	}
+	const res = await fetch("./api/vector-index/settings", {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({chunkSize, chunkOverlap})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "保存に失敗しました");
+		return;
+	}
+	renderChunkSettingsSummary(await res.json());
+});
+
+chunkSettingsResetButton.addEventListener("click", async () => {
+	if (!(await showConfirmDialog("チャンク分割設定を環境変数の既定値に戻します。よろしいですか?"))) {
+		return;
+	}
+	const res = await fetch("./api/vector-index/settings", {method: "DELETE"});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "リセットに失敗しました");
+		return;
+	}
+	renderChunkSettingsSummary(await res.json());
 });
 
 // タグ体系の並び順管理(管理者のみ)。保存を押すまではローカルの配列(tagOrderDraft)だけを

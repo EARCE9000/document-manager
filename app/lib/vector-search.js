@@ -84,9 +84,14 @@ const buildConnectionHeaders = () => {
 };
 
 // 多言語text2vec-transformersモデルの最大シーケンス長を超えて意味が失われないよう、
-// 本文をチャンク単位で登録・検索する(文字数ベースの簡易分割。厳密なトークン数ではない)
-const CHUNK_SIZE = 400;
-const CHUNK_OVERLAP = 50;
+// 本文をチャンク単位で登録・検索する(文字数ベースの簡易分割。厳密なトークン数ではない)。
+// 環境変数を既定値としつつ、「ベクトル索引」画面(admin限定)からDBへ保存した値があれば
+// そちらを優先する(getChunkSettings参照)。変更は新規に索引付けする文書からのみ反映されるため、
+// 既存文書に遡って適用したい場合は変更後に「全件を再索引」を行うこと
+const CHUNK_SIZE_DEFAULT = Number(process.env.VECTOR_CHUNK_SIZE || 400);
+const CHUNK_OVERLAP_DEFAULT = Number(process.env.VECTOR_CHUNK_OVERLAP || 50);
+const CHUNK_SIZE_MIN = 50;
+const CHUNK_SIZE_MAX = 4000;
 
 // 文書ごとの索引状態(documents.vector_index_status: NULL=未処理/'ok'/'error')。
 // 「失敗しているものを再実行する」画面(index.htmlのベクトル索引モーダル)のために、
@@ -110,7 +115,55 @@ const selectVectorIndexStatus = db.prepare(`
 	SELECT vector_index_status, vector_index_error, vector_indexed_at FROM documents WHERE id = ?
 `);
 
+// チャンク分割設定(GUIからの上書き)。id=1固定のシングルトン行で、NULLの間は環境変数の既定値を使う
+const selectChunkSettings = db.prepare(`SELECT chunk_size, chunk_overlap, updated_by, updated_at FROM vector_search_settings WHERE id = 1`);
+const upsertChunkSettings = db.prepare(`
+	INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, updated_by, updated_at)
+	VALUES (1, @chunk_size, @chunk_overlap, @updated_by, @updated_at)
+	ON CONFLICT(id) DO UPDATE SET chunk_size = excluded.chunk_size, chunk_overlap = excluded.chunk_overlap, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+`);
+
 const isEnabled = () => WEAVIATE_URL !== "";
+
+/**
+ * 現在有効なチャンク分割設定を返す。GUIから保存された値(vector_search_settings)があれば
+ * それを優先し、無ければ環境変数(VECTOR_CHUNK_SIZE/VECTOR_CHUNK_OVERLAP)の既定値を使う
+ */
+const getChunkSettings = () => {
+	const row = selectChunkSettings.get();
+	return {
+		chunkSize: row?.chunk_size ?? CHUNK_SIZE_DEFAULT,
+		chunkOverlap: row?.chunk_overlap ?? CHUNK_OVERLAP_DEFAULT,
+		isCustom: row?.chunk_size != null,
+		updatedBy: row?.updated_by ?? null,
+		updatedAt: row?.updated_at ?? null,
+		defaultChunkSize: CHUNK_SIZE_DEFAULT,
+		defaultChunkOverlap: CHUNK_OVERLAP_DEFAULT
+	};
+};
+
+/**
+ * チャンク分割設定をGUIから上書き保存する。新規に索引付けする文書からのみ反映され、
+ * 既存の索引付け済み文書には遡って適用されない(呼び出し元で「全件を再索引」を促すこと)
+ */
+const updateChunkSettings = ({chunkSize, chunkOverlap}, updatedBy) => {
+	if (!Number.isInteger(chunkSize) || chunkSize < CHUNK_SIZE_MIN || chunkSize > CHUNK_SIZE_MAX) {
+		throw new Error(`chunkSizeは${CHUNK_SIZE_MIN}〜${CHUNK_SIZE_MAX}の整数で指定してください`);
+	}
+	if (!Number.isInteger(chunkOverlap) || chunkOverlap < 0 || chunkOverlap >= chunkSize) {
+		throw new Error("chunkOverlapは0以上かつchunkSize未満の整数で指定してください");
+	}
+	upsertChunkSettings.run({chunk_size: chunkSize, chunk_overlap: chunkOverlap, updated_by: updatedBy, updated_at: new Date().toISOString()});
+	return getChunkSettings();
+};
+
+/**
+ * チャンク分割設定を環境変数の既定値に戻す(GUIでの上書きを解除する)
+ */
+const resetChunkSettings = () => {
+	upsertChunkSettings.run({chunk_size: null, chunk_overlap: null, updated_by: null, updated_at: null});
+	return getChunkSettings();
+};
 
 let clientPromise = null;
 
@@ -159,9 +212,15 @@ const getClient = () => {
 	return clientPromise;
 };
 
-// 本文を段落境界を優先しつつ約CHUNK_SIZE文字ごとに分割する。段落自体がCHUNK_SIZEを
-// 超える場合はCHUNK_OVERLAP分重ねながら固定長で分割する
-const chunkText = (text) => {
+// 本文を段落境界を優先しつつ約chunkSize文字ごとに分割する。段落自体がchunkSizeを
+// 超える場合はchunkOverlap分重ねながら固定長で分割する。chunkSize/chunkOverlapを
+// 省略した場合は現在有効な設定(getChunkSettings参照)を使う
+const chunkText = (text, chunkSize, chunkOverlap) => {
+	if (chunkSize == null || chunkOverlap == null) {
+		const settings = getChunkSettings();
+		chunkSize = chunkSize ?? settings.chunkSize;
+		chunkOverlap = chunkOverlap ?? settings.chunkOverlap;
+	}
 	const paragraphs = text.split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter((paragraph) => paragraph !== "");
 	const chunks = [];
 	let current = "";
@@ -174,14 +233,14 @@ const chunkText = (text) => {
 	};
 
 	for (const paragraph of paragraphs) {
-		if (paragraph.length > CHUNK_SIZE) {
+		if (paragraph.length > chunkSize) {
 			flush();
-			for (let i = 0; i < paragraph.length; i += CHUNK_SIZE - CHUNK_OVERLAP) {
-				chunks.push(paragraph.slice(i, i + CHUNK_SIZE));
+			for (let i = 0; i < paragraph.length; i += chunkSize - chunkOverlap) {
+				chunks.push(paragraph.slice(i, i + chunkSize));
 			}
 			continue;
 		}
-		if (current !== "" && current.length + paragraph.length + 2 > CHUNK_SIZE) {
+		if (current !== "" && current.length + paragraph.length + 2 > chunkSize) {
 			flush();
 		}
 		current = current === "" ? paragraph : `${current}\n\n${paragraph}`;
@@ -357,4 +416,7 @@ const retryDocument = async (documentId) => {
 	};
 };
 
-module.exports = {isEnabled, indexDocument, removeDocument, search, chunkText, backfillMissingDocuments, listIndexStatuses, retryDocument};
+module.exports = {
+	isEnabled, indexDocument, removeDocument, search, chunkText, backfillMissingDocuments, listIndexStatuses, retryDocument,
+	getChunkSettings, updateChunkSettings, resetChunkSettings
+};

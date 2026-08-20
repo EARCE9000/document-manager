@@ -35,7 +35,8 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
 - **セマンティック検索(任意機能)**: `WEAVIATE_URL`環境変数を設定すると、キーワードの部分一致ではなく言い換え・表記ゆれを含めて意味的に近い文書を検索できるようになる(`GET api/documents/search/vector?q=...`)。ベクトルDBには[Weaviate](https://weaviate.io/)(OSS)を別コンテナで使用する。`WEAVIATE_URL`未設定の間はこの機能自体が無効化され、既存のキーワード検索・文書管理には一切影響しない。文書一覧画面の「セマンティック検索」チェックボックス、またはAPI(`api/documents/search/vector`)から利用できる。詳細は[docker-compose.yml](docker-compose.yml)を参照
   - **Embeddingプロバイダの切り替え**: `WEAVIATE_VECTORIZER`環境変数で、Weaviate側のベクトライザーモジュールを切り替えられる。既定は自己ホストの`text2vec-transformers`(多言語sentence-transformersモデル、外部APIキー不要)。`text2vec-cohere`(要`COHERE_APIKEY`)・`text2vec-openai`(要`OPENAI_APIKEY`)を指定すると、Weaviateが直接Cohere/OpenAIのEmbedding APIを呼ぶ構成に切り替わり、`t2v-transformers`コンテナは不要になる。APIキーはこのアプリの環境変数からWeaviateへのリクエストヘッダーとして都度渡され、Weaviateコンテナ自体には保持させない。**切り替えは新規作成するコレクションにのみ反映される**ため、既に文書を索引済みの状態で切り替える場合はWeaviate側でコレクション(`DocumentChunk`)を削除してからサーバーを再起動し、「ベクトル索引」画面の「全件を再索引」で作り直すこと(異なるベクトライザーのベクトルは互換性が無いため)
   - **既存文書のバックフィル**: `WEAVIATE_URL`を設定してサーバーを起動すると、この機能を導入する前にアップロード済みだった文書も自動的に差分索引付けされる(既にWeaviate側に登録済みの文書は再処理しない)
-  - **索引状態の確認・再実行**: 画面右上の「ベクトル索引」アイコン(要 admin/readwrite ロール)から、索引付けに失敗した文書の一覧確認・個別/一括での再実行ができる。チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」から一括で再実行できる(`GET api/documents/vector-index/status` / `POST api/documents/:id/vector-index/retry`)
+  - **索引状態の確認・再実行**: パンくずメニューの「ベクトル索引」(要 admin/readwrite ロール。件数が多くなる想定のためモーダルではなくページ全体で表示)から、索引付けに失敗した文書の一覧確認・個別/一括での再実行ができる。チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」から一括で再実行できる(`GET api/documents/vector-index/status` / `POST api/documents/:id/vector-index/retry`)
+  - **チャンク分割設定**: 本文を分割する単位(チャンクサイズ・オーバーラップ)は`VECTOR_CHUNK_SIZE`/`VECTOR_CHUNK_OVERLAP`環境変数で既定値を指定できるほか、「ベクトル索引」画面から admin ロールで上書き保存できる(GUIでの変更はサーバー再起動不要、`GET/PUT/DELETE api/vector-index/settings`)。**変更は新規に索引付けする文書からのみ反映される**ため、既存の索引付け済み文書にも適用したい場合は変更後に「全件を再索引」を行うこと
 - **タグ**: 文書ごとに自由入力のタグを付与できる。他の文書に付けた既存タグを候補として選択することも可能(個数上限なし)
 - **メモ**: プレビュー下部に、文書ごとの備忘録として自由記述メモを入力・保存できる(要 admin/readwrite ロール。アーカイブ表示では閲覧のみ)。検索対象にも含まれる
 - **登録日検索**: アップロード日時のFrom〜Toで絞り込み。初期表示は「2か月前 〜 (Toは空欄)」
@@ -112,6 +113,8 @@ document-manager/
 | `WEAVIATE_VECTORIZER` | `text2vec-transformers` | Embedding計算に使うWeaviateのベクトライザーモジュール。`text2vec-transformers`(自己ホスト、APIキー不要)/ `text2vec-cohere`(要`COHERE_APIKEY`)/ `text2vec-openai`(要`OPENAI_APIKEY`) |
 | `COHERE_APIKEY` | (未設定) | `WEAVIATE_VECTORIZER=text2vec-cohere`の場合に必須。CohereのEmbedding APIキー |
 | `OPENAI_APIKEY` | (未設定) | `WEAVIATE_VECTORIZER=text2vec-openai`の場合に必須。OpenAIのAPIキー |
+| `VECTOR_CHUNK_SIZE` | `400` | セマンティック検索の本文チャンク分割サイズ(文字数の既定値)。「ベクトル索引」画面からadminロールで上書き保存でき、その場合はDB側の値が優先される |
+| `VECTOR_CHUNK_OVERLAP` | `50` | チャンク分割時のオーバーラップ(文字数の既定値)。上書きの扱いは`VECTOR_CHUNK_SIZE`と同様 |
 | `LOG_LEVEL` | `info` | ログレベル (pino) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を丸ごとバイパスする開発用フラグ。本番では未設定のこと |
 | `OIDC_ISSUER` | (必須) | OIDCプロバイダのissuer URL。例: `https://login.microsoftonline.com/<TENANT_ID>/v2.0`(EntraID)、`https://cognito-idp.<REGION>.amazonaws.com/<USER_POOL_ID>`(Cognito) |

@@ -999,6 +999,54 @@ app.post(BASE_URL_PATH + 'api/documents/:id/vector-index/retry', requireAuth, re
 });
 
 /**
+ * ベクトル検索のチャンク分割設定を取得する(要 admin/readwrite ロール。画面表示用)。
+ * GUIで上書きされていなければ環境変数(VECTOR_CHUNK_SIZE/VECTOR_CHUNK_OVERLAP)の既定値を返す
+ */
+app.get(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(VectorSearch.getChunkSettings());
+	} catch (err) {
+		logger.error(err, "::api/vector-index/settings:get");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * ベクトル検索のチャンク分割設定をGUIから変更する(要 admin ロール。システム全体に影響するため)。
+ * 変更は新規に索引付けする文書からのみ反映され、既存の索引付け済み文書には遡って適用されない
+ */
+app.put(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const chunkSize = Number(req.body.chunkSize);
+		const chunkOverlap = Number(req.body.chunkOverlap);
+		const settings = VectorSearch.updateChunkSettings({chunkSize, chunkOverlap}, req.authData.user_identifier);
+		res.status(200).json(settings);
+	} catch (err) {
+		if (err instanceof Error && /chunkSize|chunkOverlap/.test(err.message)) {
+			res.status(400).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/vector-index/settings:put");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * ベクトル検索のチャンク分割設定を環境変数の既定値に戻す(要 admin ロール)
+ */
+app.delete(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(VectorSearch.resetChunkSettings());
+	} catch (err) {
+		logger.error(err, "::api/vector-index/settings:delete");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * 文書アップロード (html / mhtml / markdown / pdf 単一ファイル)
  * ファイルサイズの上限はUPLOAD_MAX_BYTES(既定100MB)。超過時はexpress-fileuploadが
  * 413で切断する(abortOnLimit)。認証チェックの方を先に行うため、未認証のリクエストは
