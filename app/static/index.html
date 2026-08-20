@@ -200,7 +200,8 @@
 	#appShell.readOnlyMode .archiveButton,
 	#appShell.readOnlyMode .tagEditButton,
 	#appShell.readOnlyMode .removeTagButton,
-	#appShell.readOnlyMode #menuArchiveLink { display: none !important; }
+	#appShell.readOnlyMode #menuArchiveLink,
+	#appShell.readOnlyMode #vectorIndexManageLink { display: none !important; }
 
 	/* アーカイブ表示中はアップロードできない(通常一覧に戻ってから行う) */
 	#appShell.archiveMode #uploadDropZone { display: none !important; }
@@ -752,6 +753,38 @@
 	#historyTable .historyActionBadge.restore { background: #eaf7ea; color: #2f9e44; }
 	#historyTable .historyActionBadge.project_unassign { background: #f4f5f7; color: #666; }
 
+	#vectorIndexModalBox { max-width: 780px; width: 94%; }
+	#vectorIndexTableWrap {
+		max-height: 420px;
+		overflow-y: auto;
+		border: 1px solid #e2e2e2;
+		border-radius: 6px;
+		margin-top: 10px;
+	}
+	#vectorIndexTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.85em; }
+	#vectorIndexTable col.colTarget { width: 26%; }
+	#vectorIndexTable col.colNote { width: 40%; }
+	#vectorIndexTable col.colDate { width: 20%; }
+	#vectorIndexTable col.colAction { width: 14%; }
+	#vectorIndexTable th, #vectorIndexTable td {
+		text-align: left;
+		padding: 8px 10px;
+		border-bottom: 1px solid #eee;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	#vectorIndexTable th {
+		position: sticky;
+		top: 0;
+		background: #f8f9fa;
+		font-weight: 600;
+		color: #555;
+		z-index: 1;
+	}
+	#vectorIndexTable tbody tr:last-child td { border-bottom: none; }
+	#vectorIndexTable .vectorIndexRetryButton { padding: 3px 10px; font-size: 0.9em; }
+
 	#tagOrderModalBox { max-width: 560px; width: 94%; }
 	#tagOrderModalBox .toolbarRow { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
 	#tagOrderAddInput { flex: 1; min-width: 0; padding: 0 10px; border: 1px solid #ccc; border-radius: 4px; height: 36px; box-sizing: border-box; }
@@ -862,6 +895,9 @@
 			</button>
 			<button type="button" id="historyManageLink" class="topBarIconButton" title="操作履歴(直近30日、自分の操作のみ)" aria-label="操作履歴">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+			</button>
+			<button type="button" id="vectorIndexManageLink" class="topBarIconButton" title="ベクトル索引(セマンティック検索の登録状況・失敗した文書の再実行)" aria-label="ベクトル索引">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
 			</button>
 			<a href="./logout" id="logoutLink" class="topBarIconButton" title="ログアウト" aria-label="ログアウト">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -1064,6 +1100,38 @@
 		<div id="historyEmptyMessage" class="emptyMessage" style="display:none;">直近30日の操作履歴はありません。</div>
 		<div class="modalButtons">
 			<button id="historyCloseButton" type="button" class="modalButton">閉じる</button>
+		</div>
+	</div>
+</div>
+
+<div id="vectorIndexOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="vectorIndexModalBox">
+		<p>ベクトル索引</p>
+		<div class="docMeta">セマンティック検索(意味検索)の索引付けに失敗した文書の一覧です。Weaviateが一時的に落ちていた場合などにここから再実行できます。</div>
+		<div id="vectorIndexDisabledMessage" class="emptyMessage" style="display:none;">ベクトル検索は設定されていません(WEAVIATE_URL未設定)。</div>
+		<div id="vectorIndexTableWrap">
+			<table id="vectorIndexTable">
+				<colgroup>
+					<col class="colTarget">
+					<col class="colNote">
+					<col class="colDate">
+					<col class="colAction">
+				</colgroup>
+				<thead>
+					<tr>
+						<th>ファイル名</th>
+						<th>エラー内容</th>
+						<th>最終試行</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody id="vectorIndexList"></tbody>
+			</table>
+		</div>
+		<div id="vectorIndexEmptyMessage" class="emptyMessage" style="display:none;">索引付けに失敗している文書はありません。</div>
+		<div class="modalButtons">
+			<button id="vectorIndexRetryAllButton" type="button" class="modalButton save">すべて再実行</button>
+			<button id="vectorIndexCloseButton" type="button" class="modalButton">閉じる</button>
 		</div>
 	</div>
 </div>
@@ -2895,6 +2963,78 @@ document.getElementById("historyManageLink").addEventListener("click", () => {
 historyCloseButton.addEventListener("click", () => { historyOverlay.style.display = "none"; });
 historyOverlay.addEventListener("click", (ev) => {
 	if (ev.target === historyOverlay) historyOverlay.style.display = "none";
+});
+
+// ベクトル索引(セマンティック検索)モーダル: 索引付けに失敗した文書の一覧・個別/一括の再実行
+const vectorIndexOverlay = document.getElementById("vectorIndexOverlay");
+const vectorIndexList = document.getElementById("vectorIndexList");
+const vectorIndexTableWrap = document.getElementById("vectorIndexTableWrap");
+const vectorIndexEmptyMessage = document.getElementById("vectorIndexEmptyMessage");
+const vectorIndexDisabledMessage = document.getElementById("vectorIndexDisabledMessage");
+const vectorIndexRetryAllButton = document.getElementById("vectorIndexRetryAllButton");
+const vectorIndexCloseButton = document.getElementById("vectorIndexCloseButton");
+
+const retryVectorIndex = async (id) => {
+	const res = await fetch(`./api/documents/${encodeURIComponent(id)}/vector-index/retry`, {method: "POST"});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "再実行に失敗しました");
+	}
+};
+
+const loadVectorIndexFailures = async () => {
+	const res = await fetch("./api/documents/vector-index/failed");
+	if (res.status !== 200) return;
+	const {enabled, documents} = await res.json();
+
+	vectorIndexDisabledMessage.style.display = enabled ? "none" : "block";
+	vectorIndexRetryAllButton.style.display = enabled ? "" : "none";
+	if (!enabled) {
+		vectorIndexTableWrap.style.display = "none";
+		vectorIndexEmptyMessage.style.display = "none";
+		vectorIndexList.innerHTML = "";
+		return;
+	}
+
+	vectorIndexTableWrap.style.display = documents.length === 0 ? "none" : "block";
+	vectorIndexEmptyMessage.style.display = documents.length === 0 ? "block" : "none";
+	vectorIndexList.innerHTML = documents.map((doc) => `
+		<tr data-id="${escapeHtml(doc.id)}">
+			<td title="${escapeHtml(doc.entryFile)}">${escapeHtml(doc.entryFile)}</td>
+			<td title="${escapeHtml(doc.error || "")}">${escapeHtml(doc.error || "")}</td>
+			<td>${doc.indexedAt ? formatDateTime(doc.indexedAt) : "-"}</td>
+			<td><button type="button" class="modalButton vectorIndexRetryButton" data-id="${escapeHtml(doc.id)}">再実行</button></td>
+		</tr>
+	`).join("");
+	vectorIndexList.querySelectorAll(".vectorIndexRetryButton").forEach((btn) => {
+		btn.addEventListener("click", async () => {
+			btn.disabled = true;
+			btn.textContent = "実行中...";
+			await retryVectorIndex(btn.dataset.id);
+			await loadVectorIndexFailures();
+		});
+	});
+};
+
+document.getElementById("vectorIndexManageLink").addEventListener("click", () => {
+	vectorIndexOverlay.style.display = "flex";
+	loadVectorIndexFailures();
+});
+vectorIndexCloseButton.addEventListener("click", () => { vectorIndexOverlay.style.display = "none"; });
+vectorIndexOverlay.addEventListener("click", (ev) => {
+	if (ev.target === vectorIndexOverlay) vectorIndexOverlay.style.display = "none";
+});
+vectorIndexRetryAllButton.addEventListener("click", async () => {
+	const ids = [...vectorIndexList.querySelectorAll("tr")].map((tr) => tr.dataset.id);
+	if (ids.length === 0) return;
+	vectorIndexRetryAllButton.disabled = true;
+	vectorIndexRetryAllButton.textContent = "実行中...";
+	for (const id of ids) {
+		await retryVectorIndex(id);
+	}
+	vectorIndexRetryAllButton.disabled = false;
+	vectorIndexRetryAllButton.textContent = "すべて再実行";
+	await loadVectorIndexFailures();
 });
 
 // タグ体系の並び順管理(管理者のみ)。保存を押すまではローカルの配列(tagOrderDraft)だけを

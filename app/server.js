@@ -707,6 +707,10 @@ const selectActiveDocuments = db.prepare(`
 	ORDER BY uploaded_at DESC
 `);
 
+// 起動時のベクトル検索バックフィル(過去にアップロードされた文書)用。VectorSearch側で
+// 既にWeaviateに登録済みの文書は除外されるため、ここではアクティブな文書を全件渡すだけでよい
+const selectActiveDocumentsForIndexing = db.prepare(`SELECT id, content_text FROM documents WHERE deleted_at IS NULL`);
+
 // ファイル名・本文はFTS5(trigramトークナイザ)で部分一致検索する。日本語等CJKでも
 // 単語分割不要で高速だが、3文字未満のクエリはヒットしないためLIKEにフォールバックする
 // (タグは元々短い文字列でLIKEで十分高速なため、こちらは常にLIKEのまま)。
@@ -949,6 +953,46 @@ app.get(BASE_URL_PATH + 'api/documents/search/vector', requireAuth, async (req, 
 		res.status(200).json(documents);
 	} catch (err) {
 		logger.error(err, "::api/documents/search/vector");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * ベクトル検索の索引付けに失敗した文書の一覧(要 admin/readwrite ロール)。
+ * 「失敗した文書を再実行する」画面(index.html)から呼ばれる。Weaviate未設定の場合も
+ * エラーにはせず enabled:false を返す(その場合 documents は常に空)
+ */
+app.get(BASE_URL_PATH + 'api/documents/vector-index/failed', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json({
+			enabled: VectorSearch.isEnabled(),
+			documents: VectorSearch.isEnabled() ? VectorSearch.listFailedDocuments() : []
+		});
+	} catch (err) {
+		logger.error(err, "::api/documents/vector-index/failed");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * ベクトル検索の索引付けを1文書だけ再実行する(要 admin/readwrite ロール)
+ */
+app.post(BASE_URL_PATH + 'api/documents/:id/vector-index/retry', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!VectorSearch.isEnabled()) {
+			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
+			return;
+		}
+		const result = await VectorSearch.retryDocument(req.params.id);
+		if (result == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		res.status(200).json(result);
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/vector-index/retry");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
@@ -1877,6 +1921,9 @@ const main = async () => {
 	}
 	server.listen(LISTEN_PORT);
 	logger.info({LISTEN_PORT}, "server started on port");
+	// 過去にアップロードされた(このベクトル検索機能の導入前からある)文書を差分バックフィルする。
+	// サーバー起動をブロックしないよう非同期で流す(WEAVIATE_URL未設定時は何もしない)
+	VectorSearch.backfillMissingDocuments(selectActiveDocumentsForIndexing.all());
 };
 
 main().catch((err) => {
