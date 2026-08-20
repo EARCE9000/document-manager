@@ -533,6 +533,7 @@ const {convert: htmlToText} = require("html-to-text");
 const {parse: parseCsvSync} = require("csv-parse/sync");
 const {PDFParse} = require("pdf-parse");
 const db = require("./lib/db.js");
+const VectorSearch = require("./lib/vector-search.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -805,6 +806,9 @@ const selectDocumentById = db.prepare(`
 	WHERE id = ?
 `);
 
+// 文書復元時、ベクトル検索インデックス(Weaviate)へ再登録するためだけに使う
+const selectContentTextById = db.prepare(`SELECT content_text FROM documents WHERE id = ?`);
+
 const softDeleteDocument = db.prepare(`
 	UPDATE documents SET deleted_at = @deleted_at, deleted_by = @deleted_by
 	WHERE id = @id AND deleted_at IS NULL
@@ -915,6 +919,41 @@ app.get(BASE_URL_PATH + 'api/documents', requireAuth, async (req, res) => {
 });
 
 /**
+ * 文書のベクトル(意味)検索。キーワードの部分一致ではなく、言い換え・表記ゆれを含めて
+ * 意味的に近い文書を探す。Weaviate(WEAVIATE_URL環境変数)が設定されていない場合は
+ * 任意機能として503を返す(既存のキーワード検索・文書管理には影響しない)
+ */
+app.get(BASE_URL_PATH + 'api/documents/search/vector', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!VectorSearch.isEnabled()) {
+			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
+			return;
+		}
+		const q = String(req.query.q || "").trim();
+		if (q === "") {
+			res.status(400).json({error: "q is required"});
+			return;
+		}
+		const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+		const hits = await VectorSearch.search(q, limit);
+		const documents = hits
+			.map((hit) => {
+				const row = selectActiveDocumentById.get(hit.documentId);
+				if (row == null) {
+					return null;
+				}
+				return {...toDocumentResponse(row), snippet: hit.snippet, distance: hit.distance};
+			})
+			.filter((doc) => doc != null);
+		res.status(200).json(documents);
+	} catch (err) {
+		logger.error(err, "::api/documents/search/vector");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * 文書アップロード (html / mhtml / markdown / pdf 単一ファイル)
  * ファイルサイズの上限はUPLOAD_MAX_BYTES(既定100MB)。超過時はexpress-fileuploadが
  * 413で切断する(abortOnLimit)。認証チェックの方を先に行うため、未認証のリクエストは
@@ -964,6 +1003,9 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		};
 		insertDocument.run(row);
 		insertDocumentFts.run(row);
+		// ベクトル検索(Weaviate)への索引登録はベストエフォート(WEAVIATE_URL未設定/接続失敗でも
+		// アップロード自体は成功させる。詳細はlib/vector-search.js参照)
+		await VectorSearch.indexDocument(id, contentText);
 		logger.info({
 			audit: "upload",
 			user: req.authData.user_identifier,
@@ -1088,6 +1130,7 @@ app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		await VectorSearch.removeDocument(req.params.id);
 		logger.info({
 			audit: "delete",
 			user: req.authData.user_identifier,
@@ -1133,6 +1176,8 @@ app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite,
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		// 論理削除時にWeaviate側のチャンクは削除済みのため、content_textから再登録する
+		await VectorSearch.indexDocument(req.params.id, selectContentTextById.get(req.params.id)?.content_text ?? null);
 		logger.info({
 			audit: "restore",
 			user: req.authData.user_identifier,

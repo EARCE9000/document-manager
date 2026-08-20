@@ -1,0 +1,58 @@
+# docker-compose.yml : Document Manager + ベクトル検索(Weaviate)
+# Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
+# MIT Licensed
+#
+# ベクトル(意味)検索は任意機能。使わない場合はこのファイルを使わず、これまで通り
+# `docker build` + `docker run` で app サービス単体を起動すればよい(README参照)。
+# WEAVIATE_URL を設定した場合のみ有効化される(app/lib/vector-search.js参照)。
+#
+# weaviate/t2v-transformersのイメージタグは:latestにしている。自己ホスト運用では
+# 動作確認後に具体的なバージョンへ固定することを推奨する。
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      - WEAVIATE_URL=http://weaviate:8080
+      - WEAVIATE_GRPC_PORT=50051
+      # OIDC_*/SESSION_SECRET等、既存の必須環境変数はREADMEの「環境変数」表を参照して別途指定すること
+      - AUTH_DISABLED=${AUTH_DISABLED:-}
+    depends_on:
+      - weaviate
+
+  # ベクトルDB本体。REST(8080)とgRPC(50051)の両方をappコンテナから使う
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+      - "50051:50051"
+    environment:
+      - QUERY_DEFAULTS_LIMIT=25
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - ENABLE_MODULES=text2vec-transformers
+      - DEFAULT_VECTORIZER_MODULE=text2vec-transformers
+      - TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080
+      - CLUSTER_HOSTNAME=node1
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    depends_on:
+      - t2v-transformers
+
+  # Embedding推論サーバー(Weaviate公式のOSSコンテナ)。日本語を含む多言語文書のため
+  # 多言語sentence-transformersモデルを使用する。外部APIキーは不要
+  t2v-transformers:
+    image: semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2
+    restart: unless-stopped
+    environment:
+      - ENABLE_CUDA=0
+
+volumes:
+  weaviate_data:
