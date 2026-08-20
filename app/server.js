@@ -948,7 +948,7 @@ app.get(BASE_URL_PATH + 'api/documents/search/vector', requireAuth, async (req, 
 				if (row == null) {
 					return null;
 				}
-				return {...toDocumentResponse(row), snippet: hit.snippet, distance: hit.distance};
+				return {...toDocumentResponse(row), snippet: hit.snippet, distance: hit.distance, rerankScore: hit.rerankScore};
 			})
 			.filter((doc) => doc != null);
 		res.status(200).json(documents);

@@ -13,8 +13,14 @@
 # 未使用になるだけで、動かしたままでも害はない。不要なら`docker compose up -d app weaviate`
 # のようにサービスを指定して起動すれば省略できる)。
 #
-# weaviate/t2v-transformersのイメージタグは:latestにしている。自己ホスト運用では
-# 動作確認後に具体的なバージョンへ固定することを推奨する。
+# 検索結果のリランキング(並び替え)も同様に任意機能。既定は無効(距離順のまま)。
+# appのWEAVIATE_RERANKER=reranker-transformersで有効化すると、reranker-transformers
+# コンテナ(自己ホストのクロスエンコーダ、LLMではない)が使われる。こちらも外部APIキー不要で、
+# 未使用ならreranker-transformersコンテナごと`docker compose up -d app weaviate t2v-transformers`
+# のように省略してよい。
+#
+# weaviate/t2v-transformers/reranker-transformersのイメージタグは:latest相当(具体的なモデル名タグ)
+# にしている。自己ホスト運用では動作確認後にバージョンを固定することを推奨する。
 
 services:
   app:
@@ -34,6 +40,9 @@ services:
       - WEAVIATE_VECTORIZER=${WEAVIATE_VECTORIZER:-text2vec-transformers}
       - COHERE_APIKEY=${COHERE_APIKEY:-}
       - OPENAI_APIKEY=${OPENAI_APIKEY:-}
+      # 既定は無効(空文字)。有効化する場合は .env 等で
+      # WEAVIATE_RERANKER=reranker-transformers を指定する
+      - WEAVIATE_RERANKER=${WEAVIATE_RERANKER:-}
       # OIDC_*/SESSION_SECRET等、既存の必須環境変数はREADMEの「環境変数」表を参照して別途指定すること
       - AUTH_DISABLED=${AUTH_DISABLED:-}
     depends_on:
@@ -51,16 +60,18 @@ services:
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
       - PERSISTENCE_DATA_PATH=/var/lib/weaviate
       # text2vec-cohere/text2vec-openaiは追加コンテナ不要(Weaviate本体に組み込み済みで
-      # 外部APIを呼ぶだけ)なため、appのWEAVIATE_VECTORIZERをいつでも切り替えられるよう
-      # 3方式ともまとめて有効化しておく(未使用の方式はAPIキー等が無ければ単に呼ばれない)
-      - ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai
+      # 外部APIを呼ぶだけ)なため、appのWEAVIATE_VECTORIZER/WEAVIATE_RERANKERを
+      # いつでも切り替えられるようまとめて有効化しておく(未使用の方式は単に呼ばれない)
+      - ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai,reranker-transformers
       - DEFAULT_VECTORIZER_MODULE=text2vec-transformers
       - TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080
+      - RERANKER_INFERENCE_API=http://reranker-transformers:8080
       - CLUSTER_HOSTNAME=node1
     volumes:
       - weaviate_data:/var/lib/weaviate
     depends_on:
       - t2v-transformers
+      - reranker-transformers
 
   # Embedding推論サーバー(Weaviate公式のOSSコンテナ)。WEAVIATE_VECTORIZER=text2vec-transformers
   # (既定)の場合のみ使われる。日本語を含む多言語文書のため多言語sentence-transformers
@@ -70,6 +81,14 @@ services:
     restart: unless-stopped
     environment:
       - ENABLE_CUDA=0
+
+  # リランキング推論サーバー(Weaviate公式のOSSコンテナ)。WEAVIATE_RERANKER=reranker-transformers
+  # を指定した場合のみ使われる。クロスエンコーダはLLM(文章生成)ではなく、クエリと文書の
+  # 組から関連度スコアだけを返す専用の小さなモデル。日本語を含む多言語文書のため
+  # BAAI/bge-reranker-v2-m3(多言語対応クロスエンコーダ)を使用する。外部APIキーは不要
+  reranker-transformers:
+    image: semitechnologies/reranker-transformers:baai-bge-reranker-v2-m3
+    restart: unless-stopped
 
 volumes:
   weaviate_data:

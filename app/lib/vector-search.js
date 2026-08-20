@@ -13,6 +13,12 @@
  * 切り替えた場合は、Weaviate側でコレクションを削除してから起動し直し、「ベクトル索引」画面の
  * 「全件を再索引」で作り直すこと(異なるベクトライザーのベクトルは互換性が無いため)。
  *
+ * 検索結果の並び替え(リランキング)も任意機能。WEAVIATE_RERANKER=reranker-transformersを
+ * 指定すると、自己ホストのクロスエンコーダ(LLMではない、関連度スコアだけを返す専用モデル。
+ * さらに別コンテナの推論サーバー、外部APIキー不要)で検索結果を再スコアリングする。
+ * こちらも新規作成するコレクションにのみ反映されるため、有効化前に索引済みの文書がある場合は
+ * ベクトライザー切り替え時と同様にコレクション削除→「全件を再索引」が必要
+ *
  * WEAVIATE_URL環境変数が未設定の間は完全に無効化される(任意機能)。既存の単一コンテナ
  * 運用(docker run)には影響を与えず、Weaviateが導入されていない/落ちている場合でも
  * 文書のアップロード・削除・復元自体は失敗させない(索引更新はベストエフォート)。
@@ -67,6 +73,13 @@ const resolveVectorizer = () => {
 	}
 	return vectorizer;
 };
+
+// リランキング(検索結果の並び替え)は任意機能。既定(未設定)は無効で、従来通りベクトル距離のみで
+// 順位付けする。"reranker-transformers"を指定すると、自己ホストのクロスエンコーダ
+// (文章生成をしないLLMではない専用の小さなモデル。Weaviate公式のOSSコンテナ)で
+// 検索結果を再スコアリングし、より精度の高い順位に並び替える。外部APIキーは不要
+const WEAVIATE_RERANKER = process.env.WEAVIATE_RERANKER || "";
+const isRerankerEnabled = () => WEAVIATE_RERANKER === "reranker-transformers";
 
 // 外部API方式のベクトライザー用に、APIキーをリクエストヘッダーとして組み立てる
 // (text2vec-transformersのようにAPIキー不要な方式ではapiKeyEnvがnullのため何もしない)
@@ -174,13 +187,14 @@ const ensureCollection = async (weaviate, client) => {
 	await client.collections.create({
 		name: COLLECTION_NAME,
 		vectorizers: resolveVectorizer().configure(weaviate),
+		...(isRerankerEnabled() ? {reranker: weaviate.configure.reranker.transformers()} : {}),
 		properties: [
 			{name: "documentId", dataType: weaviate.dataType.TEXT, skipVectorization: true, indexFilterable: true},
 			{name: "chunkIndex", dataType: weaviate.dataType.INT, skipVectorization: true},
 			{name: "text", dataType: weaviate.dataType.TEXT}
 		]
 	});
-	logger.info({collection: COLLECTION_NAME, vectorizer: WEAVIATE_VECTORIZER}, "::ensureCollection: Weaviateコレクションを作成しました");
+	logger.info({collection: COLLECTION_NAME, vectorizer: WEAVIATE_VECTORIZER, reranker: isRerankerEnabled() ? WEAVIATE_RERANKER : null}, "::ensureCollection: Weaviateコレクションを作成しました");
 };
 
 // Weaviateクライアントの初期化(初回呼び出し時のみ接続・コレクション確認を行い、以降は使い回す)。
@@ -312,32 +326,39 @@ const removeDocument = async (documentId) => {
 };
 
 /**
- * 意味検索。文書IDごとに最もスコアの良いチャンク1件へ集約し、距離(小さいほど近い)昇順で返す。
+ * 意味検索。文書IDごとに最もスコアの良いチャンク1件へ集約して返す。
+ * リランキング有効時はクロスエンコーダのrerankScore(大きいほど良い)で、無効時は
+ * ベクトル距離(小さいほど近い)で順位付けする。
  * Weaviate未設定時はnull(呼び出し元で503を返すため)、エラー時は空配列を返す
  */
 const search = async (query, limit) => {
 	if (!isEnabled()) {
 		return null;
 	}
+	const useReranker = isRerankerEnabled();
 	try {
 		const client = await getClient();
 		const collection = client.collections.use(COLLECTION_NAME);
 		// 同一文書の複数チャンクがヒットする分を見込んで多めに取得し、文書単位に集約後にlimit件へ絞る
 		const result = await collection.query.nearText(query, {
 			limit: limit * 3,
-			returnMetadata: ["distance"]
+			returnMetadata: useReranker ? ["distance", "rerankScore"] : ["distance"],
+			...(useReranker ? {rerank: {property: "text", query}} : {})
 		});
 
 		const bestByDocument = new Map();
 		for (const obj of result.objects) {
 			const documentId = obj.properties.documentId;
 			const distance = obj.metadata?.distance ?? Number.POSITIVE_INFINITY;
+			const rerankScore = obj.metadata?.rerankScore ?? null;
 			const existing = bestByDocument.get(documentId);
-			if (existing == null || distance < existing.distance) {
-				bestByDocument.set(documentId, {documentId, distance, snippet: obj.properties.text});
+			const isBetter = existing == null || (useReranker ? rerankScore > existing.rerankScore : distance < existing.distance);
+			if (isBetter) {
+				bestByDocument.set(documentId, {documentId, distance, rerankScore, snippet: obj.properties.text});
 			}
 		}
-		return [...bestByDocument.values()].sort((a, b) => a.distance - b.distance).slice(0, limit);
+		const sorted = [...bestByDocument.values()].sort((a, b) => (useReranker ? b.rerankScore - a.rerankScore : a.distance - b.distance));
+		return sorted.slice(0, limit);
 	} catch (err) {
 		logger.error({err, query}, "::search");
 		return [];

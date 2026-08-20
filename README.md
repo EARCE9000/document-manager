@@ -34,6 +34,7 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
 - **全文検索**: ファイル名・本文(抽出済みプレーンテキスト)はFTS5(`trigram`トークナイザ)で部分一致検索する。単語分割不要で日本語等CJKにも強いが、3文字未満のクエリはヒットしない制約があるため、その場合は自動的に `LIKE` 検索にフォールバックする。タグ・メモは元々短い文字列のため常に `LIKE` で検索する
 - **セマンティック検索(任意機能)**: `WEAVIATE_URL`環境変数を設定すると、キーワードの部分一致ではなく言い換え・表記ゆれを含めて意味的に近い文書を検索できるようになる(`GET api/documents/search/vector?q=...`)。ベクトルDBには[Weaviate](https://weaviate.io/)(OSS)を別コンテナで使用する。`WEAVIATE_URL`未設定の間はこの機能自体が無効化され、既存のキーワード検索・文書管理には一切影響しない。文書一覧画面の「セマンティック検索」チェックボックス、またはAPI(`api/documents/search/vector`)から利用できる。詳細は[docker-compose.yml](docker-compose.yml)を参照
   - **Embeddingプロバイダの切り替え**: `WEAVIATE_VECTORIZER`環境変数で、Weaviate側のベクトライザーモジュールを切り替えられる。既定は自己ホストの`text2vec-transformers`(多言語sentence-transformersモデル、外部APIキー不要)。`text2vec-cohere`(要`COHERE_APIKEY`)・`text2vec-openai`(要`OPENAI_APIKEY`)を指定すると、Weaviateが直接Cohere/OpenAIのEmbedding APIを呼ぶ構成に切り替わり、`t2v-transformers`コンテナは不要になる。APIキーはこのアプリの環境変数からWeaviateへのリクエストヘッダーとして都度渡され、Weaviateコンテナ自体には保持させない。**切り替えは新規作成するコレクションにのみ反映される**ため、既に文書を索引済みの状態で切り替える場合はWeaviate側でコレクション(`DocumentChunk`)を削除してからサーバーを再起動し、「ベクトル索引」画面の「全件を再索引」で作り直すこと(異なるベクトライザーのベクトルは互換性が無いため)
+  - **リランキング(任意機能)**: `WEAVIATE_RERANKER=reranker-transformers`を指定すると、検索結果をクロスエンコーダで再スコアリングしてから返すようになり、ベクトル距離だけの順位付けより精度が上がる。クロスエンコーダは文章生成をするLLMではなく、クエリと文書の組から関連度スコアだけを返す専用の小さなモデルで、こちらも自己ホストの`reranker-transformers`コンテナ(多言語クロスエンコーダ、外部APIキー不要)で完結する。既定は無効(ベクトル距離のみで順位付け)。Embeddingプロバイダの切り替えと同様、**有効化は新規作成するコレクションにのみ反映される**ため、既に索引済みの文書がある状態で有効化する場合はコレクション削除→「全件を再索引」が必要
   - **既存文書のバックフィル**: `WEAVIATE_URL`を設定してサーバーを起動すると、この機能を導入する前にアップロード済みだった文書も自動的に差分索引付けされる(既にWeaviate側に登録済みの文書は再処理しない)
   - **索引状態の確認・再実行**: パンくずメニューの「ベクトル索引」(要 admin/readwrite ロール。件数が多くなる想定のためモーダルではなくページ全体で表示)から、索引付けに失敗した文書の一覧確認・個別/一括での再実行ができる。チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」から一括で再実行できる(`GET api/documents/vector-index/status` / `POST api/documents/:id/vector-index/retry`)
   - **チャンク分割設定**: 本文を分割する単位(チャンクサイズ・オーバーラップ)は`VECTOR_CHUNK_SIZE`/`VECTOR_CHUNK_OVERLAP`環境変数で既定値を指定できるほか、「ベクトル索引」画面から admin ロールで上書き保存できる(GUIでの変更はサーバー再起動不要、`GET/PUT/DELETE api/vector-index/settings`)。**変更は新規に索引付けする文書からのみ反映される**ため、既存の索引付け済み文書にも適用したい場合は変更後に「全件を再索引」を行うこと
@@ -114,6 +115,7 @@ document-manager/
 | `WEAVIATE_VECTORIZER` | `text2vec-transformers` | Embedding計算に使うWeaviateのベクトライザーモジュール。`text2vec-transformers`(自己ホスト、APIキー不要)/ `text2vec-cohere`(要`COHERE_APIKEY`)/ `text2vec-openai`(要`OPENAI_APIKEY`) |
 | `COHERE_APIKEY` | (未設定) | `WEAVIATE_VECTORIZER=text2vec-cohere`の場合に必須。CohereのEmbedding APIキー |
 | `OPENAI_APIKEY` | (未設定) | `WEAVIATE_VECTORIZER=text2vec-openai`の場合に必須。OpenAIのAPIキー |
+| `WEAVIATE_RERANKER` | (未設定) | 検索結果のリランキングに使うWeaviateのリランカーモジュール。既定は無効(ベクトル距離のみで順位付け)。`reranker-transformers`を指定すると自己ホストのクロスエンコーダ(LLMではない、APIキー不要)で再スコアリングする |
 | `VECTOR_CHUNK_SIZE` | `400` | セマンティック検索の本文チャンク分割サイズ(文字数の既定値)。「ベクトル索引」画面からadminロールで上書き保存でき、その場合はDB側の値が優先される |
 | `VECTOR_CHUNK_OVERLAP` | `50` | チャンク分割時のオーバーラップ(文字数の既定値)。上書きの扱いは`VECTOR_CHUNK_SIZE`と同様 |
 | `LOG_LEVEL` | `info` | ログレベル (pino) |
@@ -173,6 +175,7 @@ docker compose up -d
 - `app`: このリポジトリのDockerfileをビルドして起動(`WEAVIATE_URL`は自動設定される)。`OIDC_*`等の必須環境変数は`docker-compose.yml`内のenvironmentか`.env`ファイルで別途指定すること
 - `weaviate`: ベクトルDB本体(OSS)。データは`weaviate_data`ボリュームに永続化される
 - `t2v-transformers`: Embedding計算を行う推論サーバー(Weaviate公式、多言語sentence-transformersモデル)。既定の`WEAVIATE_VECTORIZER=text2vec-transformers`の場合のみ使われ、外部APIキーは不要
+- `reranker-transformers`: 検索結果のリランキング(並び替え)を行う推論サーバー(Weaviate公式、多言語クロスエンコーダ)。`WEAVIATE_RERANKER=reranker-transformers`を指定した場合のみ使われ、外部APIキーは不要
 
 Cohere/OpenAIのEmbedding APIを使いたい場合は、`docker-compose.yml`自体を編集せず、`.env`ファイル(または環境変数)で以下のように上書きするだけでよい(`t2v-transformers`コンテナは未使用になるが動かしたままでも問題ない)。
 
@@ -180,6 +183,13 @@ Cohere/OpenAIのEmbedding APIを使いたい場合は、`docker-compose.yml`自�
 # .env
 WEAVIATE_VECTORIZER=text2vec-cohere
 COHERE_APIKEY=<Cohereで発行したAPIキー>
+```
+
+リランキングを有効にしたい場合も同様に`.env`だけで済む。
+
+```bash
+# .env
+WEAVIATE_RERANKER=reranker-transformers
 ```
 
 初回起動時、Weaviateがコレクションを自動作成し、以後のアップロードから自動的に索引付けされる。`WEAVIATE_URL`を設定しなければこれらのコンテナは不要で、機能自体が無効化される(既存の単一コンテナ運用に影響しない)。
@@ -201,7 +211,15 @@ docker run -d \
   -e ENABLE_CUDA=0 \
   semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2
 
-# 3. Weaviate本体(REST:8081→8080, gRPC:50051→50051でホストに公開。無くても動くが
+# 3. リランキング推論サーバー(WEAVIATE_RERANKER=reranker-transformersを使う場合のみ必要。
+#    使わないならこのコンテナ自体を起動しなくてよい)
+docker run -d \
+  --name reranker-transformers \
+  --network document-manager-net \
+  --restart unless-stopped \
+  semitechnologies/reranker-transformers:baai-bge-reranker-v2-m3
+
+# 4. Weaviate本体(REST:8081→8080, gRPC:50051→50051でホストに公開。無くても動くが
 #    動作確認・デバッグ用に外部からも叩けるようにしている)
 docker run -d \
   --name weaviate \
@@ -213,13 +231,14 @@ docker run -d \
   -e QUERY_DEFAULTS_LIMIT=25 \
   -e AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true \
   -e PERSISTENCE_DATA_PATH=/var/lib/weaviate \
-  -e ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai \
+  -e ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai,reranker-transformers \
   -e DEFAULT_VECTORIZER_MODULE=text2vec-transformers \
   -e TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080 \
+  -e RERANKER_INFERENCE_API=http://reranker-transformers:8080 \
   -e CLUSTER_HOSTNAME=node1 \
   semitechnologies/weaviate:latest
 
-# 4. document-manager本体(同じネットワークに参加させ、WEAVIATE_URLはコンテナ名で指定)
+# 5. document-manager本体(同じネットワークに参加させ、WEAVIATE_URLはコンテナ名で指定)
 docker build -t document-manager .
 
 # Windows + Git Bashの場合、-vのパスをMSYSに誤変換されないようMSYS_NO_PATHCONV=1を付けること
@@ -240,12 +259,12 @@ MSYS_NO_PATHCONV=1 docker run -d \
   document-manager
 ```
 
-Cohere/OpenAIを使う場合は手順2を省略し、手順4に`-e WEAVIATE_VECTORIZER="text2vec-cohere" -e COHERE_APIKEY="<APIキー>"`(OpenAIなら`text2vec-openai`/`OPENAI_APIKEY`)を追加するだけでよい。手順3の`weaviate`はENABLE_MODULESに3方式ともあらかじめ含めてあるため、Weaviate側の設定変更は不要。
+Cohere/OpenAIを使う場合は手順2を省略し、手順5に`-e WEAVIATE_VECTORIZER="text2vec-cohere" -e COHERE_APIKEY="<APIキー>"`(OpenAIなら`text2vec-openai`/`OPENAI_APIKEY`)を追加するだけでよい。リランキングを使わない場合は手順3を省略してよい。手順4の`weaviate`はENABLE_MODULESにあらかじめ全方式含めてあるため、Weaviate側の設定変更は不要。リランキングを使う場合は手順5に`-e WEAVIATE_RERANKER="reranker-transformers"`を追加する。
 
 停止・削除する場合は次の順序で(依存関係の都合上、appから止めるのが無難)。
 
 ```bash
-docker rm -f document-manager weaviate t2v-transformers
+docker rm -f document-manager weaviate t2v-transformers reranker-transformers
 docker network rm document-manager-net
 # ベクトルDBのデータ自体を消したい場合のみ(通常は残してよい)
 docker volume rm weaviate_data
