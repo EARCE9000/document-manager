@@ -159,6 +159,17 @@
 		border-radius: 4px;
 		font-size: 0.9em;
 	}
+	#semanticSearchToggleLabel {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 0.8em;
+		color: #555;
+		margin-top: 4px;
+		cursor: pointer;
+		user-select: none;
+	}
+	#semanticSearchToggleLabel input { margin: 0; cursor: pointer; }
 	#dateRangeRow { gap: 0.4em; }
 	#dateRangeRow span { color: #888; font-size: 0.85em; }
 	#fromDateInput, #toDateInput {
@@ -198,7 +209,11 @@
 	   管理ボタン(並び順の編集)はadminロールのみ表示する */
 	#appShell.tagTreeMode #filterRow,
 	#appShell.tagTreeMode #dateRangeRow,
-	#appShell.tagTreeMode #uploadDropZone { display: none !important; }
+	#appShell.tagTreeMode #uploadDropZone,
+	#appShell.tagTreeMode #semanticSearchToggleLabel { display: none !important; }
+
+	/* アーカイブ済み文書はベクトル索引から除外されるため、アーカイブ表示中はセマンティック検索を出さない */
+	#appShell.archiveMode #semanticSearchToggleLabel { display: none !important; }
 	#sideBarToolbar #tagTreeManageRow { display: none; }
 	#appShell.tagTreeMode.adminMode #tagTreeManageRow { display: flex; }
 
@@ -898,6 +913,10 @@
 				<div class="toolbarRow" id="filterRow">
 					<input type="text" id="filterInput" placeholder="ファイル名・タグ・本文で検索...">
 				</div>
+				<label id="semanticSearchToggleLabel" for="semanticSearchToggle" title="言い換え・表記ゆれを含め、意味的に近い文書を検索します(Weaviateが設定されている場合のみ利用可能)">
+					<input type="checkbox" id="semanticSearchToggle">
+					セマンティック検索
+				</label>
 				<div class="toolbarRow" id="dateRangeRow">
 					<input type="date" id="fromDateInput" title="登録日(From)">
 					<span>〜</span>
@@ -1153,6 +1172,7 @@ const memoSaveButton = document.getElementById("memoSaveButton");
 const memoSavedIndicator = document.getElementById("memoSavedIndicator");
 const docCountChip = document.getElementById("docCountChip");
 const filterInput = document.getElementById("filterInput");
+const semanticSearchToggle = document.getElementById("semanticSearchToggle");
 const fromDateInput = document.getElementById("fromDateInput");
 const toDateInput = document.getElementById("toDateInput");
 const confirmOverlay = document.getElementById("confirmOverlay");
@@ -1814,10 +1834,21 @@ const loadDocuments = async () => {
 		return;
 	}
 	const q = filterInput.value.trim();
+	// セマンティック検索(意味検索)はアクティブな文書一覧でのみ有効(アーカイブ済み文書は
+	// ベクトル索引から除外されているため対象外。トグルUI側も同様に非表示にしている)
+	const useSemanticSearch = currentView === "active" && semanticSearchToggle.checked && q !== "";
 	const basePath = currentView === "archive" ? "./api/documents/trash" : "./api/documents";
-	const url = q === "" ? basePath : `${basePath}?q=${encodeURIComponent(q)}`;
+	const url = useSemanticSearch
+		? `./api/documents/search/vector?q=${encodeURIComponent(q)}`
+		: (q === "" ? basePath : `${basePath}?q=${encodeURIComponent(q)}`);
 	const res = await fetch(url);
-	if (res.status !== 200) return;
+	if (res.status !== 200) {
+		if (useSemanticSearch) {
+			const body = await res.json().catch(() => ({}));
+			alert(body.error || "セマンティック検索に失敗しました");
+		}
+		return;
+	}
 	allDocuments = await res.json();
 	renderDocumentList();
 };
@@ -2458,6 +2489,7 @@ filterInput.addEventListener("input", () => {
 	clearTimeout(filterDebounceTimer);
 	filterDebounceTimer = setTimeout(loadDocuments, 300);
 });
+semanticSearchToggle.addEventListener("change", loadDocuments);
 fromDateInput.addEventListener("change", renderDocumentList);
 toDateInput.addEventListener("change", renderDocumentList);
 document.getElementById("refreshButton").addEventListener("click", loadDocuments);
@@ -3007,6 +3039,12 @@ const buildAiUsageMarkdown = () => {
 - \`q\`省略時は全件(論理削除済みを除く)を返す
 - ファイル名・タグ・本文(抽出済みプレーンテキスト)を対象に部分一致検索する
 
+### セマンティック検索(意味検索。Weaviateが設定されている場合のみ利用可能)
+\`GET ${baseUrl}/api/documents/search/vector?q=<検索語>&limit=20\`
+- キーワードの部分一致ではなく、言い換え・表記ゆれを含めて意味的に近い文書を返す(スコアの良い順)
+- サーバー側でベクトル検索が未設定の場合は503が返る(その場合は通常の「文書一覧・検索」を使うこと)
+- レスポンスの各要素は通常の文書一覧と同じ形式に加え、\`snippet\`(ヒットした本文の抜粋)・\`distance\`(小さいほど類似度が高い)を含む
+
 ### 文書アップロード (要 admin/readwrite ロール)
 \`POST ${baseUrl}/api/documents\`
 - \`multipart/form-data\`、フィールド名は \`uploadfile\`
@@ -3062,6 +3100,9 @@ const buildAiUsageMarkdown = () => {
 # 一覧・検索
 curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/documents?q=請求書"
 
+# セマンティック検索(意味検索。Weaviate未設定の場合は503が返る)
+curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/documents/search/vector?q=経費精算のルールについて"
+
 # アップロード
 curl -X POST "${baseUrl}/api/documents" \\
   -H "Authorization: Bearer <APIキー>" \\
@@ -3101,9 +3142,14 @@ curl -X PUT "${baseUrl}/api/projects/<projectId>/documents/<documentId>" \\
 (readonlyロールのキーの場合はアップロードできないので、その旨をユーザーに伝えてください)。
 
 ### 「探して」「検索して」「〜の資料ある?」「〜についての文書見せて」
-上記の「文書一覧・検索」APIの \`q\` パラメータに検索キーワードを渡して検索し、
-見つかった文書のファイル名・タグ・文書ID(必要ならプレビュー/ダウンロードURL)を
-一覧にしてユーザーに報告してください。見つからない場合はその旨を伝えてください。
+まず上記の「文書一覧・検索」APIの \`q\` パラメータに検索キーワードを渡して検索してください。
+見つかった文書のファイル名・タグ・文書ID(必要ならプレビュー/ダウンロードURL)を一覧にして
+ユーザーに報告してください。見つからない場合はその旨を伝えてください。
+
+### 「意味的に近い文書を探して」「〜に関連する資料ある?」「言い換えても探して」
+上記の「セマンティック検索」APIの \`q\` パラメータに探したい内容を渡して検索してください。
+キーワードの部分一致では見つからない、表記ゆれ・言い換えを含む検索をしたい場合にも使えます。
+503が返った場合はこの機能が未設定であることをユーザーに伝え、通常の「文書一覧・検索」で代替してください。
 
 この指示を読んだら、Document Managerとの連携準備が整ったことと、「アップして」「探して」のように
 話しかければ操作できることをユーザーに一言伝えてください。

@@ -32,6 +32,7 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
   - リンクのコピー・「別ウィンドウで開く」・一覧の別ウィンドウアイコンは、いずれも `api/documents/:id/viewer` を指す。`api/documents/:id/file`(APIキー連携クライアント向け。未認証時はJSONの401のみを返す)とは別系統で、未ログイン状態でこのURLを開くとログイン画面へ自動的に迂回し、ログイン完了後に元のURLへ戻ってから文書を表示する。他の人にリンクを共有する場合はこちらが使われる
   - プレビュー上部に、ファイル名が似ている他の文書(現在表示中の一覧内、文字3-gramのDice係数で判定)をチップ表示し、クリックでそちらのプレビューに切り替えられる(バージョン違い等の関連文書を見つけやすくする)
 - **全文検索**: ファイル名・本文(抽出済みプレーンテキスト)はFTS5(`trigram`トークナイザ)で部分一致検索する。単語分割不要で日本語等CJKにも強いが、3文字未満のクエリはヒットしない制約があるため、その場合は自動的に `LIKE` 検索にフォールバックする。タグ・メモは元々短い文字列のため常に `LIKE` で検索する
+- **セマンティック検索(任意機能)**: `WEAVIATE_URL`環境変数を設定すると、キーワードの部分一致ではなく言い換え・表記ゆれを含めて意味的に近い文書を検索できるようになる(`GET api/documents/search/vector?q=...`)。ベクトルDBには[Weaviate](https://weaviate.io/)(OSS)を別コンテナで使用し、Embedding計算はWeaviate公式の`text2vec-transformers`推論コンテナ(多言語sentence-transformersモデル)に任せるため、外部APIキーは不要。`WEAVIATE_URL`未設定の間はこの機能自体が無効化され、既存のキーワード検索・文書管理には一切影響しない。文書一覧画面の「セマンティック検索」チェックボックス、またはAPI(`api/documents/search/vector`)から利用できる。詳細は[docker-compose.yml](docker-compose.yml)を参照
 - **タグ**: 文書ごとに自由入力のタグを付与できる。他の文書に付けた既存タグを候補として選択することも可能(個数上限なし)
 - **メモ**: プレビュー下部に、文書ごとの備忘録として自由記述メモを入力・保存できる(要 admin/readwrite ロール。アーカイブ表示では閲覧のみ)。検索対象にも含まれる
 - **登録日検索**: アップロード日時のFrom〜Toで絞り込み。初期表示は「2か月前 〜 (Toは空欄)」
@@ -82,6 +83,7 @@ document-manager/
 │   │   ├── projects.js        # プロジェクト(フォルダ階層による文書整理)の管理
 │   │   ├── audit-log.js       # 操作履歴(自分の登録/アーカイブ/復元/プロジェクト操作)の記録・参照
 │   │   ├── storage.js         # 文書ファイルの保存先抽象化 (ローカルディスク/S3。STORAGE_BACKENDで切替)
+│   │   ├── vector-search.js   # セマンティック検索(Weaviate連携、任意機能。WEAVIATE_URLで有効化)
 │   │   └── logger.js          # 共通ロガー (標準出力のみ)
 │   └── static/index.html     # フロントエンド(単一HTML)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
@@ -102,6 +104,8 @@ document-manager/
 | `S3_REGION` | (STORAGE_BACKEND=s3の場合必須) | S3バケットのリージョン |
 | `S3_PREFIX` | `documents` | S3オブジェクトキーのプレフィックス(`<prefix>/<文書ID>/<ファイル名>`) |
 | `S3_ENDPOINT` | (未設定) | MinIO等のS3互換サービスに接続する場合のエンドポイントURL。未設定時は実AWS S3に接続する |
+| `WEAVIATE_URL` | (未設定) | セマンティック検索(意味検索)用のWeaviateエンドポイント(例: `http://weaviate:8080`)。未設定の間はこの機能自体が無効化され、`api/documents/search/vector`は503を返す |
+| `WEAVIATE_GRPC_PORT` | `50051` | WeaviateのgRPCポート(`WEAVIATE_URL`設定時のみ使用) |
 | `LOG_LEVEL` | `info` | ログレベル (pino) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を丸ごとバイパスする開発用フラグ。本番では未設定のこと |
 | `OIDC_ISSUER` | (必須) | OIDCプロバイダのissuer URL。例: `https://login.microsoftonline.com/<TENANT_ID>/v2.0`(EntraID)、`https://cognito-idp.<REGION>.amazonaws.com/<USER_POOL_ID>`(Cognito) |
@@ -145,6 +149,20 @@ docker run -d \
 ```
 
 環境変数の詳細は上記「環境変数」の表を参照。`OIDC_*`系は利用するIDプロバイダ(EntraID/Cognito/Google等)の値に置き換えること。
+
+## セマンティック検索(Weaviate)込みで起動する
+
+セマンティック検索を使わない場合は上記の`docker run`単体構成のままでよい。使う場合は[docker-compose.yml](docker-compose.yml)でapp/Weaviate/Embedding推論サーバーの3コンテナを起動する。
+
+```bash
+docker compose up -d
+```
+
+- `app`: このリポジトリのDockerfileをビルドして起動(`WEAVIATE_URL`は自動設定される)。`OIDC_*`等の必須環境変数は`docker-compose.yml`内のenvironmentか`.env`ファイルで別途指定すること
+- `weaviate`: ベクトルDB本体(OSS)。データは`weaviate_data`ボリュームに永続化される
+- `t2v-transformers`: Embedding計算を行う推論サーバー(Weaviate公式、多言語sentence-transformersモデル)。外部APIキーは不要
+
+初回起動時、Weaviateがコレクションを自動作成し、以後のアップロードから自動的に索引付けされる。`WEAVIATE_URL`を設定しなければこれらのコンテナは不要で、機能自体が無効化される(既存の単一コンテナ運用に影響しない)。
 
 ## DockerHubから利用する
 
