@@ -94,6 +94,9 @@
 	}
 	#breadcrumbBar .menuLink:hover { color: #ee7800; }
 	#breadcrumbBar .menuLink.active { color: #ee7800; box-shadow: inset 0 -3px 0 #ee7800; }
+	/* アーカイブは他の表示切り替えメニューと性質が異なる(誤操作を避けたい)ため、
+	   右端に離して配置する */
+	#breadcrumbBar #menuArchiveLink { margin-left: auto; }
 
 	#mainArea { flex: 1; display: flex; min-height: 0; }
 
@@ -201,7 +204,7 @@
 	#appShell.readOnlyMode .tagEditButton,
 	#appShell.readOnlyMode .removeTagButton,
 	#appShell.readOnlyMode #menuArchiveLink,
-	#appShell.readOnlyMode #vectorIndexManageLink { display: none !important; }
+	#appShell.readOnlyMode #menuVectorIndexLink { display: none !important; }
 
 	/* アーカイブ表示中はアップロードできない(通常一覧に戻ってから行う) */
 	#appShell.archiveMode #uploadDropZone { display: none !important; }
@@ -241,6 +244,13 @@
 	#projectTreePane { display: none; width: 300px; min-width: 300px; background: #fff; border-right: 1px solid #ddd; flex-direction: column; }
 	#appShell.projectsMode #projectTreePane { display: flex; }
 	#appShell.projectsMode:not(.projectsEditMode) #sideBar { display: none; }
+
+	/* ベクトル索引: 件数が多くなる想定のため、モーダルではなく文書一覧/プレビューを両方隠して
+	   ページ全体(#vectorIndexPane)に表として表示する */
+	#vectorIndexPane { display: none; flex: 1; flex-direction: column; min-width: 0; background: #fff; }
+	#appShell.vectorIndexMode #vectorIndexPane { display: flex; }
+	#appShell.vectorIndexMode #sideBar,
+	#appShell.vectorIndexMode #previewArea { display: none !important; }
 	#projectTreeToolbar { padding: 10px 12px; border-bottom: 1px solid #eee; }
 	#projectTreeHeaderRow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
 	/* 誤クリック防止のため、アーカイブ/元に戻すボタンは他の操作ボタンから間隔と区切り線を空けて配置する
@@ -753,26 +763,26 @@
 	#historyTable .historyActionBadge.restore { background: #eaf7ea; color: #2f9e44; }
 	#historyTable .historyActionBadge.project_unassign { background: #f4f5f7; color: #666; }
 
-	#vectorIndexModalBox { max-width: 780px; width: 94%; }
+	/* ベクトル索引ページ(モーダルではなく#mainArea全体を使うページ表示。件数が多い想定のため) */
+	#vectorIndexPaneHeader { padding: 14px 20px; border-bottom: 1px solid #ddd; flex-shrink: 0; }
+	#vectorIndexPaneHeader h2 { margin: 0 0 6px; font-size: 1.05em; }
+	#vectorIndexPaneMeta { color: #666; font-size: 0.85em; line-height: 1.6; }
+	#vectorIndexControls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 10px; }
+	#vectorIndexActions { display: flex; gap: 8px; margin-left: auto; }
 	#vectorIndexShowAllLabel {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		font-size: 0.85em;
 		color: #555;
-		margin: 8px 0 0;
 		cursor: pointer;
 		user-select: none;
 	}
 	#vectorIndexShowAllLabel input { margin: 0; cursor: pointer; }
-	#vectorIndexTableWrap {
-		max-height: 420px;
-		overflow-y: auto;
-		border: 1px solid #e2e2e2;
-		border-radius: 6px;
-		margin-top: 10px;
-	}
-	#vectorIndexTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.85em; }
+	#vectorIndexDisabledMessage,
+	#vectorIndexEmptyMessage { margin: 16px 20px; color: #888; font-size: 0.9em; }
+	#vectorIndexTableWrap { flex: 1; overflow-y: auto; }
+	#vectorIndexTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.9em; }
 	#vectorIndexTable col.colTarget { width: 22%; }
 	#vectorIndexTable col.colStatus { width: 12%; }
 	#vectorIndexTable col.colNote { width: 34%; }
@@ -780,12 +790,14 @@
 	#vectorIndexTable col.colAction { width: 14%; }
 	#vectorIndexTable th, #vectorIndexTable td {
 		text-align: left;
-		padding: 8px 10px;
+		padding: 10px 10px;
 		border-bottom: 1px solid #eee;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	#vectorIndexTable th:first-child, #vectorIndexTable td:first-child { padding-left: 20px; }
+	#vectorIndexTable th:last-child, #vectorIndexTable td:last-child { padding-right: 20px; }
 	#vectorIndexTable th {
 		position: sticky;
 		top: 0;
@@ -919,16 +931,13 @@
 			<button type="button" id="historyManageLink" class="topBarIconButton" title="操作履歴(直近30日、自分の操作のみ)" aria-label="操作履歴">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
 			</button>
-			<button type="button" id="vectorIndexManageLink" class="topBarIconButton" title="ベクトル索引(セマンティック検索の登録状況・失敗した文書の再実行)" aria-label="ベクトル索引">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
-			</button>
 			<a href="./logout" id="logoutLink" class="topBarIconButton" title="ログアウト" aria-label="ログアウト">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
 			</a>
 		</div>
 	</header>
 	<nav id="breadcrumbBar">
-		<a href="#" id="menuDocumentsLink" class="menuLink active">文書一覧</a><a href="#" id="menuTagTreeLink" class="menuLink">タグ体系</a><a href="#" id="menuProjectsLink" class="menuLink">プロジェクト</a><a href="#" id="menuArchiveLink" class="menuLink">アーカイブ</a>
+		<a href="#" id="menuDocumentsLink" class="menuLink active">文書一覧</a><a href="#" id="menuTagTreeLink" class="menuLink">タグ体系</a><a href="#" id="menuProjectsLink" class="menuLink">プロジェクト</a><a href="#" id="menuVectorIndexLink" class="menuLink">ベクトル索引</a><a href="#" id="menuArchiveLink" class="menuLink">アーカイブ</a>
 	</nav>
 	<div id="projectSwitcherBar">
 		<div id="projectTabs"></div>
@@ -1034,6 +1043,48 @@
 				<textarea id="memoTextarea" rows="3" placeholder="このドキュメントについての備忘録を入力..."></textarea>
 			</div>
 		</main>
+		<main id="vectorIndexPane">
+			<div id="vectorIndexPaneHeader">
+				<h2>ベクトル索引</h2>
+				<div id="vectorIndexPaneMeta">
+					セマンティック検索(意味検索)の索引状況です。索引付けに失敗した文書はここから再実行できます。<br>
+					チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」を使ってください(文書数が多いと時間がかかります)。
+				</div>
+				<div id="vectorIndexControls">
+					<label id="vectorIndexShowAllLabel">
+						<input type="checkbox" id="vectorIndexShowAllToggle">
+						成功・未処理の文書も表示する
+					</label>
+					<div id="vectorIndexActions">
+						<button id="vectorIndexReindexAllButton" type="button" class="modalButton">全件を再索引</button>
+						<button id="vectorIndexRetryFailedButton" type="button" class="modalButton save">失敗を再実行</button>
+					</div>
+				</div>
+			</div>
+			<div id="vectorIndexDisabledMessage" class="emptyMessage" style="display:none;">ベクトル検索は設定されていません(WEAVIATE_URL未設定)。</div>
+			<div id="vectorIndexTableWrap">
+				<table id="vectorIndexTable">
+					<colgroup>
+						<col class="colTarget">
+						<col class="colStatus">
+						<col class="colNote">
+						<col class="colDate">
+						<col class="colAction">
+					</colgroup>
+					<thead>
+						<tr>
+							<th>ファイル名</th>
+							<th>状態</th>
+							<th>エラー内容</th>
+							<th>最終成功</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody id="vectorIndexList"></tbody>
+				</table>
+			</div>
+			<div id="vectorIndexEmptyMessage" class="emptyMessage" style="display:none;">索引付けに失敗している文書はありません。</div>
+		</main>
 	</div>
 	<footer id="appFooter">
 		<span>© <span id="footerYear"></span> EARCE.NET</span>
@@ -1123,48 +1174,6 @@
 		<div id="historyEmptyMessage" class="emptyMessage" style="display:none;">直近30日の操作履歴はありません。</div>
 		<div class="modalButtons">
 			<button id="historyCloseButton" type="button" class="modalButton">閉じる</button>
-		</div>
-	</div>
-</div>
-
-<div id="vectorIndexOverlay" class="modalOverlay" style="display:none;">
-	<div class="modalBox" id="vectorIndexModalBox">
-		<p>ベクトル索引</p>
-		<div class="docMeta">
-			セマンティック検索(意味検索)の索引状況です。索引付けに失敗した文書はここから再実行できます。<br>
-			チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」を使ってください(文書数が多いと時間がかかります)。
-		</div>
-		<div id="vectorIndexDisabledMessage" class="emptyMessage" style="display:none;">ベクトル検索は設定されていません(WEAVIATE_URL未設定)。</div>
-		<label id="vectorIndexShowAllLabel">
-			<input type="checkbox" id="vectorIndexShowAllToggle">
-			成功・未処理の文書も表示する
-		</label>
-		<div id="vectorIndexTableWrap">
-			<table id="vectorIndexTable">
-				<colgroup>
-					<col class="colTarget">
-					<col class="colStatus">
-					<col class="colNote">
-					<col class="colDate">
-					<col class="colAction">
-				</colgroup>
-				<thead>
-					<tr>
-						<th>ファイル名</th>
-						<th>状態</th>
-						<th>エラー内容</th>
-						<th>最終成功</th>
-						<th></th>
-					</tr>
-				</thead>
-				<tbody id="vectorIndexList"></tbody>
-			</table>
-		</div>
-		<div id="vectorIndexEmptyMessage" class="emptyMessage" style="display:none;">索引付けに失敗している文書はありません。</div>
-		<div class="modalButtons">
-			<button id="vectorIndexReindexAllButton" type="button" class="modalButton">全件を再索引</button>
-			<button id="vectorIndexRetryFailedButton" type="button" class="modalButton save">失敗を再実行</button>
-			<button id="vectorIndexCloseButton" type="button" class="modalButton">閉じる</button>
 		</div>
 	</div>
 </div>
@@ -1284,6 +1293,7 @@ const uploadDropZone = document.getElementById("uploadDropZone");
 const menuDocumentsLink = document.getElementById("menuDocumentsLink");
 const menuTagTreeLink = document.getElementById("menuTagTreeLink");
 const menuProjectsLink = document.getElementById("menuProjectsLink");
+const menuVectorIndexLink = document.getElementById("menuVectorIndexLink");
 const menuArchiveLink = document.getElementById("menuArchiveLink");
 const projectSwitcherBar = document.getElementById("projectSwitcherBar");
 const projectTabsEl = document.getElementById("projectTabs");
@@ -1934,6 +1944,10 @@ const loadDocuments = async () => {
 		renderTagTreeList(tagOrderRows);
 		return;
 	}
+	if (currentView === "vectorIndex") {
+		await loadVectorIndexStatuses();
+		return;
+	}
 	const q = filterInput.value.trim();
 	// セマンティック検索(意味検索)はアクティブな文書一覧でのみ有効(アーカイブ済み文書は
 	// ベクトル索引から除外されているため対象外。トグルUI側も同様に非表示にしている)
@@ -1954,12 +1968,13 @@ const loadDocuments = async () => {
 	renderDocumentList();
 };
 
-// 文書一覧 <-> アーカイブ <-> タグ体系 <-> プロジェクト の表示切り替え
+// 文書一覧 <-> アーカイブ <-> タグ体系 <-> プロジェクト <-> ベクトル索引 の表示切り替え
 const setView = (view) => {
 	currentView = view;
 	appShell.classList.toggle("archiveMode", view === "archive");
 	appShell.classList.toggle("tagTreeMode", view === "tagTree");
 	appShell.classList.toggle("projectsMode", view === "projects");
+	appShell.classList.toggle("vectorIndexMode", view === "vectorIndex");
 	if (view !== "projects") {
 		projectsEditMode = false;
 		appShell.classList.remove("projectsEditMode");
@@ -1971,6 +1986,7 @@ const setView = (view) => {
 	menuDocumentsLink.classList.toggle("active", view === "active");
 	menuTagTreeLink.classList.toggle("active", view === "tagTree");
 	menuProjectsLink.classList.toggle("active", view === "projects");
+	menuVectorIndexLink.classList.toggle("active", view === "vectorIndex");
 	menuArchiveLink.classList.toggle("active", view === "archive");
 	clearPreview();
 	loadDocuments();
@@ -1988,6 +2004,10 @@ menuTagTreeLink.addEventListener("click", (ev) => {
 menuProjectsLink.addEventListener("click", (ev) => {
 	ev.preventDefault();
 	setView("projects");
+});
+menuVectorIndexLink.addEventListener("click", (ev) => {
+	ev.preventDefault();
+	setView("vectorIndex");
 });
 menuArchiveLink.addEventListener("click", (ev) => {
 	ev.preventDefault();
@@ -2998,10 +3018,10 @@ historyOverlay.addEventListener("click", (ev) => {
 	if (ev.target === historyOverlay) historyOverlay.style.display = "none";
 });
 
-// ベクトル索引(セマンティック検索)モーダル: 索引状態の一覧・個別/一括の再実行。
+// ベクトル索引ページ(setViewで切り替える文書一覧と同格の画面。件数が多い想定のため
+// モーダルではなくページ全体を使う): 索引状態の一覧・個別/一括の再実行。
 // 既定では失敗した文書だけを表示するが、チャンク分割方法や埋め込みモデルを変更した際は
 // 成功済み(status: 'ok')の文書も含めて再索引したくなるため、トグルで全件表示に切り替えられる
-const vectorIndexOverlay = document.getElementById("vectorIndexOverlay");
 const vectorIndexList = document.getElementById("vectorIndexList");
 const vectorIndexTableWrap = document.getElementById("vectorIndexTableWrap");
 const vectorIndexEmptyMessage = document.getElementById("vectorIndexEmptyMessage");
@@ -3010,7 +3030,6 @@ const vectorIndexShowAllToggle = document.getElementById("vectorIndexShowAllTogg
 const vectorIndexShowAllLabel = document.getElementById("vectorIndexShowAllLabel");
 const vectorIndexReindexAllButton = document.getElementById("vectorIndexReindexAllButton");
 const vectorIndexRetryFailedButton = document.getElementById("vectorIndexRetryFailedButton");
-const vectorIndexCloseButton = document.getElementById("vectorIndexCloseButton");
 
 const VECTOR_INDEX_STATUS_LABELS = {ok: "成功", error: "失敗"};
 
@@ -3081,14 +3100,6 @@ const loadVectorIndexStatuses = async () => {
 	});
 };
 
-document.getElementById("vectorIndexManageLink").addEventListener("click", () => {
-	vectorIndexOverlay.style.display = "flex";
-	loadVectorIndexStatuses();
-});
-vectorIndexCloseButton.addEventListener("click", () => { vectorIndexOverlay.style.display = "none"; });
-vectorIndexOverlay.addEventListener("click", (ev) => {
-	if (ev.target === vectorIndexOverlay) vectorIndexOverlay.style.display = "none";
-});
 vectorIndexShowAllToggle.addEventListener("change", loadVectorIndexStatuses);
 
 // 失敗している文書だけを再実行する(表示中のフィルタに関わらず、失敗している全件が対象)
