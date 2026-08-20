@@ -41,7 +41,7 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
 - **メモ**: プレビュー下部に、文書ごとの備忘録として自由記述メモを入力・保存できる(要 admin/readwrite ロール。アーカイブ表示では閲覧のみ)。検索対象にも含まれる
 - **登録日検索**: アップロード日時のFrom〜Toで絞り込み。初期表示は「2か月前 〜 (Toは空欄)」
 - **週単位グルーピング**: 一覧はアップロード週(日曜始まり)で `YYYY-MM-DD ~` 見出しにまとめ、新しい週が上に来る
-- **画面切り替えメニュー**: パンくずバーに「文書一覧 / タグ体系 / アーカイブ」のメニューを常設し、現在の表示をハイライトする(アーカイブは admin/readwrite ロールのみ表示)
+- **画面切り替えメニュー**: パンくずバーに「文書一覧 / タグ体系 / プロジェクト / ベクトル索引 / アーカイブ」のメニューを常設し、現在の表示をハイライトする(アーカイブ・ベクトル索引は admin/readwrite ロールのみ表示。ベクトル索引は`WEAVIATE_URL`未設定でも表示され、その場合は未設定である旨を案内する)
 - **アーカイブ・復元(Gmail風の論理削除)**: 「削除」ではなく`documents.deleted_at`/`deleted_by`を立てるだけの論理削除で、実ファイルは残す。「アーカイブ」メニューで通常の文書一覧と同じ画面(検索・週単位一覧・プレビュー)のままアーカイブ済み文書の一覧に切り替えられ、いつでも元に戻せる
 - **タグ体系(タグツリー表示)**: 「タグ体系」メニューで、通常の週単位一覧とは別に、タグ名を見出しにしたグループ表示へ切り替えられる(検索・日付絞り込み・アップロードはこの画面では行わない)。表示対象のタグと並び順は`tag_order`テーブルで管理し(`GET/PUT api/tag_order`。並び順の変更はadminロール限定)、画面内の「タグ体系を管理」ボタンから追加・並び替え(上下ボタン)・削除ができる。複数のタグを持つ文書は該当する全グループに重複表示され、登録していないタグしか持たない文書は「未分類」として末尾にまとめられる
 - **リアルタイム更新**: SSE (`GET api/documents/events`) で他クライアントのアップロード/削除を検知し、一覧を自動更新する
@@ -69,7 +69,8 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
 - **アップロードサイズ上限**: 1ファイル`UPLOAD_MAX_BYTES`(既定256MB)まで。超過時は413を返す。認証チェック(`requireAuth`/`requireWrite`)をmultipartパース(`express-fileupload`)より先に行う構成のため、未認証のリクエストはファイル本体の読み取りが始まる前に401/403で弾かれる(サイズ判定にすら到達しない)
 
 ### AI連携ヘルプ
-- 画面右上のヘルプアイコンから、Claude Desktop・Antigravity等のデスクトップAIにこのAPIの使い方を教えるためのMarkdown(接続情報・エンドポイント一覧・curl例)を表示・コピーできる。ベースURLは実際のアクセス元(`location.href`)から動的に算出するため、リバースプロキシ配下の `BASE_PATH` にも自動的に対応する
+- 画面右上のヘルプアイコンから、Claude Desktop・Antigravity・Cowork等のデスクトップ/エージェント型AIにこのAPIの使い方を教えるためのMarkdown(接続情報・エンドポイント一覧・curl例・AIへの指示)を表示・コピーできる。ベースURLは実際のアクセス元(`location.href`)から動的に算出するため、リバースプロキシ配下の `BASE_PATH` にも自動的に対応する
+- セマンティック検索・ベクトル索引関連のエンドポイント説明は、`WEAVIATE_URL`が設定されている(=実際に使える)環境でアクセスした場合にのみ含まれる。未設定の環境では、存在しないAPIをAIに教えないようこれらの記述ごと省かれる
 
 ## ディレクトリ構成
 
@@ -79,7 +80,7 @@ document-manager/
 ├── app/                     # アプリケーション本体 (Dockerイメージにコピーされる)
 │   ├── server.js             # エントリポイント
 │   ├── lib/
-│   │   ├── db.js              # SQLite初期化・スキーマバージョン管理 (documents/document_tags/api_keys/allowed_users/tag_order/projects/project_folders/project_documents/audit_log)
+│   │   ├── db.js              # SQLite初期化・スキーマバージョン管理 (documents/document_tags/api_keys/allowed_users/tag_order/projects/project_folders/project_documents/audit_log/vector_search_settings)
 │   │   ├── oidc-client.js     # OIDC Discovery + Configuration初期化
 │   │   ├── api-keys.js        # APIキーの発行/検証/失効
 │   │   ├── allowed-users.js   # ログイン許可ユーザーのホワイトリスト管理
@@ -180,6 +181,71 @@ COHERE_APIKEY=<Cohereで発行したAPIキー>
 ```
 
 初回起動時、Weaviateがコレクションを自動作成し、以後のアップロードから自動的に索引付けされる。`WEAVIATE_URL`を設定しなければこれらのコンテナは不要で、機能自体が無効化される(既存の単一コンテナ運用に影響しない)。
+
+### `docker compose`を使わずにWeaviateも起動する場合
+
+Kubernetes等、`docker compose`を前提にできない環境向けに、[docker-compose.yml](docker-compose.yml)と同じ構成(コンテナ間の環境変数・ポート・ボリューム)を`docker run`だけで再現する手順。コンテナ名で名前解決できるよう、まずユーザー定義ネットワークを作成する。
+
+```bash
+# 1. コンテナ間通信用のネットワークを作成(初回のみ)
+docker network create document-manager-net
+
+# 2. Embedding推論サーバー(WEAVIATE_VECTORIZER=text2vec-transformers、既定の場合のみ必要。
+#    Cohere/OpenAIを使う場合はこのコンテナ自体を起動しなくてよい)
+docker run -d \
+  --name t2v-transformers \
+  --network document-manager-net \
+  --restart unless-stopped \
+  -e ENABLE_CUDA=0 \
+  semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2
+
+# 3. Weaviate本体(REST:8081→8080, gRPC:50051→50051でホストに公開。無くても動くが
+#    動作確認・デバッグ用に外部からも叩けるようにしている)
+docker run -d \
+  --name weaviate \
+  --network document-manager-net \
+  --restart unless-stopped \
+  -p 8081:8080 \
+  -p 50051:50051 \
+  -v weaviate_data:/var/lib/weaviate \
+  -e QUERY_DEFAULTS_LIMIT=25 \
+  -e AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true \
+  -e PERSISTENCE_DATA_PATH=/var/lib/weaviate \
+  -e ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai \
+  -e DEFAULT_VECTORIZER_MODULE=text2vec-transformers \
+  -e TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080 \
+  -e CLUSTER_HOSTNAME=node1 \
+  semitechnologies/weaviate:latest
+
+# 4. document-manager本体(同じネットワークに参加させ、WEAVIATE_URLはコンテナ名で指定)
+docker build -t document-manager .
+
+docker run -d \
+  --name document-manager \
+  --network document-manager-net \
+  -p 8080:8080 \
+  -v "$(pwd)/data:/data" \
+  -e WEAVIATE_URL="http://weaviate:8080" \
+  -e WEAVIATE_GRPC_PORT="50051" \
+  -e OIDC_ISSUER="https://login.microsoftonline.com/<TENANT_ID>/v2.0" \
+  -e OIDC_CLIENT_ID="<CLIENT_ID>" \
+  -e OIDC_CLIENT_SECRET="<CLIENT_SECRET>" \
+  -e OIDC_REDIRECT_URI="https://your-domain.example.com/document_management/login" \
+  -e ADMIN_EMAIL="admin@example.com" \
+  -e SESSION_SECRET="<ランダムな文字列>" \
+  document-manager
+```
+
+Cohere/OpenAIを使う場合は手順2を省略し、手順4に`-e WEAVIATE_VECTORIZER="text2vec-cohere" -e COHERE_APIKEY="<APIキー>"`(OpenAIなら`text2vec-openai`/`OPENAI_APIKEY`)を追加するだけでよい。手順3の`weaviate`はENABLE_MODULESに3方式ともあらかじめ含めてあるため、Weaviate側の設定変更は不要。
+
+停止・削除する場合は次の順序で(依存関係の都合上、appから止めるのが無難)。
+
+```bash
+docker rm -f document-manager weaviate t2v-transformers
+docker network rm document-manager-net
+# ベクトルDBのデータ自体を消したい場合のみ(通常は残してよい)
+docker volume rm weaviate_data
+```
 
 ## DockerHubから利用する
 
