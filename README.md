@@ -160,6 +160,8 @@ docker run -d \
 
 環境変数の詳細は上記「環境変数」の表を参照。`OIDC_*`系は利用するIDプロバイダ(EntraID/Cognito/Google等)の値に置き換えること。
 
+> **Windows + Git Bash利用時の注意**: Git Bashは`-v`引数のパス(`$(pwd)/data:/data`等)をMSYSが独自に(誤って)変換してしまい、`/data`側まで書き換えられて`EACCES: permission denied`でコンテナが落ちることがある(実際にこのDocker検証中に再現した)。`docker run`の前に`MSYS_NO_PATHCONV=1`を付けるか、PowerShell/コマンドプロンプトから実行すること。`docker compose`はYAML内のパスを直接読むためこの問題が起きない。
+
 ## セマンティック検索(Weaviate)込みで起動する
 
 セマンティック検索を使わない場合は上記の`docker run`単体構成のままでよい。使う場合は[docker-compose.yml](docker-compose.yml)でapp/Weaviate/Embedding推論サーバーの3コンテナを起動する。
@@ -220,7 +222,9 @@ docker run -d \
 # 4. document-manager本体(同じネットワークに参加させ、WEAVIATE_URLはコンテナ名で指定)
 docker build -t document-manager .
 
-docker run -d \
+# Windows + Git Bashの場合、-vのパスをMSYSに誤変換されないようMSYS_NO_PATHCONV=1を付けること
+# (付けないと/data側まで巻き込まれてEACCESでコンテナが落ちる。上記「Dockerビルド・起動」の注意点と同じ)
+MSYS_NO_PATHCONV=1 docker run -d \
   --name document-manager \
   --network document-manager-net \
   -p 8080:8080 \
@@ -254,6 +258,7 @@ docker volume rm weaviate_data
 ```bash
 docker pull earce9000/document-manager:latest
 
+# Windows + Git Bashの場合はMSYS_NO_PATHCONV=1を付けること(「Dockerビルド・起動」の注意点参照)
 docker run -d \
   --name document-manager \
   -p 8080:8080 \
