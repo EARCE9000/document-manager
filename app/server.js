@@ -391,7 +391,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 		setHTTPHeaders(res);
 
 		if (AUTH_DISABLED) {
-			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role});
+			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled()});
 			return;
 		}
 
@@ -401,7 +401,8 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 				res.status(200).json({
 					user_identifier: req.session.user.identifier,
 					isAdmin: role === AllowedUsers.ROLES.ADMIN,
-					role
+					role,
+					vectorSearchEnabled: VectorSearch.isEnabled()
 				});
 				return;
 			}
@@ -1019,6 +1020,10 @@ app.get(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireWrite, 
 app.put(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
+		if (!VectorSearch.isEnabled()) {
+			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
+			return;
+		}
 		const chunkSize = Number(req.body.chunkSize);
 		const chunkOverlap = Number(req.body.chunkOverlap);
 		const settings = VectorSearch.updateChunkSettings({chunkSize, chunkOverlap}, req.authData.user_identifier);
@@ -1039,6 +1044,10 @@ app.put(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmin, 
 app.delete(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
+		if (!VectorSearch.isEnabled()) {
+			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
+			return;
+		}
 		res.status(200).json(VectorSearch.resetChunkSettings());
 	} catch (err) {
 		logger.error(err, "::api/vector-index/settings:delete");
@@ -1971,8 +1980,11 @@ const main = async () => {
 	server.listen(LISTEN_PORT);
 	logger.info({LISTEN_PORT}, "server started on port");
 	// 過去にアップロードされた(このベクトル検索機能の導入前からある)文書を差分バックフィルする。
-	// サーバー起動をブロックしないよう非同期で流す(WEAVIATE_URL未設定時は何もしない)
-	VectorSearch.backfillMissingDocuments(selectActiveDocumentsForIndexing.all());
+	// サーバー起動をブロックしないよう非同期で流す。WEAVIATE_URL未設定時はisEnabled()の時点で
+	// 弾き、全文書のcontent_textを読み出すクエリ自体を実行しない(単体SQLiteモードと同じ動作にする)
+	if (VectorSearch.isEnabled()) {
+		VectorSearch.backfillMissingDocuments(selectActiveDocumentsForIndexing.all());
+	}
 };
 
 main().catch((err) => {
