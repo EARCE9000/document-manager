@@ -19,6 +19,12 @@
 # 未使用ならreranker-transformersコンテナごと`docker compose up -d app weaviate t2v-transformers`
 # のように省略してよい。
 #
+# ⚠️ リランキングは自己責任機能: GPU無し実機でクロスエンコーダの実測を行ったところ、
+# 候補1件あたり約400〜550msかかった。既定の候補数(検索APIのlimit×3、limit=20なら60件)では
+# 25〜30秒かかり、Weaviateの30秒gRPCタイムアウトを超えて検索結果が空で返ることがある
+# (文書の総数には依存しない。候補数だけで決まる)。有効化する場合は検索時のlimitを
+# 小さめに指定するなど利用側で候補数を絞ること。詳細はREADME.mdの「リランキング」項目を参照。
+#
 # weaviate/t2v-transformers/reranker-transformersのイメージタグは:latest相当(具体的なモデル名タグ)
 # にしている。自己ホスト運用では動作確認後にバージョンを固定することを推奨する。
 
@@ -40,8 +46,8 @@ services:
       - WEAVIATE_VECTORIZER=${WEAVIATE_VECTORIZER:-text2vec-transformers}
       - COHERE_APIKEY=${COHERE_APIKEY:-}
       - OPENAI_APIKEY=${OPENAI_APIKEY:-}
-      # 既定は無効(空文字)。有効化する場合は .env 等で
-      # WEAVIATE_RERANKER=reranker-transformers を指定する
+      # 既定は無効(空文字)。⚠️自己責任機能(CPU実行時は低速・タイムアウトの実績あり。
+      # 上記の注記参照)。有効化する場合は .env 等で WEAVIATE_RERANKER=reranker-transformers を指定する
       - WEAVIATE_RERANKER=${WEAVIATE_RERANKER:-}
       # OIDC_*/SESSION_SECRET等、既存の必須環境変数はREADMEの「環境変数」表を参照して別途指定すること
       - AUTH_DISABLED=${AUTH_DISABLED:-}
@@ -85,7 +91,8 @@ services:
   # リランキング推論サーバー(Weaviate公式のOSSコンテナ)。WEAVIATE_RERANKER=reranker-transformers
   # を指定した場合のみ使われる。クロスエンコーダはLLM(文章生成)ではなく、クエリと文書の
   # 組から関連度スコアだけを返す専用の小さなモデル。日本語を含む多言語文書のため
-  # BAAI/bge-reranker-v2-m3(多言語対応クロスエンコーダ)を使用する。外部APIキーは不要
+  # BAAI/bge-reranker-v2-m3(多言語対応クロスエンコーダ)を使用する。外部APIキーは不要。
+  # ⚠️GPU無し実機でCPU推論が候補1件あたり約400〜550msと低速なことを実測済み(自己責任機能)
   reranker-transformers:
     image: semitechnologies/reranker-transformers:baai-bge-reranker-v2-m3
     restart: unless-stopped

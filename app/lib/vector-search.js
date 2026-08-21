@@ -78,6 +78,13 @@ const resolveVectorizer = () => {
 // 順位付けする。"reranker-transformers"を指定すると、自己ホストのクロスエンコーダ
 // (文章生成をしないLLMではない専用の小さなモデル。Weaviate公式のOSSコンテナ)で
 // 検索結果を再スコアリングし、より精度の高い順位に並び替える。外部APIキーは不要
+//
+// ⚠️自己責任機能: GPU無し実機で実測したところ、候補1件あたり約400〜550msかかった。
+// searchAPIのlimit×3件(既定limit=20なら60件)を再スコアリングすると25〜30秒かかり、
+// Weaviateの30秒gRPCタイムアウトを超えて検索結果が空で返ることがある(文書の総数には
+// 依存せず、候補数だけで決まる)。現状、候補数の削減・軽量モデルへの変更・タイムアウト時の
+// エラー明示化はいずれも未対応。有効化する場合は呼び出し側でlimitを小さめにするなど、
+// 利用者の判断で候補数を絞ること
 const WEAVIATE_RERANKER = process.env.WEAVIATE_RERANKER || "";
 const isRerankerEnabled = () => WEAVIATE_RERANKER === "reranker-transformers";
 
