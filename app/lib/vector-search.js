@@ -118,6 +118,13 @@ const selectDocumentForIndexing = db.prepare(`
 const selectVectorIndexStatus = db.prepare(`
 	SELECT vector_index_status, vector_index_error, vector_indexed_at FROM documents WHERE id = ?
 `);
+// 'processing'はプロセス内メモリのキュー(runSerialized/runEmbeddingExclusive)が進行中で
+// あることを前提にした状態のため、サーバーの強制終了(クラッシュ・強制停止)を挟むとキューの
+// 情報自体が失われ、DBにだけ'processing'が残って永久に「処理中」と表示され続けてしまう。
+// 起動時に必ずクリンアップ(未処理へ戻す)して、次回の索引付け/バックフィルで再処理させる
+const resetStaleProcessingStatus = db.prepare(`
+	UPDATE documents SET vector_index_status = NULL, vector_index_error = NULL WHERE vector_index_status = 'processing'
+`);
 
 // チャンク分割設定(GUIからの上書き)。id=1固定のシングルトン行で、NULLの間は環境変数の既定値を使う
 const selectChunkSettings = db.prepare(`SELECT chunk_size, chunk_overlap, updated_by, updated_at FROM vector_search_settings WHERE id = 1`);
@@ -258,14 +265,26 @@ const removeDocumentChunks = async (collection, documentId) => {
 	await collection.data.deleteMany(collection.filter.byProperty("documentId").equal(documentId));
 };
 
-// 索引結果(成功/失敗)をdocuments.vector_index_status等へ記録する。記録自体の失敗は
-// 索引処理の成否に影響させない(ログのみ)
+// 索引状態(processing/ok/error/未処理)が変化するたびにserver.js側へ通知するためのフック。
+// server.js側でSSE配信(broadcastDocumentsChanged)を登録することで、「ベクトル索引」画面を
+// 開いている全クライアントへバックグラウンド処理の開始・完了をリアルタイムに反映できる。
+// 未登録(デフォルト)の場合は何もしない
+let onStatusChange = () => {};
+const setStatusChangeListener = (listener) => {
+	onStatusChange = listener;
+};
+
+// 索引結果(処理中/成功/失敗)をdocuments.vector_index_status等へ記録する。記録自体の失敗は
+// 索引処理の成否に影響させない(ログのみ)。DBへ記録するのは、プロセス再起動後も状態を
+// 引き継ぐため、および複数クライアントから見えるようにするため(inFlightIndexingは
+// プロセス内メモリのみで、再起動やSSE通知には使えない)
 const recordIndexResult = (documentId, status, error) => {
 	try {
 		updateVectorIndexStatus.run({id: documentId, status, error, indexed_at: status === "ok" ? new Date().toISOString() : null});
 	} catch (err) {
 		logger.error({err, documentId}, "::recordIndexResult");
 	}
+	onStatusChange();
 };
 
 // indexDocument/removeDocumentは呼び出し元(server.js)からawaitせずバックグラウンドで
@@ -299,6 +318,15 @@ const runEmbeddingExclusive = (task) => {
 	return result;
 };
 
+// 索引付け中の文書に対して、アップロード直後のバックグラウンド処理と手動の再実行が
+// ほぼ同時に呼ばれるなど、同一文書への重複リクエストが発生し得る(vector_index_status='processing'は
+// UI上での視認性のためのものであり、それを見た利用者が再実行するのを完全に防ぐことはできない。
+// 複数ブラウザタブや、SSE通知が届く前の連打などもあり得る)。indexDocumentは常に現在の
+// content_textを元に全チャンクを作り直すため、進行中の索引付けと同じ内容を二重に処理しても
+// 結果は変わらず無駄になるだけである。そのため、既に進行中の索引付けがあればそれに合流し
+// (新たな処理は開始せず、同じ結果を待つだけにする)、推論サーバーへの負荷と待ち時間を増やさないようにする
+const inFlightIndexing = new Map();
+
 /**
  * 指定文書のチャンクを登録し直す(既存チャンクは一旦全削除してから再登録する)。
  * 成功/失敗をdocuments.vector_index_status等へ記録し、「失敗した文書の再実行」画面から
@@ -314,7 +342,15 @@ const indexDocument = (documentId, contentText) => {
 		recordIndexResult(documentId, "ok", null);
 		return Promise.resolve();
 	}
-	return runSerialized(documentId, () => runEmbeddingExclusive(async () => {
+	const inFlight = inFlightIndexing.get(documentId);
+	if (inFlight != null) {
+		return inFlight;
+	}
+	// 実際の埋め込み計算(runEmbeddingExclusiveの順番待ちを含む)を始める前に、同期的に
+	// 'processing'を記録する。こうすることで、呼び出し元(server.js)がこの直後に行う
+	// SSE通知(documents-changed)の時点で、DBには既に'processing'が反映されている
+	recordIndexResult(documentId, "processing", null);
+	const promise = runSerialized(documentId, () => runEmbeddingExclusive(async () => {
 		try {
 			const client = await getClient();
 			const collection = client.collections.use(COLLECTION_NAME);
@@ -329,6 +365,13 @@ const indexDocument = (documentId, contentText) => {
 			recordIndexResult(documentId, "error", String(err?.message || err));
 		}
 	}));
+	inFlightIndexing.set(documentId, promise);
+	promise.finally(() => {
+		if (inFlightIndexing.get(documentId) === promise) {
+			inFlightIndexing.delete(documentId);
+		}
+	});
+	return promise;
 };
 
 /**
@@ -424,9 +467,9 @@ const backfillMissingDocuments = async (documents) => {
 };
 
 /**
- * アクティブな全文書の索引状態(status: null=未処理 / 'ok' / 'error')を返す。
- * 「ベクトル索引」画面(index.html)から呼ばれる。失敗した文書の再実行だけでなく、
- * チャンク分割方法や埋め込みモデルを変更した際に成功済みの文書も含めて
+ * アクティブな全文書の索引状態(status: null=未処理 / 'processing'=バックグラウンド処理中 /
+ * 'ok' / 'error')を返す。「ベクトル索引」画面(index.html)から呼ばれる。失敗した文書の
+ * 再実行だけでなく、チャンク分割方法や埋め込みモデルを変更した際に成功済みの文書も含めて
  * 再索引したいケースに対応するため、'ok'の文書も返す
  */
 const listIndexStatuses = () => selectAllDocumentStatuses.all().map((row) => ({
@@ -456,7 +499,26 @@ const retryDocument = async (documentId) => {
 	};
 };
 
+/**
+ * サーバー起動時に呼ぶ。前回の起動時に'processing'のまま残っている文書(強制終了等で
+ * プロセス内キューの情報が失われたもの)を「未処理」に戻し、次回の索引付け/バックフィルで
+ * 再処理されるようにする。Weaviate未設定時は何もしない
+ */
+const recoverStaleProcessing = () => {
+	if (!isEnabled()) {
+		return;
+	}
+	try {
+		const result = resetStaleProcessingStatus.run();
+		if (result.changes > 0) {
+			logger.warn({count: result.changes}, "::recoverStaleProcessing: 前回起動時に処理中のまま残っていた文書を未処理に戻しました");
+		}
+	} catch (err) {
+		logger.error(err, "::recoverStaleProcessing");
+	}
+};
+
 module.exports = {
 	isEnabled, indexDocument, removeDocument, search, chunkText, backfillMissingDocuments, listIndexStatuses, retryDocument,
-	getChunkSettings, updateChunkSettings, resetChunkSettings
+	getChunkSettings, updateChunkSettings, resetChunkSettings, setStatusChangeListener, recoverStaleProcessing
 };

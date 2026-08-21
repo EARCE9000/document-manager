@@ -880,6 +880,11 @@ const broadcastDocumentsChanged = () => {
 	}
 };
 
+// ベクトル索引の状態(processing/ok/error)がバックグラウンドで変化するたびに、SSE経由で
+// 「ベクトル索引」画面を開いている全クライアントへ反映する(indexDocumentはawaitせず
+// fire-and-forgetで呼ぶため、完了をこの通知でしか知る術がない。詳細はvector-search.js参照)
+VectorSearch.setStatusChangeListener(broadcastDocumentsChanged);
+
 // プロジェクトの施錠/解錠・構成変更(フォルダ/文書の登録・並び替え等)を同じSSE接続で通知する。
 // 全利用者で共有される状態のため、他クライアントが変更していても画面が古いままにならないようにする
 const broadcastProjectsChanged = () => {
@@ -1981,6 +1986,10 @@ const main = async () => {
 	}
 	server.listen(LISTEN_PORT);
 	logger.info({LISTEN_PORT}, "server started on port");
+	// 前回の起動時に強制終了等でバックグラウンド処理中(processing)のまま残った文書があれば
+	// 未処理に戻す(プロセス内キューの情報は再起動で失われるため)。バックフィルより先に行うことで、
+	// 未処理へ戻った文書もバックフィル/以後の索引付けで正しく再処理の対象になるようにする
+	VectorSearch.recoverStaleProcessing();
 	// 過去にアップロードされた(このベクトル検索機能の導入前からある)文書を差分バックフィルする。
 	// サーバー起動をブロックしないよう非同期で流す。WEAVIATE_URL未設定時はisEnabled()の時点で
 	// 弾き、全文書のcontent_textを読み出すクエリ自体を実行しない(単体SQLiteモードと同じ動作にする)
