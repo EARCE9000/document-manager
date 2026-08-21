@@ -779,6 +779,7 @@
 		user-select: none;
 	}
 	#vectorIndexShowAllLabel input { margin: 0; cursor: pointer; }
+	#vectorIndexRunStatus { font-size: 0.8em; color: #888; }
 	#vectorIndexSettingsRow {
 		display: flex;
 		align-items: center;
@@ -1068,17 +1069,18 @@
 			<div id="vectorIndexPaneHeader">
 				<h2>ベクトル索引</h2>
 				<div id="vectorIndexPaneMeta">
-					セマンティック検索(意味検索)の索引状況です。索引付けに失敗した文書はここから再実行できます。<br>
+					セマンティック検索(意味検索)の索引状況です。索引付けに失敗・未処理の文書は常に一覧に表示され、ここから再実行できます。<br>
 					チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」を使ってください(文書数が多いと時間がかかります)。
 				</div>
 				<div id="vectorIndexControls">
 					<label id="vectorIndexShowAllLabel">
 						<input type="checkbox" id="vectorIndexShowAllToggle">
-						成功・未処理の文書も表示する
+						成功の文書も表示する
 					</label>
+					<span id="vectorIndexRunStatus"></span>
 					<div id="vectorIndexActions">
 						<button id="vectorIndexReindexAllButton" type="button" class="modalButton">全件を再索引</button>
-						<button id="vectorIndexRetryFailedButton" type="button" class="modalButton save">失敗を再実行</button>
+						<button id="vectorIndexRetryFailedButton" type="button" class="modalButton save">失敗・未処理を再実行</button>
 					</div>
 				</div>
 				<div id="vectorIndexSettingsRow">
@@ -3060,6 +3062,7 @@ const vectorIndexEmptyMessage = document.getElementById("vectorIndexEmptyMessage
 const vectorIndexDisabledMessage = document.getElementById("vectorIndexDisabledMessage");
 const vectorIndexShowAllToggle = document.getElementById("vectorIndexShowAllToggle");
 const vectorIndexShowAllLabel = document.getElementById("vectorIndexShowAllLabel");
+const vectorIndexRunStatus = document.getElementById("vectorIndexRunStatus");
 const vectorIndexReindexAllButton = document.getElementById("vectorIndexReindexAllButton");
 const vectorIndexRetryFailedButton = document.getElementById("vectorIndexRetryFailedButton");
 const vectorIndexSettingsRow = document.getElementById("vectorIndexSettingsRow");
@@ -3068,26 +3071,34 @@ const VECTOR_INDEX_STATUS_LABELS = {ok: "成功", error: "失敗"};
 
 let vectorIndexDocuments = [];
 
+// 成否をboolean(HTTP自体の失敗も含めfalse)で返す。呼び出し元(一括実行)が
+// 完了時に成功/失敗件数をまとめて表示できるようにするため
 const retryVectorIndex = async (id) => {
 	const res = await fetch(`./api/documents/${encodeURIComponent(id)}/vector-index/retry`, {method: "POST"});
 	if (res.status !== 200) {
 		const body = await res.json().catch(() => ({}));
 		alert(body.error || "再実行に失敗しました");
+		return false;
 	}
+	const result = await res.json();
+	return result.status === "ok";
 };
 
 // 複数件をまとめて再索引する。逐次実行にしてWeaviate/推論サーバーへの同時リクエストが
-// 大量に飛ばないようにする(件数が多いと時間がかかる旨をボタンのテキストで示す)
+// 大量に飛ばないようにする(件数が多いと時間がかかる旨をボタンのテキストで示す)。
+// 完了後は「いつ・何件成功したか」を#vectorIndexRunStatusに表示する
 const retryVectorIndexMany = async (ids, button, runningLabel) => {
 	if (ids.length === 0) return;
 	button.disabled = true;
 	const originalLabel = button.textContent;
+	let successCount = 0;
 	for (let i = 0; i < ids.length; i++) {
 		button.textContent = `${runningLabel} (${i + 1}/${ids.length})`;
-		await retryVectorIndex(ids[i]);
+		if (await retryVectorIndex(ids[i])) successCount++;
 	}
 	button.disabled = false;
 	button.textContent = originalLabel;
+	vectorIndexRunStatus.textContent = `最終実行: ${formatDateTime(new Date().toISOString())}(成功 ${successCount}/${ids.length}件)`;
 	await loadVectorIndexStatuses();
 };
 
@@ -3111,12 +3122,13 @@ const loadVectorIndexStatuses = async () => {
 		return;
 	}
 
+	// 失敗(error)・未処理(status未設定)は常に表示し、成功(ok)はトグルで表示/非表示を切り替える
 	const showAll = vectorIndexShowAllToggle.checked;
-	const rows = showAll ? documents : documents.filter((doc) => doc.status === "error");
+	const rows = showAll ? documents : documents.filter((doc) => doc.status !== "ok");
 
 	vectorIndexTableWrap.style.display = rows.length === 0 ? "none" : "block";
 	vectorIndexEmptyMessage.style.display = rows.length === 0 ? "block" : "none";
-	vectorIndexEmptyMessage.textContent = showAll ? "対象の文書はありません。" : "索引付けに失敗している文書はありません。";
+	vectorIndexEmptyMessage.textContent = showAll ? "対象の文書はありません。" : "索引付けに失敗・未処理の文書はありません(すべて成功しています)。";
 	vectorIndexList.innerHTML = rows.map((doc) => `
 		<tr data-id="${escapeHtml(doc.id)}">
 			<td title="${escapeHtml(doc.entryFile)}">${escapeHtml(doc.entryFile)}</td>
@@ -3138,11 +3150,11 @@ const loadVectorIndexStatuses = async () => {
 
 vectorIndexShowAllToggle.addEventListener("change", loadVectorIndexStatuses);
 
-// 失敗している文書だけを再実行する(表示中のフィルタに関わらず、失敗している全件が対象)
+// 失敗・未処理の文書だけを再実行する(成功済みは対象外。表示中のフィルタに関わらず全件が対象)
 vectorIndexRetryFailedButton.addEventListener("click", async () => {
-	const ids = vectorIndexDocuments.filter((doc) => doc.status === "error").map((doc) => doc.id);
+	const ids = vectorIndexDocuments.filter((doc) => doc.status !== "ok").map((doc) => doc.id);
 	if (ids.length === 0) {
-		alert("索引付けに失敗している文書はありません。");
+		alert("索引付けに失敗・未処理の文書はありません。");
 		return;
 	}
 	await retryVectorIndexMany(ids, vectorIndexRetryFailedButton, "実行中");
