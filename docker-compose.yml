@@ -13,20 +13,13 @@
 # 未使用になるだけで、動かしたままでも害はない。不要なら`docker compose up -d app weaviate`
 # のようにサービスを指定して起動すれば省略できる)。
 #
-# 検索結果のリランキング(並び替え)も同様に任意機能。既定は無効(距離順のまま)。
-# appのWEAVIATE_RERANKER=reranker-transformersで有効化すると、reranker-transformers
-# コンテナ(自己ホストのクロスエンコーダ、LLMではない)が使われる。こちらも外部APIキー不要で、
-# 未使用ならreranker-transformersコンテナごと`docker compose up -d app weaviate t2v-transformers`
-# のように省略してよい。
+# 検索結果のリランキング機能は実装していない。CPU実行時に候補数に応じてWeaviateの
+# 30秒タイムアウトへ達し検索結果が空で返る実測結果に加え、Weaviate公式のプリビルド
+# イメージには多言語対応かつ非中国系のクロスエンコーダが無かったため見送っている
+# (詳細はREADME.mdの「性能検証結果」項目を参照)。
 #
-# ⚠️ リランキングは自己責任機能: GPU無し実機でクロスエンコーダの実測を行ったところ、
-# 候補1件あたり約400〜550msかかった。既定の候補数(検索APIのlimit×3、limit=20なら60件)では
-# 25〜30秒かかり、Weaviateの30秒gRPCタイムアウトを超えて検索結果が空で返ることがある
-# (文書の総数には依存しない。候補数だけで決まる)。有効化する場合は検索時のlimitを
-# 小さめに指定するなど利用側で候補数を絞ること。詳細はREADME.mdの「リランキング」項目を参照。
-#
-# weaviate/t2v-transformers/reranker-transformersのイメージタグは:latest相当(具体的なモデル名タグ)
-# にしている。自己ホスト運用では動作確認後にバージョンを固定することを推奨する。
+# weaviate/t2v-transformersのイメージタグは:latest相当(具体的なモデル名タグ)にしている。
+# 自己ホスト運用では動作確認後にバージョンを固定することを推奨する。
 
 services:
   app:
@@ -46,9 +39,6 @@ services:
       - WEAVIATE_VECTORIZER=${WEAVIATE_VECTORIZER:-text2vec-transformers}
       - COHERE_APIKEY=${COHERE_APIKEY:-}
       - OPENAI_APIKEY=${OPENAI_APIKEY:-}
-      # 既定は無効(空文字)。⚠️自己責任機能(CPU実行時は低速・タイムアウトの実績あり。
-      # 上記の注記参照)。有効化する場合は .env 等で WEAVIATE_RERANKER=reranker-transformers を指定する
-      - WEAVIATE_RERANKER=${WEAVIATE_RERANKER:-}
       # OIDC_*/SESSION_SECRET等、既存の必須環境変数はREADMEの「環境変数」表を参照して別途指定すること
       - AUTH_DISABLED=${AUTH_DISABLED:-}
     depends_on:
@@ -66,36 +56,25 @@ services:
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
       - PERSISTENCE_DATA_PATH=/var/lib/weaviate
       # text2vec-cohere/text2vec-openaiは追加コンテナ不要(Weaviate本体に組み込み済みで
-      # 外部APIを呼ぶだけ)なため、appのWEAVIATE_VECTORIZER/WEAVIATE_RERANKERを
+      # 外部APIを呼ぶだけ)なため、appのWEAVIATE_VECTORIZERを
       # いつでも切り替えられるようまとめて有効化しておく(未使用の方式は単に呼ばれない)
-      - ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai,reranker-transformers
+      - ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai
       - DEFAULT_VECTORIZER_MODULE=text2vec-transformers
       - TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080
-      - RERANKER_INFERENCE_API=http://reranker-transformers:8080
       - CLUSTER_HOSTNAME=node1
     volumes:
       - weaviate_data:/var/lib/weaviate
     depends_on:
       - t2v-transformers
-      - reranker-transformers
 
   # Embedding推論サーバー(Weaviate公式のOSSコンテナ)。WEAVIATE_VECTORIZER=text2vec-transformers
   # (既定)の場合のみ使われる。日本語を含む多言語文書のため多言語sentence-transformers
   # モデルを使用する。外部APIキーは不要
   t2v-transformers:
-    image: semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2
+    image: semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-mpnet-base-v2
     restart: unless-stopped
     environment:
       - ENABLE_CUDA=0
-
-  # リランキング推論サーバー(Weaviate公式のOSSコンテナ)。WEAVIATE_RERANKER=reranker-transformers
-  # を指定した場合のみ使われる。クロスエンコーダはLLM(文章生成)ではなく、クエリと文書の
-  # 組から関連度スコアだけを返す専用の小さなモデル。日本語を含む多言語文書のため
-  # BAAI/bge-reranker-v2-m3(多言語対応クロスエンコーダ)を使用する。外部APIキーは不要。
-  # ⚠️GPU無し実機でCPU推論が候補1件あたり約400〜550msと低速なことを実測済み(自己責任機能)
-  reranker-transformers:
-    image: semitechnologies/reranker-transformers:baai-bge-reranker-v2-m3
-    restart: unless-stopped
 
 volumes:
   weaviate_data:
