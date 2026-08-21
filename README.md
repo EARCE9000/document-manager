@@ -33,7 +33,9 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
   - プレビュー上部に、ファイル名が似ている他の文書(現在表示中の一覧内、文字3-gramのDice係数で判定)をチップ表示し、クリックでそちらのプレビューに切り替えられる(バージョン違い等の関連文書を見つけやすくする)
 - **全文検索**: ファイル名・本文(抽出済みプレーンテキスト)はFTS5(`trigram`トークナイザ)で部分一致検索する。単語分割不要で日本語等CJKにも強いが、3文字未満のクエリはヒットしない制約があるため、その場合は自動的に `LIKE` 検索にフォールバックする。タグ・メモは元々短い文字列のため常に `LIKE` で検索する
 - **セマンティック検索(任意機能)**: `WEAVIATE_URL`環境変数を設定すると、キーワードの部分一致ではなく言い換え・表記ゆれを含めて意味的に近い文書を検索できるようになる(`GET api/documents/search/vector?q=...`)。ベクトルDBには[Weaviate](https://weaviate.io/)(OSS)を別コンテナで使用する。`WEAVIATE_URL`未設定の間はこの機能自体が無効化され、既存のキーワード検索・文書管理には一切影響しない。文書一覧画面の「セマンティック検索」チェックボックス、またはAPI(`api/documents/search/vector`)から利用できる。詳細は[docker-compose.yml](docker-compose.yml)を参照
-  - **Embeddingプロバイダの切り替え**: `WEAVIATE_VECTORIZER`環境変数で、Weaviate側のベクトライザーモジュールを切り替えられる。既定は自己ホストの`text2vec-transformers`(多言語sentence-transformersモデル、外部APIキー不要)。`text2vec-cohere`(要`COHERE_APIKEY`)・`text2vec-openai`(要`OPENAI_APIKEY`)を指定すると、Weaviateが直接Cohere/OpenAIのEmbedding APIを呼ぶ構成に切り替わり、`t2v-transformers`コンテナは不要になる。APIキーはこのアプリの環境変数からWeaviateへのリクエストヘッダーとして都度渡され、Weaviateコンテナ自体には保持させない。**切り替えは新規作成するコレクションにのみ反映される**ため、既に文書を索引済みの状態で切り替える場合はWeaviate側でコレクション(`DocumentChunk`)を削除してからサーバーを再起動し、「ベクトル索引」画面の「全件を再索引」で作り直すこと(異なるベクトライザーのベクトルは互換性が無いため)
+  - **Embeddingプロバイダの切り替え**: 既定は自己ホストの`text2vec-transformers`(多言語sentence-transformersモデル、外部APIキー不要)。`text2vec-cohere`(Cohere SaaS、要`COHERE_APIKEY`)・`text2vec-openai`(要`OPENAI_APIKEY`)・`text2vec-aws`(Cohere on AWS Bedrock、要`AWS_BEDROCK_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)に切り替えると、Weaviateが直接各社のEmbedding APIを呼ぶ構成になり、`t2v-transformers`コンテナは不要になる。認証情報はこのアプリの環境変数からWeaviateへのリクエストヘッダーとして都度渡され、Weaviateコンテナ自体・DBのいずれにも保持させない(AWSの認証情報はECS等のタスク定義でSecrets Managerから環境変数へ注入する構成を想定している)。
+    - 既定値は`WEAVIATE_VECTORIZER`環境変数で指定するほか、「ベクトル索引」画面から admin ロールでGUI上書きもできる(`GET/PUT/DELETE api/vector-index/vectorizer`)。選択肢には必要な環境変数が揃っているものだけが選べる状態で表示され(未設定のものは「(未設定)」と表示され選択不可)、GUI自体は認証情報の値を一切扱わない(表示もしない)
+    - **切り替えは新規作成するコレクションにのみ反映される**ため、既に文書を索引済みの状態で切り替える場合はコレクション(`DocumentChunk`)の再作成が必要になる。GUIから切り替えた場合はこれを自動的に行う(既存コレクションの削除・全文書の索引状態リセットまでを自動実行し、サーバー再起動は不要)。環境変数`WEAVIATE_VECTORIZER`側だけを変更した場合は、従来通りWeaviate側でコレクションを削除してからサーバーを再起動すること
   - **索引付けの非同期化**: アップロード/削除/復元のAPI応答は、SQLite側の登録・全文検索(FTS5)更新が終わり次第すぐに返る(Weaviate側の埋め込み計算完了は待たない)。Weaviateへの登録・削除はバックグラウンドで実行され、進行状況は`documents.vector_index_status`に`processing`(処理中)として記録される。状態が変化するたび(処理中→成功/失敗)にSSE(`GET api/documents/events`の`documents-changed`)で通知するため、「ベクトル索引」画面を開いたままでも自動的に反映される。同一文書に対する登録・削除の実行順序は内部で直列化しており、アップロード直後に即削除するような操作を行っても、削除済みの文書のチャンクがWeaviate側に残留することはない。既に処理中の文書に対して再度索引付けが要求された場合(手動の再実行・複数タブからの操作等)は、新たに処理を開始せず進行中の処理に合流するため、二重に実行されることはない。また、埋め込み計算は1件だけでもCPUを使い切る重い処理のため、文書をまとめてアップロードした場合でも埋め込み計算自体は内部でグローバルに1件ずつ直列実行するよう制限している(この制限が無いと推論サーバーにリクエストが殺到し、Weaviate側の90秒タイムアウトで軒並み失敗することを実機で確認したため)。サーバーの強制終了等でプロセス内の実行キューが失われた場合に備え、起動時に`processing`のまま残っている文書は自動的に未処理へリセットされる(次回の索引付け/バックフィルで再処理される)
   - **既存文書のバックフィル**: `WEAVIATE_URL`を設定してサーバーを起動すると、この機能を導入する前にアップロード済みだった文書も自動的に差分索引付けされる(既にWeaviate側に登録済みの文書は再処理しない)
   - **索引状態の確認・再実行**: パンくずメニューの「ベクトル索引」(要 admin/readwrite ロール。件数が多くなる想定のためモーダルではなくページ全体で表示)から、索引付けに失敗した文書の一覧確認・個別/一括での再実行ができる。チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」から一括で再実行できる(`GET api/documents/vector-index/status` / `POST api/documents/:id/vector-index/retry`)
@@ -112,9 +114,12 @@ document-manager/
 | `S3_ENDPOINT` | (未設定) | MinIO等のS3互換サービスに接続する場合のエンドポイントURL。未設定時は実AWS S3に接続する |
 | `WEAVIATE_URL` | (未設定) | セマンティック検索(意味検索)用のWeaviateエンドポイント(例: `http://weaviate:8080`)。未設定の間はこの機能自体が無効化され、`api/documents/search/vector`は503を返す |
 | `WEAVIATE_GRPC_PORT` | `50051` | WeaviateのgRPCポート(`WEAVIATE_URL`設定時のみ使用) |
-| `WEAVIATE_VECTORIZER` | `text2vec-transformers` | Embedding計算に使うWeaviateのベクトライザーモジュール。`text2vec-transformers`(自己ホスト、APIキー不要)/ `text2vec-cohere`(要`COHERE_APIKEY`)/ `text2vec-openai`(要`OPENAI_APIKEY`) |
-| `COHERE_APIKEY` | (未設定) | `WEAVIATE_VECTORIZER=text2vec-cohere`の場合に必須。CohereのEmbedding APIキー |
-| `OPENAI_APIKEY` | (未設定) | `WEAVIATE_VECTORIZER=text2vec-openai`の場合に必須。OpenAIのAPIキー |
+| `WEAVIATE_VECTORIZER` | `text2vec-transformers` | Embedding計算に使うWeaviateのベクトライザーモジュールの既定値。`text2vec-transformers`(自己ホスト、認証情報不要)/ `text2vec-cohere`(Cohere SaaS、要`COHERE_APIKEY`)/ `text2vec-openai`(要`OPENAI_APIKEY`)/ `text2vec-aws`(Cohere on AWS Bedrock、要`AWS_BEDROCK_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)。「ベクトル索引」画面からadminロールで上書きでき、その場合はDB側の値が優先される(認証情報自体はDBに保存されない) |
+| `COHERE_APIKEY` | (未設定) | `text2vec-cohere`を使う場合に必須。CohereのEmbedding APIキー |
+| `OPENAI_APIKEY` | (未設定) | `text2vec-openai`を使う場合に必須。OpenAIのAPIキー |
+| `AWS_BEDROCK_REGION` | (未設定) | `text2vec-aws`を使う場合に必須。Bedrockを呼び出すAWSリージョン(例: `us-east-1`) |
+| `AWS_BEDROCK_MODEL` | `cohere.embed-multilingual-v3` | `text2vec-aws`使用時のBedrockモデルID。Amazon Titanの埋め込みモデル(例: `amazon.titan-embed-text-v2:0`)等に変更することも可能 |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | (未設定) | `text2vec-aws`を使う場合に必須。Bedrockの呼び出し権限を持つIAMユーザーの認証情報(S3の`STORAGE_BACKEND=s3`利用時とは別に、Weaviateへのリクエストヘッダーとして都度渡される)。AWS上で稼働させる場合は、ECSタスク定義の`secrets`等でAWS Secrets Managerの値をコンテナ起動時に注入する構成を推奨する |
 | `VECTOR_CHUNK_SIZE` | `400` | セマンティック検索の本文チャンク分割サイズ(文字数の既定値)。「ベクトル索引」画面からadminロールで上書き保存でき、その場合はDB側の値が優先される |
 | `VECTOR_CHUNK_OVERLAP` | `50` | チャンク分割時のオーバーラップ(文字数の既定値)。上書きの扱いは`VECTOR_CHUNK_SIZE`と同様 |
 | `LOG_LEVEL` | `info` | ログレベル (pino) |
@@ -214,7 +219,7 @@ docker run -d \
   -e QUERY_DEFAULTS_LIMIT=25 \
   -e AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true \
   -e PERSISTENCE_DATA_PATH=/var/lib/weaviate \
-  -e ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai \
+  -e ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai,text2vec-aws \
   -e DEFAULT_VECTORIZER_MODULE=text2vec-transformers \
   -e TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080 \
   -e CLUSTER_HOSTNAME=node1 \
@@ -241,7 +246,7 @@ MSYS_NO_PATHCONV=1 docker run -d \
   document-manager
 ```
 
-Cohere/OpenAIを使う場合は手順2を省略し、手順4に`-e WEAVIATE_VECTORIZER="text2vec-cohere" -e COHERE_APIKEY="<APIキー>"`(OpenAIなら`text2vec-openai`/`OPENAI_APIKEY`)を追加するだけでよい。手順3の`weaviate`はENABLE_MODULESにあらかじめ全方式含めてあるため、Weaviate側の設定変更は不要。
+Cohere(SaaS)/OpenAI/Cohere on AWS Bedrockを使う場合は手順2を省略し、手順4に`-e WEAVIATE_VECTORIZER="text2vec-cohere" -e COHERE_APIKEY="<APIキー>"`(OpenAIなら`text2vec-openai`/`OPENAI_APIKEY`、AWS Bedrockなら`text2vec-aws`/`AWS_BEDROCK_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)を追加するだけでよい。手順3の`weaviate`はENABLE_MODULESにあらかじめ全方式含めてあるため、Weaviate側の設定変更は不要。
 
 停止・削除する場合は次の順序で(依存関係の都合上、appから止めるのが無難)。
 

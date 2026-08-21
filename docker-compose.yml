@@ -7,11 +7,12 @@
 # WEAVIATE_URL を設定した場合のみ有効化される(app/lib/vector-search.js参照)。
 #
 # Embedding計算の方式(WEAVIATE_VECTORIZER)は既定で自己ホストのtext2vec-transformers
-# (外部APIキー不要、t2v-transformersコンテナを使用)。Cohere/OpenAI等の外部APIに
-# 切り替える場合は、appサービスの環境変数(WEAVIATE_VECTORIZER・各種APIKEY)を
-# .env等で上書きすればよく、このファイル自体の編集は不要(t2v-transformersコンテナは
+# (外部APIキー不要、t2v-transformersコンテナを使用)。Cohere(SaaS)/OpenAI/Cohere on AWS Bedrock
+# 等の外部API・クラウド方式に切り替える場合は、appサービスの環境変数(WEAVIATE_VECTORIZER・
+# 各種認証情報)を.env等で上書きすればよく、このファイル自体の編集は不要(t2v-transformersコンテナは
 # 未使用になるだけで、動かしたままでも害はない。不要なら`docker compose up -d app weaviate`
-# のようにサービスを指定して起動すれば省略できる)。
+# のようにサービスを指定して起動すれば省略できる)。既定値の切り替えのほか、「ベクトル索引」画面
+# (admin限定)からGUIで切り替えることもできる(認証情報は環境変数のまま、DBには保存しない)。
 #
 # 検索結果のリランキング機能は実装していない。CPU実行時に候補数に応じてWeaviateの
 # 30秒タイムアウトへ達し検索結果が空で返る実測結果に加え、Weaviate公式のプリビルド
@@ -33,12 +34,16 @@ services:
     environment:
       - WEAVIATE_URL=http://weaviate:8080
       - WEAVIATE_GRPC_PORT=50051
-      # 既定はtext2vec-transformers(外部APIキー不要)。Cohere/OpenAIを使う場合は
-      # .env等でWEAVIATE_VECTORIZER=text2vec-cohere(またはtext2vec-openai)と
-      # 対応するAPIキーを設定する(COHERE_APIKEY / OPENAI_APIKEY)
+      # 既定はtext2vec-transformers(外部APIキー不要)。Cohere(SaaS)/OpenAI/Cohere on AWS Bedrock
+      # を使う場合は.env等でWEAVIATE_VECTORIZER=text2vec-cohere(またはtext2vec-openai/text2vec-aws)と
+      # 対応する認証情報を設定する(COHERE_APIKEY / OPENAI_APIKEY / AWS_BEDROCK_REGION等)
       - WEAVIATE_VECTORIZER=${WEAVIATE_VECTORIZER:-text2vec-transformers}
       - COHERE_APIKEY=${COHERE_APIKEY:-}
       - OPENAI_APIKEY=${OPENAI_APIKEY:-}
+      - AWS_BEDROCK_REGION=${AWS_BEDROCK_REGION:-}
+      - AWS_BEDROCK_MODEL=${AWS_BEDROCK_MODEL:-cohere.embed-multilingual-v3}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       # OIDC_*/SESSION_SECRET等、既存の必須環境変数はREADMEの「環境変数」表を参照して別途指定すること
       - AUTH_DISABLED=${AUTH_DISABLED:-}
     depends_on:
@@ -55,10 +60,10 @@ services:
       - QUERY_DEFAULTS_LIMIT=25
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
       - PERSISTENCE_DATA_PATH=/var/lib/weaviate
-      # text2vec-cohere/text2vec-openaiは追加コンテナ不要(Weaviate本体に組み込み済みで
-      # 外部APIを呼ぶだけ)なため、appのWEAVIATE_VECTORIZERを
+      # text2vec-cohere/text2vec-openai/text2vec-awsは追加コンテナ不要(Weaviate本体に
+      # 組み込み済みで外部APIを呼ぶだけ)なため、appのWEAVIATE_VECTORIZERを
       # いつでも切り替えられるようまとめて有効化しておく(未使用の方式は単に呼ばれない)
-      - ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai
+      - ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai,text2vec-aws
       - DEFAULT_VECTORIZER_MODULE=text2vec-transformers
       - TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080
       - CLUSTER_HOSTNAME=node1

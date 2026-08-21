@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -172,14 +172,17 @@ const createSchema = (targetDb) => {
 		)
 	`);
 
-	// ベクトル検索のチャンク分割設定(v8で追加)。id=1固定のシングルトン行。
-	// chunk_size/chunk_overlapがNULLの間は環境変数(VECTOR_CHUNK_SIZE/VECTOR_CHUNK_OVERLAP)の
-	// 既定値を使う(admin画面から上書きされたらそちらを優先する。vector-search.js参照)
+	// ベクトル検索のチャンク分割設定(v8で追加)・ベクトライザー選択(v9で追加)。id=1固定の
+	// シングルトン行。chunk_size/chunk_overlap/vectorizerがNULLの間は環境変数
+	// (VECTOR_CHUNK_SIZE/VECTOR_CHUNK_OVERLAP/WEAVIATE_VECTORIZER)の既定値を使う
+	// (admin画面から上書きされたらそちらを優先する。vector-search.js参照)。vectorizerの
+	// 実際の認証情報(APIキー等)はDBには保存せず環境変数のまま(vector-search.js冒頭のコメント参照)
 	targetDb.exec(`
 		CREATE TABLE IF NOT EXISTS vector_search_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			chunk_size INTEGER,
 			chunk_overlap INTEGER,
+			vectorizer TEXT,
 			updated_by TEXT,
 			updated_at TEXT
 		)
@@ -406,6 +409,45 @@ const MIGRATIONS = {
 				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
 			`);
 			// vector_search_settingsはv7に存在しないため対象外(空のまま=環境変数の既定値を使う)
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
+	},
+	9: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at, locked)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at, locked FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at FROM old.project_documents;
+
+				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
+				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
+
+				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, updated_by, updated_at)
+				SELECT id, chunk_size, chunk_overlap, updated_by, updated_at FROM old.vector_search_settings;
+			`);
+			// vector_search_settings.vectorizerはv8に存在しないため対象外(NULLのまま=環境変数の既定値を使う)
 		} finally {
 			newDb.exec("DETACH DATABASE old");
 		}

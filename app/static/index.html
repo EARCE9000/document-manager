@@ -801,6 +801,18 @@
 		font-size: 0.9em;
 	}
 	#chunkSettingsSaveButton, #chunkSettingsResetButton { padding: 4px 12px; font-size: 0.85em; }
+	#vectorIndexVectorizerSummary { font-size: 0.85em; color: #555; }
+	#vectorIndexVectorizerEdit { display: none; align-items: center; gap: 10px; flex-wrap: wrap; }
+	#appShell.adminMode #vectorIndexVectorizerEdit { display: flex; }
+	#vectorIndexVectorizerEdit label { display: flex; align-items: center; gap: 5px; font-size: 0.85em; color: #555; }
+	#vectorIndexVectorizerEdit select {
+		padding: 4px 6px;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-size: 0.9em;
+		max-width: 260px;
+	}
+	#vectorizerSaveButton, #vectorizerResetButton { padding: 4px 12px; font-size: 0.85em; }
 	#vectorIndexDisabledMessage,
 	#vectorIndexEmptyMessage { margin: 16px 20px; color: #888; font-size: 0.9em; }
 	#vectorIndexTableWrap { flex: 1; overflow-y: auto; }
@@ -1091,6 +1103,14 @@
 						<label>オーバーラップ<input type="number" id="chunkOverlapInput" min="0" step="1"></label>
 						<button id="chunkSettingsSaveButton" type="button" class="modalButton save">保存</button>
 						<button id="chunkSettingsResetButton" type="button" class="modalButton">既定値に戻す</button>
+					</div>
+				</div>
+				<div id="vectorIndexSettingsRow">
+					<span id="vectorIndexVectorizerSummary">ベクトライザー: -</span>
+					<div id="vectorIndexVectorizerEdit">
+						<label>方式<select id="vectorizerSelect"></select></label>
+						<button id="vectorizerSaveButton" type="button" class="modalButton save">保存</button>
+						<button id="vectorizerResetButton" type="button" class="modalButton">既定値に戻す</button>
 					</div>
 				</div>
 			</div>
@@ -1980,7 +2000,7 @@ const loadDocuments = async () => {
 		return;
 	}
 	if (currentView === "vectorIndex") {
-		await Promise.all([loadVectorIndexStatuses(), loadVectorIndexSettings()]);
+		await Promise.all([loadVectorIndexStatuses(), loadVectorIndexSettings(), loadVectorIndexVectorizer()]);
 		return;
 	}
 	const q = filterInput.value.trim();
@@ -3231,6 +3251,65 @@ chunkSettingsResetButton.addEventListener("click", async () => {
 	renderChunkSettingsSummary(await res.json());
 });
 
+// ベクトライザー(埋め込みプロバイダ)選択。閲覧はrequireWrite全員、変更はadminロール限定。
+// 選択肢は環境変数で必要な認証情報が揃っているものだけ有効化する(揃っていない候補は
+// 「(未設定)」を付けて選べないようにする)。認証情報そのものはこの画面には一切表示しない
+const vectorIndexVectorizerSummary = document.getElementById("vectorIndexVectorizerSummary");
+const vectorizerSelect = document.getElementById("vectorizerSelect");
+const vectorizerSaveButton = document.getElementById("vectorizerSaveButton");
+const vectorizerResetButton = document.getElementById("vectorizerResetButton");
+
+const renderVectorizerSummary = (settings) => {
+	vectorizerSelect.innerHTML = settings.options.map((opt) => `
+		<option value="${escapeHtml(opt.key)}" ${opt.configured ? "" : "disabled"} ${opt.key === settings.vectorizer ? "selected" : ""}>
+			${escapeHtml(opt.label)}${opt.configured ? "" : "(未設定)"}
+		</option>
+	`).join("");
+	const base = `ベクトライザー: ${settings.label}`;
+	vectorIndexVectorizerSummary.textContent = settings.isCustom
+		? `${base}(カスタム設定${settings.updatedAt ? ` ・ ${formatDateTime(settings.updatedAt)}` : ""}${settings.updatedBy ? ` ${settings.updatedBy}` : ""})`
+		: `${base}(既定値)`;
+};
+
+const loadVectorIndexVectorizer = async () => {
+	const res = await fetch("./api/vector-index/vectorizer");
+	if (res.status !== 200) return;
+	renderVectorizerSummary(await res.json());
+};
+
+vectorizerSaveButton.addEventListener("click", async () => {
+	const vectorizer = vectorizerSelect.value;
+	if (!(await showConfirmDialog("ベクトライザーを切り替えます。既存のベクトル索引は互換性が無くなるため自動的に削除され、全文書が「未処理」に戻ります。切り替え後は「全件を再索引」を行ってください。よろしいですか?"))) {
+		return;
+	}
+	const res = await fetch("./api/vector-index/vectorizer", {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({vectorizer})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "保存に失敗しました");
+		return;
+	}
+	renderVectorizerSummary(await res.json());
+	await loadVectorIndexStatuses();
+});
+
+vectorizerResetButton.addEventListener("click", async () => {
+	if (!(await showConfirmDialog("ベクトライザーを環境変数の既定値に戻します。設定が変わる場合は既存のベクトル索引が削除され、全文書が「未処理」に戻ります。よろしいですか?"))) {
+		return;
+	}
+	const res = await fetch("./api/vector-index/vectorizer", {method: "DELETE"});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "リセットに失敗しました");
+		return;
+	}
+	renderVectorizerSummary(await res.json());
+	await loadVectorIndexStatuses();
+});
+
 // タグ体系の並び順管理(管理者のみ)。保存を押すまではローカルの配列(tagOrderDraft)だけを
 // 編集し、サーバーには反映しない(全件置き換えのPUTで一括保存する)
 const tagOrderOverlay = document.getElementById("tagOrderOverlay");
@@ -3371,10 +3450,10 @@ const buildAiUsageMarkdown = () => {
 \`POST ${baseUrl}/api/documents/:id/vector-index/retry\`
 - 指定した1文書の索引付けを再実行する
 
-**チャンク分割設定(サイズ・オーバーラップ)の変更は含まれない**: これはadminロール限定の操作だが、
-APIキーはreadonly/readwriteでしか発行できない仕様のため(adminロールのAPIキーは発行不可)、
-このAI(APIキー経由)からは変更できない。変更したい場合は、ユーザー本人がブラウザにログインし、
-「ベクトル索引」画面から行う必要がある旨を伝えること。
+**チャンク分割設定(サイズ・オーバーラップ)・ベクトライザー(埋め込みプロバイダ)の変更は含まれない**:
+これらはadminロール限定の操作だが、APIキーはreadonly/readwriteでしか発行できない仕様のため
+(adminロールのAPIキーは発行不可)、このAI(APIキー経由)からは変更できない。変更したい場合は、
+ユーザー本人がブラウザにログインし、「ベクトル索引」画面から行う必要がある旨を伝えること。
 `;
 
 	const vectorSearchCurlExamples = !vectorSearchEnabled ? "" : `
@@ -3400,9 +3479,10 @@ curl -X POST "${baseUrl}/api/documents/<id>/vector-index/retry" \\
 「直して」「再実行して」と言われたら、対象文書のIDに対して\`POST .../vector-index/retry\`を呼び、
 結果(成功したか、まだ失敗しているか)を報告してください。
 - 403が返った場合は、このAPIキーがreadonlyロールのため実行できないことを伝えてください
-- チャンク分割設定(サイズ・オーバーラップ)を変更してほしいと言われた場合、これはAPIキー経由では
-  変更できない(adminロールのAPIキーが発行できない仕様のため)ことを伝え、ブラウザにログインして
-  「ベクトル索引」画面から行うようユーザーに案内してください
+- チャンク分割設定(サイズ・オーバーラップ)やベクトライザー(埋め込みプロバイダ、Cohere/OpenAI/
+  AWS Bedrock等)を変更してほしいと言われた場合、これはAPIキー経由では変更できない(adminロールの
+  APIキーが発行できない仕様のため)ことを伝え、ブラウザにログインして「ベクトル索引」画面から
+  行うようユーザーに案内してください
 `;
 
 	return `# Document Manager API 利用ガイド (AI向け)

@@ -7,11 +7,15 @@
  * Weaviate(OSS)を使った意味検索を追加の検索手段として提供する。Embeddingの計算は
  * Weaviate側のベクトライザーモジュールに任せるため、このモジュールはテキストの
  * 登録・削除・検索の仲介のみを行う。既定は自己ホストのtext2vec-transformers
- * (さらに別コンテナの推論サーバー、外部APIキー不要)だが、WEAVIATE_VECTORIZER環境変数で
- * text2vec-cohere/text2vec-openai等の外部API方式にも切り替えられる(下記VECTORIZERS参照)。
- * 切り替えは新規作成するWeaviateコレクションにのみ反映される。既に文書が索引済みの状態で
- * 切り替えた場合は、Weaviate側でコレクションを削除してから起動し直し、「ベクトル索引」画面の
- * 「全件を再索引」で作り直すこと(異なるベクトライザーのベクトルは互換性が無いため)。
+ * (さらに別コンテナの推論サーバー、外部APIキー不要)だが、text2vec-cohere(Cohere SaaS)/
+ * text2vec-openai/text2vec-aws(AWS Bedrock経由)等の外部API・クラウド方式にも切り替えられる
+ * (下記VECTORIZERS参照)。既定値はWEAVIATE_VECTORIZER環境変数で指定し、「ベクトル索引」画面
+ * (admin限定)からGUIで上書きもできる(getVectorizerSetting/updateVectorizerSetting参照)。
+ * 認証情報(APIキー・AWSクレデンシャル)は常に環境変数から読み、DBには保存しない(GUIは
+ * 「どのベクトライザーを使うか」の選択と、必要な環境変数が揃っているかの表示のみを担う)。
+ * 切り替えは新規作成するWeaviateコレクションにのみ反映されるため、GUIから切り替えると
+ * 既存コレクションを自動的に削除し、全文書の索引状態を未処理へ戻す(異なるベクトライザーの
+ * ベクトルは互換性が無いため。切り替え後は「全件を再索引」で作り直すこと)。
  *
  * WEAVIATE_URL環境変数が未設定の間は完全に無効化される(任意機能)。既存の単一コンテナ
  * 運用(docker run)には影響を与えず、Weaviateが導入されていない/落ちている場合でも
@@ -35,56 +39,93 @@ const WEAVIATE_URL = process.env.WEAVIATE_URL || "";
 // WeaviateはREST(WEAVIATE_URLのポート)とは別にgRPCポートを持つ(v3クライアントは
 // バッチ登録・検索にgRPCを使う)。docker-compose.yml側のweaviateサービスの既定ポートに合わせる
 const WEAVIATE_GRPC_PORT = Number(process.env.WEAVIATE_GRPC_PORT || 50051);
-// 使用するベクトライザーモジュール名(Weaviate側でENABLE_MODULESに含めておく必要がある)。
-// 未知の値が指定された場合はtext2vec-transformers(既定)にフォールバックする
-const WEAVIATE_VECTORIZER = process.env.WEAVIATE_VECTORIZER || "text2vec-transformers";
+// 使用するベクトライザーモジュール名(Weaviate側でENABLE_MODULESに含めておく必要がある)の既定値。
+// 未知の値が指定された場合はtext2vec-transformers(既定)にフォールバックする。
+// 「ベクトル索引」画面(admin限定)からDBへ保存した値があればそちらを優先する(getVectorizerSetting参照)
+const WEAVIATE_VECTORIZER_DEFAULT = process.env.WEAVIATE_VECTORIZER || "text2vec-transformers";
+// AWS Bedrock経由のベクトライザー(text2vec-aws, service: "bedrock")用の設定。
+// リージョンは必須。モデルは既定でCohereの多言語埋め込みモデル(Titan等に変更も可能)
+const AWS_BEDROCK_REGION = process.env.AWS_BEDROCK_REGION || "";
+const AWS_BEDROCK_MODEL = process.env.AWS_BEDROCK_MODEL || "cohere.embed-multilingual-v3";
 
 const COLLECTION_NAME = "DocumentChunk";
 
-// サポートするベクトライザーと、対応する設定の組み立て方・APIキーのヘッダー名。
-// 外部API方式(cohere/openai)はWeaviateコンテナ自体にAPIキーを持たせず、
+// サポートするベクトライザーと、対応する設定の組み立て方・認証情報のヘッダー名・GUI表示用ラベル。
+// 外部API/クラウド方式(cohere/openai/aws)はWeaviateコンテナ自体に認証情報を持たせず、
 // このアプリのプロセス側の環境変数からリクエストヘッダーとして都度渡す
-// (シークレットの置き場所をこのアプリ1箇所に集約するため)
+// (シークレットの置き場所をこのアプリ1箇所に集約するため。DBには保存しない)。
+// requiredEnvは、この方式を使うために設定されているべき環境変数の一覧(GUI上で「未設定」の
+// 判定・切り替え時のバリデーションに使う)。credentialsはrequiredEnvのうち実際にヘッダーとして
+// 送るものだけを対象とする(AWSのregionのようにヘッダーではなくconfigure側で使うものは含まない)
 const VECTORIZERS = {
 	"text2vec-transformers": {
+		label: "自己ホスト (text2vec-transformers)",
 		configure: (weaviate) => weaviate.configure.vectorizer.text2VecTransformers({vectorizeCollectionName: false}),
-		apiKeyEnv: null,
-		apiKeyHeader: null
+		requiredEnv: [],
+		credentials: []
 	},
 	"text2vec-cohere": {
+		label: "Cohere (SaaS)",
 		configure: (weaviate) => weaviate.configure.vectorizer.text2VecCohere({vectorizeCollectionName: false}),
-		apiKeyEnv: "COHERE_APIKEY",
-		apiKeyHeader: "X-Cohere-Api-Key"
+		requiredEnv: ["COHERE_APIKEY"],
+		credentials: [{envVar: "COHERE_APIKEY", header: "X-Cohere-Api-Key"}]
 	},
 	"text2vec-openai": {
+		label: "OpenAI",
 		configure: (weaviate) => weaviate.configure.vectorizer.text2VecOpenAI({vectorizeCollectionName: false}),
-		apiKeyEnv: "OPENAI_APIKEY",
-		apiKeyHeader: "X-OpenAI-Api-Key"
+		requiredEnv: ["OPENAI_APIKEY"],
+		credentials: [{envVar: "OPENAI_APIKEY", header: "X-OpenAI-Api-Key"}]
+	},
+	"text2vec-aws": {
+		label: `Cohere (AWS Bedrock, ${AWS_BEDROCK_MODEL})`,
+		configure: (weaviate) => weaviate.configure.vectorizer.text2VecAWS({
+			vectorizeCollectionName: false,
+			service: "bedrock",
+			region: AWS_BEDROCK_REGION,
+			model: AWS_BEDROCK_MODEL
+		}),
+		requiredEnv: ["AWS_BEDROCK_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+		credentials: [
+			{envVar: "AWS_ACCESS_KEY_ID", header: "X-AWS-Access-Key"},
+			{envVar: "AWS_SECRET_ACCESS_KEY", header: "X-AWS-Secret-Key"}
+		]
 	}
 };
 
-const resolveVectorizer = () => {
-	const vectorizer = VECTORIZERS[WEAVIATE_VECTORIZER];
+// 指定したベクトライザーが実際に使える状態か(requiredEnvが全て設定されているか)を返す。
+// GUIの選択肢表示・切り替え時のバリデーションの両方で使う
+const isVectorizerConfigured = (key) => {
+	const vectorizer = VECTORIZERS[key];
 	if (vectorizer == null) {
-		logger.warn({WEAVIATE_VECTORIZER}, "::resolveVectorizer: 未知のWEAVIATE_VECTORIZERが指定されたため、text2vec-transformersにフォールバックします");
+		return false;
+	}
+	return vectorizer.requiredEnv.every((envVar) => (process.env[envVar] || "") !== "");
+};
+
+const resolveVectorizer = () => {
+	const key = getVectorizerSetting().vectorizer;
+	const vectorizer = VECTORIZERS[key];
+	if (vectorizer == null) {
+		logger.warn({vectorizer: key}, "::resolveVectorizer: 未知のベクトライザーが指定されたため、text2vec-transformersにフォールバックします");
 		return VECTORIZERS["text2vec-transformers"];
 	}
 	return vectorizer;
 };
 
-// 外部API方式のベクトライザー用に、APIキーをリクエストヘッダーとして組み立てる
-// (text2vec-transformersのようにAPIキー不要な方式ではapiKeyEnvがnullのため何もしない)
+// 外部API/クラウド方式のベクトライザー用に、認証情報をリクエストヘッダーとして組み立てる
+// (text2vec-transformersのように認証情報が不要な方式ではcredentialsが空のため何もしない)
 const buildConnectionHeaders = () => {
 	const vectorizer = resolveVectorizer();
-	if (vectorizer.apiKeyEnv == null) {
-		return {};
+	const headers = {};
+	for (const {envVar, header} of vectorizer.credentials) {
+		const value = process.env[envVar] || "";
+		if (value === "") {
+			logger.warn({envVar}, "::buildConnectionHeaders: 認証情報の環境変数が未設定です");
+			continue;
+		}
+		headers[header] = value;
 	}
-	const apiKey = process.env[vectorizer.apiKeyEnv] || "";
-	if (apiKey === "") {
-		logger.warn({WEAVIATE_VECTORIZER, apiKeyEnv: vectorizer.apiKeyEnv}, "::buildConnectionHeaders: APIキーが未設定です");
-		return {};
-	}
-	return {[vectorizer.apiKeyHeader]: apiKey};
+	return headers;
 };
 
 // 多言語text2vec-transformersモデルの最大シーケンス長を超えて意味が失われないよう、
@@ -134,6 +175,21 @@ const upsertChunkSettings = db.prepare(`
 	ON CONFLICT(id) DO UPDATE SET chunk_size = excluded.chunk_size, chunk_overlap = excluded.chunk_overlap, updated_by = excluded.updated_by, updated_at = excluded.updated_at
 `);
 
+// ベクトライザー選択(GUIからの上書き)。id=1固定のシングルトン行(チャンク分割設定と共有)で、
+// NULLの間は環境変数(WEAVIATE_VECTORIZER)の既定値を使う
+const selectVectorizerSetting = db.prepare(`SELECT vectorizer, updated_by, updated_at FROM vector_search_settings WHERE id = 1`);
+const upsertVectorizerSetting = db.prepare(`
+	INSERT INTO vector_search_settings (id, vectorizer, updated_by, updated_at)
+	VALUES (1, @vectorizer, @updated_by, @updated_at)
+	ON CONFLICT(id) DO UPDATE SET vectorizer = excluded.vectorizer, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+`);
+// ベクトライザー切り替え時は、既存の索引付け済みベクトルが新しいベクトライザーとは
+// 互換性が無くなる(Weaviate側のコレクション自体を削除するため)。アクティブな全文書の
+// 索引状態を未処理へ戻し、「ベクトル索引」画面から「全件を再索引」を促す
+const resetAllIndexStatuses = db.prepare(`
+	UPDATE documents SET vector_index_status = NULL, vector_index_error = NULL, vector_indexed_at = NULL WHERE deleted_at IS NULL
+`);
+
 const isEnabled = () => WEAVIATE_URL !== "";
 
 /**
@@ -176,6 +232,26 @@ const resetChunkSettings = () => {
 	return getChunkSettings();
 };
 
+/**
+ * 現在有効なベクトライザーの設定情報を返す。GUIから保存された値(vector_search_settings)が
+ * あればそれを優先し、無ければ環境変数(WEAVIATE_VECTORIZER)の既定値を使う。
+ * optionsには選択可能な全ベクトライザーとその設定済み状態(configured)を含める
+ * (GUI側で未設定の選択肢を判別できるようにするため)
+ */
+const getVectorizerSetting = () => {
+	const row = selectVectorizerSetting.get();
+	const key = (row?.vectorizer != null && VECTORIZERS[row.vectorizer] != null) ? row.vectorizer : WEAVIATE_VECTORIZER_DEFAULT;
+	return {
+		vectorizer: key,
+		label: VECTORIZERS[key]?.label ?? key,
+		isCustom: row?.vectorizer != null,
+		updatedBy: row?.updated_by ?? null,
+		updatedAt: row?.updated_at ?? null,
+		defaultVectorizer: WEAVIATE_VECTORIZER_DEFAULT,
+		options: Object.entries(VECTORIZERS).map(([optionKey, v]) => ({key: optionKey, label: v.label, configured: isVectorizerConfigured(optionKey)}))
+	};
+};
+
 let clientPromise = null;
 
 const ensureCollection = async (weaviate, client) => {
@@ -191,7 +267,7 @@ const ensureCollection = async (weaviate, client) => {
 			{name: "text", dataType: weaviate.dataType.TEXT}
 		]
 	});
-	logger.info({collection: COLLECTION_NAME, vectorizer: WEAVIATE_VECTORIZER}, "::ensureCollection: Weaviateコレクションを作成しました");
+	logger.info({collection: COLLECTION_NAME, vectorizer: getVectorizerSetting().vectorizer}, "::ensureCollection: Weaviateコレクションを作成しました");
 };
 
 // Weaviateクライアントの初期化(初回呼び出し時のみ接続・コレクション確認を行い、以降は使い回す)。
@@ -221,6 +297,62 @@ const getClient = () => {
 		});
 	}
 	return clientPromise;
+};
+
+/**
+ * Weaviate側のDocumentChunkコレクションを削除し、キャッシュ済みの接続を破棄する。
+ * ベクトライザー切り替え時に呼ぶ(異なるベクトライザーのベクトルは互換性が無いため、
+ * 既存のコレクションを残したまま新しいベクトライザーを設定しても正しく動作しない)。
+ * 次回のgetClient()呼び出し時に、新しい設定でコレクションが自動的に再作成される
+ * (ensureCollection参照)。あわせてアクティブな全文書の索引状態を未処理へ戻す
+ */
+const recreateCollection = async () => {
+	if (isEnabled()) {
+		try {
+			const client = await getClient();
+			if (await client.collections.exists(COLLECTION_NAME)) {
+				await client.collections.delete(COLLECTION_NAME);
+			}
+		} catch (err) {
+			logger.error(err, "::recreateCollection: 既存コレクションの削除に失敗しました");
+		} finally {
+			clientPromise = null;
+		}
+	}
+	resetAllIndexStatuses.run();
+	onStatusChange();
+};
+
+/**
+ * ベクトライザーをGUIから切り替える(admin限定、呼び出し元のserver.jsでロールチェックする)。
+ * 必要な環境変数(requiredEnv)が揃っていないベクトライザーへの切り替えは拒否する。
+ * 切り替えに伴い、既存コレクションの削除・索引状態のリセットを行う(recreateCollection参照)ため、
+ * 呼び出し元で「全件を再索引」を促すこと
+ */
+const updateVectorizerSetting = async (vectorizerKey, updatedBy) => {
+	const vectorizer = VECTORIZERS[vectorizerKey];
+	if (vectorizer == null) {
+		throw new Error(`未知のvectorizerです: ${vectorizerKey}`);
+	}
+	if (!isVectorizerConfigured(vectorizerKey)) {
+		throw new Error(`${vectorizer.label}は必要な環境変数(${vectorizer.requiredEnv.join(", ")})が設定されていないため切り替えられません`);
+	}
+	upsertVectorizerSetting.run({vectorizer: vectorizerKey, updated_by: updatedBy, updated_at: new Date().toISOString()});
+	await recreateCollection();
+	return getVectorizerSetting();
+};
+
+/**
+ * ベクトライザーを環境変数の既定値に戻す(GUIでの上書きを解除する)。
+ * 実際に切り替わる(現在の設定と既定値が異なる)場合のみコレクションを再作成する
+ */
+const resetVectorizerSetting = async () => {
+	const before = getVectorizerSetting();
+	upsertVectorizerSetting.run({vectorizer: null, updated_by: null, updated_at: null});
+	if (before.isCustom && before.vectorizer !== WEAVIATE_VECTORIZER_DEFAULT) {
+		await recreateCollection();
+	}
+	return getVectorizerSetting();
 };
 
 // 本文を段落境界を優先しつつ約chunkSize文字ごとに分割する。段落自体がchunkSizeを
@@ -520,5 +652,6 @@ const recoverStaleProcessing = () => {
 
 module.exports = {
 	isEnabled, indexDocument, removeDocument, search, chunkText, backfillMissingDocuments, listIndexStatuses, retryDocument,
-	getChunkSettings, updateChunkSettings, resetChunkSettings, setStatusChangeListener, recoverStaleProcessing
+	getChunkSettings, updateChunkSettings, resetChunkSettings, setStatusChangeListener, recoverStaleProcessing,
+	getVectorizerSetting, updateVectorizerSetting, resetVectorizerSetting
 };

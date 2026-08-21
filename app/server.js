@@ -1061,6 +1061,61 @@ app.delete(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmi
 });
 
 /**
+ * 現在有効なベクトライザーと、選択可能な候補一覧(環境変数が設定済みかどうか含む)を取得する
+ * (要 admin/readwrite ロール。画面表示用)。認証情報そのものは含めない
+ */
+app.get(BASE_URL_PATH + 'api/vector-index/vectorizer', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(VectorSearch.getVectorizerSetting());
+	} catch (err) {
+		logger.error(err, "::api/vector-index/vectorizer:get");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * ベクトライザーをGUIから切り替える(要 admin ロール。システム全体に影響するため)。
+ * 必要な環境変数が未設定の候補への切り替えは400を返す。切り替えに伴い既存コレクションを
+ * 削除し全文書の索引状態を未処理へ戻すため、応答後に「全件を再索引」を行うことを画面側で促す
+ */
+app.put(BASE_URL_PATH + 'api/vector-index/vectorizer', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!VectorSearch.isEnabled()) {
+			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
+			return;
+		}
+		const settings = await VectorSearch.updateVectorizerSetting(String(req.body.vectorizer || ""), req.authData.user_identifier);
+		res.status(200).json(settings);
+	} catch (err) {
+		if (err instanceof Error && /vectorizer|環境変数/.test(err.message)) {
+			res.status(400).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/vector-index/vectorizer:put");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * ベクトライザーを環境変数の既定値に戻す(要 admin ロール)
+ */
+app.delete(BASE_URL_PATH + 'api/vector-index/vectorizer', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!VectorSearch.isEnabled()) {
+			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
+			return;
+		}
+		res.status(200).json(await VectorSearch.resetVectorizerSetting());
+	} catch (err) {
+		logger.error(err, "::api/vector-index/vectorizer:delete");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * 文書アップロード (html / mhtml / markdown / pdf 単一ファイル)
  * ファイルサイズの上限はUPLOAD_MAX_BYTES(既定100MB)。超過時はexpress-fileuploadが
  * 413で切断する(abortOnLimit)。認証チェックの方を先に行うため、未認証のリクエストは
