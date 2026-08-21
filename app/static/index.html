@@ -780,6 +780,17 @@
 	}
 	#vectorIndexShowAllLabel input { margin: 0; cursor: pointer; }
 	#vectorIndexRunStatus { font-size: 0.8em; color: #888; }
+	#vectorIndexCurrentConfig {
+		display: flex;
+		gap: 16px;
+		flex-wrap: wrap;
+		font-size: 0.85em;
+		color: #444;
+		background: #f4f5f7;
+		border-radius: 6px;
+		padding: 8px 12px;
+		margin: 8px 0 14px;
+	}
 	#vectorIndexSettingsRow {
 		display: flex;
 		align-items: center;
@@ -1084,6 +1095,10 @@
 				<div id="vectorIndexPaneMeta">
 					セマンティック検索(意味検索)の索引状況です。索引付けに失敗・未処理の文書は常に一覧に表示され、ここから再実行できます。<br>
 					チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」を使ってください(文書数が多いと時間がかかります)。
+				</div>
+				<div id="vectorIndexCurrentConfig">
+					<span id="vectorIndexVectorizerSummaryTop">ベクトライザー: -</span>
+					<span id="vectorIndexSettingsSummaryTop">チャンク分割設定: -</span>
 				</div>
 				<div id="vectorIndexControls">
 					<label id="vectorIndexShowAllLabel">
@@ -3199,6 +3214,7 @@ vectorIndexReindexAllButton.addEventListener("click", async () => {
 // (システム全体の索引付けに影響するため)。入力欄・保存/リセットボタン自体もadminMode時のみ
 // CSSで表示する(#vectorIndexSettingsEdit参照)
 const vectorIndexSettingsSummary = document.getElementById("vectorIndexSettingsSummary");
+const vectorIndexSettingsSummaryTop = document.getElementById("vectorIndexSettingsSummaryTop");
 const chunkSizeInput = document.getElementById("chunkSizeInput");
 const chunkOverlapInput = document.getElementById("chunkOverlapInput");
 const chunkSettingsSaveButton = document.getElementById("chunkSettingsSaveButton");
@@ -3208,9 +3224,11 @@ const renderChunkSettingsSummary = (settings) => {
 	chunkSizeInput.value = settings.chunkSize;
 	chunkOverlapInput.value = settings.chunkOverlap;
 	const base = `チャンク分割設定: ${settings.chunkSize}文字 / オーバーラップ${settings.chunkOverlap}文字`;
-	vectorIndexSettingsSummary.textContent = settings.isCustom
+	const text = settings.isCustom
 		? `${base}(カスタム設定${settings.updatedAt ? ` ・ ${formatDateTime(settings.updatedAt)}` : ""}${settings.updatedBy ? ` ${settings.updatedBy}` : ""})`
 		: `${base}(既定値)`;
+	vectorIndexSettingsSummary.textContent = text;
+	vectorIndexSettingsSummaryTop.textContent = text;
 };
 
 const loadVectorIndexSettings = async () => {
@@ -3255,6 +3273,7 @@ chunkSettingsResetButton.addEventListener("click", async () => {
 // 選択肢は環境変数で必要な認証情報が揃っているものだけ有効化する(揃っていない候補は
 // 「(未設定)」を付けて選べないようにする)。認証情報そのものはこの画面には一切表示しない
 const vectorIndexVectorizerSummary = document.getElementById("vectorIndexVectorizerSummary");
+const vectorIndexVectorizerSummaryTop = document.getElementById("vectorIndexVectorizerSummaryTop");
 const vectorizerSelect = document.getElementById("vectorizerSelect");
 const vectorizerSaveButton = document.getElementById("vectorizerSaveButton");
 const vectorizerResetButton = document.getElementById("vectorizerResetButton");
@@ -3266,9 +3285,11 @@ const renderVectorizerSummary = (settings) => {
 		</option>
 	`).join("");
 	const base = `ベクトライザー: ${settings.label}`;
-	vectorIndexVectorizerSummary.textContent = settings.isCustom
+	const text = settings.isCustom
 		? `${base}(カスタム設定${settings.updatedAt ? ` ・ ${formatDateTime(settings.updatedAt)}` : ""}${settings.updatedBy ? ` ${settings.updatedBy}` : ""})`
 		: `${base}(既定値)`;
+	vectorIndexVectorizerSummary.textContent = text;
+	vectorIndexVectorizerSummaryTop.textContent = text;
 };
 
 const loadVectorIndexVectorizer = async () => {
