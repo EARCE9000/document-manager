@@ -271,6 +271,33 @@ docker network rm document-manager-net
 docker volume rm weaviate_data
 ```
 
+## 性能検証結果(実測)
+
+Docker Desktop(Windows 11、GPU無し)の実機で、SQLite単体・ベクトル検索・リランキングの3パターンを実測した記録。テストデータは実際の文学作品106件(青空文庫スタイルの日本語作品+Project Gutenbergの英語原文、合計約1.1MB・平均約10KB/件)。合成的な短文ではなく実文書での結果である点に注意。
+
+### 検索速度・メモリ
+
+| パターン | 索引付け | 検索速度 | 追加メモリ(アイドル時) |
+|---|---|---|---|
+| ① SQLite単体 | 約4.1秒/件 | **148ms** | +0MB |
+| ② ベクトル検索のみ | 約2.3秒/件 | **約230ms** | weaviate + t2v-transformers で約+1GB(主にt2v-transformersの828MB) |
+| ③ ベクトル検索+リランキング | ②と同じ(リランキングは索引付けに影響しない) | 候補3件: 5.5秒 / 6件: 11.1秒 / 9件: 15.5秒 / 15件(既定`limit=20`相当): **30秒タイムアウトで結果が空に** | reranker-transformersでさらに約+1.2GB、CPU使用率は瞬間的に400%超 |
+
+②→③でCPU/メモリ使用量がほぼ倍増する一方、③は既定設定のままだと実用的な速度で動かない(「主な機能」内のリランキングの注記を参照)。短い合成テキストでの実測(候補1件あたり約400〜550ms)と比べ、実文書(長い日本語の文章)では**候補1件あたり約1.7〜1.8秒と3〜4倍遅く**なることも確認した。
+
+### 既知の制約: 多言語埋め込みモデルのクロスリンガル性能
+
+既定の埋め込みモデル(`text2vec-transformers`、多言語sentence-transformers)は、**クエリと文書で言語が異なる場合に精度が大きく落ちる**ことを実測で確認した。
+
+同一の英語文書(`Alice's Adventures in Wonderland`の一節、体が小さくなる場面を含む)に対して:
+
+| クエリ | 距離(小さいほど類似) |
+|---|---|
+| 日本語:「不思議の国で体が小さくなってしまった」 | 0.810 |
+| 英語:"Alice drank a potion and became very small" | 0.470 |
+
+同じ文書・同じ意味内容でも、クエリの言語を日本語→英語に変えるだけで距離がほぼ半分になった。実際、106件中に日本語訳ではなく英語原文で登録されたAlice関連文書があったところ、日本語クエリでは(他の日本語文書に押しのけられて)上位に出てこず、英語クエリでは明確に上位に出た。**日本語文書と英語文書が混在するコーパスでは、既定の軽量モデルでは言語をまたいだ検索精度に限界がある**。より高精度が必要な場合は`WEAVIATE_VECTORIZER=text2vec-cohere`等、クロスリンガル性能の高い外部APIへの切り替えを検討すること。
+
 ## DockerHubから利用する
 
 ビルド済みイメージは [earce9000/document-manager](https://hub.docker.com/r/earce9000/document-manager) として公開している(`linux/amd64`/`linux/arm64`対応)。`main`ブランチへのpushのたびに、`latest`と`YYYYMMDD_HHmmss`(JST、ビルド日時)タグが自動的にビルド・公開される([.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml))。特定時点のビルドに固定したい場合は日時タグでpullする。
