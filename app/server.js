@@ -1105,9 +1105,10 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		};
 		insertDocument.run(row);
 		insertDocumentFts.run(row);
-		// ベクトル検索(Weaviate)への索引登録はベストエフォート(WEAVIATE_URL未設定/接続失敗でも
-		// アップロード自体は成功させる。詳細はlib/vector-search.js参照)
-		await VectorSearch.indexDocument(id, contentText);
+		// ベクトル検索(Weaviate)への索引登録はベストエフォート・非同期(埋め込み計算に数秒
+		// かかるため、awaitせずバックグラウンドで実行しアップロードAPIの応答をブロックしない。
+		// WEAVIATE_URL未設定/接続失敗でもアップロード自体は成功させる。詳細はlib/vector-search.js参照)
+		VectorSearch.indexDocument(id, contentText).catch((err) => logger.error({err, documentId: id}, "::api/documents:upload:indexDocument"));
 		logger.info({
 			audit: "upload",
 			user: req.authData.user_identifier,
@@ -1232,7 +1233,7 @@ app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		await VectorSearch.removeDocument(req.params.id);
+		VectorSearch.removeDocument(req.params.id).catch((err) => logger.error({err, documentId: req.params.id}, "::api/documents/:id:delete:removeDocument"));
 		logger.info({
 			audit: "delete",
 			user: req.authData.user_identifier,
@@ -1279,7 +1280,8 @@ app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite,
 			return;
 		}
 		// 論理削除時にWeaviate側のチャンクは削除済みのため、content_textから再登録する
-		await VectorSearch.indexDocument(req.params.id, selectContentTextById.get(req.params.id)?.content_text ?? null);
+		VectorSearch.indexDocument(req.params.id, selectContentTextById.get(req.params.id)?.content_text ?? null)
+			.catch((err) => logger.error({err, documentId: req.params.id}, "::api/documents/:id/restore:indexDocument"));
 		logger.info({
 			audit: "restore",
 			user: req.authData.user_identifier,

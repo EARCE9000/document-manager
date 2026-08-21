@@ -17,6 +17,10 @@
  * 運用(docker run)には影響を与えず、Weaviateが導入されていない/落ちている場合でも
  * 文書のアップロード・削除・復元自体は失敗させない(索引更新はベストエフォート)。
  *
+ * indexDocument/removeDocumentは埋め込み計算に数秒かかるため、server.js側ではawaitせず
+ * バックグラウンドで実行する(アップロード等のAPI応答をブロックしないため)。同一文書IDへの
+ * 操作の実行順序はこのモジュール内部で直列化して保証する(runSerialized参照)。
+ *
  * weaviate-client(公式JS/TSクライアント)はESM専用パッケージで、CJSビルドも内部で
  * ESM専用のuuidパッケージをrequireしており`require("weaviate-client")`は失敗する
  * (ERR_REQUIRE_ESM)。server.js内のmhtml-to-html(buildPreviewFile参照)と同様に、
@@ -264,51 +268,86 @@ const recordIndexResult = (documentId, status, error) => {
 	}
 };
 
+// indexDocument/removeDocumentは呼び出し元(server.js)からawaitせずバックグラウンドで
+// 実行される(埋め込み計算に数秒かかるため、アップロード/削除APIの応答をブロックしないよう
+// fire-and-forgetで呼ばれる)。同一文書IDに対する操作(アップロード直後の削除、削除直後の
+// 復元等)が入れ替わって実行されると、Weaviate側に古い/削除済みのはずのチャンクが
+// 残ってしまう恐れがあるため、文書IDごとに前の操作の完了を待ってから次を実行するよう
+// 直列化する(異なる文書ID同士は並行実行されるため、一括バックフィル等の速度には影響しない)
+const pendingByDocument = new Map();
+const runSerialized = (documentId, task) => {
+	const previous = pendingByDocument.get(documentId) || Promise.resolve();
+	const next = previous.then(task, task);
+	pendingByDocument.set(documentId, next);
+	next.finally(() => {
+		if (pendingByDocument.get(documentId) === next) {
+			pendingByDocument.delete(documentId);
+		}
+	});
+	return next;
+};
+
+// 埋め込み計算(t2v-transformers等の推論サーバー呼び出し)は文書1件だけでもCPUを使い切る
+// 重い処理であるため(実機ではCPU使用率がピーク400%超に達することを確認済み)、文書ごとの
+// 直列化(runSerialized)とは別に、埋め込みを伴う処理全体をグローバルに1件ずつ実行する。
+// これが無いと、複数文書の連続アップロード時にindexDocumentが並行に走ってしまい、推論サーバーに
+// リクエストが殺到してWeaviate側の90秒タイムアウトに達し、索引付けが軒並み失敗する(実機で確認済み)
+let embeddingQueueTail = Promise.resolve();
+const runEmbeddingExclusive = (task) => {
+	const result = embeddingQueueTail.then(task, task);
+	embeddingQueueTail = result.then(() => {}, () => {});
+	return result;
+};
+
 /**
  * 指定文書のチャンクを登録し直す(既存チャンクは一旦全削除してから再登録する)。
  * 成功/失敗をdocuments.vector_index_status等へ記録し、「失敗した文書の再実行」画面から
  * 状態を確認できるようにする。Weaviate未設定時は何もしない(状態も更新しない)。
  * エラー時も例外は投げず、呼び出し元(アップロード/復元処理)を失敗させない
  */
-const indexDocument = async (documentId, contentText) => {
+const indexDocument = (documentId, contentText) => {
 	if (!isEnabled()) {
-		return;
+		return Promise.resolve();
 	}
 	if (contentText == null || contentText.trim() === "") {
 		// 索引対象の本文が無い(画像等)。エラーではないのでok扱いにする
 		recordIndexResult(documentId, "ok", null);
-		return;
+		return Promise.resolve();
 	}
-	try {
-		const client = await getClient();
-		const collection = client.collections.use(COLLECTION_NAME);
-		await removeDocumentChunks(collection, documentId);
-		const chunks = chunkText(contentText);
-		if (chunks.length > 0) {
-			await collection.data.insertMany(chunks.map((text, chunkIndex) => ({documentId, chunkIndex, text})));
+	return runSerialized(documentId, () => runEmbeddingExclusive(async () => {
+		try {
+			const client = await getClient();
+			const collection = client.collections.use(COLLECTION_NAME);
+			await removeDocumentChunks(collection, documentId);
+			const chunks = chunkText(contentText);
+			if (chunks.length > 0) {
+				await collection.data.insertMany(chunks.map((text, chunkIndex) => ({documentId, chunkIndex, text})));
+			}
+			recordIndexResult(documentId, "ok", null);
+		} catch (err) {
+			logger.error({err, documentId}, "::indexDocument");
+			recordIndexResult(documentId, "error", String(err?.message || err));
 		}
-		recordIndexResult(documentId, "ok", null);
-	} catch (err) {
-		logger.error({err, documentId}, "::indexDocument");
-		recordIndexResult(documentId, "error", String(err?.message || err));
-	}
+	}));
 };
 
 /**
  * 指定文書のチャンクを削除する(論理削除時に呼ぶ。ベストエフォート)。索引状態も未処理に戻す
  */
-const removeDocument = async (documentId) => {
+const removeDocument = (documentId) => {
 	if (!isEnabled()) {
-		return;
+		return Promise.resolve();
 	}
-	try {
-		const client = await getClient();
-		const collection = client.collections.use(COLLECTION_NAME);
-		await removeDocumentChunks(collection, documentId);
-		recordIndexResult(documentId, null, null);
-	} catch (err) {
-		logger.error({err, documentId}, "::removeDocument");
-	}
+	return runSerialized(documentId, async () => {
+		try {
+			const client = await getClient();
+			const collection = client.collections.use(COLLECTION_NAME);
+			await removeDocumentChunks(collection, documentId);
+			recordIndexResult(documentId, null, null);
+		} catch (err) {
+			logger.error({err, documentId}, "::removeDocument");
+		}
+	});
 };
 
 /**
