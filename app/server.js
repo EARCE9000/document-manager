@@ -126,17 +126,77 @@ app.use(express.urlencoded({extended: false}));
 // static contents (frontend shell; actual data access is gated by requireAuth on api/*)
 app.use(express.static(path.join(__dirname, 'static')));
 
-// レート制限。api/*全体には緩やかな上限、/loginにはやや厳しめの上限をかけ、
-// 未認証・認証済み問わず総当たり/スクレイピング/連打によるDoSを緩和する
-// (trust proxyの設定と組み合わせ、Apache経由の実クライアントIP単位でカウントする)
+const ApiKeys = require("./lib/api-keys.js");
+const AllowedUsers = require("./lib/allowed-users.js");
+
+// AUTH_DISABLED=true の間は認証を全てバイパスする(開発用。本番では未設定のこと)
+const AUTH_DISABLED = /^(1|true)$/i.test(process.env.AUTH_DISABLED || "");
+if (AUTH_DISABLED) {
+	logger.warn("AUTH_DISABLED=true: 認証を無効化して起動しています(開発用途のみ)");
+}
+const DEV_AUTH_DATA = {user_identifier: "dev-user", role: AllowedUsers.ROLES.ADMIN};
+
+// resolveAuthは、requireAuthと同じ手順(Bearer APIキー→セッションの順)で認証情報を
+// 解決するが、失敗しても401を返さずreq.authDataを未設定のまま次へ進める(このモジュールの
+// 唯一の役割は、後段のレート制限で「認証済みかどうか」を判定できるようにすること)。
+// 実際の認証必須化は従来通りrequireAuth(下部で定義)が担う
+const resolveAuth = (req, res, next) => {
+	if (AUTH_DISABLED) {
+		req.authData = DEV_AUTH_DATA;
+		next();
+		return;
+	}
+	const authorizationHeader = req.headers.authorization || "";
+	if (authorizationHeader.startsWith("Bearer ")) {
+		const apiKey = authorizationHeader.slice("Bearer ".length).trim();
+		const verifyResult = ApiKeys.verifyApiKey(apiKey);
+		if (verifyResult.status === "expired") {
+			req.authError = {status: 401, body: {error: "APIキーの有効期限が切れています。新しいキーを発行してください。"}};
+			next();
+			return;
+		}
+		if (verifyResult.status === "ok" && AllowedUsers.isAllowed(verifyResult.row.created_by)) {
+			const apiKeyRow = verifyResult.row;
+			req.authData = {user_identifier: apiKeyRow.created_by, viaApiKey: apiKeyRow.label, role: apiKeyRow.role};
+		}
+		next();
+		return;
+	}
+	if (req.session?.user != null) {
+		const role = AllowedUsers.getRole(req.session.user.identifier);
+		if (role != null) {
+			req.authData = {user_identifier: req.session.user.identifier, role};
+		}
+	}
+	next();
+};
+
+// レート制限。/loginは総当たり対策のため未認証のまま厳しめの上限をかける。api/*は
+// 未認証(総当たり・スクレイピング等の悪用が主目的)と認証済み(正規利用者・AI連携APIキー等)を
+// 別枠にする。api/*は全リクエストが原則認証必須なため、未認証側の上限は低めのままでよい一方、
+// 認証済み側は複数文書の一括操作等でまとまった量のリクエストが発生するAI連携の実利用を踏まえ、
+// 大幅に緩めている(実機でのAI連携テスト中に旧来の一律300/5分へ到達した実績があったため)。
+// 認証済み側は、trust proxy配下で複数利用者が同一IPに見える環境(社内共有ネットワーク等)でも
+// 利用者ごとに正しく分離されるよう、IPではなく利用者識別子(APIキー発行者/ログインユーザー)で
+// カウントする
 const rateLimit = require('express-rate-limit');
 const RATE_LIMIT_MESSAGE = {error: "リクエストが多すぎます。しばらく待ってから再度お試しください。"};
-const apiRateLimiter = rateLimit({
+const apiRateLimiterAnonymous = rateLimit({
 	windowMs: 5 * 60 * 1000,
 	limit: 300,
 	standardHeaders: 'draft-7',
 	legacyHeaders: false,
-	message: RATE_LIMIT_MESSAGE
+	message: RATE_LIMIT_MESSAGE,
+	skip: (req) => req.authData != null
+});
+const apiRateLimiterAuthenticated = rateLimit({
+	windowMs: 5 * 60 * 1000,
+	limit: 1000,
+	standardHeaders: 'draft-7',
+	legacyHeaders: false,
+	message: RATE_LIMIT_MESSAGE,
+	skip: (req) => req.authData == null,
+	keyGenerator: (req) => req.authData?.user_identifier || req.ip
 });
 const loginRateLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000,
@@ -145,7 +205,7 @@ const loginRateLimiter = rateLimit({
 	legacyHeaders: false,
 	message: RATE_LIMIT_MESSAGE
 });
-app.use(BASE_URL_PATH + 'api/', apiRateLimiter);
+app.use(BASE_URL_PATH + 'api/', resolveAuth, apiRateLimiterAnonymous, apiRateLimiterAuthenticated);
 app.use(BASE_URL_PATH + 'login', loginRateLimiter);
 
 // 外部公開時のパスプレフィックス。ApacheのReverseProxyはこのプレフィックスを
@@ -256,8 +316,6 @@ app.all(BASE_URL_PATH + 'home', async (req, res) => {
 /* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
 
 const initOidcClient = require("./lib/oidc-client.js");
-const ApiKeys = require("./lib/api-keys.js");
-const AllowedUsers = require("./lib/allowed-users.js");
 const TagOrder = require("./lib/tag-order.js");
 const Projects = require("./lib/projects.js");
 const AuditLog = require("./lib/audit-log.js");
@@ -266,13 +324,6 @@ const OIDC_REDIRECT_URI = process.env.OIDC_REDIRECT_URI || "";
 const OIDC_SCOPE = process.env.OIDC_SCOPE || "openid profile email";
 // プロバイダ側でクライアント登録時に選択した「username claim」に合わせる (既定: email)
 const OIDC_USERNAME_CLAIM = process.env.OIDC_USERNAME_CLAIM || "email";
-
-// AUTH_DISABLED=true の間は認証を全てバイパスする(開発用。本番では未設定のこと)
-const AUTH_DISABLED = /^(1|true)$/i.test(process.env.AUTH_DISABLED || "");
-if (AUTH_DISABLED) {
-	logger.warn("AUTH_DISABLED=true: 認証を無効化して起動しています(開発用途のみ)");
-}
-const DEV_AUTH_DATA = {user_identifier: "dev-user", role: AllowedUsers.ROLES.ADMIN};
 
 let oidcConfig = null;
 
@@ -443,46 +494,18 @@ app.all(BASE_URL_PATH + 'logout', async (req, res) => {
  * ブラウザの対話的ログイン(セッション)に加え、Claude Desktop等のマシンクライアント向けに
  * Authorization: Bearer <APIキー> でも認証できるようにしている。
  */
+// 実際の認証情報の解決(Bearer APIキー→セッションの順、APIキー発行者のホワイトリスト
+// 失効チェック、有効期限切れの個別メッセージ等)はresolveAuth(上部、レート制限の直前に
+// api/*全体へグローバル適用済み)が既に行っている。requireAuthはその結果(req.authData/
+// req.authError)を見て、未認証なら401を返すだけの薄いゲートになっている
 const requireAuth = (req, res, next) => {
-	if (AUTH_DISABLED) {
-		req.authData = DEV_AUTH_DATA;
+	if (req.authData != null) {
 		next();
 		return;
 	}
-
-	const authorizationHeader = req.headers.authorization || "";
-	if (authorizationHeader.startsWith("Bearer ")) {
-		const apiKey = authorizationHeader.slice("Bearer ".length).trim();
-		const verifyResult = ApiKeys.verifyApiKey(apiKey);
-		if (verifyResult.status === "expired") {
-			res.status(401).json({error: "APIキーの有効期限が切れています。新しいキーを発行してください。"});
-			return;
-		}
-		if (verifyResult.status !== "ok") {
-			res.status(401).json({error: "unauthorized"});
-			return;
-		}
-		const apiKeyRow = verifyResult.row;
-		// 発行者が後からホワイトリストを外された場合、そのAPIキーも無効として扱う。
-		// 権限レベル自体は発行者の"現在の"ロールではなく、キーに記録されたroleを使う
-		// (発行者が後から昇格/降格しても、既存キーの権限はキー発行時のまま変わらない)。
-		if (!AllowedUsers.isAllowed(apiKeyRow.created_by)) {
-			res.status(401).json({error: "unauthorized"});
-			return;
-		}
-		// APIキー経由でも、そのキーを発行した本人として動作させる(操作ログ等の記録は本人名義になる)
-		req.authData = {user_identifier: apiKeyRow.created_by, viaApiKey: apiKeyRow.label, role: apiKeyRow.role};
-		next();
+	if (req.authError != null) {
+		res.status(req.authError.status).json(req.authError.body);
 		return;
-	}
-
-	if (req.session?.user != null) {
-		const role = AllowedUsers.getRole(req.session.user.identifier);
-		if (role != null) {
-			req.authData = {user_identifier: req.session.user.identifier, role};
-			next();
-			return;
-		}
 	}
 	res.status(401).json({error: "unauthorized"});
 };
