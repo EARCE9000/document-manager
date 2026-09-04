@@ -1449,7 +1449,7 @@ app.put(BASE_URL_PATH + 'api/documents/:id/memo', requireAuth, requireWrite, asy
 app.get(BASE_URL_PATH + 'api/history', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(AuditLog.listMine(req.authData.user_identifier));
+		res.status(200).json(await AuditLog.listMine(req.authData.user_identifier));
 	} catch (err) {
 		logger.error(err, "::api/history");
 		res.status(500).json({error: "Internal Error"});

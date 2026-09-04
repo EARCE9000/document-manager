@@ -12,32 +12,34 @@
 const path = require("path");
 const crypto = require("crypto");
 const logger = require("./logger.js")(path.basename(__filename));
-const db = require("./db.js");
+const ds = require("./datastore.js");
 
 const HISTORY_RETENTION_DAYS = 30;
 const HISTORY_MAX_ROWS = 500;
 
-const insertAuditLog = db.prepare(`
+const INSERT_AUDIT_LOG = `
 	INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
 	VALUES (@id, @user_identifier, @action, @document_id, @entry_file, @project_id, @project_name, @created_at)
-`);
+`;
 
-const selectMyAuditLog = db.prepare(`
+const SELECT_MY_AUDIT_LOG = `
 	SELECT id, action, document_id, entry_file, project_id, project_name, created_at
 	FROM audit_log
 	WHERE user_identifier = ? AND created_at >= ?
 	ORDER BY created_at DESC
 	LIMIT ?
-`);
+`;
 
 /**
  * 操作履歴を1件記録する。呼び出し元(server.js)は標準出力への監査ログ出力と
  * このrecordを両方呼ぶこと(役割が異なるため一本化はしない。標準出力側は
- * サーバー運用者向け、こちらは利用者本人向けの画面表示用)
+ * サーバー運用者向け、こちらは利用者本人向けの画面表示用)。
+ * 記録失敗で本処理を失敗させたくないため内部でエラーを握りつぶす(=呼び出し側は
+ * await 不要のfire-and-forgetでよい。rejectしないためunhandled rejectionにもならない)
  */
-module.exports.record = ({userIdentifier, action, documentId = null, entryFile = null, projectId = null, projectName = null}) => {
+module.exports.record = async ({userIdentifier, action, documentId = null, entryFile = null, projectId = null, projectName = null}) => {
 	try {
-		insertAuditLog.run({
+		await ds.run(INSERT_AUDIT_LOG, {
 			id: crypto.randomUUID(),
 			user_identifier: userIdentifier,
 			action,
@@ -48,7 +50,6 @@ module.exports.record = ({userIdentifier, action, documentId = null, entryFile =
 			created_at: new Date().toISOString()
 		});
 	} catch (err) {
-		// 履歴記録の失敗で本処理(アップロード等)を失敗させたくないため、ここで握りつぶす
 		logger.error(err, "::record");
 	}
 };
@@ -56,9 +57,10 @@ module.exports.record = ({userIdentifier, action, documentId = null, entryFile =
 /**
  * 呼び出したユーザー自身の直近の操作履歴を返す(既定で直近30日・最大500件)
  */
-module.exports.listMine = (userIdentifier) => {
+module.exports.listMine = async (userIdentifier) => {
 	const since = new Date(Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-	return selectMyAuditLog.all(userIdentifier, since, HISTORY_MAX_ROWS).map((row) => ({
+	const rows = await ds.all(SELECT_MY_AUDIT_LOG, [userIdentifier, since, HISTORY_MAX_ROWS]);
+	return rows.map((row) => ({
 		id: row.id,
 		action: row.action,
 		documentId: row.document_id,
