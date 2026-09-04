@@ -1646,7 +1646,7 @@ app.delete(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin
 app.get(BASE_URL_PATH + 'api/tag_order', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(TagOrder.listTagOrder());
+		res.status(200).json(await TagOrder.listTagOrder());
 	} catch (err) {
 		logger.error(err, "::api/tag_order:list");
 		res.status(500).json({error: "Internal Error"});
@@ -1664,7 +1664,7 @@ app.put(BASE_URL_PATH + 'api/tag_order', requireAuth, requireAdmin, async (req, 
 			res.status(400).json({error: "tags must be an array"});
 			return;
 		}
-		const saved = TagOrder.replaceTagOrder(req.body.tags, req.authData.user_identifier);
+		const saved = await TagOrder.replaceTagOrder(req.body.tags, req.authData.user_identifier);
 		res.status(200).json({tags: saved});
 	} catch (err) {
 		logger.error(err, "::api/tag_order:replace");
