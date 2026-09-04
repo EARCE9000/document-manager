@@ -75,6 +75,12 @@ const UPLOAD_MAX_BYTES = 256 * 1024 * 1024; // 256MB
 const session = require('express-session');
 const oidc = require('openid-client');
 
+// セッションの保存先。既定のMemoryStore(プロセス内メモリ)はプロセス再起動でセッションが
+// 消えるうえ、複数インスタンス(ECS/Cloud Run等の水平スケール・ローリングデプロイ)で
+// 共有されないため、永続ストアに置き換える。DATABASE_BACKEND環境変数で保存先を切り替える
+// (既定はsqlite。将来postgres等を追加すれば全インスタンスでセッションを共有できる)
+const {createSessionStore} = require('./lib/session-store.js');
+
 const SESSION_SECRET = process.env.SESSION_SECRET || "";
 if (SESSION_SECRET === "") {
 	logger.warn("SESSION_SECRET is not set. generating a random value (sessions will be invalidated on every restart)");
@@ -82,6 +88,7 @@ if (SESSION_SECRET === "") {
 const SESSION_MAX_AGE_MS = Number(process.env.SESSION_MAX_AGE_HOURS || 8) * 60 * 60 * 1000;
 
 app.use(session({
+	store: createSessionStore(session),
 	secret: SESSION_SECRET || oidc.randomState(),
 	resave: false,
 	saveUninitialized: false,
