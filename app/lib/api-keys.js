@@ -17,7 +17,7 @@
 const crypto = require("crypto");
 const path = require("path");
 const logger = require("./logger.js")(path.basename(__filename));
-const db = require("./db.js");
+const ds = require("./datastore.js");
 const AllowedUsers = require("./allowed-users.js");
 
 const API_KEY_PREFIX = "dm_";
@@ -68,29 +68,29 @@ const calculateExpiresAt = (option, now = new Date()) => {
 
 const hashKey = (apiKey) => crypto.createHash("sha256").update(apiKey).digest("hex");
 
-const insertApiKey = db.prepare(`
+const SQL_INSERT_API_KEY = `
 	INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at)
 	VALUES (@id, @label, @key_hash, @role, @created_by, @created_at, @expires_at)
-`);
+`;
 
-const selectActiveApiKeysByOwner = db.prepare(`
+const SQL_SELECT_ACTIVE_API_KEYS_BY_OWNER = `
 	SELECT id, label, role, created_by, created_at, expires_at, last_used_at
 	FROM api_keys
 	WHERE revoked_at IS NULL AND created_by = ?
 	ORDER BY created_at DESC
-`);
+`;
 
-const selectActiveApiKeyByHash = db.prepare(`
+const SQL_SELECT_ACTIVE_API_KEY_BY_HASH = `
 	SELECT id, label, role, created_by, expires_at FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL
-`);
+`;
 
-const touchLastUsed = db.prepare(`UPDATE api_keys SET last_used_at = ? WHERE id = ?`);
+const SQL_TOUCH_LAST_USED = `UPDATE api_keys SET last_used_at = ? WHERE id = ?`;
 
 // 発行者本人以外は失効できないよう created_by も条件に含める
-const revokeApiKey = db.prepare(`
+const SQL_REVOKE_API_KEY = `
 	UPDATE api_keys SET revoked_at = @revoked_at
 	WHERE id = @id AND created_by = @created_by AND revoked_at IS NULL
-`);
+`;
 
 module.exports.EXPIRY_OPTIONS = EXPIRY_OPTIONS;
 module.exports.API_KEY_ROLES = API_KEY_ROLES;
@@ -103,7 +103,7 @@ module.exports.calculateExpiresAt = calculateExpiresAt;
  * role(readonly/readwrite)とexpiryOption(today/30d/90d)は呼び出し元(server.js)で
  * 発行者の現在のロールと突き合わせた上で渡すこと。ここでは値の形式だけを検証する。
  */
-module.exports.createApiKey = (label, role, expiryOption, createdBy) => {
+module.exports.createApiKey = async (label, role, expiryOption, createdBy) => {
 	if (!isValidApiKeyRole(role)) {
 		throw new Error(`invalid api key role: ${role}`);
 	}
@@ -114,7 +114,7 @@ module.exports.createApiKey = (label, role, expiryOption, createdBy) => {
 	const apiKey = API_KEY_PREFIX + crypto.randomBytes(32).toString("base64url");
 	const now = new Date();
 	const expiresAt = calculateExpiresAt(expiryOption, now);
-	insertApiKey.run({
+	await ds.run(SQL_INSERT_API_KEY, {
 		id,
 		label,
 		key_hash: hashKey(apiKey),
@@ -129,13 +129,13 @@ module.exports.createApiKey = (label, role, expiryOption, createdBy) => {
 /**
  * 発行者本人のAPIキーのみを返す
  */
-module.exports.listApiKeys = (ownerUserIdentifier) => selectActiveApiKeysByOwner.all(ownerUserIdentifier);
+module.exports.listApiKeys = async (ownerUserIdentifier) => ds.all(SQL_SELECT_ACTIVE_API_KEYS_BY_OWNER, [ownerUserIdentifier]);
 
 /**
  * 発行者本人のAPIキーのみ失効できる
  */
-module.exports.revokeApiKeyById = (id, ownerUserIdentifier) => {
-	const result = revokeApiKey.run({id, created_by: ownerUserIdentifier, revoked_at: new Date().toISOString()});
+module.exports.revokeApiKeyById = async (id, ownerUserIdentifier) => {
+	const result = await ds.run(SQL_REVOKE_API_KEY, {id, created_by: ownerUserIdentifier, revoked_at: new Date().toISOString()});
 	return result.changes > 0;
 };
 
@@ -146,19 +146,19 @@ module.exports.revokeApiKeyById = (id, ownerUserIdentifier) => {
  * (キー自体が間違っているのか、期限切れなのかで対応が変わる)。
  * 失効チェックはlast_used_atの更新より前に行う(失効キーの最終使用時刻は更新しない)。
  */
-module.exports.verifyApiKey = (apiKey) => {
+module.exports.verifyApiKey = async (apiKey) => {
 	try {
 		if (!apiKey || !apiKey.startsWith(API_KEY_PREFIX)) {
 			return {status: "invalid"};
 		}
-		const row = selectActiveApiKeyByHash.get(hashKey(apiKey));
+		const row = await ds.get(SQL_SELECT_ACTIVE_API_KEY_BY_HASH, [hashKey(apiKey)]);
 		if (row == null) {
 			return {status: "invalid"};
 		}
 		if (row.expires_at <= new Date().toISOString()) {
 			return {status: "expired"};
 		}
-		touchLastUsed.run(new Date().toISOString(), row.id);
+		await ds.run(SQL_TOUCH_LAST_USED, [new Date().toISOString(), row.id]);
 		return {status: "ok", row};
 	} catch (err) {
 		logger.error(err, "::verifyApiKey");

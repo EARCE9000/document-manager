@@ -161,7 +161,7 @@ const resolveAuth = async (req, res, next) => {
 		const authorizationHeader = req.headers.authorization || "";
 		if (authorizationHeader.startsWith("Bearer ")) {
 			const apiKey = authorizationHeader.slice("Bearer ".length).trim();
-			const verifyResult = ApiKeys.verifyApiKey(apiKey);
+			const verifyResult = await ApiKeys.verifyApiKey(apiKey);
 			if (verifyResult.status === "expired") {
 				req.authError = {status: 401, body: {error: "APIキーの有効期限が切れています。新しいキーを発行してください。"}};
 				next();
@@ -1480,7 +1480,7 @@ app.get(BASE_URL_PATH + 'api/history', requireAuth, async (req, res) => {
 app.get(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const keys = ApiKeys.listApiKeys(req.authData.user_identifier).map((row) => ({
+		const keys = (await ApiKeys.listApiKeys(req.authData.user_identifier)).map((row) => ({
 			id: row.id,
 			label: row.label,
 			role: row.role,
@@ -1526,7 +1526,7 @@ app.post(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
 			res.status(400).json({error: "expiryOption must be one of today/30d/90d"});
 			return;
 		}
-		const created = ApiKeys.createApiKey(label, role, expiryOption, req.authData.user_identifier);
+		const created = await ApiKeys.createApiKey(label, role, expiryOption, req.authData.user_identifier);
 		res.status(200).json(created);
 	} catch (err) {
 		logger.error(err, "::api/apikeys:create");
@@ -1540,7 +1540,7 @@ app.post(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
 app.delete(BASE_URL_PATH + 'api/apikeys/:id', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const revoked = ApiKeys.revokeApiKeyById(req.params.id, req.authData.user_identifier);
+		const revoked = await ApiKeys.revokeApiKeyById(req.params.id, req.authData.user_identifier);
 		if (!revoked) {
 			res.status(404).json({error: "not found"});
 			return;
