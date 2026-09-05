@@ -195,7 +195,7 @@ const resolveAuth = async (req, res, next) => {
 // 認証済み側は、trust proxy配下で複数利用者が同一IPに見える環境(社内共有ネットワーク等)でも
 // 利用者ごとに正しく分離されるよう、IPではなく利用者識別子(APIキー発行者/ログインユーザー)で
 // カウントする
-const rateLimit = require('express-rate-limit');
+const {rateLimit, ipKeyGenerator} = require('express-rate-limit');
 const RATE_LIMIT_MESSAGE = {error: "リクエストが多すぎます。しばらく待ってから再度お試しください。"};
 const apiRateLimiterAnonymous = rateLimit({
 	windowMs: 5 * 60 * 1000,
@@ -212,7 +212,9 @@ const apiRateLimiterAuthenticated = rateLimit({
 	legacyHeaders: false,
 	message: RATE_LIMIT_MESSAGE,
 	skip: (req) => req.authData == null,
-	keyGenerator: (req) => req.authData?.user_identifier || req.ip
+	// IP フォールバック時は ipKeyGenerator で包み、IPv6 を /64 サブネット単位に正しく集約する
+	// (素の req.ip だと IPv6 の完全アドレス単位になり、上限を回避され得る)
+	keyGenerator: (req) => req.authData?.user_identifier || ipKeyGenerator(req.ip)
 });
 const loginRateLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000,
