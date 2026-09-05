@@ -17,7 +17,8 @@ Node.js (Express) 製の単一コンテナで動作し、メタデータはSQLit
 
 ### 文書管理
 - **対応形式**: `.html` / `.htm` / `.mhtml` / `.mht` / `.md` / `.markdown` / `.pdf` / `.svg` / `.png` / `.jpg` / `.jpeg` / `.csv` / `.tsv` / `.txt` / `.log` / `.json`(単一ファイルのみ、1ファイル256MBまで)
-- **保存先の切り替え**: 文書ファイルの実体は`STORAGE_BACKEND`環境変数でローカルディスク(既定)/S3を切り替えられる。アップロード・プレビュー変換・全文抽出・配信のすべてが共通のストレージ抽象層([lib/storage.js](app/lib/storage.js))経由になっており、S3モードでもアプリを経由してストリーミング配信するため認証・監査ログの挙動は変わらない。モード切替は「今後の保存先」の変更のみで、既存ファイルの自動移行は行わない
+- **保存先の切り替え**: 文書ファイルの実体は`STORAGE_BACKEND`環境変数でローカルディスク(既定)/S3(AWS)/GCS(Google Cloud Storage)を切り替えられる。アップロード・プレビュー変換・全文抽出・配信のすべてが共通のストレージ抽象層([lib/storage.js](app/lib/storage.js))経由になっており、S3/GCSモードでもアプリを経由してストリーミング配信(Range対応)するため認証・監査ログの挙動は変わらない。モード切替は「今後の保存先」の変更のみで、既存ファイルの自動移行は行わない
+- **メタDBの切り替え**: 文書メタデータ・タグ・プロジェクト・APIキー・ホワイトリスト・操作履歴・セッションを格納するDBは`DATABASE_BACKEND`環境変数でSQLite(既定・単一コンテナ向け)/PostgreSQL(RDS/Aurora, Cloud SQL/AlloyDB等)を切り替えられる。全DBアクセスが非同期の抽象層([lib/datastore.js](app/lib/datastore.js))経由のため、アプリロジックはバックエンドを意識しない。Postgresを選ぶとセッションもDBで共有され、複数インスタンスでの水平スケール(ECS/Cloud Run)に対応する
 - **プレビュー**
   - html/htm: ブラウザがネイティブに描画できるためそのまま表示
   - mhtml/mht: `mhtml-to-html` で単一HTMLに変換して表示(ブラウザのネイティブmhtmlレンダリングは不安定なため)
@@ -83,20 +84,23 @@ document-manager/
 ├── app/                     # アプリケーション本体 (Dockerイメージにコピーされる)
 │   ├── server.js             # エントリポイント
 │   ├── lib/
+│   │   ├── datastore.js       # DBアクセスの非同期抽象層 (DATABASE_BACKENDでsqlite/postgresを切替。各libはこれ経由でアクセス)
 │   │   ├── db.js              # SQLite初期化・スキーマバージョン管理 (documents/document_tags/api_keys/allowed_users/tag_order/projects/project_folders/project_documents/audit_log/vector_search_settings)
+│   │   ├── schema-pg.js       # Postgresバックエンド用スキーマDDL (pg_trgm/GIN含む。datastore.initで冪等作成)
+│   │   ├── session-store.js   # express-session用の永続セッションストア (sqlite/postgres。MemoryStore不使用)
 │   │   ├── oidc-client.js     # OIDC Discovery + Configuration初期化
 │   │   ├── api-keys.js        # APIキーの発行/検証/失効
 │   │   ├── allowed-users.js   # ログイン許可ユーザーのホワイトリスト管理
 │   │   ├── tag-order.js       # タグ体系(タグツリー表示)の並び順管理
 │   │   ├── projects.js        # プロジェクト(フォルダ階層による文書整理)の管理
 │   │   ├── audit-log.js       # 操作履歴(自分の登録/アーカイブ/復元/プロジェクト操作)の記録・参照
-│   │   ├── storage.js         # 文書ファイルの保存先抽象化 (ローカルディスク/S3。STORAGE_BACKENDで切替)
+│   │   ├── storage.js         # 文書ファイルの保存先抽象化 (ローカルディスク/S3/GCS。STORAGE_BACKENDで切替)
 │   │   ├── vector-search.js   # セマンティック検索(Weaviate連携、任意機能。WEAVIATE_URLで有効化)
 │   │   └── logger.js          # 共通ロガー (標準出力のみ)
 │   └── static/index.html     # フロントエンド(単一HTML)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
-    ├── documents/<年月>_<UUID>/  # 文書本体 (元ファイル + 変換後preview.html)
-    └── db/document_manager.sqlite
+    ├── documents/<年月>_<UUID>/  # 文書本体 (元ファイル + 変換後preview.html。STORAGE_BACKEND=local時のみ)
+    └── db/document_manager.sqlite  # DATABASE_BACKEND=sqlite時のみ (postgres時はマネージドDB側に保存され、このボリュームは不要)
 ```
 
 ## 環境変数
@@ -106,12 +110,17 @@ document-manager/
 | `LISTEN_PORT` | `8080` | Listenポート |
 | `BASE_URL_PATH` | `/` | Express内部のルーティングprefix(通常は変更不要。リバースプロキシがprefixを剥がして転送する前提) |
 | `BASE_PATH` | `/document_management` | 外部公開時のパスprefix。ログイン/ログアウト/ホームの遷移先の組み立てに使用 |
-| `DATA_DIR` | `/data` | DBの保存先。`STORAGE_BACKEND=local`の場合は文書ファイルもここに保存される |
-| `STORAGE_BACKEND` | `local` | 文書ファイルの保存先。`local`(ディスク)または`s3`。切り替えは今後の保存先を変えるだけで、既存ファイルの自動移行は行わない |
+| `DATA_DIR` | `/data` | `DATABASE_BACKEND=sqlite`(既定)時のSQLite DBの保存先。`STORAGE_BACKEND=local`の場合は文書ファイルもここに保存される。`DATABASE_BACKEND=postgres`かつ`STORAGE_BACKEND`がs3/gcsなら永続ボリューム不要 |
+| `DATABASE_BACKEND` | `sqlite` | メタデータDBのバックエンド。`sqlite`(単一コンテナ・`DATA_DIR`上のファイル)または`postgres`(RDS/Aurora, Cloud SQL/AlloyDB等のマネージドPostgreSQL)。複数インスタンスで水平スケールする場合は`postgres`が必須(SQLiteは単一インスタンス前提。セッションもこのDBで共有される) |
+| `DATABASE_URL` | (postgres時に使用) | Postgres接続文字列(例: `postgres://user:pass@host:5432/dbname`)。`DATABASE_BACKEND=postgres`で未設定の場合は標準の`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`が使われる。スキーマは起動時に自動作成される(冪等) |
+| `DATABASE_SSL` | (未設定) | `true`でPostgres接続にTLSを使う(マネージドPGで必要な場合)。証明書検証は行わない(`rejectUnauthorized:false`) |
+| `STORAGE_BACKEND` | `local` | 文書ファイルの保存先。`local`(ディスク)/`s3`(AWS)/`gcs`(Google Cloud Storage)。切り替えは今後の保存先を変えるだけで、既存ファイルの自動移行は行わない |
 | `S3_BUCKET` | (STORAGE_BACKEND=s3の場合必須) | 保存先のS3バケット名 |
 | `S3_REGION` | (STORAGE_BACKEND=s3の場合必須) | S3バケットのリージョン |
 | `S3_PREFIX` | `documents` | S3オブジェクトキーのプレフィックス(`<prefix>/<文書ID>/<ファイル名>`) |
 | `S3_ENDPOINT` | (未設定) | MinIO等のS3互換サービスに接続する場合のエンドポイントURL。未設定時は実AWS S3に接続する |
+| `GCS_BUCKET` | (STORAGE_BACKEND=gcsの場合必須) | 保存先のGoogle Cloud Storageバケット名 |
+| `GCS_PREFIX` | `documents` | GCSオブジェクト名のプレフィックス(`<prefix>/<文書ID>/<ファイル名>`) |
 | `WEAVIATE_URL` | (未設定) | セマンティック検索(意味検索)用のWeaviateエンドポイント(例: `http://weaviate:8080`)。未設定の間はこの機能自体が無効化され、`api/documents/search/vector`は503を返す |
 | `WEAVIATE_GRPC_PORT` | `50051` | WeaviateのgRPCポート(`WEAVIATE_URL`設定時のみ使用) |
 | `WEAVIATE_VECTORIZER` | `text2vec-transformers` | Embedding計算に使うWeaviateのベクトライザーモジュールの既定値。`text2vec-transformers`(自己ホスト、認証情報不要)/ `text2vec-cohere`(Cohere SaaS、要`COHERE_APIKEY`)/ `text2vec-openai`(要`OPENAI_APIKEY`)/ `text2vec-aws`(Cohere on AWS Bedrock、要`AWS_BEDROCK_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)。「ベクトル索引」画面からadminロールで上書きでき、その場合はDB側の値が優先される(認証情報自体はDBに保存されない) |
@@ -135,6 +144,22 @@ document-manager/
 | `ADMIN_EMAIL` | (未設定) | adminロールのユーザーが1人もいない場合にだけ、ログイン時に自動でadminとして登録される自己修復用のメールアドレス。常設の特別枠ではない |
 
 S3の認証情報は、AWS SDKの標準クレデンシャルチェーン(ECSタスクロール/EC2インスタンスロール等のIAMロールを優先し、未設定時は`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`環境変数や共有設定ファイルにフォールバック)にそのまま従う。アプリ側で個別の環境変数は用意していない。
+
+GCSの認証情報は、Google CloudのADC(Application Default Credentials。GKEのWorkload Identityやアタッチされたサービスアカウント、`GOOGLE_APPLICATION_CREDENTIALS`が指す鍵ファイル等)に従う。アプリ側で個別の環境変数は用意していない。
+
+Postgresの認証情報は`DATABASE_URL`(または`PG*`環境変数)に含める。パスワードを含むため、AWSなら`ECSタスク定義のsecrets`でSecrets Managerの値を、GCPならCloud RunのシークレットやSecret Managerの値を、コンテナ起動時に環境変数へ注入する構成を推奨する(平文でイメージやリポジトリに残さない)。DBはアプリと同じクラウド・同じVPC内に置き、レイテンシと下り転送料を抑えること。
+
+### マルチクラウド構成の要点
+
+同じDockerイメージのままAWS/GCP双方のマネージド環境で動く。実行基盤とマネージドサービスは同じクラウドに揃えるのが原則:
+
+| 用途 | AWS (ECS/Fargate) | GCP (Cloud Run / GKE) |
+| --- | --- | --- |
+| メタDB・セッション | `DATABASE_BACKEND=postgres` + RDS/Aurora | `DATABASE_BACKEND=postgres` + Cloud SQL/AlloyDB |
+| 文書ファイル | `STORAGE_BACKEND=s3` + S3 | `STORAGE_BACKEND=gcs` + GCS |
+| ベクトル検索(任意) | Weaviateコンテナ / Weaviate Cloud | 同左 |
+
+複数インスタンスで動かす場合は`DATABASE_BACKEND=postgres`が前提(セッションもPostgresで共有されるため、どのインスタンスに振り分けられてもログイン状態が維持される)。全文検索は、SQLiteではFTS5(trigram)、PostgresではpgのGIN trigramインデックス(pg_trgm)で自動的に切り替わる。
 
 ## ローカル動作確認
 
