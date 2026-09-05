@@ -31,6 +31,14 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000; // 1h
 // cookieから失効時刻を決められない場合のフォールバック(express-session既定に倣う)
 const FALLBACK_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
+// cookie.expires(またはoriginalMaxAge)から失効時刻(epoch ms)を求める(両バックエンド共通)
+const getExpiresAt = (sess) => {
+	const expires = sess && sess.cookie && sess.cookie.expires;
+	if (expires) return new Date(expires).getTime();
+	const maxAge = sess && sess.cookie && sess.cookie.originalMaxAge;
+	return Date.now() + (typeof maxAge === "number" ? maxAge : FALLBACK_TTL_MS);
+};
+
 /**
  * SQLite(better-sqlite3)上の sessions テーブルに保存するストアを生成する。
  * better-sqlite3は同期APIなので、各Storeメソッドはその場で完了しコールバックを呼ぶ。
@@ -56,14 +64,6 @@ const createSqliteStore = (session) => {
 	const touchStmt = db.prepare("UPDATE sessions SET expires_at = ? WHERE sid = ?");
 	const deleteStmt = db.prepare("DELETE FROM sessions WHERE sid = ?");
 	const pruneStmt = db.prepare("DELETE FROM sessions WHERE expires_at <= ?");
-
-	// cookie.expires(またはoriginalMaxAge)から失効時刻(epoch ms)を求める
-	const getExpiresAt = (sess) => {
-		const expires = sess && sess.cookie && sess.cookie.expires;
-		if (expires) return new Date(expires).getTime();
-		const maxAge = sess && sess.cookie && sess.cookie.originalMaxAge;
-		return Date.now() + (typeof maxAge === "number" ? maxAge : FALLBACK_TTL_MS);
-	};
 
 	class SqliteSessionStore extends session.Store {
 		get(sid, cb) {
@@ -128,6 +128,70 @@ const createSqliteStore = (session) => {
 };
 
 /**
+ * Postgres上の sessions テーブルに保存するストアを生成する。datastore経由で非同期に
+ * 読み書きし、コールバックへ橋渡しする。sessionsテーブルは schema-pg.js が作成する
+ * (このストアはDDLを行わない。expires_atはepoch msのBIGINTで、pgは文字列で返すためNumber化する)
+ */
+const createPostgresStore = (session) => {
+	const ds = require("./datastore.js");
+
+	const SELECT_SQL = "SELECT data, expires_at FROM sessions WHERE sid = ?";
+	const UPSERT_SQL = `
+		INSERT INTO sessions (sid, data, expires_at) VALUES (?, ?, ?)
+		ON CONFLICT (sid) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at
+	`;
+	const TOUCH_SQL = "UPDATE sessions SET expires_at = ? WHERE sid = ?";
+	const DELETE_SQL = "DELETE FROM sessions WHERE sid = ?";
+	const PRUNE_SQL = "DELETE FROM sessions WHERE expires_at <= ?";
+
+	class PostgresSessionStore extends session.Store {
+		get(sid, cb) {
+			ds.get(SELECT_SQL, [sid])
+				.then((row) => {
+					if (!row) return cb(null, null);
+					if (Number(row.expires_at) <= Date.now()) {
+						return ds.run(DELETE_SQL, [sid]).then(() => cb(null, null));
+					}
+					return cb(null, JSON.parse(row.data));
+				})
+				.catch(cb);
+		}
+
+		set(sid, sess, cb) {
+			ds.run(UPSERT_SQL, [sid, JSON.stringify(sess), getExpiresAt(sess)])
+				.then(() => cb(null))
+				.catch(cb);
+		}
+
+		touch(sid, sess, cb) {
+			ds.run(TOUCH_SQL, [getExpiresAt(sess), sid])
+				.then(() => cb(null))
+				.catch(cb);
+		}
+
+		destroy(sid, cb) {
+			ds.run(DELETE_SQL, [sid])
+				.then(() => cb(null))
+				.catch(cb);
+		}
+	}
+
+	const store = new PostgresSessionStore();
+
+	const timer = setInterval(() => {
+		ds.run(PRUNE_SQL, [Date.now()])
+			.then((info) => {
+				if (info.changes > 0) logger.debug({removed: info.changes}, "expired sessions pruned");
+			})
+			.catch((err) => logger.warn({err}, "session prune failed"));
+	}, PRUNE_INTERVAL_MS);
+	if (timer.unref) timer.unref();
+
+	logger.info("session store ready (backend=postgres)");
+	return store;
+};
+
+/**
  * DATABASE_BACKENDに応じたセッションストアを返す。引数にはexpress-sessionの
  * sessionモジュール(session.Storeを継承するため)を渡す
  */
@@ -135,6 +199,8 @@ module.exports.createSessionStore = (session) => {
 	switch (DATABASE_BACKEND) {
 		case "sqlite":
 			return createSqliteStore(session);
+		case "postgres":
+			return createPostgresStore(session);
 		default:
 			throw new Error(`未対応のDATABASE_BACKEND: ${DATABASE_BACKEND}`);
 	}
