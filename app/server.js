@@ -147,35 +147,44 @@ const DEV_AUTH_DATA = {user_identifier: "dev-user", role: AllowedUsers.ROLES.ADM
 // 解決するが、失敗しても401を返さずreq.authDataを未設定のまま次へ進める(このモジュールの
 // 唯一の役割は、後段のレート制限で「認証済みかどうか」を判定できるようにすること)。
 // 実際の認証必須化は従来通りrequireAuth(下部で定義)が担う
-const resolveAuth = (req, res, next) => {
-	if (AUTH_DISABLED) {
-		req.authData = DEV_AUTH_DATA;
-		next();
-		return;
-	}
-	const authorizationHeader = req.headers.authorization || "";
-	if (authorizationHeader.startsWith("Bearer ")) {
-		const apiKey = authorizationHeader.slice("Bearer ".length).trim();
-		const verifyResult = ApiKeys.verifyApiKey(apiKey);
-		if (verifyResult.status === "expired") {
-			req.authError = {status: 401, body: {error: "APIキーの有効期限が切れています。新しいキーを発行してください。"}};
+// datastore経由の認証判定(AllowedUsers/ApiKeys)がasyncになったため、この関数もasync。
+// asyncミドルウェアの例外はExpress4では自動捕捉されずリクエストが宙吊りになるため、
+// 全体をtry/catchで囲み、想定外エラー時は認証情報を付けず(=未認証扱いで)next()する
+// (従来からresolveRole等がエラー時にnullを返し未認証扱いにしていた挙動を踏襲する)
+const resolveAuth = async (req, res, next) => {
+	try {
+		if (AUTH_DISABLED) {
+			req.authData = DEV_AUTH_DATA;
 			next();
 			return;
 		}
-		if (verifyResult.status === "ok" && AllowedUsers.isAllowed(verifyResult.row.created_by)) {
-			const apiKeyRow = verifyResult.row;
-			req.authData = {user_identifier: apiKeyRow.created_by, viaApiKey: apiKeyRow.label, role: apiKeyRow.role};
+		const authorizationHeader = req.headers.authorization || "";
+		if (authorizationHeader.startsWith("Bearer ")) {
+			const apiKey = authorizationHeader.slice("Bearer ".length).trim();
+			const verifyResult = ApiKeys.verifyApiKey(apiKey);
+			if (verifyResult.status === "expired") {
+				req.authError = {status: 401, body: {error: "APIキーの有効期限が切れています。新しいキーを発行してください。"}};
+				next();
+				return;
+			}
+			if (verifyResult.status === "ok" && await AllowedUsers.isAllowed(verifyResult.row.created_by)) {
+				const apiKeyRow = verifyResult.row;
+				req.authData = {user_identifier: apiKeyRow.created_by, viaApiKey: apiKeyRow.label, role: apiKeyRow.role};
+			}
+			next();
+			return;
+		}
+		if (req.session?.user != null) {
+			const role = await AllowedUsers.getRole(req.session.user.identifier);
+			if (role != null) {
+				req.authData = {user_identifier: req.session.user.identifier, role};
+			}
 		}
 		next();
-		return;
+	} catch (err) {
+		logger.error(err, "::resolveAuth");
+		next();
 	}
-	if (req.session?.user != null) {
-		const role = AllowedUsers.getRole(req.session.user.identifier);
-		if (role != null) {
-			req.authData = {user_identifier: req.session.user.identifier, role};
-		}
-	}
-	next();
 };
 
 // レート制限。/loginは総当たり対策のため未認証のまま厳しめの上限をかける。api/*は
@@ -368,7 +377,7 @@ app.all(BASE_URL_PATH + 'login', async (req, res) => {
 				const user_identifier = claims[OIDC_USERNAME_CLAIM] || claims.email || claims.preferred_username || claims.sub;
 
 				// ADMIN_EMAIL/ホワイトリストとの比較内容を毎回ログに残す(許可・拒否どちらの場合も)
-				const accessInfo = AllowedUsers.describeAccess(user_identifier);
+				const accessInfo = await AllowedUsers.describeAccess(user_identifier);
 				logger.info({
 					oidc_username_claim: OIDC_USERNAME_CLAIM,
 					claims_email: claims.email,
@@ -454,7 +463,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 		}
 
 		if (req.session?.user != null) {
-			const role = AllowedUsers.getRole(req.session.user.identifier);
+			const role = await AllowedUsers.getRole(req.session.user.identifier);
 			if (role != null) {
 				res.status(200).json({
 					user_identifier: req.session.user.identifier,
@@ -1296,7 +1305,7 @@ app.get(BASE_URL_PATH + 'api/documents/:id/viewer', async (req, res) => {
 		if (AUTH_DISABLED) {
 			req.authData = DEV_AUTH_DATA;
 		} else {
-			const role = req.session?.user != null ? AllowedUsers.getRole(req.session.user.identifier) : null;
+			const role = req.session?.user != null ? await AllowedUsers.getRole(req.session.user.identifier) : null;
 			if (role == null) {
 				res.redirect(`${LOGIN_URI}?next=${encodeURIComponent(PUBLIC_BASE_PATH + req.originalUrl)}`);
 				return;
@@ -1563,7 +1572,7 @@ app.delete(BASE_URL_PATH + 'api/apikeys/:id', requireAuth, async (req, res) => {
 app.get(BASE_URL_PATH + 'api/allowed_users', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const users = AllowedUsers.listAllowedUsers().map((row) => ({
+		const users = (await AllowedUsers.listAllowedUsers()).map((row) => ({
 			email: row.email,
 			role: row.role,
 			addedBy: row.added_by,
@@ -1592,7 +1601,7 @@ app.post(BASE_URL_PATH + 'api/allowed_users', requireAuth, requireAdmin, async (
 			res.status(400).json({error: "role must be one of admin/readwrite/readonly"});
 			return;
 		}
-		AllowedUsers.addAllowedUser(email, role, req.authData.user_identifier);
+		await AllowedUsers.addAllowedUser(email, role, req.authData.user_identifier);
 		res.status(200).json({email, role});
 	} catch (err) {
 		logger.error(err, "::api/allowed_users:add");
@@ -1611,7 +1620,7 @@ app.put(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin, a
 			res.status(400).json({error: "role must be one of admin/readwrite/readonly"});
 			return;
 		}
-		const updated = AllowedUsers.updateAllowedUserRole(req.params.email, role);
+		const updated = await AllowedUsers.updateAllowedUserRole(req.params.email, role);
 		if (!updated) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1629,7 +1638,7 @@ app.put(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin, a
 app.delete(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const removed = AllowedUsers.removeAllowedUser(req.params.email);
+		const removed = await AllowedUsers.removeAllowedUser(req.params.email);
 		if (!removed) {
 			res.status(404).json({error: "not found"});
 			return;

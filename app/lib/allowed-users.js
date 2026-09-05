@@ -20,7 +20,7 @@
 
 const path = require("path");
 const logger = require("./logger.js")(path.basename(__filename));
-const db = require("./db.js");
+const ds = require("./datastore.js");
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
@@ -35,40 +35,40 @@ const VALID_ROLES = Object.freeze(Object.values(ROLES));
 
 const isValidRole = (role) => VALID_ROLES.includes(role);
 
-const insertAllowedUser = db.prepare(`
+const SQL_INSERT_ALLOWED_USER = `
 	INSERT INTO allowed_users (email, role, added_by, added_at) VALUES (@email, @role, @added_by, @added_at)
 	ON CONFLICT(email) DO UPDATE SET role = excluded.role, added_by = excluded.added_by
-`);
-const deleteAllowedUser = db.prepare(`DELETE FROM allowed_users WHERE email = ?`);
-const updateRole = db.prepare(`UPDATE allowed_users SET role = ? WHERE email = ?`);
-const selectAllowedUsers = db.prepare(`SELECT email, role, added_by, added_at FROM allowed_users ORDER BY added_at DESC`);
-const selectAllowedUserByEmail = db.prepare(`SELECT email, role FROM allowed_users WHERE email = ?`);
-const countAdmins = db.prepare(`SELECT COUNT(*) AS count FROM allowed_users WHERE role = '${ROLES.ADMIN}'`);
+`;
+const SQL_DELETE_ALLOWED_USER = `DELETE FROM allowed_users WHERE email = ?`;
+const SQL_UPDATE_ROLE = `UPDATE allowed_users SET role = ? WHERE email = ?`;
+const SQL_SELECT_ALLOWED_USERS = `SELECT email, role, added_by, added_at FROM allowed_users ORDER BY added_at DESC`;
+const SQL_SELECT_ALLOWED_USER_BY_EMAIL = `SELECT email, role FROM allowed_users WHERE email = ?`;
+const SQL_COUNT_ADMINS = `SELECT COUNT(*) AS count FROM allowed_users WHERE role = '${ROLES.ADMIN}'`;
 
-const upsertBootstrapAdmin = db.prepare(`
+const SQL_UPSERT_BOOTSTRAP_ADMIN = `
 	INSERT INTO allowed_users (email, role, added_by, added_at)
 	VALUES (@email, '${ROLES.ADMIN}', 'system:bootstrap', @added_at)
 	ON CONFLICT(email) DO UPDATE SET role = '${ROLES.ADMIN}', added_by = 'system:bootstrap'
-`);
+`;
 
 // adminロールが1人もいない場合に限り、ADMIN_EMAILをadminとして(再)登録する
-const maybeBootstrapAdmin = (normalizedEmail) => {
+const maybeBootstrapAdmin = async (normalizedEmail) => {
 	if (ADMIN_EMAIL === "" || normalizedEmail !== ADMIN_EMAIL) {
 		return;
 	}
-	if (countAdmins.get().count > 0) {
+	if ((await ds.get(SQL_COUNT_ADMINS)).count > 0) {
 		return;
 	}
-	upsertBootstrapAdmin.run({email: normalizedEmail, added_at: new Date().toISOString()});
+	await ds.run(SQL_UPSERT_BOOTSTRAP_ADMIN, {email: normalizedEmail, added_at: new Date().toISOString()});
 	logger.warn({email: normalizedEmail}, "::maybeBootstrapAdmin: adminロールが不在だったためADMIN_EMAILをadminとして登録しました");
 };
 
 // 指定ユーザーの現在のロールを返す(ホワイトリスト未登録なら null)
-const resolveRole = (email) => {
+const resolveRole = async (email) => {
 	try {
 		const normalized = normalizeEmail(email);
-		maybeBootstrapAdmin(normalized);
-		const row = selectAllowedUserByEmail.get(normalized);
+		await maybeBootstrapAdmin(normalized);
+		const row = await ds.get(SQL_SELECT_ALLOWED_USER_BY_EMAIL, [normalized]);
 		return row ? row.role : null;
 	} catch (err) {
 		logger.error(err, "::resolveRole");
@@ -84,12 +84,12 @@ module.exports.isValidRole = isValidRole;
  * 「入力されたメールアドレス」対「ADMIN_EMAIL」「ホワイトリスト」の比較が
  * どう評価されたかを、ログインを許可/拒否するたびに確認できるようにする。
  */
-module.exports.describeAccess = (email) => {
+module.exports.describeAccess = async (email) => {
 	const normalizedEmail = normalizeEmail(email);
-	const adminCountBeforeBootstrap = countAdmins.get().count;
+	const adminCountBeforeBootstrap = (await ds.get(SQL_COUNT_ADMINS)).count;
 	const matchesAdminEmail = ADMIN_EMAIL !== "" && normalizedEmail === ADMIN_EMAIL;
-	maybeBootstrapAdmin(normalizedEmail);
-	const row = selectAllowedUserByEmail.get(normalizedEmail);
+	await maybeBootstrapAdmin(normalizedEmail);
+	const row = await ds.get(SQL_SELECT_ALLOWED_USER_BY_EMAIL, [normalizedEmail]);
 	return {
 		inputEmail: email,
 		normalizedEmail,
@@ -104,7 +104,7 @@ module.exports.describeAccess = (email) => {
 /**
  * 指定ユーザーがログイン許可されているか判定する
  */
-module.exports.isAllowed = (email) => resolveRole(email) != null;
+module.exports.isAllowed = async (email) => (await resolveRole(email)) != null;
 
 /**
  * 指定ユーザーの現在のロールを返す(未登録なら null)
@@ -114,13 +114,13 @@ module.exports.getRole = (email) => resolveRole(email);
 /**
  * 指定ユーザーがadminロールかどうか判定する
  */
-module.exports.isAdmin = (email) => resolveRole(email) === ROLES.ADMIN;
+module.exports.isAdmin = async (email) => (await resolveRole(email)) === ROLES.ADMIN;
 
-module.exports.addAllowedUser = (email, role, addedBy) => {
+module.exports.addAllowedUser = async (email, role, addedBy) => {
 	if (!isValidRole(role)) {
 		throw new Error(`invalid role: ${role}`);
 	}
-	insertAllowedUser.run({
+	await ds.run(SQL_INSERT_ALLOWED_USER, {
 		email: normalizeEmail(email),
 		role,
 		added_by: addedBy,
@@ -128,17 +128,17 @@ module.exports.addAllowedUser = (email, role, addedBy) => {
 	});
 };
 
-module.exports.updateAllowedUserRole = (email, role) => {
+module.exports.updateAllowedUserRole = async (email, role) => {
 	if (!isValidRole(role)) {
 		throw new Error(`invalid role: ${role}`);
 	}
-	const result = updateRole.run(role, normalizeEmail(email));
+	const result = await ds.run(SQL_UPDATE_ROLE, [role, normalizeEmail(email)]);
 	return result.changes > 0;
 };
 
-module.exports.removeAllowedUser = (email) => {
-	const result = deleteAllowedUser.run(normalizeEmail(email));
+module.exports.removeAllowedUser = async (email) => {
+	const result = await ds.run(SQL_DELETE_ALLOWED_USER, [normalizeEmail(email)]);
 	return result.changes > 0;
 };
 
-module.exports.listAllowedUsers = () => selectAllowedUsers.all();
+module.exports.listAllowedUsers = async () => ds.all(SQL_SELECT_ALLOWED_USERS);
