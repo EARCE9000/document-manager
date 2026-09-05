@@ -26,6 +26,7 @@
 		"mhtml-to-html": "^2.1.0",
 		"openid-client": "^6.8.5",
 		"pdf-parse": "^2.4.5",
+		"pg": "^8.23.0",
 		"pino": "^9.3.2",
 		"uuid": "^9.0.1",
 		"weaviate-client": "^3.14.0"

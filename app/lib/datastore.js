@@ -105,6 +105,113 @@ const createSqliteDatastore = () => {
 	return datastore;
 };
 
+/**
+ * SQLite形式のSQL(位置パラメータ ? / 名前付き @name)を pg 形式($n)へ変換する。
+ * 各モジュールのSQLを書き換えずにそのまま流せるようにするための互換層。
+ *   - params が配列  : ? を出現順に $1,$2,... へ
+ *   - params がオブジェクト: @name を $n へ(同名は同じ $n を再利用)。値は初出順の配列にする
+ * 注意: この変換はプレースホルダのみを対象とする。文字列リテラル内に ? や @ を含むSQLは
+ * 想定しない(現状の全SQLは該当しない)。INSERT OR IGNORE や FTS5 MATCH 等の方言、および
+ * camelCaseエイリアス(pgは小文字化する)は、呼び出し側SQLの可搬化で別途吸収する。
+ */
+const translatePlaceholders = (sql, params) => {
+	if (params == null) {
+		return {text: sql, values: []};
+	}
+	if (Array.isArray(params)) {
+		let i = 0;
+		const text = sql.replace(/\?/g, () => `$${++i}`);
+		return {text, values: params};
+	}
+	const values = [];
+	const indexByName = new Map();
+	const text = sql.replace(/@(\w+)/g, (_match, name) => {
+		if (!indexByName.has(name)) {
+			values.push(params[name]);
+			indexByName.set(name, values.length); // 1-based の $n
+		}
+		return `$${indexByName.get(name)}`;
+	});
+	return {text, values};
+};
+
+/**
+ * Postgresバックエンド。executor(プール または トランザクション用client)に対して
+ * get/all/run/exec を提供する共通API。
+ */
+const makePgApi = (executor) => ({
+	async get(sql, params) {
+		const {text, values} = translatePlaceholders(sql, params);
+		const result = await executor.query(text, values);
+		return result.rows[0];
+	},
+	async all(sql, params) {
+		const {text, values} = translatePlaceholders(sql, params);
+		const result = await executor.query(text, values);
+		return result.rows;
+	},
+	async run(sql, params) {
+		const {text, values} = translatePlaceholders(sql, params);
+		const result = await executor.query(text, values);
+		// pgはlastInsertRowid相当を返さない(本アプリのidはUUID採番のため未使用)
+		return {changes: result.rowCount, lastInsertRowid: undefined};
+	},
+	async exec(sql) {
+		// パラメータ無しのDDL等。pgのsimple query protocolは複数文(;区切り)を一括実行できる
+		await executor.query(sql);
+	},
+});
+
+const createPostgresDatastore = () => {
+	const {Pool} = require("pg");
+
+	// 接続情報は DATABASE_URL(接続文字列) を優先。未指定なら pg が標準の
+	// PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE 環境変数を読む。
+	// マネージドPG(RDS/Cloud SQL等)でTLSが要る場合は DATABASE_SSL=true を指定する
+	const poolConfig = process.env.DATABASE_URL ? {connectionString: process.env.DATABASE_URL} : {};
+	if (process.env.DATABASE_SSL === "true") {
+		poolConfig.ssl = {rejectUnauthorized: false};
+	}
+	const pool = new Pool(poolConfig);
+	pool.on("error", (err) => logger.error({err}, "postgres pool error (idle client)"));
+
+	const api = makePgApi(pool);
+
+	const datastore = {
+		backend: "postgres",
+		get: api.get,
+		all: api.all,
+		run: api.run,
+		exec: api.exec,
+
+		async transaction(fn) {
+			const client = await pool.connect();
+			try {
+				await client.query("BEGIN");
+				// tx内はこのclient上でのみ実行する。fnにはclientスコープのAPIを渡す
+				// (このスコープのtransactionは入れ子を張らずfnをそのまま実行する。入れ子は想定しない)
+				const clientApi = makePgApi(client);
+				clientApi.transaction = (innerFn) => innerFn(clientApi);
+				const result = await fn(clientApi);
+				await client.query("COMMIT");
+				return result;
+			} catch (err) {
+				try {
+					await client.query("ROLLBACK");
+				} catch (rollbackErr) {
+					logger.error({err: rollbackErr}, "transaction rollback failed");
+				}
+				throw err;
+			} finally {
+				client.release();
+			}
+		},
+	};
+
+	logger.info("datastore ready (backend=postgres)");
+	return datastore;
+};
+
 let instance = null;
 
 /**
@@ -115,6 +222,9 @@ const getDatastore = () => {
 	switch (DATABASE_BACKEND) {
 		case "sqlite":
 			instance = createSqliteDatastore();
+			break;
+		case "postgres":
+			instance = createPostgresDatastore();
 			break;
 		default:
 			throw new Error(`未対応のDATABASE_BACKEND: ${DATABASE_BACKEND}`);
