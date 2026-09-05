@@ -1685,7 +1685,7 @@ const respondProjectLocked = (res) => {
 app.get(BASE_URL_PATH + 'api/projects', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(Projects.listProjects());
+		res.status(200).json(await Projects.listProjects());
 	} catch (err) {
 		logger.error(err, "::api/projects:list");
 		res.status(500).json({error: "Internal Error"});
@@ -1698,7 +1698,7 @@ app.get(BASE_URL_PATH + 'api/projects', requireAuth, async (req, res) => {
 app.get(BASE_URL_PATH + 'api/projects/archived', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(Projects.listArchivedProjects());
+		res.status(200).json(await Projects.listArchivedProjects());
 	} catch (err) {
 		logger.error(err, "::api/projects/archived:list");
 		res.status(500).json({error: "Internal Error"});
@@ -1711,7 +1711,7 @@ app.get(BASE_URL_PATH + 'api/projects/archived', requireAuth, async (req, res) =
 app.post(BASE_URL_PATH + 'api/projects', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = Projects.createProject(req.body.name, req.authData.user_identifier);
+		const project = await Projects.createProject(req.body.name, req.authData.user_identifier);
 		res.status(200).json(project);
 	} catch (err) {
 		if (err.message === "project name is required") {
@@ -1729,7 +1729,7 @@ app.post(BASE_URL_PATH + 'api/projects', requireAuth, requireWrite, async (req, 
 app.put(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = Projects.getProject(req.params.id);
+		const project = await Projects.getProject(req.params.id);
 		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1738,9 +1738,9 @@ app.put(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (re
 			respondProjectLocked(res);
 			return;
 		}
-		Projects.renameProject(req.params.id, req.body.name);
+		await Projects.renameProject(req.params.id, req.body.name);
 		broadcastProjectsChanged();
-		res.status(200).json(Projects.getProject(req.params.id));
+		res.status(200).json(await Projects.getProject(req.params.id));
 	} catch (err) {
 		if (err.message === "project name is required") {
 			res.status(400).json({error: err.message});
@@ -1757,12 +1757,12 @@ app.put(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (re
 app.post(BASE_URL_PATH + 'api/projects/:id/archive', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const archived = Projects.archiveProject(req.params.id, req.authData.user_identifier);
+		const archived = await Projects.archiveProject(req.params.id, req.authData.user_identifier);
 		if (!archived) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		res.status(200).json(Projects.getProject(req.params.id));
+		res.status(200).json(await Projects.getProject(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/archive");
 		res.status(500).json({error: "Internal Error"});
@@ -1775,12 +1775,12 @@ app.post(BASE_URL_PATH + 'api/projects/:id/archive', requireAuth, requireWrite, 
 app.post(BASE_URL_PATH + 'api/projects/:id/restore', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const restored = Projects.restoreProject(req.params.id);
+		const restored = await Projects.restoreProject(req.params.id);
 		if (!restored) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		res.status(200).json(Projects.getProject(req.params.id));
+		res.status(200).json(await Projects.getProject(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/restore");
 		res.status(500).json({error: "Internal Error"});
@@ -1795,13 +1795,13 @@ app.post(BASE_URL_PATH + 'api/projects/:id/restore', requireAuth, requireWrite, 
 app.post(BASE_URL_PATH + 'api/projects/:id/unlock', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const updated = Projects.setProjectLocked(req.params.id, false);
+		const updated = await Projects.setProjectLocked(req.params.id, false);
 		if (!updated) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
 		broadcastProjectsChanged();
-		res.status(200).json(Projects.getProject(req.params.id));
+		res.status(200).json(await Projects.getProject(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/unlock");
 		res.status(500).json({error: "Internal Error"});
@@ -1815,13 +1815,13 @@ app.post(BASE_URL_PATH + 'api/projects/:id/unlock', requireAuth, requireWrite, a
 app.post(BASE_URL_PATH + 'api/projects/:id/lock', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const updated = Projects.setProjectLocked(req.params.id, true);
+		const updated = await Projects.setProjectLocked(req.params.id, true);
 		if (!updated) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
 		broadcastProjectsChanged();
-		res.status(200).json(Projects.getProject(req.params.id));
+		res.status(200).json(await Projects.getProject(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/lock");
 		res.status(500).json({error: "Internal Error"});
@@ -1834,7 +1834,7 @@ app.post(BASE_URL_PATH + 'api/projects/:id/lock', requireAuth, requireWrite, asy
 app.delete(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const deleted = Projects.deleteProject(req.params.id);
+		const deleted = await Projects.deleteProject(req.params.id);
 		if (!deleted) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1852,11 +1852,11 @@ app.delete(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async 
 app.get(BASE_URL_PATH + 'api/projects/:id/tree', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		if (Projects.getProject(req.params.id) == null) {
+		if (await Projects.getProject(req.params.id) == null) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		res.status(200).json(Projects.getProjectTree(req.params.id));
+		res.status(200).json(await Projects.getProjectTree(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/tree");
 		res.status(500).json({error: "Internal Error"});
@@ -1870,7 +1870,7 @@ app.get(BASE_URL_PATH + 'api/projects/:id/tree', requireAuth, async (req, res) =
 app.post(BASE_URL_PATH + 'api/projects/:id/folders', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = Projects.getProject(req.params.id);
+		const project = await Projects.getProject(req.params.id);
 		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1879,7 +1879,7 @@ app.post(BASE_URL_PATH + 'api/projects/:id/folders', requireAuth, requireWrite, 
 			respondProjectLocked(res);
 			return;
 		}
-		const folder = Projects.createFolder(req.params.id, req.body.name, req.body.parentFolderId || null, req.authData.user_identifier);
+		const folder = await Projects.createFolder(req.params.id, req.body.name, req.body.parentFolderId || null, req.authData.user_identifier);
 		broadcastProjectsChanged();
 		res.status(200).json(folder);
 	} catch (err) {
@@ -1898,7 +1898,7 @@ app.post(BASE_URL_PATH + 'api/projects/:id/folders', requireAuth, requireWrite, 
 app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = Projects.getProject(req.params.id);
+		const project = await Projects.getProject(req.params.id);
 		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1907,7 +1907,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, requi
 			respondProjectLocked(res);
 			return;
 		}
-		const updated = Projects.renameFolder(req.params.id, req.params.folderId, req.body.name);
+		const updated = await Projects.renameFolder(req.params.id, req.params.folderId, req.body.name);
 		if (!updated) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1930,7 +1930,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, requi
 app.delete(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = Projects.getProject(req.params.id);
+		const project = await Projects.getProject(req.params.id);
 		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1939,7 +1939,7 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, re
 			respondProjectLocked(res);
 			return;
 		}
-		const result = Projects.deleteFolder(req.params.id, req.params.folderId);
+		const result = await Projects.deleteFolder(req.params.id, req.params.folderId);
 		if (result === "not_found") {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1963,7 +1963,7 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/folders/:folderId', requireAuth, re
 app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = Projects.getProject(req.params.id);
+		const project = await Projects.getProject(req.params.id);
 		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1977,7 +1977,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, r
 			res.status(404).json({error: "document not found"});
 			return;
 		}
-		const placement = Projects.placeDocument(req.params.id, req.params.documentId, req.body.folderId || null, req.authData.user_identifier);
+		const placement = await Projects.placeDocument(req.params.id, req.params.documentId, req.body.folderId || null, req.authData.user_identifier);
 		AuditLog.record({
 			userIdentifier: req.authData.user_identifier,
 			action: "project_assign",
@@ -2004,7 +2004,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, r
 app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = Projects.getProject(req.params.id);
+		const project = await Projects.getProject(req.params.id);
 		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -2014,7 +2014,7 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth
 			return;
 		}
 		const document = selectDocumentById.get(req.params.documentId);
-		const removed = Projects.removeDocument(req.params.id, req.params.documentId);
+		const removed = await Projects.removeDocument(req.params.id, req.params.documentId);
 		if (!removed) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -2042,7 +2042,7 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth
 app.put(BASE_URL_PATH + 'api/projects/:id/reorder', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = Projects.getProject(req.params.id);
+		const project = await Projects.getProject(req.params.id);
 		if (project == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -2055,9 +2055,9 @@ app.put(BASE_URL_PATH + 'api/projects/:id/reorder', requireAuth, requireWrite, a
 			res.status(400).json({error: "documentIds must be an array"});
 			return;
 		}
-		Projects.reorderDocuments(req.params.id, req.body.folderId || null, req.body.documentIds);
+		await Projects.reorderDocuments(req.params.id, req.body.folderId || null, req.body.documentIds);
 		broadcastProjectsChanged();
-		res.status(200).json(Projects.getProjectTree(req.params.id));
+		res.status(200).json(await Projects.getProjectTree(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/reorder");
 		res.status(500).json({error: "Internal Error"});
