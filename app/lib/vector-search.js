@@ -33,7 +33,7 @@
 
 const path = require("path");
 const logger = require("./logger.js")(path.basename(__filename));
-const db = require("./db.js");
+const ds = require("./datastore.js");
 
 const WEAVIATE_URL = process.env.WEAVIATE_URL || "";
 // WeaviateはREST(WEAVIATE_URLのポート)とは別にgRPCポートを持つ(v3クライアントは
@@ -148,53 +148,53 @@ const CHUNK_SIZE_MAX = 4000;
 // 「失敗しているものを再実行する」画面(index.htmlのベクトル索引モーダル)のために、
 // 各文書の索引結果をdocumentsテーブルに直接記録する(audit-log.js等と同様、このモジュールが
 // 自分の関心事に関わる列の読み書きを担う)
-const updateVectorIndexStatus = db.prepare(`
+const SQL_UPDATE_VECTOR_INDEX_STATUS = `
 	UPDATE documents SET vector_index_status = @status, vector_index_error = @error, vector_indexed_at = @indexed_at WHERE id = @id
-`);
+`;
 // チャンク分割方法・埋め込みモデルの変更後は、既に'ok'で成功している文書も含めて
 // 再索引が必要になり得るため、失敗した文書だけでなくアクティブな全文書の状態を返せるようにする
-const selectAllDocumentStatuses = db.prepare(`
+const SQL_SELECT_ALL_DOCUMENT_STATUSES = `
 	SELECT id, entry_file, vector_index_status, vector_index_error, vector_indexed_at
 	FROM documents
 	WHERE deleted_at IS NULL
 	ORDER BY entry_file
-`);
-const selectDocumentForIndexing = db.prepare(`
+`;
+const SQL_SELECT_DOCUMENT_FOR_INDEXING = `
 	SELECT id, content_text FROM documents WHERE id = ? AND deleted_at IS NULL
-`);
-const selectVectorIndexStatus = db.prepare(`
+`;
+const SQL_SELECT_VECTOR_INDEX_STATUS = `
 	SELECT vector_index_status, vector_index_error, vector_indexed_at FROM documents WHERE id = ?
-`);
+`;
 // 'processing'はプロセス内メモリのキュー(runSerialized/runEmbeddingExclusive)が進行中で
 // あることを前提にした状態のため、サーバーの強制終了(クラッシュ・強制停止)を挟むとキューの
 // 情報自体が失われ、DBにだけ'processing'が残って永久に「処理中」と表示され続けてしまう。
 // 起動時に必ずクリンアップ(未処理へ戻す)して、次回の索引付け/バックフィルで再処理させる
-const resetStaleProcessingStatus = db.prepare(`
+const SQL_RESET_STALE_PROCESSING_STATUS = `
 	UPDATE documents SET vector_index_status = NULL, vector_index_error = NULL WHERE vector_index_status = 'processing'
-`);
+`;
 
 // チャンク分割設定(GUIからの上書き)。id=1固定のシングルトン行で、NULLの間は環境変数の既定値を使う
-const selectChunkSettings = db.prepare(`SELECT chunk_size, chunk_overlap, updated_by, updated_at FROM vector_search_settings WHERE id = 1`);
-const upsertChunkSettings = db.prepare(`
+const SQL_SELECT_CHUNK_SETTINGS = `SELECT chunk_size, chunk_overlap, updated_by, updated_at FROM vector_search_settings WHERE id = 1`;
+const SQL_UPSERT_CHUNK_SETTINGS = `
 	INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, updated_by, updated_at)
 	VALUES (1, @chunk_size, @chunk_overlap, @updated_by, @updated_at)
 	ON CONFLICT(id) DO UPDATE SET chunk_size = excluded.chunk_size, chunk_overlap = excluded.chunk_overlap, updated_by = excluded.updated_by, updated_at = excluded.updated_at
-`);
+`;
 
 // ベクトライザー選択(GUIからの上書き)。id=1固定のシングルトン行(チャンク分割設定と共有)で、
 // NULLの間は環境変数(WEAVIATE_VECTORIZER)の既定値を使う
-const selectVectorizerSetting = db.prepare(`SELECT vectorizer, updated_by, updated_at FROM vector_search_settings WHERE id = 1`);
-const upsertVectorizerSetting = db.prepare(`
+const SQL_SELECT_VECTORIZER_SETTING = `SELECT vectorizer, updated_by, updated_at FROM vector_search_settings WHERE id = 1`;
+const SQL_UPSERT_VECTORIZER_SETTING = `
 	INSERT INTO vector_search_settings (id, vectorizer, updated_by, updated_at)
 	VALUES (1, @vectorizer, @updated_by, @updated_at)
 	ON CONFLICT(id) DO UPDATE SET vectorizer = excluded.vectorizer, updated_by = excluded.updated_by, updated_at = excluded.updated_at
-`);
+`;
 // ベクトライザー切り替え時は、既存の索引付け済みベクトルが新しいベクトライザーとは
 // 互換性が無くなる(Weaviate側のコレクション自体を削除するため)。アクティブな全文書の
 // 索引状態を未処理へ戻し、「ベクトル索引」画面から「全件を再索引」を促す
-const resetAllIndexStatuses = db.prepare(`
+const SQL_RESET_ALL_INDEX_STATUSES = `
 	UPDATE documents SET vector_index_status = NULL, vector_index_error = NULL, vector_indexed_at = NULL WHERE deleted_at IS NULL
-`);
+`;
 
 const isEnabled = () => WEAVIATE_URL !== "";
 
@@ -202,8 +202,8 @@ const isEnabled = () => WEAVIATE_URL !== "";
  * 現在有効なチャンク分割設定を返す。GUIから保存された値(vector_search_settings)があれば
  * それを優先し、無ければ環境変数(VECTOR_CHUNK_SIZE/VECTOR_CHUNK_OVERLAP)の既定値を使う
  */
-const getChunkSettings = () => {
-	const row = selectChunkSettings.get();
+const getChunkSettings = async () => {
+	const row = await ds.get(SQL_SELECT_CHUNK_SETTINGS);
 	return {
 		chunkSize: row?.chunk_size ?? CHUNK_SIZE_DEFAULT,
 		chunkOverlap: row?.chunk_overlap ?? CHUNK_OVERLAP_DEFAULT,
@@ -219,22 +219,22 @@ const getChunkSettings = () => {
  * チャンク分割設定をGUIから上書き保存する。新規に索引付けする文書からのみ反映され、
  * 既存の索引付け済み文書には遡って適用されない(呼び出し元で「全件を再索引」を促すこと)
  */
-const updateChunkSettings = ({chunkSize, chunkOverlap}, updatedBy) => {
+const updateChunkSettings = async ({chunkSize, chunkOverlap}, updatedBy) => {
 	if (!Number.isInteger(chunkSize) || chunkSize < CHUNK_SIZE_MIN || chunkSize > CHUNK_SIZE_MAX) {
 		throw new Error(`chunkSizeは${CHUNK_SIZE_MIN}〜${CHUNK_SIZE_MAX}の整数で指定してください`);
 	}
 	if (!Number.isInteger(chunkOverlap) || chunkOverlap < 0 || chunkOverlap >= chunkSize) {
 		throw new Error("chunkOverlapは0以上かつchunkSize未満の整数で指定してください");
 	}
-	upsertChunkSettings.run({chunk_size: chunkSize, chunk_overlap: chunkOverlap, updated_by: updatedBy, updated_at: new Date().toISOString()});
+	await ds.run(SQL_UPSERT_CHUNK_SETTINGS, {chunk_size: chunkSize, chunk_overlap: chunkOverlap, updated_by: updatedBy, updated_at: new Date().toISOString()});
 	return getChunkSettings();
 };
 
 /**
  * チャンク分割設定を環境変数の既定値に戻す(GUIでの上書きを解除する)
  */
-const resetChunkSettings = () => {
-	upsertChunkSettings.run({chunk_size: null, chunk_overlap: null, updated_by: null, updated_at: null});
+const resetChunkSettings = async () => {
+	await ds.run(SQL_UPSERT_CHUNK_SETTINGS, {chunk_size: null, chunk_overlap: null, updated_by: null, updated_at: null});
 	return getChunkSettings();
 };
 
@@ -244,8 +244,8 @@ const resetChunkSettings = () => {
  * optionsには選択可能な全ベクトライザーとその設定済み状態(configured)を含める
  * (GUI側で未設定の選択肢を判別できるようにするため)
  */
-const getVectorizerSetting = () => {
-	const row = selectVectorizerSetting.get();
+const getVectorizerSetting = async () => {
+	const row = await ds.get(SQL_SELECT_VECTORIZER_SETTING);
 	const key = (row?.vectorizer != null && VECTORIZERS[row.vectorizer] != null) ? row.vectorizer : WEAVIATE_VECTORIZER_DEFAULT;
 	return {
 		vectorizer: key,
@@ -273,7 +273,7 @@ const ensureCollection = async (weaviate, client) => {
 			{name: "text", dataType: weaviate.dataType.TEXT}
 		]
 	});
-	logger.info({collection: COLLECTION_NAME, vectorizer: getVectorizerSetting().vectorizer}, "::ensureCollection: Weaviateコレクションを作成しました");
+	logger.info({collection: COLLECTION_NAME, vectorizer: (await getVectorizerSetting()).vectorizer}, "::ensureCollection: Weaviateコレクションを作成しました");
 };
 
 // Weaviateクライアントの初期化(初回呼び出し時のみ接続・コレクション確認を行い、以降は使い回す)。
@@ -325,7 +325,7 @@ const recreateCollection = async () => {
 			clientPromise = null;
 		}
 	}
-	resetAllIndexStatuses.run();
+	await ds.run(SQL_RESET_ALL_INDEX_STATUSES);
 	onStatusChange();
 };
 
@@ -343,7 +343,7 @@ const updateVectorizerSetting = async (vectorizerKey, updatedBy) => {
 	if (!isVectorizerConfigured(vectorizerKey)) {
 		throw new Error(`${vectorizer.label}は必要な環境変数(${vectorizer.requiredEnv.join(", ")})が設定されていないため切り替えられません`);
 	}
-	upsertVectorizerSetting.run({vectorizer: vectorizerKey, updated_by: updatedBy, updated_at: new Date().toISOString()});
+	await ds.run(SQL_UPSERT_VECTORIZER_SETTING, {vectorizer: vectorizerKey, updated_by: updatedBy, updated_at: new Date().toISOString()});
 	await recreateCollection();
 	return getVectorizerSetting();
 };
@@ -353,8 +353,8 @@ const updateVectorizerSetting = async (vectorizerKey, updatedBy) => {
  * 実際に切り替わる(現在の設定と既定値が異なる)場合のみコレクションを再作成する
  */
 const resetVectorizerSetting = async () => {
-	const before = getVectorizerSetting();
-	upsertVectorizerSetting.run({vectorizer: null, updated_by: null, updated_at: null});
+	const before = await getVectorizerSetting();
+	await ds.run(SQL_UPSERT_VECTORIZER_SETTING, {vectorizer: null, updated_by: null, updated_at: null});
 	if (before.isCustom && before.vectorizer !== WEAVIATE_VECTORIZER_DEFAULT) {
 		await recreateCollection();
 	}
@@ -364,9 +364,9 @@ const resetVectorizerSetting = async () => {
 // 本文を段落境界を優先しつつ約chunkSize文字ごとに分割する。段落自体がchunkSizeを
 // 超える場合はchunkOverlap分重ねながら固定長で分割する。chunkSize/chunkOverlapを
 // 省略した場合は現在有効な設定(getChunkSettings参照)を使う
-const chunkText = (text, chunkSize, chunkOverlap) => {
+const chunkText = async (text, chunkSize, chunkOverlap) => {
 	if (chunkSize == null || chunkOverlap == null) {
-		const settings = getChunkSettings();
+		const settings = await getChunkSettings();
 		chunkSize = chunkSize ?? settings.chunkSize;
 		chunkOverlap = chunkOverlap ?? settings.chunkOverlap;
 	}
@@ -419,9 +419,13 @@ const setStatusChangeListener = (listener) => {
 // 索引処理の成否に影響させない(ログのみ)。DBへ記録するのは、プロセス再起動後も状態を
 // 引き継ぐため、および複数クライアントから見えるようにするため(inFlightIndexingは
 // プロセス内メモリのみで、再起動やSSE通知には使えない)
-const recordIndexResult = (documentId, status, error) => {
+// datastore経由でasync化。SQLiteバックエンドでは ds.run が同期的に書き込みを完了するため、
+// このrecordIndexResultをawaitせずに呼んでも、呼び出し側の同期処理が続く前にDBへは反映される
+// (indexDocumentが'processing'を同期記録することに依存する下記の不変条件はSQLiteでは保たれる。
+//  Postgres対応時は、この同期前提が崩れるため呼び出し順序の見直しが必要)
+const recordIndexResult = async (documentId, status, error) => {
 	try {
-		updateVectorIndexStatus.run({id: documentId, status, error, indexed_at: status === "ok" ? new Date().toISOString() : null});
+		await ds.run(SQL_UPDATE_VECTOR_INDEX_STATUS, {id: documentId, status, error, indexed_at: status === "ok" ? new Date().toISOString() : null});
 	} catch (err) {
 		logger.error({err, documentId}, "::recordIndexResult");
 	}
@@ -496,14 +500,14 @@ const indexDocument = (documentId, contentText) => {
 			const client = await getClient();
 			const collection = client.collections.use(COLLECTION_NAME);
 			await removeDocumentChunks(collection, documentId);
-			const chunks = chunkText(contentText);
+			const chunks = await chunkText(contentText);
 			if (chunks.length > 0) {
 				await collection.data.insertMany(chunks.map((text, chunkIndex) => ({documentId, chunkIndex, text})));
 			}
-			recordIndexResult(documentId, "ok", null);
+			await recordIndexResult(documentId, "ok", null);
 		} catch (err) {
 			logger.error({err, documentId}, "::indexDocument");
-			recordIndexResult(documentId, "error", String(err?.message || err));
+			await recordIndexResult(documentId, "error", String(err?.message || err));
 		}
 	}));
 	inFlightIndexing.set(documentId, promise);
@@ -527,7 +531,7 @@ const removeDocument = (documentId) => {
 			const client = await getClient();
 			const collection = client.collections.use(COLLECTION_NAME);
 			await removeDocumentChunks(collection, documentId);
-			recordIndexResult(documentId, null, null);
+			await recordIndexResult(documentId, null, null);
 		} catch (err) {
 			logger.error({err, documentId}, "::removeDocument");
 		}
@@ -613,7 +617,7 @@ const backfillMissingDocuments = async (documents) => {
  * 再実行だけでなく、チャンク分割方法や埋め込みモデルを変更した際に成功済みの文書も含めて
  * 再索引したいケースに対応するため、'ok'の文書も返す
  */
-const listIndexStatuses = () => selectAllDocumentStatuses.all().map((row) => ({
+const listIndexStatuses = async () => (await ds.all(SQL_SELECT_ALL_DOCUMENT_STATUSES)).map((row) => ({
 	id: row.id,
 	entryFile: row.entry_file,
 	status: row.vector_index_status,
@@ -626,12 +630,12 @@ const listIndexStatuses = () => selectAllDocumentStatuses.all().map((row) => ({
  * 既にアーカイブ済みの場合はnullを返す
  */
 const retryDocument = async (documentId) => {
-	const row = selectDocumentForIndexing.get(documentId);
+	const row = await ds.get(SQL_SELECT_DOCUMENT_FOR_INDEXING, [documentId]);
 	if (row == null) {
 		return null;
 	}
 	await indexDocument(row.id, row.content_text);
-	const statusRow = selectVectorIndexStatus.get(documentId);
+	const statusRow = await ds.get(SQL_SELECT_VECTOR_INDEX_STATUS, [documentId]);
 	return {
 		id: documentId,
 		status: statusRow?.vector_index_status ?? null,
@@ -645,12 +649,12 @@ const retryDocument = async (documentId) => {
  * プロセス内キューの情報が失われたもの)を「未処理」に戻し、次回の索引付け/バックフィルで
  * 再処理されるようにする。Weaviate未設定時は何もしない
  */
-const recoverStaleProcessing = () => {
+const recoverStaleProcessing = async () => {
 	if (!isEnabled()) {
 		return;
 	}
 	try {
-		const result = resetStaleProcessingStatus.run();
+		const result = await ds.run(SQL_RESET_STALE_PROCESSING_STATUS);
 		if (result.changes > 0) {
 			logger.warn({count: result.changes}, "::recoverStaleProcessing: 前回起動時に処理中のまま残っていた文書を未処理に戻しました");
 		}

@@ -1004,7 +1004,7 @@ app.get(BASE_URL_PATH + 'api/documents/vector-index/status', requireAuth, requir
 		setHTTPHeaders(res);
 		res.status(200).json({
 			enabled: VectorSearch.isEnabled(),
-			documents: VectorSearch.isEnabled() ? VectorSearch.listIndexStatuses() : []
+			documents: VectorSearch.isEnabled() ? await VectorSearch.listIndexStatuses() : []
 		});
 	} catch (err) {
 		logger.error(err, "::api/documents/vector-index/status");
@@ -1041,7 +1041,7 @@ app.post(BASE_URL_PATH + 'api/documents/:id/vector-index/retry', requireAuth, re
 app.get(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(VectorSearch.getChunkSettings());
+		res.status(200).json(await VectorSearch.getChunkSettings());
 	} catch (err) {
 		logger.error(err, "::api/vector-index/settings:get");
 		res.status(500).json({error: "Internal Error"});
@@ -1061,7 +1061,7 @@ app.put(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmin, 
 		}
 		const chunkSize = Number(req.body.chunkSize);
 		const chunkOverlap = Number(req.body.chunkOverlap);
-		const settings = VectorSearch.updateChunkSettings({chunkSize, chunkOverlap}, req.authData.user_identifier);
+		const settings = await VectorSearch.updateChunkSettings({chunkSize, chunkOverlap}, req.authData.user_identifier);
 		res.status(200).json(settings);
 	} catch (err) {
 		if (err instanceof Error && /chunkSize|chunkOverlap/.test(err.message)) {
@@ -1083,7 +1083,7 @@ app.delete(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmi
 			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
 			return;
 		}
-		res.status(200).json(VectorSearch.resetChunkSettings());
+		res.status(200).json(await VectorSearch.resetChunkSettings());
 	} catch (err) {
 		logger.error(err, "::api/vector-index/settings:delete");
 		res.status(500).json({error: "Internal Error"});
@@ -1097,7 +1097,7 @@ app.delete(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmi
 app.get(BASE_URL_PATH + 'api/vector-index/vectorizer', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(VectorSearch.getVectorizerSetting());
+		res.status(200).json(await VectorSearch.getVectorizerSetting());
 	} catch (err) {
 		logger.error(err, "::api/vector-index/vectorizer:get");
 		res.status(500).json({error: "Internal Error"});
@@ -2074,7 +2074,7 @@ const main = async () => {
 	// 前回の起動時に強制終了等でバックグラウンド処理中(processing)のまま残った文書があれば
 	// 未処理に戻す(プロセス内キューの情報は再起動で失われるため)。バックフィルより先に行うことで、
 	// 未処理へ戻った文書もバックフィル/以後の索引付けで正しく再処理の対象になるようにする
-	VectorSearch.recoverStaleProcessing();
+	await VectorSearch.recoverStaleProcessing();
 	// 過去にアップロードされた(このベクトル検索機能の導入前からある)文書を差分バックフィルする。
 	// サーバー起動をブロックしないよう非同期で流す。WEAVIATE_URL未設定時はisEnabled()の時点で
 	// 弾き、全文書のcontent_textを読み出すクエリ自体を実行しない(単体SQLiteモードと同じ動作にする)
