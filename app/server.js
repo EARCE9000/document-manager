@@ -784,10 +784,29 @@ const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_FTS = `
 	ORDER BY d.uploaded_at DESC
 `;
 
+// Postgresでは FTS5 が無いため、pg_trgm(GINインデックス)で加速される ILIKE 部分一致を使う。
+// LIKE版と同じ条件だが ILIKE で大文字小文字を無視する(SQLiteのLIKEの既定挙動に合わせる)
+const SQL_SEARCH_ACTIVE_DOCUMENTS_PG = `
+	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo
+	FROM documents d
+	LEFT JOIN document_tags t ON t.document_id = d.id
+	WHERE d.deleted_at IS NULL
+	AND (
+		d.entry_file ILIKE '%' || @q || '%'
+		OR d.content_text ILIKE '%' || @q || '%'
+		OR d.memo ILIKE '%' || @q || '%'
+		OR t.tag ILIKE '%' || @q || '%'
+	)
+	ORDER BY d.uploaded_at DESC
+`;
+
 // ユーザー入力をFTS5のフレーズクエリとして安全に組み立てる(演算子等として解釈させない)
 const toFtsPhraseQuery = (q) => `"${q.replace(/"/g, '""')}"`;
 
 const searchActiveDocuments = async (q) => {
+	if (ds.backend === "postgres") {
+		return ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_PG, {q});
+	}
 	if (q.length < MIN_FTS_QUERY_LENGTH) {
 		return ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE, {q});
 	}
@@ -827,7 +846,24 @@ const SQL_SEARCH_DELETED_DOCUMENTS_BY_FTS = `
 	ORDER BY d.deleted_at DESC
 `;
 
+const SQL_SEARCH_DELETED_DOCUMENTS_PG = `
+	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo
+	FROM documents d
+	LEFT JOIN document_tags t ON t.document_id = d.id
+	WHERE d.deleted_at IS NOT NULL
+	AND (
+		d.entry_file ILIKE '%' || @q || '%'
+		OR d.content_text ILIKE '%' || @q || '%'
+		OR d.memo ILIKE '%' || @q || '%'
+		OR t.tag ILIKE '%' || @q || '%'
+	)
+	ORDER BY d.deleted_at DESC
+`;
+
 const searchDeletedDocuments = async (q) => {
+	if (ds.backend === "postgres") {
+		return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_PG, {q});
+	}
 	if (q.length < MIN_FTS_QUERY_LENGTH) {
 		return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE, {q});
 	}
@@ -876,7 +912,9 @@ const SQL_UPDATE_DOCUMENT_MEMO = `UPDATE documents SET memo = ? WHERE id = ?`;
 
 const SQL_SELECT_TAGS_BY_DOCUMENT_ID = `SELECT tag FROM document_tags WHERE document_id = ? ORDER BY tag`;
 const SQL_DELETE_TAGS_BY_DOCUMENT_ID = `DELETE FROM document_tags WHERE document_id = ?`;
-const SQL_INSERT_TAG = `INSERT OR IGNORE INTO document_tags (document_id, tag) VALUES (?, ?)`;
+// ON CONFLICT DO NOTHING はSQLite(3.24+)・Postgres双方で有効(旧 INSERT OR IGNORE の可搬形)。
+// document_tags は PRIMARY KEY(document_id, tag) のため重複挿入は無視される
+const SQL_INSERT_TAG = `INSERT INTO document_tags (document_id, tag) VALUES (?, ?) ON CONFLICT DO NOTHING`;
 const replaceDocumentTags = async (documentId, tags) => {
 	await ds.transaction(async (tx) => {
 		await tx.run(SQL_DELETE_TAGS_BY_DOCUMENT_ID, [documentId]);
@@ -1206,7 +1244,10 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 			uploaded_at: new Date().toISOString()
 		};
 		await ds.run(SQL_INSERT_DOCUMENT, row);
-		await ds.run(SQL_INSERT_DOCUMENT_FTS, row);
+		// documents_fts はSQLite(FTS5)専用。Postgresではpg_trgmインデックスで代替するため不要
+		if (ds.backend === "sqlite") {
+			await ds.run(SQL_INSERT_DOCUMENT_FTS, row);
+		}
 		// ベクトル検索(Weaviate)への索引登録はベストエフォート・非同期(埋め込み計算に数秒
 		// かかるため、awaitせずバックグラウンドで実行しアップロードAPIの応答をブロックしない。
 		// WEAVIATE_URL未設定/接続失敗でもアップロード自体は成功させる。詳細はlib/vector-search.js参照)

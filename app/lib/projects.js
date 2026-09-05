@@ -28,7 +28,7 @@ const SQL_UPDATE_PROJECT_LOCKED = `UPDATE projects SET locked = ? WHERE id = ?`;
 const SQL_DELETE_PROJECT = `DELETE FROM projects WHERE id = ?`;
 const SQL_DELETE_FOLDERS_BY_PROJECT = `DELETE FROM project_folders WHERE project_id = ?`;
 const SQL_DELETE_DOCUMENTS_BY_PROJECT = `DELETE FROM project_documents WHERE project_id = ?`;
-const SQL_MAX_PROJECT_SORT_ORDER = `SELECT MAX(sort_order) AS maxOrder FROM projects`;
+const SQL_MAX_PROJECT_SORT_ORDER = `SELECT MAX(sort_order) AS "maxOrder" FROM projects`;
 
 const SQL_LIST_FOLDERS_BY_PROJECT = `
 	SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at
@@ -43,9 +43,10 @@ const SQL_UPDATE_FOLDER_NAME = `UPDATE project_folders SET name = ? WHERE id = ?
 const SQL_DELETE_FOLDER = `DELETE FROM project_folders WHERE id = ? AND project_id = ?`;
 const SQL_COUNT_SUBFOLDERS = `SELECT COUNT(*) AS c FROM project_folders WHERE parent_folder_id = ?`;
 const SQL_COUNT_DOCUMENTS_IN_FOLDER = `SELECT COUNT(*) AS c FROM project_documents WHERE project_id = ? AND folder_id = ?`;
-const SQL_MAX_FOLDER_SORT_ORDER = `
-	SELECT MAX(sort_order) AS maxOrder FROM project_folders WHERE project_id = ? AND parent_folder_id IS ?
-`;
+// parent_folder_id が NULL(プロジェクト直下)か否かで分岐する。SQLiteの `col IS ?`(null安全等価)は
+// Postgresでは構文エラーになるため、IS NULL / = ? に分けて両DB可搬にする
+const SQL_MAX_FOLDER_SORT_ORDER_ROOT = `SELECT MAX(sort_order) AS "maxOrder" FROM project_folders WHERE project_id = ? AND parent_folder_id IS NULL`;
+const SQL_MAX_FOLDER_SORT_ORDER_CHILD = `SELECT MAX(sort_order) AS "maxOrder" FROM project_folders WHERE project_id = ? AND parent_folder_id = ?`;
 
 // documentsとLEFT JOINしてプレビューに必要な情報も一緒に返す。文書がアーカイブ(論理削除)されて
 // いても、ツリー側でファイル名の表示だけでなくプレビュー表示までできるようにするため
@@ -66,9 +67,9 @@ const SQL_UPSERT_PLACEMENT = `
 	ON CONFLICT(project_id, document_id) DO UPDATE SET folder_id = excluded.folder_id, sort_order = excluded.sort_order
 `;
 const SQL_DELETE_PLACEMENT = `DELETE FROM project_documents WHERE project_id = ? AND document_id = ?`;
-const SQL_MAX_DOCUMENT_SORT_ORDER = `
-	SELECT MAX(sort_order) AS maxOrder FROM project_documents WHERE project_id = ? AND folder_id IS ?
-`;
+// folder_id が NULL(プロジェクト直下)か否かで分岐する(上記と同じ理由で両DB可搬にする)
+const SQL_MAX_DOCUMENT_SORT_ORDER_ROOT = `SELECT MAX(sort_order) AS "maxOrder" FROM project_documents WHERE project_id = ? AND folder_id IS NULL`;
+const SQL_MAX_DOCUMENT_SORT_ORDER_FOLDER = `SELECT MAX(sort_order) AS "maxOrder" FROM project_documents WHERE project_id = ? AND folder_id = ?`;
 const SQL_UPDATE_DOCUMENT_SORT_ORDER = `UPDATE project_documents SET sort_order = ? WHERE project_id = ? AND document_id = ?`;
 
 const toProjectResponse = (row) => ({
@@ -197,7 +198,9 @@ module.exports.createFolder = async (projectId, name, parentFolderId, createdBy)
 		throw new Error("parent folder not found");
 	}
 	const id = crypto.randomUUID();
-	const maxRow = await ds.get(SQL_MAX_FOLDER_SORT_ORDER, [projectId, parentFolderId ?? null]);
+	const maxRow = parentFolderId == null
+		? await ds.get(SQL_MAX_FOLDER_SORT_ORDER_ROOT, [projectId])
+		: await ds.get(SQL_MAX_FOLDER_SORT_ORDER_CHILD, [projectId, parentFolderId]);
 	const nextOrder = (maxRow.maxOrder ?? -1) + 1;
 	await ds.run(SQL_INSERT_FOLDER, {
 		id,
@@ -247,7 +250,9 @@ module.exports.placeDocument = async (projectId, documentId, folderId, addedBy) 
 	if (folderId != null && (await ds.get(SQL_GET_FOLDER, [folderId, projectId])) == null) {
 		throw new Error("folder not found");
 	}
-	const maxRow = await ds.get(SQL_MAX_DOCUMENT_SORT_ORDER, [projectId, folderId ?? null]);
+	const maxRow = folderId == null
+		? await ds.get(SQL_MAX_DOCUMENT_SORT_ORDER_ROOT, [projectId])
+		: await ds.get(SQL_MAX_DOCUMENT_SORT_ORDER_FOLDER, [projectId, folderId]);
 	const nextOrder = (maxRow.maxOrder ?? -1) + 1;
 	await ds.run(SQL_UPSERT_PLACEMENT, {
 		project_id: projectId,
