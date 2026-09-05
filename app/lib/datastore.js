@@ -82,6 +82,9 @@ const createSqliteDatastore = () => {
 			db.exec(sql);
 		},
 
+		// スキーマはdb.jsのrequire時に同期的に作成済みのためno-op(IFの統一のために用意)
+		async init() {},
+
 		async transaction(fn) {
 			db.exec("BEGIN");
 			try {
@@ -183,6 +186,14 @@ const createPostgresDatastore = () => {
 		all: api.all,
 		run: api.run,
 		exec: api.exec,
+
+		// Postgresスキーマ(schema-pg.js)を冪等に作成する。SQLiteと異なり接続後に
+		// 非同期で実行する必要があるため、server.jsの起動時(main)から一度呼ぶ
+		async init() {
+			const {ensureSchema} = require("./schema-pg.js");
+			await ensureSchema(datastore);
+			logger.info("postgres schema ensured");
+		},
 
 		async transaction(fn) {
 			const client = await pool.connect();

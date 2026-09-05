@@ -2078,6 +2078,9 @@ app.put(BASE_URL_PATH + 'api/projects/:id/reorder', requireAuth, requireWrite, a
 
 
 const main = async () => {
+	// DBスキーマの用意。SQLiteはdb.jsのrequire時に作成済みでno-op、Postgresは
+	// 接続後にここでスキーマDDLを冪等実行する(datastore.init参照)
+	await ds.init();
 	if (!AUTH_DISABLED) {
 		oidcConfig = await initOidcClient();
 	}
