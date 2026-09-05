@@ -245,3 +245,5 @@ const getDatastore = () => {
 
 module.exports = getDatastore();
 module.exports.DATABASE_BACKEND = DATABASE_BACKEND;
+// テスト用に公開(プレースホルダ変換は純関数で副作用が無い)
+module.exports.translatePlaceholders = translatePlaceholders;
