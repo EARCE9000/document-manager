@@ -563,7 +563,7 @@ const {marked} = require("marked");
 const {convert: htmlToText} = require("html-to-text");
 const {parse: parseCsvSync} = require("csv-parse/sync");
 const {PDFParse} = require("pdf-parse");
-const db = require("./lib/db.js");
+const ds = require("./lib/datastore.js");
 const VectorSearch = require("./lib/vector-search.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
@@ -721,33 +721,33 @@ const extractContentText = async (documentId, originalName, extension, previewFi
 	}
 };
 
-const insertDocument = db.prepare(`
+const SQL_INSERT_DOCUMENT = `
 	INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at)
 	VALUES (@id, @entry_file, @preview_file, @content_text, @size, @uploaded_by, @uploaded_at)
-`);
+`;
 
-const insertDocumentFts = db.prepare(`
+const SQL_INSERT_DOCUMENT_FTS = `
 	INSERT INTO documents_fts (id, entry_file, content_text)
 	VALUES (@id, @entry_file, @content_text)
-`);
+`;
 
-const selectActiveDocuments = db.prepare(`
+const SQL_SELECT_ACTIVE_DOCUMENTS = `
 	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo
 	FROM documents
 	WHERE deleted_at IS NULL
 	ORDER BY uploaded_at DESC
-`);
+`;
 
 // 起動時のベクトル検索バックフィル(過去にアップロードされた文書)用。VectorSearch側で
 // 既にWeaviateに登録済みの文書は除外されるため、ここではアクティブな文書を全件渡すだけでよい
-const selectActiveDocumentsForIndexing = db.prepare(`SELECT id, content_text FROM documents WHERE deleted_at IS NULL`);
+const SQL_SELECT_ACTIVE_DOCUMENTS_FOR_INDEXING = `SELECT id, content_text FROM documents WHERE deleted_at IS NULL`;
 
 // ファイル名・本文はFTS5(trigramトークナイザ)で部分一致検索する。日本語等CJKでも
 // 単語分割不要で高速だが、3文字未満のクエリはヒットしないためLIKEにフォールバックする
 // (タグは元々短い文字列でLIKEで十分高速なため、こちらは常にLIKEのまま)。
 const MIN_FTS_QUERY_LENGTH = 3;
 
-const searchActiveDocumentsByLike = db.prepare(`
+const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE = `
 	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo
 	FROM documents d
 	LEFT JOIN document_tags t ON t.document_id = d.id
@@ -759,9 +759,9 @@ const searchActiveDocumentsByLike = db.prepare(`
 		OR t.tag LIKE '%' || @q || '%'
 	)
 	ORDER BY d.uploaded_at DESC
-`);
+`;
 
-const searchActiveDocumentsByFts = db.prepare(`
+const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_FTS = `
 	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo
 	FROM documents d
 	WHERE d.deleted_at IS NULL
@@ -771,26 +771,26 @@ const searchActiveDocumentsByFts = db.prepare(`
 		OR d.id IN (SELECT document_id FROM document_tags WHERE tag LIKE '%' || @q || '%')
 	)
 	ORDER BY d.uploaded_at DESC
-`);
+`;
 
 // ユーザー入力をFTS5のフレーズクエリとして安全に組み立てる(演算子等として解釈させない)
 const toFtsPhraseQuery = (q) => `"${q.replace(/"/g, '""')}"`;
 
-const searchActiveDocuments = (q) => {
+const searchActiveDocuments = async (q) => {
 	if (q.length < MIN_FTS_QUERY_LENGTH) {
-		return searchActiveDocumentsByLike.all({q});
+		return ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE, {q});
 	}
 	try {
-		return searchActiveDocumentsByFts.all({ftsQuery: toFtsPhraseQuery(q), q});
+		return await ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_BY_FTS, {ftsQuery: toFtsPhraseQuery(q), q});
 	} catch (err) {
 		logger.error(err, "::searchActiveDocuments:fts_fallback");
-		return searchActiveDocumentsByLike.all({q});
+		return ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE, {q});
 	}
 };
 
 // アーカイブ(論理削除済み)一覧・検索。アクティブ一覧と同じ検索方式(FTS5/LIKE)を、
 // 対象をdeleted_at IS NOT NULLに変えて流用する
-const searchDeletedDocumentsByLike = db.prepare(`
+const SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE = `
 	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo
 	FROM documents d
 	LEFT JOIN document_tags t ON t.document_id = d.id
@@ -802,9 +802,9 @@ const searchDeletedDocumentsByLike = db.prepare(`
 		OR t.tag LIKE '%' || @q || '%'
 	)
 	ORDER BY d.deleted_at DESC
-`);
+`;
 
-const searchDeletedDocumentsByFts = db.prepare(`
+const SQL_SEARCH_DELETED_DOCUMENTS_BY_FTS = `
 	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo
 	FROM documents d
 	WHERE d.deleted_at IS NOT NULL
@@ -814,64 +814,66 @@ const searchDeletedDocumentsByFts = db.prepare(`
 		OR d.id IN (SELECT document_id FROM document_tags WHERE tag LIKE '%' || @q || '%')
 	)
 	ORDER BY d.deleted_at DESC
-`);
+`;
 
-const searchDeletedDocuments = (q) => {
+const searchDeletedDocuments = async (q) => {
 	if (q.length < MIN_FTS_QUERY_LENGTH) {
-		return searchDeletedDocumentsByLike.all({q});
+		return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE, {q});
 	}
 	try {
-		return searchDeletedDocumentsByFts.all({ftsQuery: toFtsPhraseQuery(q), q});
+		return await ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_FTS, {ftsQuery: toFtsPhraseQuery(q), q});
 	} catch (err) {
 		logger.error(err, "::searchDeletedDocuments:fts_fallback");
-		return searchDeletedDocumentsByLike.all({q});
+		return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE, {q});
 	}
 };
 
-const selectActiveDocumentById = db.prepare(`
+const SQL_SELECT_ACTIVE_DOCUMENT_BY_ID = `
 	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo
 	FROM documents
 	WHERE id = ? AND deleted_at IS NULL
-`);
+`;
 
 // アーカイブ済み文書もプレビュー/ダウンロードできるよう、状態を問わずidだけで引く
-const selectDocumentById = db.prepare(`
+const SQL_SELECT_DOCUMENT_BY_ID = `
 	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo
 	FROM documents
 	WHERE id = ?
-`);
+`;
 
 // 文書復元時、ベクトル検索インデックス(Weaviate)へ再登録するためだけに使う
-const selectContentTextById = db.prepare(`SELECT content_text FROM documents WHERE id = ?`);
+const SQL_SELECT_CONTENT_TEXT_BY_ID = `SELECT content_text FROM documents WHERE id = ?`;
 
-const softDeleteDocument = db.prepare(`
+const SQL_SOFT_DELETE_DOCUMENT = `
 	UPDATE documents SET deleted_at = @deleted_at, deleted_by = @deleted_by
 	WHERE id = @id AND deleted_at IS NULL
-`);
+`;
 
-const selectDeletedDocuments = db.prepare(`
+const SQL_SELECT_DELETED_DOCUMENTS = `
 	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo
 	FROM documents
 	WHERE deleted_at IS NOT NULL
 	ORDER BY deleted_at DESC
-`);
+`;
 
-const restoreDocument = db.prepare(`
+const SQL_RESTORE_DOCUMENT = `
 	UPDATE documents SET deleted_at = NULL, deleted_by = NULL
 	WHERE id = ? AND deleted_at IS NOT NULL
-`);
+`;
 
-const updateDocumentMemo = db.prepare(`UPDATE documents SET memo = ? WHERE id = ?`);
+const SQL_UPDATE_DOCUMENT_MEMO = `UPDATE documents SET memo = ? WHERE id = ?`;
 
-const selectTagsByDocumentId = db.prepare(`SELECT tag FROM document_tags WHERE document_id = ? ORDER BY tag`);
-const deleteTagsByDocumentId = db.prepare(`DELETE FROM document_tags WHERE document_id = ?`);
-const insertTag = db.prepare(`INSERT OR IGNORE INTO document_tags (document_id, tag) VALUES (?, ?)`);
-const replaceDocumentTags = db.transaction((documentId, tags) => {
-	deleteTagsByDocumentId.run(documentId);
-	for (const tag of tags) insertTag.run(documentId, tag);
-});
+const SQL_SELECT_TAGS_BY_DOCUMENT_ID = `SELECT tag FROM document_tags WHERE document_id = ? ORDER BY tag`;
+const SQL_DELETE_TAGS_BY_DOCUMENT_ID = `DELETE FROM document_tags WHERE document_id = ?`;
+const SQL_INSERT_TAG = `INSERT OR IGNORE INTO document_tags (document_id, tag) VALUES (?, ?)`;
+const replaceDocumentTags = async (documentId, tags) => {
+	await ds.transaction(async (tx) => {
+		await tx.run(SQL_DELETE_TAGS_BY_DOCUMENT_ID, [documentId]);
+		for (const tag of tags) await tx.run(SQL_INSERT_TAG, [documentId, tag]);
+	});
+};
 
-const toDocumentResponse = (row) => ({
+const toDocumentResponse = async (row) => ({
 	id: row.id,
 	entryFile: row.entry_file,
 	previewFile: row.preview_file,
@@ -879,10 +881,10 @@ const toDocumentResponse = (row) => ({
 	uploadedBy: row.uploaded_by,
 	modified: row.uploaded_at,
 	memo: row.memo,
-	tags: selectTagsByDocumentId.all(row.id).map((tagRow) => tagRow.tag)
+	tags: (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [row.id])).map((tagRow) => tagRow.tag)
 });
 
-const toDeletedDocumentResponse = (row) => ({
+const toDeletedDocumentResponse = async (row) => ({
 	id: row.id,
 	entryFile: row.entry_file,
 	previewFile: row.preview_file,
@@ -892,7 +894,7 @@ const toDeletedDocumentResponse = (row) => ({
 	deletedBy: row.deleted_by,
 	deletedAt: row.deleted_at,
 	memo: row.memo,
-	tags: selectTagsByDocumentId.all(row.id).map((tagRow) => tagRow.tag)
+	tags: (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [row.id])).map((tagRow) => tagRow.tag)
 });
 
 /* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
@@ -949,8 +951,8 @@ app.get(BASE_URL_PATH + 'api/documents', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		const q = String(req.query.q || "").trim();
-		const rows = q === "" ? selectActiveDocuments.all() : searchActiveDocuments(q);
-		const documents = rows.map(toDocumentResponse);
+		const rows = q === "" ? await ds.all(SQL_SELECT_ACTIVE_DOCUMENTS) : await searchActiveDocuments(q);
+		const documents = await Promise.all(rows.map(toDocumentResponse));
 		res.status(200).json(documents);
 	} catch (err) {
 		logger.error(err, "::api/documents:list");
@@ -977,15 +979,14 @@ app.get(BASE_URL_PATH + 'api/documents/search/vector', requireAuth, async (req, 
 		}
 		const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
 		const hits = await VectorSearch.search(q, limit);
-		const documents = hits
-			.map((hit) => {
-				const row = selectActiveDocumentById.get(hit.documentId);
-				if (row == null) {
-					return null;
-				}
-				return {...toDocumentResponse(row), snippet: hit.snippet, distance: hit.distance};
-			})
-			.filter((doc) => doc != null);
+		const documents = [];
+		for (const hit of hits) {
+			const row = await ds.get(SQL_SELECT_ACTIVE_DOCUMENT_BY_ID, [hit.documentId]);
+			if (row == null) {
+				continue;
+			}
+			documents.push({...(await toDocumentResponse(row)), snippet: hit.snippet, distance: hit.distance});
+		}
 		res.status(200).json(documents);
 	} catch (err) {
 		logger.error(err, "::api/documents/search/vector");
@@ -1193,8 +1194,8 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 			uploaded_by: req.authData.user_identifier,
 			uploaded_at: new Date().toISOString()
 		};
-		insertDocument.run(row);
-		insertDocumentFts.run(row);
+		await ds.run(SQL_INSERT_DOCUMENT, row);
+		await ds.run(SQL_INSERT_DOCUMENT_FTS, row);
 		// ベクトル検索(Weaviate)への索引登録はベストエフォート・非同期(埋め込み計算に数秒
 		// かかるため、awaitせずバックグラウンドで実行しアップロードAPIの応答をブロックしない。
 		// WEAVIATE_URL未設定/接続失敗でもアップロード自体は成功させる。詳細はlib/vector-search.js参照)
@@ -1208,7 +1209,7 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		AuditLog.record({userIdentifier: req.authData.user_identifier, action: "upload", documentId: id, entryFile: originalName});
 		broadcastDocumentsChanged();
 
-		res.status(200).json(toDocumentResponse(row));
+		res.status(200).json(await toDocumentResponse(row));
 	} catch (err) {
 		logger.error(err, "::api/documents:upload");
 		res.status(500).json({error: "Internal Error"});
@@ -1243,7 +1244,7 @@ const handleServeFileError = (err, req, res, label) => {
  */
 const serveDocumentFile = async (req, res) => {
 	setHTTPHeaders(res);
-	const document = selectDocumentById.get(req.params.id);
+	const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
 	if (document == null) {
 		res.status(404).json({error: "not found"});
 		return;
@@ -1314,7 +1315,7 @@ app.get(BASE_URL_PATH + 'api/documents/:id/viewer', async (req, res) => {
 app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const result = softDeleteDocument.run({
+		const result = await ds.run(SQL_SOFT_DELETE_DOCUMENT, {
 			id: req.params.id,
 			deleted_at: new Date().toISOString(),
 			deleted_by: req.authData.user_identifier
@@ -1333,7 +1334,7 @@ app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async
 			userIdentifier: req.authData.user_identifier,
 			action: "delete",
 			documentId: req.params.id,
-			entryFile: selectDocumentById.get(req.params.id)?.entry_file ?? null
+			entryFile: (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]))?.entry_file ?? null
 		});
 		broadcastDocumentsChanged();
 		res.status(204).end();
@@ -1350,8 +1351,8 @@ app.get(BASE_URL_PATH + 'api/documents/trash', requireAuth, requireWrite, async 
 	try {
 		setHTTPHeaders(res);
 		const q = String(req.query.q || "").trim();
-		const rows = q === "" ? selectDeletedDocuments.all() : searchDeletedDocuments(q);
-		res.status(200).json(rows.map(toDeletedDocumentResponse));
+		const rows = q === "" ? await ds.all(SQL_SELECT_DELETED_DOCUMENTS) : await searchDeletedDocuments(q);
+		res.status(200).json(await Promise.all(rows.map(toDeletedDocumentResponse)));
 	} catch (err) {
 		logger.error(err, "::api/documents/trash:list");
 		res.status(500).json({error: "Internal Error"});
@@ -1364,13 +1365,13 @@ app.get(BASE_URL_PATH + 'api/documents/trash', requireAuth, requireWrite, async 
 app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const result = restoreDocument.run(req.params.id);
+		const result = await ds.run(SQL_RESTORE_DOCUMENT, [req.params.id]);
 		if (result.changes === 0) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
 		// 論理削除時にWeaviate側のチャンクは削除済みのため、content_textから再登録する
-		VectorSearch.indexDocument(req.params.id, selectContentTextById.get(req.params.id)?.content_text ?? null)
+		VectorSearch.indexDocument(req.params.id, (await ds.get(SQL_SELECT_CONTENT_TEXT_BY_ID, [req.params.id]))?.content_text ?? null)
 			.catch((err) => logger.error({err, documentId: req.params.id}, "::api/documents/:id/restore:indexDocument"));
 		logger.info({
 			audit: "restore",
@@ -1381,7 +1382,7 @@ app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite,
 			userIdentifier: req.authData.user_identifier,
 			action: "restore",
 			documentId: req.params.id,
-			entryFile: selectDocumentById.get(req.params.id)?.entry_file ?? null
+			entryFile: (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]))?.entry_file ?? null
 		});
 		broadcastDocumentsChanged();
 		res.status(200).json({id: req.params.id});
@@ -1397,7 +1398,7 @@ app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite,
 app.put(BASE_URL_PATH + 'api/documents/:id/tags', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const document = selectActiveDocumentById.get(req.params.id);
+		const document = await ds.get(SQL_SELECT_ACTIVE_DOCUMENT_BY_ID, [req.params.id]);
 		if (document == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -1405,7 +1406,7 @@ app.put(BASE_URL_PATH + 'api/documents/:id/tags', requireAuth, requireWrite, asy
 		const rawTags = Array.isArray(req.body.tags) ? req.body.tags : [];
 		const tags = [...new Set(rawTags.map((tag) => String(tag).trim()).filter((tag) => tag !== ""))];
 
-		replaceDocumentTags(document.id, tags);
+		await replaceDocumentTags(document.id, tags);
 		broadcastDocumentsChanged();
 		res.status(200).json({tags});
 	} catch (err) {
@@ -1420,13 +1421,13 @@ app.put(BASE_URL_PATH + 'api/documents/:id/tags', requireAuth, requireWrite, asy
 app.put(BASE_URL_PATH + 'api/documents/:id/memo', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const document = selectActiveDocumentById.get(req.params.id);
+		const document = await ds.get(SQL_SELECT_ACTIVE_DOCUMENT_BY_ID, [req.params.id]);
 		if (document == null) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
 		const memo = String(req.body.memo || "");
-		updateDocumentMemo.run(memo === "" ? null : memo, document.id);
+		await ds.run(SQL_UPDATE_DOCUMENT_MEMO, [memo === "" ? null : memo, document.id]);
 		res.status(200).json({memo});
 	} catch (err) {
 		logger.error(err, "::api/documents/:id/memo");
@@ -1972,7 +1973,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, r
 			respondProjectLocked(res);
 			return;
 		}
-		const document = selectDocumentById.get(req.params.documentId);
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.documentId]);
 		if (document == null) {
 			res.status(404).json({error: "document not found"});
 			return;
@@ -2013,7 +2014,7 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth
 			respondProjectLocked(res);
 			return;
 		}
-		const document = selectDocumentById.get(req.params.documentId);
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.documentId]);
 		const removed = await Projects.removeDocument(req.params.id, req.params.documentId);
 		if (!removed) {
 			res.status(404).json({error: "not found"});
@@ -2079,7 +2080,7 @@ const main = async () => {
 	// サーバー起動をブロックしないよう非同期で流す。WEAVIATE_URL未設定時はisEnabled()の時点で
 	// 弾き、全文書のcontent_textを読み出すクエリ自体を実行しない(単体SQLiteモードと同じ動作にする)
 	if (VectorSearch.isEnabled()) {
-		VectorSearch.backfillMissingDocuments(selectActiveDocumentsForIndexing.all());
+		VectorSearch.backfillMissingDocuments(await ds.all(SQL_SELECT_ACTIVE_DOCUMENTS_FOR_INDEXING));
 	}
 };
 
