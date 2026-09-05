@@ -175,6 +175,100 @@ class S3Storage {
 	}
 }
 
+/**
+ * Rangeヘッダー(bytes=start-end / bytes=start- / bytes=-suffix)と総バイト数から、
+ * 実際に配信するバイト範囲を計算する純関数(GCSはバイトオフセットで範囲取得するため必要。
+ * S3はRangeヘッダーをそのまま渡せるが、GCSのcreateReadStreamはstart/end指定のため自前計算する)。
+ * 戻り値: {satisfiable:false}(416相当) | {satisfiable:true, start, end, partial}(endは含む)
+ */
+const computeByteRange = (rangeHeader, total) => {
+	if (!rangeHeader) {
+		return {satisfiable: true, start: 0, end: total - 1, partial: false};
+	}
+	const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+	if (!match || (match[1] === "" && match[2] === "")) {
+		// 解釈できない/複数レンジ等は全体を返す(寛容に扱う。S3実装もエラーにはしない)
+		return {satisfiable: true, start: 0, end: total - 1, partial: false};
+	}
+	let start = match[1] === "" ? null : parseInt(match[1], 10);
+	let end = match[2] === "" ? null : parseInt(match[2], 10);
+	if (start === null) {
+		// suffixレンジ bytes=-N (末尾Nバイト)
+		if (end == null || end <= 0) return {satisfiable: false};
+		start = Math.max(0, total - end);
+		end = total - 1;
+	} else {
+		if (end === null || end >= total) end = total - 1;
+	}
+	if (start >= total || start > end) return {satisfiable: false};
+	return {satisfiable: true, start, end, partial: true};
+};
+
+/**
+ * Google Cloud Storage実装。バケット直下を GCS_PREFIX/<documentId>/<filename> という
+ * オブジェクト名で保存する。認証はADC(Application Default Credentials)に従う
+ * (GKE/Cloud Runのアタッチされたサービスアカウント、GOOGLE_APPLICATION_CREDENTIALS等)。
+ * テスト時は STORAGE_EMULATOR_HOST を設定すると fake-gcs-server 等のエミュレータへ接続できる。
+ */
+class GcsStorage {
+	constructor({bucket, prefix}) {
+		const {Storage} = require("@google-cloud/storage");
+		this.prefix = prefix;
+		this.bucket = new Storage().bucket(bucket);
+	}
+
+	_key(documentId, filename) {
+		return `${this.prefix}/${documentId}/${filename}`;
+	}
+
+	async writeFile(documentId, filename, buffer) {
+		// 小さめのファイル前提でresumable:false(単発アップロード)。エミュレータとも相性が良い
+		await this.bucket.file(this._key(documentId, filename)).save(buffer, {resumable: false});
+	}
+
+	async readFile(documentId, filename) {
+		const [buffer] = await this.bucket.file(this._key(documentId, filename)).download();
+		return buffer;
+	}
+
+	async exists(documentId, filename) {
+		const [exists] = await this.bucket.file(this._key(documentId, filename)).exists();
+		return exists;
+	}
+
+	// S3実装と同様、ローカル(res.sendFile)相当のRange/Content-Length/ETag応答を返して
+	// バックエンド間の挙動差をなくす(ChromeのPDFビューアはRangeでの部分取得を前提に動作する)。
+	// GCSのcreateReadStreamはバイトオフセット(start/end、endは含む)で範囲取得するため、
+	// S3のようにRangeヘッダーをそのまま渡すのではなくこちら側で範囲を計算する
+	async streamToResponse(documentId, filename, res) {
+		const {pipeline} = require("stream/promises");
+		const file = this.bucket.file(this._key(documentId, filename));
+		const [metadata] = await file.getMetadata();
+		const total = Number(metadata.size);
+		const range = res.req?.headers?.range;
+
+		res.setHeader("Accept-Ranges", "bytes");
+		if (metadata.etag) res.setHeader("ETag", metadata.etag);
+		if (metadata.updated) res.setHeader("Last-Modified", new Date(metadata.updated).toUTCString());
+
+		const computed = computeByteRange(range, total);
+		if (!computed.satisfiable) {
+			res.setHeader("Content-Range", `bytes */${total}`);
+			res.status(416).end();
+			return;
+		}
+		const {start, end, partial} = computed;
+		if (partial) {
+			res.status(206);
+			res.setHeader("Content-Range", `bytes ${start}-${end}/${total}`);
+		}
+		res.setHeader("Content-Length", String(end - start + 1));
+
+		// pipelineはクライアント切断時に上流(GCSのストリーム)を破棄した上でrejectする
+		await pipeline(file.createReadStream({start, end}), res);
+	}
+}
+
 const createStorage = (documentsDir) => {
 	if (STORAGE_BACKEND === "s3") {
 		const bucket = process.env.S3_BUCKET;
@@ -190,6 +284,17 @@ const createStorage = (documentsDir) => {
 			endpoint: process.env.S3_ENDPOINT || null
 		});
 	}
+	if (STORAGE_BACKEND === "gcs") {
+		const bucket = process.env.GCS_BUCKET;
+		if (!bucket) {
+			throw new Error("STORAGE_BACKEND=gcs の場合、GCS_BUCKET の指定が必須です");
+		}
+		logger.info({bucket, prefix: process.env.GCS_PREFIX || "documents"}, "storage backend: gcs");
+		return new GcsStorage({
+			bucket,
+			prefix: process.env.GCS_PREFIX || "documents"
+		});
+	}
 	if (STORAGE_BACKEND !== "local") {
 		logger.warn({STORAGE_BACKEND}, "未知のSTORAGE_BACKENDが指定されたため、localにフォールバックします");
 	}
@@ -197,4 +302,4 @@ const createStorage = (documentsDir) => {
 	return new LocalDiskStorage(documentsDir);
 };
 
-module.exports = {STORAGE_BACKEND, createStorage};
+module.exports = {STORAGE_BACKEND, createStorage, computeByteRange};
