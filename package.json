@@ -5,6 +5,7 @@
 	"private": true,
 	"scripts": {
 		"test": "node --test test/unit.test.js test/integration-sqlite.test.js",
+		"test:pg": "node --test test/integration-postgres.test.js",
 		"test:api": "playwright test"
 	},
 	"devDependencies": {

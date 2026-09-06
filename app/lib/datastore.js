@@ -105,6 +105,9 @@ const createSqliteDatastore = () => {
 		// スキーマはdb.jsのrequire時に同期的に作成済みのためno-op(IFの統一のために用意)
 		async init() {},
 
+		// better-sqlite3は同期・open handleを持たずプロセス終了を妨げないためno-op(IF統一のため)
+		async close() {},
+
 		async transaction(fn) {
 			db.exec("BEGIN");
 			try {
@@ -277,6 +280,15 @@ const createPostgresDatastore = () => {
 		// 変更を全インスタンスへ通知する(pg_notify。チャンネル名を安全に渡せる)
 		async notify(channel) {
 			await pool.query("SELECT pg_notify($1, '')", [channel]);
+		},
+
+		// プール・LISTEN接続を閉じる(graceful shutdown / テストのプロセス終了用)
+		async close() {
+			if (listenClient != null) {
+				try { await listenClient.end(); } catch {}
+				listenClient = null;
+			}
+			await pool.end();
 		},
 
 		// Postgresスキーマ(schema-pg.js)を冪等に作成する。SQLiteと異なり接続後に
