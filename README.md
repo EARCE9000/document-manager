@@ -186,9 +186,9 @@ npm run test:api   # 層3(API)。Playwrightが認証有効のテストサーバ�
 
 - **`test/unit.test.js`**: 純関数ユニット(Range計算・SQLプレースホルダ変換・チャンク分割・有効期限計算・ロール判定)
 - **`test/integration-sqlite.test.js`**: 一時SQLiteに対する各モジュールのライフサイクル(projects/allowed-users/api-keys/tag-order/audit-log)
-- **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUDを検証する。ブラウザは使わないため `npx playwright install` は不要
-
-Postgresバックエンド特有の検証(方言・接続)は自動テストには含めない(必要時にPostgresを立てて確認する)。
+- **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUD、および意味検索(ベクトル検索)を検証する。ブラウザは使わないため `npx playwright install` は不要
+  - `test/api/` の webServer 環境変数はパススルー式(既定は sqlite + local)。`DATABASE_BACKEND=postgres`/`DATABASE_URL`/`STORAGE_BACKEND=s3`/`S3_*`/`AWS_*` を与えれば、同じAPIテストを **Postgres + S3(MinIO等)** 構成でも実行できる(実際にこの構成で全件パスを確認済み)
+  - 意味検索のE2E(`vector-search.spec.js`)は `WEAVIATE_URL` を与えたときだけ実行される(未設定時は自動スキップし、代わりに503応答=機能無効を検証)。`WEAVIATE_URL`/`WEAVIATE_GRPC_PORT`/`WEAVIATE_VECTORIZER` を渡すと、アップロード→埋め込み→索引→意味検索ヒットまでを通しで検証する
 
 ## Dockerビルド・起動
 
