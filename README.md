@@ -171,6 +171,25 @@ AUTH_DISABLED=true DATA_DIR=../data node server.js
 
 `http://localhost:8080/` にアクセスすると、認証なし(`dev-user`)で操作できる。
 
+## テスト
+
+テストはアプリ本体(`app/`)の外、リポジトリ直下の `test/` に置く(Dockerイメージは `app/` のみを
+コピーするため、テストはイメージに含まれない)。テスト用の依存(Playwright)もルートの
+`package.json`(`app/`とは別)で管理する。
+
+```bash
+# リポジトリ直下で
+npm install        # テスト用依存(@playwright/test)を入れる。アプリ依存は app/ 側で別途 npm install
+npm test           # 層1(純関数)+層2(SQLite結合)。node:test、外部サービス不要
+npm run test:api   # 層3(API)。Playwrightが認証有効のテストサーバを起動しHTTPで検証
+```
+
+- **`test/unit.test.js`**: 純関数ユニット(Range計算・SQLプレースホルダ変換・チャンク分割・有効期限計算・ロール判定)
+- **`test/integration-sqlite.test.js`**: 一時SQLiteに対する各モジュールのライフサイクル(projects/allowed-users/api-keys/tag-order/audit-log)
+- **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUDを検証する。ブラウザは使わないため `npx playwright install` は不要
+
+Postgresバックエンド特有の検証(方言・接続)は自動テストには含めない(必要時にPostgresを立てて確認する)。
+
 ## Dockerビルド・起動
 
 ```bash

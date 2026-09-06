@@ -2139,7 +2139,14 @@ const main = async () => {
 	}
 };
 
-main().catch((err) => {
-	logger.error(err, "::main");
-	process.exit(1);
-});
+// 直接 `node server.js` で起動されたときだけ main() を走らせる。
+// テスト等から require された場合は app/server/main を使う側が起動を制御する
+// (認証を有効にしたままOIDC初期化だけ省いてテストサーバを立てる等)
+if (require.main === module) {
+	main().catch((err) => {
+		logger.error(err, "::main");
+		process.exit(1);
+	});
+}
+
+module.exports = {app, server, main};

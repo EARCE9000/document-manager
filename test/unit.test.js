@@ -3,7 +3,7 @@
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * 実行: app ディレクトリで `npm test`(= node --test)
+ * 実行: リポジトリ直下で `npm test`
  * datastore/vector-search/api-keys は require時にdatastore(既定sqlite)を初期化するため、
  * 副作用のDBファイルが既定の /data に作られないよう、先頭で DATA_DIR を一時ディレクトリに向ける。
  */
@@ -18,11 +18,11 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "dm-unit-"));
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const {computeByteRange} = require("../lib/storage.js");
-const {translatePlaceholders} = require("../lib/datastore.js");
-const VectorSearch = require("../lib/vector-search.js");
-const ApiKeys = require("../lib/api-keys.js");
-const AllowedUsers = require("../lib/allowed-users.js");
+const {computeByteRange} = require("../app/lib/storage.js");
+const {translatePlaceholders} = require("../app/lib/datastore.js");
+const VectorSearch = require("../app/lib/vector-search.js");
+const ApiKeys = require("../app/lib/api-keys.js");
+const AllowedUsers = require("../app/lib/allowed-users.js");
 
 test("computeByteRange", () => {
 	assert.deepEqual(computeByteRange(undefined, 16), {satisfiable: true, start: 0, end: 15, partial: false});

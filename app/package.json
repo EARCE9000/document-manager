@@ -4,8 +4,7 @@
 	"description": "Document Manager (Node.js, Azure EntraID auth)",
 	"main": "server.js",
 	"scripts": {
-		"start": "node server.js",
-		"test": "node --test"
+		"start": "node server.js"
 	},
 	"repository": "",
 	"keywords": [

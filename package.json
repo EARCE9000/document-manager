@@ -1,0 +1,13 @@
+{
+	"name": "toolkit_documentmanager_tests",
+	"version": "0.1.0",
+	"description": "Document Manager のテスト(node:test + Playwright API)。アプリ本体(app/)とは別管理で、コンテナイメージには含めない",
+	"private": true,
+	"scripts": {
+		"test": "node --test test/unit.test.js test/integration-sqlite.test.js",
+		"test:api": "playwright test"
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.63.0"
+	}
+}

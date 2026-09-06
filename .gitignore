@@ -1,0 +1,8 @@
+# テスト用の依存(ルートのpackage.jsonはテスト専用)。コミットしない
+/node_modules
+/package-lock.json
+# APIテスト実行時に serve.js が生成する平文APIキー
+/test/api/.auth-keys.json
+# Playwrightの実行結果・レポート
+/test-results
+/playwright-report

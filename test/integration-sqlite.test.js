@@ -3,7 +3,7 @@
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * 実行: app ディレクトリで `npm test`(= node --test)
+ * 実行: リポジトリ直下で `npm test`
  * 一時ディレクトリを DATA_DIR にして実SQLiteに対して各モジュールを動かす(外部サービス不要)。
  * Postgres特有の挙動(方言・接続)はここでは検証しない(必要なら別途PGを立てて確認する)。
  */
@@ -18,12 +18,12 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "dm-itg-"));
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const ds = require("../lib/datastore.js");
-const Projects = require("../lib/projects.js");
-const AllowedUsers = require("../lib/allowed-users.js");
-const ApiKeys = require("../lib/api-keys.js");
-const TagOrder = require("../lib/tag-order.js");
-const AuditLog = require("../lib/audit-log.js");
+const ds = require("../app/lib/datastore.js");
+const Projects = require("../app/lib/projects.js");
+const AllowedUsers = require("../app/lib/allowed-users.js");
+const ApiKeys = require("../app/lib/api-keys.js");
+const TagOrder = require("../app/lib/tag-order.js");
+const AuditLog = require("../app/lib/audit-log.js");
 
 test("projects: 作成→フォルダ(root/child)→配置(root/folder)→ツリー→並替→削除", async () => {
 	const proj = await Projects.createProject("  テスト  ", "tester");
