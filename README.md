@@ -112,7 +112,7 @@ document-manager/
 | `BASE_PATH` | `/document_management` | 外部公開時のパスprefix。ログイン/ログアウト/ホームの遷移先の組み立てに使用 |
 | `DATA_DIR` | `/data` | `DATABASE_BACKEND=sqlite`(既定)時のSQLite DBの保存先。`STORAGE_BACKEND=local`の場合は文書ファイルもここに保存される。`DATABASE_BACKEND=postgres`かつ`STORAGE_BACKEND`がs3/gcsなら永続ボリューム不要 |
 | `DATABASE_BACKEND` | `sqlite` | メタデータDBのバックエンド。`sqlite`(単一コンテナ・`DATA_DIR`上のファイル)または`postgres`(RDS/Aurora, Cloud SQL/AlloyDB等のマネージドPostgreSQL)。複数インスタンスで水平スケールする場合は`postgres`が必須(SQLiteは単一インスタンス前提。セッションもこのDBで共有される) |
-| `DATABASE_URL` | (postgres時に使用) | Postgres接続文字列(例: `postgres://user:pass@host:5432/dbname`)。`DATABASE_BACKEND=postgres`で未設定の場合は標準の`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`が使われる。スキーマは起動時に自動作成される(冪等) |
+| `DATABASE_URL` | (postgres時に使用) | Postgres接続文字列(例: `postgres://user:pass@host:5432/dbname`)。`DATABASE_BACKEND=postgres`で未設定の場合は標準の`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`が使われる。スキーマは起動時に自動適用される(`schema_migrations`テーブルで適用済みバージョンを管理し、未適用のマイグレーションだけを順に適用する。詳細は[lib/schema-pg.js](app/lib/schema-pg.js)) |
 | `DATABASE_SSL` | (未設定) | `true`でPostgres接続にTLSを使う(マネージドPGで必要な場合)。証明書検証は行わない(`rejectUnauthorized:false`) |
 | `STORAGE_BACKEND` | `local` | 文書ファイルの保存先。`local`(ディスク)/`s3`(AWS)/`gcs`(Google Cloud Storage)。切り替えは今後の保存先を変えるだけで、既存ファイルの自動移行は行わない |
 | `S3_BUCKET` | (STORAGE_BACKEND=s3の場合必須) | 保存先のS3バケット名 |

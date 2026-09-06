@@ -13,7 +13,18 @@
  *   - sessionsテーブルも用意する(session-storeのpostgresバックエンド用。expires_atはepoch msのBIGINT)
  *
  * すべて IF NOT EXISTS のため、起動のたびに安全に実行できる(datastore.init()から呼ばれる)。
+ *
+ * ---- マイグレーション ----
+ * 適用済みバージョンを schema_migrations テーブルで管理し、未適用のマイグレーションだけを
+ * version昇順にトランザクション内で適用する(PostgresはDDLもトランザクション対応)。
+ * マイグレーション1は現行スキーマ全体(下記DDL)で、すべて IF NOT EXISTS のため新規DB・既存DBの
+ * どちらに対しても安全(冪等・自己修復的)。以降のスキーマ変更は MIGRATIONS 配列に
+ * {version, sql} を追記する(既存DDLは破壊的に書き換えず、ALTER TABLE ... ADD COLUMN IF NOT EXISTS
+ * 等の非破壊・冪等な文を使う。新規DB向けには下記のベースDDLにも同じ列を追記しておく)。
  */
+
+const path = require("path");
+const logger = require("./logger.js")(path.basename(__filename));
 
 const PG_SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS documents (
@@ -134,11 +145,33 @@ CREATE INDEX IF NOT EXISTS idx_documents_memo_trgm ON documents USING gin (memo 
 CREATE INDEX IF NOT EXISTS idx_document_tags_tag_trgm ON document_tags USING gin (tag gin_trgm_ops);
 `;
 
+// マイグレーション定義(version昇順)。新しいスキーマ変更はここに追記する。
+// 例) {version: 2, sql: `ALTER TABLE documents ADD COLUMN IF NOT EXISTS foo TEXT;`}
+const MIGRATIONS = [
+	{version: 1, sql: PG_SCHEMA_DDL}
+];
+
 /**
- * Postgresスキーマを冪等に作成する。datastore.init()(postgresバックエンド)から呼ばれる
+ * Postgresスキーマを用意する。schema_migrations で適用済みバージョンを管理し、
+ * 未適用のマイグレーションだけを version昇順にトランザクション内で適用する
+ * (DDLと適用記録を1トランザクションにまとめ、途中失敗時は全体をロールバックする)。
+ * datastore.init()(postgresバックエンド)から起動時に呼ばれる。
  */
 module.exports.ensureSchema = async (ds) => {
-	await ds.exec(PG_SCHEMA_DDL);
+	await ds.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+	const row = await ds.get("SELECT COALESCE(MAX(version), 0) AS current FROM schema_migrations");
+	const current = Number(row.current);
+	for (const migration of MIGRATIONS) {
+		if (migration.version <= current) {
+			continue;
+		}
+		await ds.transaction(async (tx) => {
+			await tx.exec(migration.sql);
+			await tx.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [migration.version, new Date().toISOString()]);
+		});
+		logger.info({version: migration.version}, "postgres migration applied");
+	}
 };
 
+module.exports.MIGRATIONS = MIGRATIONS;
 module.exports.PG_SCHEMA_DDL = PG_SCHEMA_DDL;
