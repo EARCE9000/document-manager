@@ -33,7 +33,20 @@ const ApiKeys = require("../../app/lib/api-keys.js");
 const {server} = require("../../app/server.js");
 
 (async () => {
-	await ds.init(); // sqliteはno-op
+	await ds.init(); // sqliteはno-op、postgresはスキーマ作成
+
+	// Postgresは共有DBのため、前回のテストデータをクリアして毎回まっさらから始める
+	// (sqliteは一時DATA_DIRを毎回作り直しているため不要)
+	if (ds.backend === "postgres") {
+		const tables = [
+			"document_tags", "project_documents", "project_folders", "projects",
+			"audit_log", "api_keys", "allowed_users", "tag_order", "vector_search_settings",
+			"documents", "sessions"
+		];
+		for (const table of tables) {
+			await ds.run(`DELETE FROM ${table}`);
+		}
+	}
 
 	// テスト用の許可ユーザーとAPIキーを用意する。
 	// APIキーの発行者は許可ユーザーである必要がある(resolveAuthがisAllowedを確認するため)。
