@@ -62,8 +62,28 @@ const createSqliteDatastore = () => {
 		return stmt;
 	};
 
+	// 変更通知(SSE等)のpub/sub。SQLiteは単一インスタンス前提のため、プロセス内で
+	// 登録済みハンドラを直接呼ぶだけでよい(NOTIFY相当をインメモリで完結させる)
+	const subscribers = [];
+
 	const datastore = {
 		backend: "sqlite",
+
+		// チャンネル横断の変更通知を購読する。handlerは通知チャンネル名を受け取る
+		subscribe(channels, handler) {
+			subscribers.push(handler);
+		},
+
+		// 変更を通知する。単一プロセスなので登録ハンドラを同期的に呼ぶ
+		async notify(channel) {
+			for (const handler of subscribers) {
+				try {
+					handler(channel);
+				} catch (err) {
+					logger.error({err, channel}, "notify handler failed");
+				}
+			}
+		},
 
 		async get(sql, params) {
 			return invoke(prepare(sql), "get", params);
@@ -166,7 +186,7 @@ const makePgApi = (executor) => ({
 });
 
 const createPostgresDatastore = () => {
-	const {Pool} = require("pg");
+	const {Pool, Client} = require("pg");
 
 	// 接続情報は DATABASE_URL(接続文字列) を優先。未指定なら pg が標準の
 	// PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE 環境変数を読む。
@@ -180,12 +200,84 @@ const createPostgresDatastore = () => {
 
 	const api = makePgApi(pool);
 
+	// ---- 変更通知(SSE等)のpub/sub: LISTEN/NOTIFY ----
+	// 複数インスタンスへ横断的に通知するため、専用の常設接続でLISTENし、通知を全インスタンスの
+	// ローカルハンドラへ配る。NOTIFYは発行元インスタンス自身のLISTEN接続にも届くため、
+	// 発行元・他インスタンスを区別せず一様に扱える。
+	// 注意: LISTEN/NOTIFYは標準PostgreSQL(RDS/Cloud SQL等)の機能。Aurora PostgreSQLは非対応、
+	// AlloyDBは要確認。横断通知が必要な水平スケール構成では RDS/Cloud SQL を使うこと。
+	const listenHandlers = [];
+	const listenChannels = new Set();
+	let listenClient = null;
+	let listenStarting = false;
+
+	// チャンネル名は固定リテラル(documents_changed/projects_changed)のみを想定。
+	// LISTENは識別子をパラメータ化できないため、英数字とアンダースコアのみ許可して埋め込む
+	const isSafeChannel = (channel) => /^[a-z_][a-z0-9_]*$/i.test(channel);
+
+	const ensureListenClient = async () => {
+		if (listenClient != null || listenStarting || listenChannels.size === 0) {
+			return;
+		}
+		listenStarting = true;
+		const client = new Client(poolConfig);
+		try {
+			await client.connect();
+			for (const channel of listenChannels) {
+				if (isSafeChannel(channel)) {
+					await client.query(`LISTEN ${channel}`);
+				}
+			}
+			client.on("notification", (msg) => {
+				for (const handler of listenHandlers) {
+					try {
+						handler(msg.channel);
+					} catch (err) {
+						logger.error({err, channel: msg.channel}, "notify handler failed");
+					}
+				}
+			});
+			const onLost = (err) => {
+				if (err) logger.warn({err}, "postgres LISTEN connection lost; reconnecting");
+				listenClient = null;
+				try { client.removeAllListeners(); } catch {}
+				const timer = setTimeout(() => ensureListenClient().catch((e) => logger.error({err: e}, "LISTEN reconnect failed")), 2000);
+				if (timer.unref) timer.unref();
+			};
+			client.on("error", onLost);
+			client.on("end", () => onLost(null));
+			listenClient = client;
+			logger.info({channels: [...listenChannels]}, "postgres LISTEN active");
+		} catch (err) {
+			logger.error({err}, "postgres LISTEN connect failed; will retry");
+			try { await client.end(); } catch {}
+			const timer = setTimeout(() => ensureListenClient().catch((e) => logger.error({err: e}, "LISTEN reconnect failed")), 2000);
+			if (timer.unref) timer.unref();
+		} finally {
+			listenStarting = false;
+		}
+	};
+
 	const datastore = {
 		backend: "postgres",
 		get: api.get,
 		all: api.all,
 		run: api.run,
 		exec: api.exec,
+
+		// 変更通知の購読。専用のLISTEN接続を(必要になった時点で)確立する
+		subscribe(channels, handler) {
+			listenHandlers.push(handler);
+			for (const channel of channels) {
+				listenChannels.add(channel);
+			}
+			ensureListenClient().catch((err) => logger.error({err}, "ensureListenClient failed"));
+		},
+
+		// 変更を全インスタンスへ通知する(pg_notify。チャンネル名を安全に渡せる)
+		async notify(channel) {
+			await pool.query("SELECT pg_notify($1, '')", [channel]);
+		},
 
 		// Postgresスキーマ(schema-pg.js)を冪等に作成する。SQLiteと異なり接続後に
 		// 非同期で実行する必要があるため、server.jsの起動時(main)から一度呼ぶ

@@ -955,24 +955,42 @@ const toDeletedDocumentResponse = async (row) => ({
 
 const sseClients = new Set();
 
-const broadcastDocumentsChanged = () => {
+// このプロセスに接続しているSSEクライアントへ実際に書き込む(ローカル配信)
+const deliverDocumentsChanged = () => {
 	for (const client of sseClients) {
 		client.write("event: documents-changed\ndata: {}\n\n");
 	}
 };
+const deliverProjectsChanged = () => {
+	for (const client of sseClients) {
+		client.write("event: projects-changed\ndata: {}\n\n");
+	}
+};
+
+// 変更通知は datastore の pub/sub 経由で発火する。SQLite(単一インスタンス)ではプロセス内で
+// 即座にローカル配信され、Postgres(複数インスタンス)ではLISTEN/NOTIFYで全インスタンスへ伝播し、
+// 各インスタンスが自分に繋がるSSEクライアントへ配信する(発行元インスタンスにも届く)。
+// 呼び出し側の使い勝手は従来と同じ(broadcast*()を呼ぶだけ)。
+const broadcastDocumentsChanged = () => {
+	ds.notify("documents_changed").catch((err) => logger.error({err}, "::notify:documents_changed"));
+};
+const broadcastProjectsChanged = () => {
+	ds.notify("projects_changed").catch((err) => logger.error({err}, "::notify:projects_changed"));
+};
+
+// 通知チャンネルを購読し、受信したら対応するローカル配信を行う
+ds.subscribe(["documents_changed", "projects_changed"], (channel) => {
+	if (channel === "documents_changed") {
+		deliverDocumentsChanged();
+	} else if (channel === "projects_changed") {
+		deliverProjectsChanged();
+	}
+});
 
 // ベクトル索引の状態(processing/ok/error)がバックグラウンドで変化するたびに、SSE経由で
 // 「ベクトル索引」画面を開いている全クライアントへ反映する(indexDocumentはawaitせず
 // fire-and-forgetで呼ぶため、完了をこの通知でしか知る術がない。詳細はvector-search.js参照)
 VectorSearch.setStatusChangeListener(broadcastDocumentsChanged);
-
-// プロジェクトの施錠/解錠・構成変更(フォルダ/文書の登録・並び替え等)を同じSSE接続で通知する。
-// 全利用者で共有される状態のため、他クライアントが変更していても画面が古いままにならないようにする
-const broadcastProjectsChanged = () => {
-	for (const client of sseClients) {
-		client.write("event: projects-changed\ndata: {}\n\n");
-	}
-};
 
 /**
  * 文書一覧変更通知 (SSE)

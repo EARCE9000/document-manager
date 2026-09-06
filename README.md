@@ -111,7 +111,7 @@ document-manager/
 | `BASE_URL_PATH` | `/` | Express内部のルーティングprefix(通常は変更不要。リバースプロキシがprefixを剥がして転送する前提) |
 | `BASE_PATH` | `/document_management` | 外部公開時のパスprefix。ログイン/ログアウト/ホームの遷移先の組み立てに使用 |
 | `DATA_DIR` | `/data` | `DATABASE_BACKEND=sqlite`(既定)時のSQLite DBの保存先。`STORAGE_BACKEND=local`の場合は文書ファイルもここに保存される。`DATABASE_BACKEND=postgres`かつ`STORAGE_BACKEND`がs3/gcsなら永続ボリューム不要 |
-| `DATABASE_BACKEND` | `sqlite` | メタデータDBのバックエンド。`sqlite`(単一コンテナ・`DATA_DIR`上のファイル)または`postgres`(RDS/Aurora, Cloud SQL/AlloyDB等のマネージドPostgreSQL)。複数インスタンスで水平スケールする場合は`postgres`が必須(SQLiteは単一インスタンス前提。セッションもこのDBで共有される) |
+| `DATABASE_BACKEND` | `sqlite` | メタデータDBのバックエンド。`sqlite`(単一コンテナ・`DATA_DIR`上のファイル)または`postgres`(マネージドPostgreSQL)。複数インスタンスで水平スケールする場合は`postgres`が必須(SQLiteは単一インスタンス前提。セッションもこのDBで共有される)。横断SSEに`LISTEN/NOTIFY`を使うため、水平スケール時は**RDS for PostgreSQL / Cloud SQL for PostgreSQL 推奨(Aurora PostgreSQLは`LISTEN/NOTIFY`非対応)**。詳細は[マルチクラウド構成の要点](#マルチクラウド構成の要点) |
 | `DATABASE_URL` | (postgres時に使用) | Postgres接続文字列(例: `postgres://user:pass@host:5432/dbname`)。`DATABASE_BACKEND=postgres`で未設定の場合は標準の`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`が使われる。スキーマは起動時に自動適用される(`schema_migrations`テーブルで適用済みバージョンを管理し、未適用のマイグレーションだけを順に適用する。詳細は[lib/schema-pg.js](app/lib/schema-pg.js)) |
 | `DATABASE_SSL` | (未設定) | `true`でPostgres接続にTLSを使う(マネージドPGで必要な場合)。証明書検証は行わない(`rejectUnauthorized:false`) |
 | `STORAGE_BACKEND` | `local` | 文書ファイルの保存先。`local`(ディスク)/`s3`(AWS)/`gcs`(Google Cloud Storage)。切り替えは今後の保存先を変えるだけで、既存ファイルの自動移行は行わない |
@@ -161,9 +161,13 @@ Postgresの認証情報は`DATABASE_URL`(または`PG*`環境変数)に含める
 
 複数インスタンスで動かす場合は`DATABASE_BACKEND=postgres`が前提(セッションもPostgresで共有されるため、どのインスタンスに振り分けられてもログイン状態が維持される)。全文検索は、SQLiteではFTS5(trigram)、PostgresではpgのGIN trigramインデックス(pg_trgm)で自動的に切り替わる。
 
-複数インスタンス運用時の既知の制約:
+**リアルタイム更新(SSE)の横断通知には標準PostgreSQLが必要**: 一覧やベクトル索引状態の変更通知(`GET api/documents/events`)は各インスタンスがメモリ上で接続を保持しているため、素朴にはインスタンス内に閉じる。これを複数インスタンス横断で届けるため、`DATABASE_BACKEND=postgres` のときは **Postgres の `LISTEN/NOTIFY`** をバックプレーンに使い、あるインスタンスで起きた変更を全インスタンスのSSEクライアントへ伝播する(`lib/datastore.js` の `subscribe`/`notify`)。
 
-- **リアルタイム更新(SSE)はインスタンス内に閉じる**: 一覧やベクトル索引状態の変更通知(`GET api/documents/events`)は各インスタンスがメモリ上で接続を保持しているため、**別インスタンスに繋がっているクライアントには即時通知が届かない**。データ自体は共有DB/共有ストレージで整合しており、通知が届かなくても次回の再取得・再読み込みで反映されるため実害は「他人の変更が即時に画面へ反映されないことがある」程度。即時性を重視するならロードバランサでスティッキーセッションを有効にする。
+- **`LISTEN/NOTIFY` は標準PostgreSQL(RDS for PostgreSQL / Cloud SQL for PostgreSQL)の機能**。**Aurora PostgreSQL は `LISTEN/NOTIFY` に非対応**、AlloyDB は要確認。**横断SSEが必要な水平スケール構成では RDS / Cloud SQL を使うこと**(Aurora等では横断通知が届かず、各インスタンス内に閉じる。データ自体は共有DBで整合しているため、実害は「他インスタンスの利用者の変更が即時に画面反映されないことがある」程度で、次の再取得・再読み込みで反映される)。
+- SQLite(単一インスタンス)ではプロセス内で完結するため、この制約は無関係。
+
+複数インスタンス運用時のもう一つの既知の制約:
+
 - **ベクトル索引付けはインスタンスごとに直列化される**: 埋め込み計算の直列化・重複防止(`runSerialized`/`runEmbeddingExclusive`)はプロセス内メモリのキューで行うため、インスタンスをまたいだ調停は行わない(同一文書への同時操作が複数インスタンスに分かれると二重に索引付けされ得る)。索引付けは「全チャンクを作り直す冪等な処理」なので結果は壊れないが、埋め込み計算が余分に走る可能性がある。
 
 ## ローカル動作確認
