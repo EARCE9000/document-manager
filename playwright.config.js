@@ -45,6 +45,14 @@ module.exports = defineConfig({
 	use: {
 		baseURL: BASE_URL
 	},
+	// API テスト(*.spec.js)はブラウザ不要のHTTPクライアント(request)のみで動く。
+	// ブラウザE2E(*.e2e.js)は実Chromiumを起動してCSP等の実挙動を検証するため別プロジェクトに分離し、
+	// `npm run test:api`(=--project=api)はChromium未インストールでも動く従来の性質を維持する。
+	// E2Eは `npm run test:e2e`(=--project=e2e、要 `npx playwright install chromium`)で実行する
+	projects: [
+		{name: "api", testMatch: /.*\.spec\.js$/},
+		{name: "e2e", testMatch: /.*\.e2e\.js$/, use: {browserName: "chromium"}}
+	],
 	webServer: {
 		command: "node test/api/serve.js",
 		url: `${BASE_URL}/`,
