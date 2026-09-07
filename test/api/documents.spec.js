@@ -73,10 +73,34 @@ test.describe.serial("文書ライフサイクル", () => {
 	test("ファイル本体を取得できる(Range無し=200、Range指定=206)", async ({request}) => {
 		const full = await request.get(`api/documents/${documentId}/file`, {headers: rw});
 		expect(full.status()).toBe(200);
+		// txtはスクリプトを実行しないためCSP対象外(プレビュー等のUXに影響させない)
+		expect(full.headers()["content-security-policy"]).toBeFalsy();
 
 		const partial = await request.get(`api/documents/${documentId}/file`, {headers: {...rw, Range: "bytes=0-3"}});
 		expect(partial.status()).toBe(206);
 		expect(partial.headers()["content-range"]).toBeTruthy();
+	});
+
+	// 保存型XSS対策: アップロードされたhtml/htm/svgは変換されずinline配信されるため、
+	// 配信時にscript-src 'none'等のCSPを付けてスクリプト実行を無効化している(server.js参照)。
+	// スクリプトを実行し得る形式にはCSPが付くこと・txt等の非実行形式には付かないこと(上記)を
+	// 併せて検証し、防御の有無とスコープ(UX非影響)の両方を回帰から守る
+	test("html/svg等のスクリプト実行可能形式にはCSP(script-src 'none')が付与される", async ({request}) => {
+		const uploaded = await request.post("api/documents", {
+			headers: rw,
+			multipart: {uploadfile: {name: "xss-test.html", mimeType: "text/html", buffer: Buffer.from("<html><body><script>document.title='xss'</script>hello</body></html>")}}
+		});
+		expect(uploaded.status()).toBe(200);
+		const htmlId = (await uploaded.json()).id;
+
+		const res = await request.get(`api/documents/${htmlId}/file`, {headers: rw});
+		expect(res.status()).toBe(200);
+		const csp = res.headers()["content-security-policy"];
+		expect(csp).toBeTruthy();
+		expect(csp).toContain("script-src 'none'");
+
+		// このテストで作成した文書は後続の一覧・件数に影響させないようアーカイブしておく
+		await request.delete(`api/documents/${htmlId}`, {headers: rw});
 	});
 
 	test("アーカイブ(論理削除)すると一覧から消え、ゴミ箱に現れる", async ({request}) => {
