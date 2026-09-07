@@ -14,6 +14,7 @@
  */
 
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const {KEYS_FILE} = require("./config.js");
 
 const DATA_DIR = process.env.DATA_DIR;
@@ -59,12 +60,34 @@ const {server} = require("../../app/server.js");
 	const expired = await ApiKeys.createApiKey("test-expired", "readonly", "30d", owner);
 	await ds.run("UPDATE api_keys SET expires_at = ? WHERE id = ?", ["2000-01-01T00:00:00.000Z", expired.id]);
 
+	// ブラウザE2E(*.e2e.js)用に、OIDCを経由せず管理者(owner)のログイン済みセッションを1つ作る。
+	// server.jsと同じsessionsテーブル(createSessionStore)へ直接書き込み、express-sessionが
+	// 検証できる署名済みcookie(connect.sid = "s:<sid>.<hmac>")を組み立ててキーファイルへ書き出す。
+	// これによりブラウザ側はcookieを注入するだけで、認証を有効にしたまま(=APIキーが実際に機能する
+	// 状態で)UIを操作できる。APIテスト(*.spec.js)はこのcookieを使わないため影響しない
+	// sessionsテーブルはserver.jsのrequire時(sqlite)/ds.init()(postgres)で作成済み。
+	// session-store.jsのset()と同じ形(sid/JSON化したセッション/失効epoch ms)で1行入れるだけでよく、
+	// express-session本体(app/node_modules)への依存を避けられる
+	const sid = crypto.randomBytes(24).toString("hex");
+	const sessionExpiresAt = Date.now() + 8 * 60 * 60 * 1000;
+	const sessionData = {
+		cookie: {originalMaxAge: 8 * 60 * 60 * 1000, expires: new Date(sessionExpiresAt).toISOString(), httpOnly: true, path: "/", sameSite: "lax"},
+		user: {identifier: owner}
+	};
+	await ds.run("INSERT INTO sessions (sid, data, expires_at) VALUES (?, ?, ?)", [sid, JSON.stringify(sessionData), sessionExpiresAt]);
+	// express-session(cookie-signature)と同じ署名(HMAC-SHA256/base64/末尾=除去)を再現する
+	const sessionSecret = process.env.SESSION_SECRET || "test-secret";
+	const sessionSig = crypto.createHmac("sha256", sessionSecret).update(sid).digest("base64").replace(/=+$/, "");
+	const sessionCookie = `s:${sid}.${sessionSig}`;
+
 	fs.writeFileSync(KEYS_FILE, JSON.stringify({
 		owner,
 		readonly: readonly.apiKey,
 		readwrite: readwrite.apiKey,
 		expired: expired.apiKey,
-		invalid: "dm_thisisnotarealkey"
+		invalid: "dm_thisisnotarealkey",
+		sessionCookieName: "connect.sid",
+		sessionCookie
 	}, null, 2));
 
 	server.listen(port, () => {
