@@ -586,6 +586,20 @@ const NATIVE_PREVIEW_EXTENSIONS = [".html", ".htm", ".pdf"];
 const ENTRY_FILE_EXTENSIONS = [...NATIVE_PREVIEW_EXTENSIONS, ...MHTML_EXTENSIONS, ...MARKDOWN_EXTENSIONS, ...IMAGE_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS];
 const PREVIEW_FILENAME = "preview.html";
 
+// ブラウザ上でスクリプトを実行し得る(=アップロードされた内容がそのまま配信されると
+// 保存型XSSになり得る)形式。これらをinline配信する際は、下記ACTIVE_CONTENT_CSPを付けて
+// スクリプト実行を無効化する。mhtml/md/markdown/csv/tsv は preview.html(=.html)へ変換して
+// 配信されるためこの.htmlで捕捉される。png/jpg/pdf/txt/log/json はスクリプトを実行しないため
+// 対象外(特にpdfはブラウザのネイティブPDFビューアの挙動を尊重してCSPを付けない)
+const ACTIVE_CONTENT_EXTENSIONS = [".html", ".htm", ".svg"];
+// プレビュー表示(画像・CSS・フォント等の描画)は一切損なわず、スクリプト実行・プラグイン・
+// フォーム送信・baseタグ乗っ取りだけを無効化する。default-srcは指定しないため、文書内の
+// 画像/スタイル等の読み込みは従来どおり動く。アプリ内iframe(sandbox="allow-same-origin")では
+// 元々スクリプトが動かないが、別ウィンドウ/共有リンク(api/documents/:id/viewer)や
+// api/documents/:id/file への直接アクセスはトップレベル文書となりサンドボックスが効かないため、
+// レスポンスヘッダーのCSPで防ぐ(SVGのトップレベル配信にも効かせるためmetaではなくヘッダーで付与する)
+const ACTIVE_CONTENT_CSP = "script-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+
 const CONTENT_TYPE_BY_EXTENSION = {
 	".html": "text/html; charset=utf-8",
 	".htm": "text/html; charset=utf-8",
@@ -1331,6 +1345,12 @@ const serveDocumentFile = async (req, res) => {
 	}
 	const extension = path.extname(targetFile).toLowerCase();
 	res.setHeader("Content-Type", CONTENT_TYPE_BY_EXTENSION[extension] || "application/octet-stream");
+	// スクリプトを実行し得る形式(html/htm/svg)は、inline配信・別ウィンドウ・直接アクセスの
+	// いずれでもスクリプトが走らないようCSPで無効化する(保存型XSS対策)。画像/CSS等の描画には
+	// 影響しないためプレビュー表示は従来どおり。ダウンロード(attachment)時も念のため付けておく
+	if (ACTIVE_CONTENT_EXTENSIONS.includes(extension)) {
+		res.setHeader("Content-Security-Policy", ACTIVE_CONTENT_CSP);
+	}
 	if (isDownload) {
 		logger.info({
 			audit: "download",
