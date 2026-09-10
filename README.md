@@ -1,6 +1,6 @@
 # WebService_DocumentManager
 
-HTML / MHTML / Markdown / PDF / 画像(SVG/PNG/JPEG) / CSV・TSV / テキスト・ログ / JSON をアップロードして一覧・プレビューできる社内向けドキュメント管理Webサービス。
+HTML / MHTML / Markdown / PDF / 画像(SVG/PNG/JPEG) / CSV・TSV / テキスト・ログ / JSON / draw.io をアップロードして一覧・プレビューできる社内向けドキュメント管理Webサービス。
 Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite、文書ファイルはローカルディスク)で動くが、メタデータDBを PostgreSQL、文書ファイルを S3 / GCS に切り替えることで、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)のマネージド環境・複数インスタンス構成でも動作する(切り替えは環境変数のみ。詳細は「[マルチクラウド構成の要点](#マルチクラウド構成の要点)」)。
 
 ## スクリーンショット
@@ -16,7 +16,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 ## 主な機能
 
 ### 文書管理
-- **対応形式**: `.html` / `.htm` / `.mhtml` / `.mht` / `.md` / `.markdown` / `.pdf` / `.svg` / `.png` / `.jpg` / `.jpeg` / `.csv` / `.tsv` / `.txt` / `.log` / `.json`(単一ファイルのみ、1ファイル256MBまで)
+- **対応形式**: `.html` / `.htm` / `.mhtml` / `.mht` / `.md` / `.markdown` / `.pdf` / `.svg` / `.png` / `.jpg` / `.jpeg` / `.csv` / `.tsv` / `.txt` / `.log` / `.json` / `.drawio`(実体は単一ファイル、1ファイル256MBまで。`.drawio`のみプレビュー用の画像を併せて1枚添付できる)
 - **保存先の切り替え**: 文書ファイルの実体は`STORAGE_BACKEND`環境変数でローカルディスク(既定)/S3(AWS)/GCS(Google Cloud Storage)を切り替えられる。アップロード・プレビュー変換・全文抽出・配信のすべてが共通のストレージ抽象層([lib/storage.js](app/lib/storage.js))経由になっており、S3/GCSモードでもアプリを経由してストリーミング配信(Range対応)するため認証・監査ログの挙動は変わらない。モード切替は「今後の保存先」の変更のみで、既存ファイルの自動移行は行わない
 - **メタDBの切り替え**: 文書メタデータ・タグ・プロジェクト・APIキー・ホワイトリスト・操作履歴・セッションを格納するDBは`DATABASE_BACKEND`環境変数でSQLite(既定・単一コンテナ向け)/PostgreSQL(RDS/Aurora, Cloud SQL/AlloyDB等)を切り替えられる。全DBアクセスが非同期の抽象層([lib/datastore.js](app/lib/datastore.js))経由のため、アプリロジックはバックエンドを意識しない。Postgresを選ぶとセッションもDBで共有され、複数インスタンスでの水平スケール(ECS/Cloud Run)に対応する
 - **プレビュー**
@@ -27,6 +27,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - svg/png/jpg/jpeg: ブラウザがネイティブに描画できるためそのまま表示(全文検索の対象にはならない。svgに埋め込まれたスクリプトは`sandbox`属性により実行されない)
   - csv/tsv: 1行目をヘッダーとしてHTMLテーブルに変換して表示(生テキストのままだと列が揃わず読みにくいため)
   - txt/log/json: ブラウザがネイティブに描画できるためそのまま表示(jsonはChrome/Firefox標準の折りたたみ可能なビューアが`sandbox`付きiframe内でも問題なく動作する)
+  - drawio: ブラウザは`.drawio`(XML)を直接描画できないため、サーバ側では変換せず、**アップロード時に一緒に送られたプレビュー画像(svg/png)をプレビューに用いる**(同フォルダに `preview.<ext>` として保存)。画像が無ければ「プレビュー不可」表示になるが、ダウンロードは可能。実体(ダウンロード対象)は常に`.drawio`のまま保持するため、Claude等のLLMで読み書きし、最新をアップロードする際にプレビュー用のsvg/pngを添付する運用に向く。XML内のページ名・図形ラベルは全文検索の対象になる(svg自体からはテキスト抽出しない)。サーバ側でのXML→画像変換は行わない方針のため、プレビュー画像は利用側(draw.io/LLM等)でエクスポートして添付する
   - 変換結果は元ファイルと同じフォルダに `preview.html` として保存する。ダウンロードは常に元ファイルを返す
   - プレビュー用iframe(html/mhtml/md変換結果)は `sandbox` 属性でスクリプト実行を制限する
   - プレビュー右上のアイコンボタンから、ファイルへの直接リンクのコピー・ダウンロードができる

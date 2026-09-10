@@ -18,11 +18,14 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "dm-unit-"));
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const zlib = require("node:zlib");
+
 const {computeByteRange} = require("../app/lib/storage.js");
 const {translatePlaceholders} = require("../app/lib/datastore.js");
 const VectorSearch = require("../app/lib/vector-search.js");
 const ApiKeys = require("../app/lib/api-keys.js");
 const AllowedUsers = require("../app/lib/allowed-users.js");
+const {extractDrawioText} = require("../app/lib/drawio.js");
 
 test("computeByteRange", () => {
 	assert.deepEqual(computeByteRange(undefined, 16), {satisfiable: true, start: 0, end: 15, partial: false});
@@ -104,6 +107,33 @@ test("allowed-users のロール定義とバリデーション", () => {
 	assert.equal(AllowedUsers.isValidRole("readonly"), true);
 	assert.equal(AllowedUsers.isValidRole("root"), false);
 	assert.equal(AllowedUsers.ROLES.ADMIN, "admin");
+});
+
+test("extractDrawioText: 非圧縮(mxGraphModel生XML)からページ名・ラベルを抽出", () => {
+	const xml = `<mxfile><diagram name="設計フロー" id="p1"><mxGraphModel>`
+		+ `<root><mxCell id="0"/><mxCell id="2" value="開始" vertex="1"/>`
+		+ `<mxCell id="3" value="&lt;b&gt;注文処理&lt;/b&gt;" vertex="1"/>`
+		+ `<mxCell id="4" value="" vertex="1"/></root></mxGraphModel></diagram></mxfile>`;
+	const text = extractDrawioText(xml);
+	assert.match(text, /設計フロー/);
+	assert.match(text, /開始/);
+	assert.match(text, /注文処理/, "HTMLラベルはタグ除去・エンティティ復元して抽出される");
+	assert.doesNotMatch(text, /<b>/, "HTMLタグは残らない");
+});
+
+test("extractDrawioText: 圧縮(base64 deflate)されたdiagramを展開して抽出", () => {
+	const model = `<mxGraphModel><root><mxCell id="2" value="圧縮ラベル" vertex="1"/></root></mxGraphModel>`;
+	const compressed = zlib.deflateRawSync(Buffer.from(encodeURIComponent(model), "utf8")).toString("base64");
+	const xml = `<mxfile><diagram name="圧縮ページ" id="p1">${compressed}</diagram></mxfile>`;
+	const text = extractDrawioText(xml);
+	assert.match(text, /圧縮ページ/);
+	assert.match(text, /圧縮ラベル/);
+});
+
+test("extractDrawioText: 壊れた入力でも例外を投げず空文字を返す", () => {
+	assert.equal(extractDrawioText(""), "");
+	assert.equal(extractDrawioText(null), "");
+	assert.equal(typeof extractDrawioText("<mxfile><diagram>@@not-base64@@</diagram></mxfile>"), "string");
 });
 
 test.after(() => {

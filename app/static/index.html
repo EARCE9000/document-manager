@@ -366,6 +366,7 @@
 	#documentList .docTag.csv { background: #f08c00; }
 	#documentList .docTag.json { background: #495057; }
 	#documentList .docTag.text { background: #868e96; }
+	#documentList .docTag.drawio { background: #e8590c; }
 	#documentList .docTag.none { background: #999; }
 	#documentList .docMeta { font-size: 0.75em; color: #777; margin-top: 4px; }
 	#documentList .userTags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
@@ -1041,8 +1042,9 @@
 				</div>
 				<div id="uploadDropZone">
 					<div class="uploadHint">ここにファイルをドラッグ&amp;ドロップ<br>またはクリックして選択</div>
-					<div class="uploadExt">.html / .htm / .mhtml / .mht / .md / .markdown / .pdf / .svg / .png / .jpg / .jpeg / .csv / .tsv / .txt / .log / .json</div>
-					<input type="file" id="uploadfile" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json" style="display:none;">
+					<div class="uploadExt">.html / .htm / .mhtml / .mht / .md / .markdown / .pdf / .svg / .png / .jpg / .jpeg / .csv / .tsv / .txt / .log / .json / .drawio</div>
+					<div class="uploadExt">.drawio はプレビュー用の画像(.svg/.png)を一緒に選ぶと、その画像がプレビュー表示されます</div>
+					<input type="file" id="uploadfile" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio" multiple style="display:none;">
 				</div>
 			</div>
 			<ul id="documentList"></ul>
@@ -1519,6 +1521,7 @@ const tagClassFor = (entryFile) => {
 	if (ext === "csv" || ext === "tsv") return "csv";
 	if (ext === "json") return "json";
 	if (ext === "txt" || ext === "log") return "text";
+	if (ext === "drawio") return "drawio";
 	return "html";
 };
 
@@ -2692,10 +2695,28 @@ fromDateInput.value = formatDateInputValue(defaultFromDate);
 
 const uploadFileInput = document.getElementById("uploadfile");
 
-const uploadFile = async (file) => {
-	if (!file) return;
+const PREVIEW_IMAGE_EXTS = ["svg", "png", "jpg", "jpeg"];
+const extOfName = (name) => (String(name || "").split(".").pop() || "").toLowerCase();
+
+// 選択/ドロップされたファイル群から、実体(uploadfile)と任意のプレビュー(previewfile)を決める。
+// .drawio が含まれていればそれを実体とし、同時に選ばれた画像(svg/png等)をプレビューに回す。
+// .drawio が無ければ従来どおり先頭1ファイルを実体として扱う。
+const pickUploadTargets = (files) => {
+	const list = Array.from(files || []).filter(Boolean);
+	if (list.length === 0) return null;
+	const drawio = list.find((f) => extOfName(f.name) === "drawio");
+	if (drawio) {
+		return {entry: drawio, preview: list.find((f) => PREVIEW_IMAGE_EXTS.includes(extOfName(f.name))) || null};
+	}
+	return {entry: list[0], preview: null};
+};
+
+const uploadFile = async (files) => {
+	const targets = pickUploadTargets(files);
+	if (!targets) return;
 	const formData = new FormData();
-	formData.append("uploadfile", file);
+	formData.append("uploadfile", targets.entry);
+	if (targets.preview) formData.append("previewfile", targets.preview);
 	const res = await fetch("./api/documents", {method: "POST", body: formData});
 	if (res.status !== 200) {
 		const body = await res.json().catch(() => ({}));
@@ -2707,7 +2728,7 @@ const uploadFile = async (file) => {
 
 uploadDropZone.addEventListener("click", () => uploadFileInput.click());
 uploadFileInput.addEventListener("change", () => {
-	uploadFile(uploadFileInput.files[0]);
+	uploadFile(uploadFileInput.files);
 	uploadFileInput.value = "";
 });
 
@@ -2726,8 +2747,7 @@ uploadFileInput.addEventListener("change", () => {
 	});
 });
 uploadDropZone.addEventListener("drop", (ev) => {
-	const file = ev.dataTransfer.files[0];
-	uploadFile(file);
+	uploadFile(ev.dataTransfer.files);
 });
 
 // APIキー管理モーダル
@@ -3528,8 +3548,9 @@ curl -X POST "${baseUrl}/api/documents/<id>/vector-index/retry" \\
 ${vectorSearchEndpoints}
 ### 文書アップロード (要 admin/readwrite ロール)
 \`POST ${baseUrl}/api/documents\`
-- \`multipart/form-data\`、フィールド名は \`uploadfile\`
-- 対応拡張子: \`.html\` \`.htm\` \`.mhtml\` \`.mht\` \`.md\` \`.markdown\` \`.pdf\` \`.svg\` \`.png\` \`.jpg\` \`.jpeg\` \`.csv\` \`.tsv\` \`.txt\` \`.log\` \`.json\` (単一ファイルのみ)
+- \`multipart/form-data\`、実体のフィールド名は \`uploadfile\`
+- 対応拡張子: \`.html\` \`.htm\` \`.mhtml\` \`.mht\` \`.md\` \`.markdown\` \`.pdf\` \`.svg\` \`.png\` \`.jpg\` \`.jpeg\` \`.csv\` \`.tsv\` \`.txt\` \`.log\` \`.json\` \`.drawio\` (単一ファイルのみ)
+- \`.drawio\` のときは、プレビュー用の画像(\`.svg\`/\`.png\`/\`.jpg\`/\`.jpeg\`)を \`previewfile\` フィールドで同時に送れる(任意)。送らない場合はプレビュー不可になるが、ダウンロードは可能。\`.drawio\` 以外では \`previewfile\` は無視される
 
 ### 文書のプレビュー/ダウンロード
 \`GET ${baseUrl}/api/documents/:id/file\`
@@ -3585,6 +3606,12 @@ ${vectorSearchCurlExamples}
 curl -X POST "${baseUrl}/api/documents" \\
   -H "Authorization: Bearer <APIキー>" \\
   -F "uploadfile=@./report.md"
+
+# アップロード(.drawio + プレビュー画像を同時に送る)
+curl -X POST "${baseUrl}/api/documents" \\
+  -H "Authorization: Bearer <APIキー>" \\
+  -F "uploadfile=@./diagram.drawio" \\
+  -F "previewfile=@./diagram.svg"
 
 # タグ更新
 curl -X PUT "${baseUrl}/api/documents/<id>/tags" \\

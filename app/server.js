@@ -576,6 +576,7 @@ const {parse: parseCsvSync} = require("csv-parse/sync");
 const {PDFParse} = require("pdf-parse");
 const ds = require("./lib/datastore.js");
 const VectorSearch = require("./lib/vector-search.js");
+const {extractDrawioText} = require("./lib/drawio.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -583,8 +584,14 @@ const IMAGE_EXTENSIONS = [".svg", ".png", ".jpg", ".jpeg"];
 const CSV_EXTENSIONS = [".csv", ".tsv"];
 const PLAIN_TEXT_EXTENSIONS = [".txt", ".log", ".json"];
 const NATIVE_PREVIEW_EXTENSIONS = [".html", ".htm", ".pdf"];
-const ENTRY_FILE_EXTENSIONS = [...NATIVE_PREVIEW_EXTENSIONS, ...MHTML_EXTENSIONS, ...MARKDOWN_EXTENSIONS, ...IMAGE_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS];
+// draw.io のネイティブ形式。ブラウザでは直接描画できないため、実体(=ダウンロード対象)は
+// .drawio のまま保持し、プレビューはアップロード時に一緒に送られた画像(svg/png等)を用いる
+// (サーバ側ではXML→画像変換はしない)。XML内のラベルは全文検索用に抽出する。
+const DRAWIO_EXTENSIONS = [".drawio"];
+const ENTRY_FILE_EXTENSIONS = [...NATIVE_PREVIEW_EXTENSIONS, ...MHTML_EXTENSIONS, ...MARKDOWN_EXTENSIONS, ...IMAGE_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS, ...DRAWIO_EXTENSIONS];
 const PREVIEW_FILENAME = "preview.html";
+// .drawio に添付できるプレビュー画像の拡張子(IMAGE_EXTENSIONSと同じ。保存名は preview<ext>)
+const DRAWIO_PREVIEW_EXTENSIONS = IMAGE_EXTENSIONS;
 
 // ブラウザ上でスクリプトを実行し得る(=アップロードされた内容がそのまま配信されると
 // 保存型XSSになり得る)形式。これらをinline配信する際は、下記ACTIVE_CONTENT_CSPを付けて
@@ -616,7 +623,8 @@ const CONTENT_TYPE_BY_EXTENSION = {
 	".tsv": "text/tab-separated-values; charset=utf-8",
 	".txt": "text/plain; charset=utf-8",
 	".log": "text/plain; charset=utf-8",
-	".json": "application/json; charset=utf-8"
+	".json": "application/json; charset=utf-8",
+	".drawio": "application/xml; charset=utf-8"
 };
 
 // 年月(YYYYMM)
@@ -707,9 +715,28 @@ const buildPreviewFile = async (documentId, originalName, extension) => {
 	}
 };
 
+// .drawio と一緒にアップロードされたプレビュー画像(svg/png等)を保存し、保存名を返す。
+// 画像が無ければ null(=プレビュー不可。ダウンロードは可能)。呼び出し元で拡張子は検証済み。
+const storeDrawioPreview = async (documentId, previewUpload) => {
+	if (previewUpload == null) return null;
+	const previewName = path.basename(fixUploadedFilenameEncoding(String(previewUpload.name || "")));
+	const previewExt = path.extname(previewName).toLowerCase();
+	// 保存名は preview<ext> に統一(プレビュー配信時の Content-Type は拡張子から決まる)
+	const storedName = `preview${previewExt}`;
+	await storage.writeFile(documentId, storedName, previewUpload.data);
+	return storedName;
+};
+
 // 全文検索用に本文のプレーンテキストを抽出する (失敗時は null。検索対象から外れるだけで他の処理には影響しない)
 const extractContentText = async (documentId, originalName, extension, previewFile) => {
 	try {
+		// .drawio はXMLなので、ページ名・図形ラベルを入口ファイル(=XML)から直接抽出する
+		// (プレビューは画像のためテキストは取れない。画像向け分岐より先に捕捉する)
+		if (DRAWIO_EXTENSIONS.includes(extension)) {
+			const xml = (await storage.readFile(documentId, originalName)).toString("utf-8");
+			const text = extractDrawioText(xml);
+			return text === "" ? null : text;
+		}
 		if (MARKDOWN_EXTENSIONS.includes(extension)) {
 			return (await storage.readFile(documentId, originalName)).toString("utf-8");
 		}
@@ -1254,8 +1281,20 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		const originalName = path.basename(fixUploadedFilenameEncoding(String(uploadfile.name || "")));
 		const extension = path.extname(originalName).toLowerCase();
 		if (originalName === "" || !ENTRY_FILE_EXTENSIONS.includes(extension)) {
-			res.status(400).json({error: "html / mhtml / markdown / pdf / svg / png / jpeg / csv / tsv / txt / log / json ファイルのみアップロード可能です"});
+			res.status(400).json({error: "html / mhtml / markdown / pdf / svg / png / jpeg / csv / tsv / txt / log / json / drawio ファイルのみアップロード可能です"});
 			return;
+		}
+
+		// .drawio のときだけ、同時アップロードされたプレビュー画像(previewfile)を受け付ける。
+		// 他形式では previewfile は無視する(プレビューは従来どおりサーバ側で生成/ネイティブ描画)
+		const isDrawio = DRAWIO_EXTENSIONS.includes(extension);
+		const previewUpload = isDrawio ? (req.files.previewfile ?? null) : null;
+		if (previewUpload != null) {
+			const previewExt = path.extname(path.basename(fixUploadedFilenameEncoding(String(previewUpload.name || "")))).toLowerCase();
+			if (!DRAWIO_PREVIEW_EXTENSIONS.includes(previewExt)) {
+				res.status(400).json({error: "プレビュー画像(previewfile)は svg / png / jpg / jpeg のみ指定できます"});
+				return;
+			}
 		}
 
 		const id = `${currentYearMonth()}_${uuidv4()}`;
@@ -1263,7 +1302,11 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		// storage経由で書き込む(express-fileuploadはuseTempFiles未設定=false相当で常にdataを保持する)
 		await storage.writeFile(id, originalName, uploadfile.data);
 
-		const previewFile = await buildPreviewFile(id, originalName, extension);
+		// .drawio はXML→画像変換をサーバで行わず、添付されたプレビュー画像をそのまま採用する
+		// (無ければ null=プレビュー不可)。それ以外は従来どおり変換/ネイティブ描画を判定する
+		const previewFile = isDrawio
+			? await storeDrawioPreview(id, previewUpload)
+			: await buildPreviewFile(id, originalName, extension);
 		const contentText = await extractContentText(id, originalName, extension, previewFile);
 
 		const row = {

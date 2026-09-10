@@ -103,6 +103,66 @@ test.describe.serial("文書ライフサイクル", () => {
 		await request.delete(`api/documents/${htmlId}`, {headers: rw});
 	});
 
+	// draw.io: 実体(.drawio)はダウンロード用に保持し、同時アップロードした画像(svg)を
+	// プレビューに採用する。XML内のラベルは全文検索の対象になる。
+	test(".drawio を プレビュー画像(svg)付きでアップロードできる", async ({request}) => {
+		const drawioXml = `<mxfile><diagram name="構成図" id="p1"><mxGraphModel><root>`
+			+ `<mxCell id="2" value="ドローアイオー検索対象ラベル" vertex="1"/></root></mxGraphModel></diagram></mxfile>`;
+		const previewSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>`;
+		const uploaded = await request.post("api/documents", {
+			headers: rw,
+			multipart: {
+				uploadfile: {name: "構成図.drawio", mimeType: "application/xml", buffer: Buffer.from(drawioXml)},
+				previewfile: {name: "構成図.svg", mimeType: "image/svg+xml", buffer: Buffer.from(previewSvg)}
+			}
+		});
+		expect(uploaded.status()).toBe(200);
+		const body = await uploaded.json();
+		const drawioId = body.id;
+		expect(body.entryFile).toBe("構成図.drawio");
+		expect(body.previewFile).toBe("preview.svg");
+
+		// ダウンロードは .drawio 実体(XML)を返す
+		const dl = await request.get(`api/documents/${drawioId}/file?download=1`, {headers: rw});
+		expect(dl.status()).toBe(200);
+		expect(dl.headers()["content-type"]).toContain("application/xml");
+		expect(await dl.text()).toContain("<mxfile>");
+
+		// プレビューはsvg(script-src 'none'のCSP付き)
+		const pv = await request.get(`api/documents/${drawioId}/file`, {headers: rw});
+		expect(pv.status()).toBe(200);
+		expect(pv.headers()["content-type"]).toContain("image/svg+xml");
+		expect(pv.headers()["content-security-policy"]).toContain("script-src 'none'");
+
+		// XMLラベルが全文検索でヒットする
+		const search = await request.get("api/documents?q=" + encodeURIComponent("ドローアイオー検索対象ラベル"), {headers: rw});
+		expect((await search.json()).some((d) => d.id === drawioId)).toBe(true);
+
+		await request.delete(`api/documents/${drawioId}`, {headers: rw});
+	});
+
+	test(".drawio はプレビュー画像なしでもアップロードできる(プレビュー不可)", async ({request}) => {
+		const uploaded = await request.post("api/documents", {
+			headers: rw,
+			multipart: {uploadfile: {name: "素の図.drawio", mimeType: "application/xml", buffer: Buffer.from("<mxfile><diagram name='x'><mxGraphModel/></diagram></mxfile>")}}
+		});
+		expect(uploaded.status()).toBe(200);
+		const body = await uploaded.json();
+		expect(body.previewFile).toBeNull();
+		await request.delete(`api/documents/${body.id}`, {headers: rw});
+	});
+
+	test("プレビュー画像(previewfile)が svg/png 以外だと400", async ({request}) => {
+		const res = await request.post("api/documents", {
+			headers: rw,
+			multipart: {
+				uploadfile: {name: "図.drawio", mimeType: "application/xml", buffer: Buffer.from("<mxfile/>")},
+				previewfile: {name: "preview.txt", mimeType: "text/plain", buffer: Buffer.from("x")}
+			}
+		});
+		expect(res.status()).toBe(400);
+	});
+
 	test("アーカイブ(論理削除)すると一覧から消え、ゴミ箱に現れる", async ({request}) => {
 		const del = await request.delete(`api/documents/${documentId}`, {headers: rw});
 		expect(del.status()).toBe(204);
