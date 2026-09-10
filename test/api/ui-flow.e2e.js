@@ -98,4 +98,52 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 			}
 		});
 	});
+
+	// .drawio(実体)とプレビュー画像(svg)を同時に選択→フロントのペア判定で previewfile として
+	// 送信→一覧表示・DRAWIOバッジ・svgプレビュー・.drawio実体のダウンロードまでを実ブラウザで通す
+	test(".drawio+プレビュー画像の同時アップロードとプレビュー表示", async ({page, request}) => {
+		const drawioName = `e2e-${Date.now()}.drawio`;
+		const svgName = `e2e-${Date.now()}.svg`;
+		const drawioXml = `<mxfile><diagram name="E2E構成図" id="p1"><mxGraphModel><root>`
+			+ `<mxCell id="2" value="E2Eドローアイオーラベル" vertex="1"/></root></mxGraphModel></diagram></mxfile>`;
+		const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="#e8590c"/></svg>`;
+
+		await page.goto("./");
+		await expect(page.locator("#uploadDropZone")).toBeVisible();
+
+		await test.step("2ファイル選択で.drawioを実体・svgをプレビューとして送信できる", async () => {
+			await page.setInputFiles("#uploadfile", [
+				{name: drawioName, mimeType: "application/xml", buffer: Buffer.from(drawioXml)},
+				{name: svgName, mimeType: "image/svg+xml", buffer: Buffer.from(svg)}
+			]);
+			const li = page.locator("#documentList li", {hasText: drawioName});
+			await expect(li).toBeVisible();
+			// 拡張子バッジが DRAWIO になる
+			await expect(li.locator(".docTag")).toHaveText("DRAWIO");
+		});
+
+		await test.step("svgプレビューが表示され、ダウンロードは.drawio実体を指す", async () => {
+			await page.locator("#documentList li", {hasText: drawioName}).click();
+			await expect(page.locator("#previewTitle")).toHaveText(drawioName);
+			const frame = page.locator("#previewFrame");
+			await expect(frame).toBeVisible();
+			await expect(frame).toHaveAttribute("src", /api\/documents\/.+\/file$/);
+			// ダウンロードリンクは元ファイル(.drawio)を返す ?download=1
+			await expect(page.locator("#downloadLink")).toHaveAttribute("href", /api\/documents\/.+\/file\?download=1$/);
+		});
+
+		await test.step("XMLラベルが全文検索でヒットする", async () => {
+			await page.fill("#filterInput", "E2Eドローアイオーラベル");
+			await expect(page.locator("#documentList li", {hasText: drawioName})).toBeVisible();
+			await page.fill("#filterInput", "");
+		});
+
+		await test.step("後始末(作成した文書をアーカイブ)", async () => {
+			const list = await (await request.get("api/documents", {headers: {Authorization: `Bearer ${keys.readwrite}`}})).json();
+			const created = list.find((d) => d.entryFile === drawioName);
+			if (created) {
+				await request.delete(`api/documents/${created.id}`, {headers: {Authorization: `Bearer ${keys.readwrite}`}});
+			}
+		});
+	});
 });
