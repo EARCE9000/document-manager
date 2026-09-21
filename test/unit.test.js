@@ -89,6 +89,13 @@ test("calculateExpiresAt: today は min(now+12h, 翌日02:00 JST)", () => {
 	assert.equal(ApiKeys.calculateExpiresAt("today", now).toISOString(), "2026-01-01T12:00:00.000Z");
 });
 
+test("calculateExpiresAt: unlimited は null(無期限)", () => {
+	assert.equal(ApiKeys.calculateExpiresAt("unlimited", new Date()), null);
+	assert.equal(ApiKeys.isValidExpiryOption("unlimited"), true);
+	assert.equal(ApiKeys.toPublicExpiresAt("9999-12-31T23:59:59.999Z"), null);
+	assert.equal(ApiKeys.toPublicExpiresAt("2026-01-31T00:00:00.000Z"), "2026-01-31T00:00:00.000Z");
+});
+
 test("calculateExpiresAt: 不正な選択肢は例外", () => {
 	assert.throws(() => ApiKeys.calculateExpiresAt("forever", new Date()));
 });

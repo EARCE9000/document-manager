@@ -1739,7 +1739,8 @@ app.get(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
 			role: row.role,
 			createdBy: row.created_by,
 			createdAt: row.created_at,
-			expiresAt: row.expires_at,
+			// 無期限キーはnull
+			expiresAt: ApiKeys.toPublicExpiresAt(row.expires_at),
 			lastUsedAt: row.last_used_at
 		}));
 		res.status(200).json(keys);
@@ -1776,7 +1777,7 @@ app.post(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
 			return;
 		}
 		if (!ApiKeys.isValidExpiryOption(expiryOption)) {
-			res.status(400).json({error: "expiryOption must be one of today/30d/90d"});
+			res.status(400).json({error: "expiryOption must be one of today/30d/90d/unlimited"});
 			return;
 		}
 		const created = await ApiKeys.createApiKey(label, role, expiryOption, req.authData.user_identifier);

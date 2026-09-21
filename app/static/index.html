@@ -1234,7 +1234,7 @@
 <div id="apiKeyOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="apiKeyModalBox">
 		<p>APIキー管理</p>
-		<div class="docMeta">Claude Desktop等の自動化クライアントから、ブラウザログインなしでapiを呼び出すためのキーです。<code>Authorization: Bearer &lt;キー&gt;</code> ヘッダーで送信してください。キーには必ず有効期限があり、権限は発行時に選んだロールに固定されます(後から自分のロールが変わっても既存キーには影響しません)。</div>
+		<div class="docMeta">Claude Desktop等の自動化クライアントから、ブラウザログインなしでapiを呼び出すためのキーです。<code>Authorization: Bearer &lt;キー&gt;</code> ヘッダーで送信してください。有効期限は当日限り/30日/90日/無期限から選べます(無期限キーは失効操作をするまで使え続けるため、スクリプト等での継続利用に限って使い、漏れた場合はすぐ失効させてください)。権限は発行時に選んだロールに固定されます(後から自分のロールが変わっても既存キーには影響しません)。</div>
 		<div id="apiKeyNewBox" style="display:none;"></div>
 		<div class="toolbarRow apiKeyCreateRow" style="margin: 10px 0 0;">
 			<button type="button" id="apiKeyExpirySummaryButton" class="apiKeyExpirySummaryButton"></button>
@@ -2876,8 +2876,13 @@ const API_KEY_EXPIRY_OPTIONS = [
 		))
 	},
 	{value: "30d", label: "30日", calc: (now) => new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)},
-	{value: "90d", label: "90日", calc: (now) => new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000)}
+	{value: "90d", label: "90日", calc: (now) => new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000)},
+	// 無期限(サーバーはexpiresAt=nullを返す)。失効操作をするまで有効
+	{value: "unlimited", label: "無期限", calc: () => null}
 ];
+
+// expiresAt=null(無期限キー)を期限切れ判定・並び替えで「ずっと先」として扱うためのミリ秒値
+const apiKeyExpiresAtMs = (expiresAt) => (expiresAt == null ? Infinity : new Date(expiresAt).getTime());
 
 // 選択中の有効期限オプション。デフォルトは「当日限り」で、通常はこのまま発行する想定
 let selectedApiKeyExpiryOption = "today";
@@ -2892,6 +2897,7 @@ const populateApiKeyRoleOptions = () => {
 const apiKeyExpiryOptionLabel = (option) => {
 	const opt = API_KEY_EXPIRY_OPTIONS.find((o) => o.value === option);
 	const expiresAt = opt.calc(new Date());
+	if (expiresAt == null) return `${opt.label}(失効操作をするまで有効)`;
 	return `${opt.label}(${formatDateTime(expiresAt.toISOString())}に失効)`;
 };
 
@@ -2944,19 +2950,21 @@ const loadApiKeys = async () => {
 	const now = Date.now();
 	// 有効なキーを上、失効済みを下に。同じ状態内では発行日時が新しい順
 	const sorted = [...keys].sort((a, b) => {
-		const aExpired = new Date(a.expiresAt).getTime() <= now;
-		const bExpired = new Date(b.expiresAt).getTime() <= now;
+		const aExpired = apiKeyExpiresAtMs(a.expiresAt) <= now;
+		const bExpired = apiKeyExpiresAtMs(b.expiresAt) <= now;
 		if (aExpired !== bExpired) return aExpired ? 1 : -1;
 		return new Date(b.createdAt) - new Date(a.createdAt);
 	});
 	apiKeyList.innerHTML = sorted.length === 0
 		? `<div class="emptyMessage">APIキーはまだありません。</div>`
 		: sorted.map((row) => {
-			const expiresAtMs = new Date(row.expiresAt).getTime();
+			const expiresAtMs = apiKeyExpiresAtMs(row.expiresAt);
 			const isExpired = expiresAtMs <= now;
 			const warnSoon = !isExpired && (expiresAtMs - now) < 60 * 60 * 1000;
 			const expiryHtml = isExpired
 				? `<span class="apiKeyExpiredBadge">失効済み</span>`
+				: row.expiresAt == null
+				? `<div class="apiKeyExpiry">有効期限: 無期限</div>`
 				: `<div class="apiKeyExpiry ${warnSoon ? "warnSoon" : ""}">有効期限: ${formatDateTime(row.expiresAt)}(${formatRemainingTime(row.expiresAt)})</div>`;
 			// 発行日時を主見出しにし、用途(label)は入力されていれば備考として下に添える
 			const noteHtml = row.label ? `<div class="apiKeyMeta">${escapeHtml(row.label)}</div>` : "";
@@ -3017,7 +3025,7 @@ const buildApiKeyChatSnippet = (apiKey, role, expiresAt) => {
 	return `Document ManagerのAPIキーを発行しました。以下の情報でAPIを直接呼び出してください。
 
 - ロール: ${role}(${roleNote})
-- 有効期限: ${formatDateTime(expiresAt)}(これを過ぎると使えなくなります。再度必要な場合は新しいキーを発行してください)
+- 有効期限: ${expiresAt == null ? "無期限(発行者が失効させるまで使えます。外部に漏れないよう取り扱いに注意してください)" : `${formatDateTime(expiresAt)}(これを過ぎると使えなくなります。再度必要な場合は新しいキーを発行してください)`}
 
 ${guide}`;
 };
@@ -3040,7 +3048,7 @@ apiKeyCreateButton.addEventListener("click", async () => {
 	apiKeyNewBox.innerHTML = `
 		発行しました。このキーは二度と表示されないので、必ずコピーしてください。
 		<code class="apiKeyValue">${created.apiKey}</code>
-		<div style="margin-top:6px;">ロール: <strong>${created.role}</strong> / 有効期限: <strong>${formatDateTime(created.expiresAt)}</strong></div>
+		<div style="margin-top:6px;">ロール: <strong>${created.role}</strong> / 有効期限: <strong>${created.expiresAt == null ? "無期限" : formatDateTime(created.expiresAt)}</strong></div>
 		<div class="apiKeyNewBoxButtons">
 			<button type="button" class="modalButton" id="apiKeyCopyRawButton">APIキーをコピー</button>
 			<button type="button" class="modalButton save" id="apiKeyCopyChatButton">AIチャット貼り付け用にコピー</button>

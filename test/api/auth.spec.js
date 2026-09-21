@@ -91,3 +91,27 @@ test.describe("requireAdmin: APIキー(最大readwrite)では管理APIに到達�
 		expect(res.status()).toBe(401);
 	});
 });
+
+test.describe("APIキーの無期限モード", () => {
+	const rw = bearer(keys.readwrite);
+	test("無期限キーを発行でき(expiresAt=null)、使え、失効させると401になる", async ({request}) => {
+		const created = await request.post("api/apikeys", {headers: rw, data: {label: "unlimited-test", role: "readonly", expiryOption: "unlimited"}});
+		expect(created.status()).toBe(200);
+		const body = await created.json();
+		expect(body.expiresAt).toBeNull();
+
+		const unlimited = {Authorization: `Bearer ${body.apiKey}`};
+		expect((await request.get("api/documents", {headers: unlimited})).status()).toBe(200);
+
+		const list = await (await request.get("api/apikeys", {headers: rw})).json();
+		expect(list.find((k) => k.id === body.id).expiresAt).toBeNull();
+
+		expect((await request.delete(`api/apikeys/${body.id}`, {headers: rw})).status()).toBe(204);
+		expect((await request.get("api/documents", {headers: unlimited})).status()).toBe(401);
+	});
+
+	test("不正な expiryOption は400", async ({request}) => {
+		const res = await request.post("api/apikeys", {headers: rw, data: {role: "readonly", expiryOption: "forever"}});
+		expect(res.status()).toBe(400);
+	});
+});

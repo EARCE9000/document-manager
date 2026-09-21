@@ -7,8 +7,10 @@
  * api を直接叩けるようにするための Bearer トークン認証。
  * 平文キーはDBに保存せず、sha256ハッシュのみを保存する(発行時に一度だけ平文を返す)。
  *
- * キーは「貼った先に平文で残る」運用を前提に、必ず有効期限を持ち(無期限キーは発行不可)、
- * 権限もキー発行時に選んだロール(readonly/readwrite。adminキーは発行不可)に固定される。
+ * キーは「貼った先に平文で残る」運用を前提に、既定では有効期限を持たせる(当日限り/30日/90日)。
+ * スクリプト・常駐ツール等からの継続利用向けに「無期限(unlimited)」も選べるが、その場合は
+ * 失効操作(revoke)でのみ無効化される。権限はキー発行時に選んだロール
+ * (readonly/readwrite。adminキーは発行不可)に固定される。
  * 発行者本人のロールが後から変わっても、既存キーのロードには影響しない
  * (権限判定は常に「キーに記録されたrole」を見る。発行者自身がホワイトリストから
  * 外れた場合のみ、別途requireAuth側でログイン不可=キーも無効として扱う)。
@@ -27,11 +29,18 @@ const isValidApiKeyRole = (role) => API_KEY_ROLES.includes(role);
 const EXPIRY_OPTIONS = Object.freeze({
 	TODAY: "today",
 	DAYS_30: "30d",
-	DAYS_90: "90d"
+	DAYS_90: "90d",
+	UNLIMITED: "unlimited"
 });
 const isValidExpiryOption = (option) => Object.values(EXPIRY_OPTIONS).includes(option);
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+// 無期限キーのexpires_atに保存する番兵値(expires_atはNOT NULLのため)。ISO8601文字列の
+// 大小比較で常に「未来」になるので、verifyApiKeyの期限判定はそのままで通る。
+// APIの応答ではこの値をnull(=無期限)として返す
+const UNLIMITED_EXPIRES_AT = "9999-12-31T23:59:59.999Z";
+const toPublicExpiresAt = (expiresAt) => (expiresAt === UNLIMITED_EXPIRES_AT ? null : expiresAt);
 
 // UTCのDateから「JSTの壁時計としての年月日」を取り出す(process.env.TZに依存させない)
 const toJstWallClockParts = (date) => {
@@ -48,7 +57,7 @@ const nextDay2amJstAsUtcDate = (now) => {
 
 /**
  * 有効期限の選択肢から実際のexpires_at(Date)を計算する。
- * TODAY(当日限り) = LEAST(now + 12時間, 翌日02:00(JST))
+ * TODAY(当日限り) = LEAST(now + 12時間, 翌日02:00(JST))。UNLIMITED(無期限)はnullを返す
  */
 const calculateExpiresAt = (option, now = new Date()) => {
 	switch (option) {
@@ -61,6 +70,8 @@ const calculateExpiresAt = (option, now = new Date()) => {
 			return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 		case EXPIRY_OPTIONS.DAYS_90:
 			return new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+		case EXPIRY_OPTIONS.UNLIMITED:
+			return null;
 		default:
 			throw new Error(`invalid expiry option: ${option}`);
 	}
@@ -97,10 +108,11 @@ module.exports.API_KEY_ROLES = API_KEY_ROLES;
 module.exports.isValidApiKeyRole = isValidApiKeyRole;
 module.exports.isValidExpiryOption = isValidExpiryOption;
 module.exports.calculateExpiresAt = calculateExpiresAt;
+module.exports.toPublicExpiresAt = toPublicExpiresAt;
 
 /**
  * 新しいAPIキーを発行する。平文キーはこの戻り値でのみ取得可能。
- * role(readonly/readwrite)とexpiryOption(today/30d/90d)は呼び出し元(server.js)で
+ * role(readonly/readwrite)とexpiryOption(today/30d/90d/unlimited)は呼び出し元(server.js)で
  * 発行者の現在のロールと突き合わせた上で渡すこと。ここでは値の形式だけを検証する。
  */
 module.exports.createApiKey = async (label, role, expiryOption, createdBy) => {
@@ -121,9 +133,9 @@ module.exports.createApiKey = async (label, role, expiryOption, createdBy) => {
 		role,
 		created_by: createdBy,
 		created_at: now.toISOString(),
-		expires_at: expiresAt.toISOString()
+		expires_at: expiresAt == null ? UNLIMITED_EXPIRES_AT : expiresAt.toISOString()
 	});
-	return {id, label, role, apiKey, expiresAt: expiresAt.toISOString()};
+	return {id, label, role, apiKey, expiresAt: expiresAt == null ? null : expiresAt.toISOString()};
 };
 
 /**
