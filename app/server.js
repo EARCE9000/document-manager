@@ -774,8 +774,8 @@ const extractContentText = async (documentId, originalName, extension, previewFi
 };
 
 const SQL_INSERT_DOCUMENT = `
-	INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at)
-	VALUES (@id, @entry_file, @preview_file, @content_text, @size, @uploaded_by, @uploaded_at)
+	INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, previous_id)
+	VALUES (@id, @entry_file, @preview_file, @content_text, @size, @uploaded_by, @uploaded_at, @previous_id)
 `;
 
 const SQL_INSERT_DOCUMENT_FTS = `
@@ -784,7 +784,7 @@ const SQL_INSERT_DOCUMENT_FTS = `
 `;
 
 const SQL_SELECT_ACTIVE_DOCUMENTS = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id
 	FROM documents
 	WHERE deleted_at IS NULL
 	ORDER BY uploaded_at DESC
@@ -800,7 +800,7 @@ const SQL_SELECT_ACTIVE_DOCUMENTS_FOR_INDEXING = `SELECT id, content_text FROM d
 const MIN_FTS_QUERY_LENGTH = 3;
 
 const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo
+	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo, d.previous_id
 	FROM documents d
 	LEFT JOIN document_tags t ON t.document_id = d.id
 	WHERE d.deleted_at IS NULL
@@ -814,7 +814,7 @@ const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE = `
 `;
 
 const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_FTS = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo
+	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo, d.previous_id
 	FROM documents d
 	WHERE d.deleted_at IS NULL
 	AND (
@@ -828,7 +828,7 @@ const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_FTS = `
 // Postgresでは FTS5 が無いため、pg_trgm(GINインデックス)で加速される ILIKE 部分一致を使う。
 // LIKE版と同じ条件だが ILIKE で大文字小文字を無視する(SQLiteのLIKEの既定挙動に合わせる)
 const SQL_SEARCH_ACTIVE_DOCUMENTS_PG = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo
+	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo, d.previous_id
 	FROM documents d
 	LEFT JOIN document_tags t ON t.document_id = d.id
 	WHERE d.deleted_at IS NULL
@@ -862,7 +862,7 @@ const searchActiveDocuments = async (q) => {
 // アーカイブ(論理削除済み)一覧・検索。アクティブ一覧と同じ検索方式(FTS5/LIKE)を、
 // 対象をdeleted_at IS NOT NULLに変えて流用する
 const SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo
+	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo, d.previous_id
 	FROM documents d
 	LEFT JOIN document_tags t ON t.document_id = d.id
 	WHERE d.deleted_at IS NOT NULL
@@ -876,7 +876,7 @@ const SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE = `
 `;
 
 const SQL_SEARCH_DELETED_DOCUMENTS_BY_FTS = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo
+	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo, d.previous_id
 	FROM documents d
 	WHERE d.deleted_at IS NOT NULL
 	AND (
@@ -888,7 +888,7 @@ const SQL_SEARCH_DELETED_DOCUMENTS_BY_FTS = `
 `;
 
 const SQL_SEARCH_DELETED_DOCUMENTS_PG = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo
+	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo, d.previous_id
 	FROM documents d
 	LEFT JOIN document_tags t ON t.document_id = d.id
 	WHERE d.deleted_at IS NOT NULL
@@ -917,14 +917,14 @@ const searchDeletedDocuments = async (q) => {
 };
 
 const SQL_SELECT_ACTIVE_DOCUMENT_BY_ID = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id
 	FROM documents
 	WHERE id = ? AND deleted_at IS NULL
 `;
 
 // アーカイブ済み文書もプレビュー/ダウンロードできるよう、状態を問わずidだけで引く
 const SQL_SELECT_DOCUMENT_BY_ID = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, deleted_by, deleted_at
 	FROM documents
 	WHERE id = ?
 `;
@@ -938,7 +938,7 @@ const SQL_SOFT_DELETE_DOCUMENT = `
 `;
 
 const SQL_SELECT_DELETED_DOCUMENTS = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, previous_id
 	FROM documents
 	WHERE deleted_at IS NOT NULL
 	ORDER BY deleted_at DESC
@@ -956,6 +956,13 @@ const SQL_DELETE_TAGS_BY_DOCUMENT_ID = `DELETE FROM document_tags WHERE document
 // ON CONFLICT DO NOTHING はSQLite(3.24+)・Postgres双方で有効(旧 INSERT OR IGNORE の可搬形)。
 // document_tags は PRIMARY KEY(document_id, tag) のため重複挿入は無視される
 const SQL_INSERT_TAG = `INSERT INTO document_tags (document_id, tag) VALUES (?, ?) ON CONFLICT DO NOTHING`;
+// 版の紐付け: previous_idで「この文書が置き換えた旧版」を持つ。新版(next)は逆引きで求める。
+// 旧版1つにつき新版は1つだけ(アップロード時に既に新版がある旧版の指定は409で拒否する)だが、
+// 念のため新しいものを優先して1件に絞る
+const SQL_SELECT_NEXT_VERSION_ID = `SELECT id FROM documents WHERE previous_id = ? ORDER BY uploaded_at DESC LIMIT 1`;
+// 版履歴を辿る上限(循環や異常データで無限ループしないための保険)
+const MAX_VERSION_CHAIN = 200;
+
 const replaceDocumentTags = async (documentId, tags) => {
 	await ds.transaction(async (tx) => {
 		await tx.run(SQL_DELETE_TAGS_BY_DOCUMENT_ID, [documentId]);
@@ -971,6 +978,8 @@ const toDocumentResponse = async (row) => ({
 	uploadedBy: row.uploaded_by,
 	modified: row.uploaded_at,
 	memo: row.memo,
+	previousId: row.previous_id ?? null,
+	nextId: (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [row.id]))?.id ?? null,
 	tags: (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [row.id])).map((tagRow) => tagRow.tag)
 });
 
@@ -984,6 +993,8 @@ const toDeletedDocumentResponse = async (row) => ({
 	deletedBy: row.deleted_by,
 	deletedAt: row.deleted_at,
 	memo: row.memo,
+	previousId: row.previous_id ?? null,
+	nextId: (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [row.id]))?.id ?? null,
 	tags: (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [row.id])).map((tagRow) => tagRow.tag)
 });
 
@@ -1297,6 +1308,23 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 			}
 		}
 
+		// 新しい版としてのアップロード(任意)。previousIdで指定した旧版は、新版の登録と同時に
+		// アーカイブし、タグ・プロジェクトの登録(フォルダ・並び順)を新版へ引き継ぐ。
+		// 既に新版がある旧版(=最新版ではない)を指定すると版履歴が分岐するため409で拒否する
+		const previousId = String(req.body?.previousId ?? "").trim() || null;
+		const previousDocument = previousId == null ? null : await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [previousId]);
+		if (previousId != null) {
+			if (previousDocument == null) {
+				res.status(404).json({error: "previousId で指定された旧版の文書が見つかりません"});
+				return;
+			}
+			const existingNextId = (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [previousId]))?.id;
+			if (existingNextId != null) {
+				res.status(409).json({error: "指定された旧版には既に新しい版があります。最新版の文書IDを指定してください", nextId: existingNextId});
+				return;
+			}
+		}
+
 		const id = `${currentYearMonth()}_${uuidv4()}`;
 		// uploadfile.mv()はローカルディスク専用のAPIのため使わず、メモリ上のBuffer(uploadfile.data)を
 		// storage経由で書き込む(express-fileuploadはuseTempFiles未設定=false相当で常にdataを保持する)
@@ -1316,13 +1344,33 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 			content_text: contentText,
 			size: uploadfile.size,
 			uploaded_by: req.authData.user_identifier,
-			uploaded_at: new Date().toISOString()
+			uploaded_at: new Date().toISOString(),
+			previous_id: previousId
 		};
-		await ds.run(SQL_INSERT_DOCUMENT, row);
-		// documents_fts はSQLite(FTS5)専用。Postgresではpg_trgmインデックスで代替するため不要
-		if (ds.backend === "sqlite") {
-			await ds.run(SQL_INSERT_DOCUMENT_FTS, row);
-		}
+		// 新版の登録と旧版のアーカイブ・引き継ぎは1トランザクションで行い、途中で失敗しても
+		// 「新版だけ登録されて旧版が残る」等の中途半端な状態にしない
+		let archivedPrevious = false;
+		let transferredProjectIds = [];
+		await ds.transaction(async (tx) => {
+			await tx.run(SQL_INSERT_DOCUMENT, row);
+			// documents_fts はSQLite(FTS5)専用。Postgresではpg_trgmインデックスで代替するため不要
+			if (ds.backend === "sqlite") {
+				await tx.run(SQL_INSERT_DOCUMENT_FTS, row);
+			}
+			if (previousDocument != null) {
+				for (const tagRow of await tx.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [previousId])) {
+					await tx.run(SQL_INSERT_TAG, [id, tagRow.tag]);
+				}
+				transferredProjectIds = await Projects.transferPlacements(tx, previousId, id);
+				// 既にアーカイブ済みの旧版を指定した場合は紐付けと引き継ぎだけ行う
+				const archiveResult = await tx.run(SQL_SOFT_DELETE_DOCUMENT, {
+					id: previousId,
+					deleted_at: row.uploaded_at,
+					deleted_by: req.authData.user_identifier
+				});
+				archivedPrevious = archiveResult.changes > 0;
+			}
+		});
 		// ベクトル検索(Weaviate)への索引登録はベストエフォート・非同期(埋め込み計算に数秒
 		// かかるため、awaitせずバックグラウンドで実行しアップロードAPIの応答をブロックしない。
 		// WEAVIATE_URL未設定/接続失敗でもアップロード自体は成功させる。詳細はlib/vector-search.js参照)
@@ -1334,7 +1382,21 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 			entryFile: originalName
 		}, "audit");
 		AuditLog.record({userIdentifier: req.authData.user_identifier, action: "upload", documentId: id, entryFile: originalName});
+		if (archivedPrevious) {
+			VectorSearch.removeDocument(previousId).catch((err) => logger.error({err, documentId: previousId}, "::api/documents:upload:removePreviousDocument"));
+			logger.info({
+				audit: "supersede",
+				user: req.authData.user_identifier,
+				documentId: previousId,
+				nextId: id,
+				projectIds: transferredProjectIds
+			}, "audit");
+			AuditLog.record({userIdentifier: req.authData.user_identifier, action: "supersede", documentId: previousId, entryFile: previousDocument.entry_file});
+		}
 		broadcastDocumentsChanged();
+		if (transferredProjectIds.length > 0) {
+			broadcastProjectsChanged();
+		}
 
 		res.status(200).json(await toDocumentResponse(row));
 	} catch (err) {
@@ -1488,6 +1550,73 @@ app.get(BASE_URL_PATH + 'api/documents/trash', requireAuth, requireWrite, async 
 		res.status(200).json(await Promise.all(rows.map(toDeletedDocumentResponse)));
 	} catch (err) {
 		logger.error(err, "::api/documents/trash:list");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+// 単一文書の応答。アーカイブ済みかどうか(archived)も含める(版履歴から旧版を開く場合など、
+// 通常一覧/アーカイブ一覧のどちらに属するかを呼び出し側が知らなくても扱えるようにするため)
+const toSingleDocumentResponse = async (row) => ({
+	...(await toDocumentResponse(row)),
+	archived: row.deleted_at != null,
+	deletedBy: row.deleted_by ?? null,
+	deletedAt: row.deleted_at ?? null
+});
+
+/**
+ * 文書のメタ情報を1件取得する(アーカイブ済みも対象)
+ */
+app.get(BASE_URL_PATH + 'api/documents/:id', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
+		if (document == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		res.status(200).json(await toSingleDocumentResponse(document));
+	} catch (err) {
+		logger.error(err, "::api/documents/:id:get");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 版履歴。指定文書から previous_id を遡り・新版を辿って、古い順に並べた一連の版を返す
+ * (旧版はアップロード時にアーカイブされるため、archived付きで返す)
+ */
+app.get(BASE_URL_PATH + 'api/documents/:id/versions', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
+		if (document == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const seen = new Set([document.id]);
+		const older = [];
+		let cursor = document;
+		while (cursor.previous_id != null && !seen.has(cursor.previous_id) && seen.size < MAX_VERSION_CHAIN) {
+			const previous = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [cursor.previous_id]);
+			if (previous == null) break;
+			seen.add(previous.id);
+			older.unshift(previous);
+			cursor = previous;
+		}
+		const newer = [];
+		cursor = document;
+		while (seen.size < MAX_VERSION_CHAIN) {
+			const nextId = (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [cursor.id]))?.id;
+			if (nextId == null || seen.has(nextId)) break;
+			const next = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [nextId]);
+			if (next == null) break;
+			seen.add(next.id);
+			newer.push(next);
+			cursor = next;
+		}
+		res.status(200).json(await Promise.all([...older, document, ...newer].map(toSingleDocumentResponse)));
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/versions");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

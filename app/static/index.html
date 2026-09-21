@@ -471,6 +471,34 @@
 		cursor: pointer;
 	}
 	.similarFileChip:hover { background: #eaf2ff; }
+	/* 版履歴(旧版→新版の紐付け)。似ているファイル名の行と同じ見た目で、現在表示中の版を強調する */
+	#versionHistoryRow {
+		padding: 8px 16px;
+		border-bottom: 1px solid #ddd;
+		background: #fafbfc;
+		display: none;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.8em;
+	}
+	.versionChip {
+		background: #fff;
+		color: #1a56db;
+		border: 1px solid #9cc2ff;
+		border-radius: 999px;
+		padding: 2px 10px;
+		font-size: 0.95em;
+		cursor: pointer;
+		max-width: 260px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.versionChip:hover { background: #eaf2ff; }
+	.versionChip.archived { color: #888; border-color: #ccc; }
+	.versionChip.current { background: #1a56db; border-color: #1a56db; color: #fff; cursor: default; }
+	.versionArrow { color: #aaa; }
 	#previewFrame { flex: 1; border: none; width: 100%; background: #fff; }
 	#previewPlaceholder { padding: 2em; color: #888; }
 	#previewOpenExternalBox {
@@ -763,6 +791,7 @@
 	#historyTable .historyActionBadge.delete { background: #fff3cd; color: #b8860b; }
 	#historyTable .historyActionBadge.restore { background: #eaf7ea; color: #2f9e44; }
 	#historyTable .historyActionBadge.project_unassign { background: #f4f5f7; color: #666; }
+	#historyTable .historyActionBadge.supersede { background: #fff3cd; color: #b8860b; }
 
 	/* ベクトル索引ページ(モーダルではなく#mainArea全体を使うページ表示。件数が多い想定のため) */
 	#vectorIndexPaneHeader { padding: 14px 20px; border-bottom: 1px solid #ddd; flex-shrink: 0; }
@@ -1059,6 +1088,10 @@
 					<a id="downloadLink" href="#" class="previewActionButton" title="ダウンロード" aria-label="ダウンロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
 					</a>
+					<button type="button" id="previewReviseButton" class="previewActionButton previewWriteAction" title="新しい版をアップロード(この文書はアーカイブされ、タグ・プロジェクトは新しい版へ引き継がれます)" aria-label="新しい版をアップロード" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+					</button>
+					<input type="file" id="reviseFileInput" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio" multiple style="display:none;">
 					<button type="button" id="previewTagEditButton" class="previewActionButton previewWriteAction" title="タグを編集" aria-label="タグを編集" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.59a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
 					</button>
@@ -1071,6 +1104,7 @@
 				</div>
 			</div>
 			<div id="similarFilesRow"></div>
+			<div id="versionHistoryRow"></div>
 			<iframe id="previewFrame" style="display:none;" sandbox="allow-same-origin"></iframe>
 			<div id="previewOpenExternalBox" style="display:none;">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -1346,6 +1380,9 @@ const previewOpenExternalBox = document.getElementById("previewOpenExternalBox")
 const previewOpenExternalMessage = document.getElementById("previewOpenExternalMessage");
 const previewOpenExternalButton = document.getElementById("previewOpenExternalButton");
 const similarFilesRow = document.getElementById("similarFilesRow");
+const versionHistoryRow = document.getElementById("versionHistoryRow");
+const previewReviseButton = document.getElementById("previewReviseButton");
+const reviseFileInput = document.getElementById("reviseFileInput");
 const memoArea = document.getElementById("memoArea");
 const memoTextarea = document.getElementById("memoTextarea");
 const memoSaveButton = document.getElementById("memoSaveButton");
@@ -1617,6 +1654,33 @@ const renderSimilarFiles = (doc) => {
 	});
 };
 
+// 版履歴(アップロード時に旧版を指定して紐付けた一連の版)を古い順に表示する。
+// 旧版はアーカイブ済みのため通常一覧(allDocuments)には無く、APIから都度取得する
+const renderVersionHistory = async (doc) => {
+	versionHistoryRow.style.display = "none";
+	versionHistoryRow.innerHTML = "";
+	if (doc.previousId == null && doc.nextId == null) return;
+	const res = await fetch(`./api/documents/${encodeURIComponent(doc.id)}/versions`);
+	if (res.status !== 200 || selectedId !== doc.id) return;
+	const versions = await res.json();
+	if (versions.length < 2) return;
+	versionHistoryRow.innerHTML = `
+		<span class="similarFilesLabel">版履歴:</span>
+		${versions.map((v, i) => `
+			${i > 0 ? `<span class="versionArrow">›</span>` : ""}
+			<button type="button" class="versionChip ${v.id === doc.id ? "current" : ""} ${v.archived ? "archived" : ""}" data-id="${escapeHtml(v.id)}"
+				title="${escapeHtml(`${v.entryFile} (${formatDateTime(v.modified)}${v.archived ? "・アーカイブ済み" : ""})`)}">v${i + 1} ${escapeHtml(v.entryFile)}</button>
+		`).join("")}
+	`;
+	versionHistoryRow.style.display = "flex";
+	versionHistoryRow.querySelectorAll(".versionChip:not(.current)").forEach((btn) => {
+		btn.addEventListener("click", () => {
+			const target = versions.find((v) => v.id === btn.dataset.id);
+			if (target) showPreview(target);
+		});
+	});
+};
+
 const clearPreview = () => {
 	selectedId = null;
 	projectTreeList.querySelectorAll(".treeDocRow.selected").forEach((li) => li.classList.remove("selected"));
@@ -1625,11 +1689,13 @@ const clearPreview = () => {
 	previewOpenExternalBox.style.display = "none";
 	downloadLink.style.display = "none";
 	copyLinkButton.style.display = "none";
+	previewReviseButton.style.display = "none";
 	previewTagEditButton.style.display = "none";
 	previewArchiveButton.style.display = "none";
 	previewRestoreButton.style.display = "none";
 	previewTitle.textContent = "左の一覧から文書を選択してください。";
 	similarFilesRow.style.display = "none";
+	versionHistoryRow.style.display = "none";
 	memoArea.style.display = "none";
 	memoTextarea.value = "";
 };
@@ -1657,7 +1723,14 @@ const showPreview = (doc) => {
 	// タグ編集・アーカイブは通常表示の文書のみ、元に戻すはアーカイブ表示の文書のみ対象。
 	// いずれも一覧行の同名ボタンと同じ挙動(アーカイブ/復元とも確認なしの即時実行)をプレビューからも行えるようにする。
 	// プロジェクトのツリー経由でアーカイブ済み文書を開いた場合(doc.archived)も同様に扱う
-	const isArchived = currentView === "archive" || doc.archived === true;
+	// 版履歴から開いた文書はarchivedを持つため、表示中の画面(通常/アーカイブ)よりそちらを優先する
+	const isArchived = typeof doc.archived === "boolean" ? doc.archived : currentView === "archive";
+	// 新しい版のアップロードは最新版(新版がまだ無い通常表示の文書)のみ対象
+	previewReviseButton.style.display = isArchived || doc.nextId != null ? "none" : "inline-flex";
+	previewReviseButton.onclick = () => {
+		reviseTargetDoc = doc;
+		reviseFileInput.click();
+	};
 	previewTagEditButton.style.display = isArchived ? "none" : "inline-flex";
 	previewTagEditButton.onclick = () => openTagEditor(doc);
 	previewArchiveButton.style.display = isArchived ? "none" : "inline-flex";
@@ -1676,6 +1749,7 @@ const showPreview = (doc) => {
 	};
 
 	renderSimilarFiles(doc);
+	renderVersionHistory(doc);
 
 	memoArea.style.display = "flex";
 	memoTextarea.value = doc.memo || "";
@@ -2711,20 +2785,40 @@ const pickUploadTargets = (files) => {
 	return {entry: list[0], preview: null};
 };
 
-const uploadFile = async (files) => {
+// previousDoc を渡すと、その文書の新しい版としてアップロードする(旧版はサーバー側でアーカイブされ、
+// タグ・プロジェクトの登録が新しい版へ引き継がれる)。戻り値はアップロードされた文書(失敗時null)
+const uploadFile = async (files, previousDoc = null) => {
 	const targets = pickUploadTargets(files);
-	if (!targets) return;
+	if (!targets) return null;
 	const formData = new FormData();
 	formData.append("uploadfile", targets.entry);
 	if (targets.preview) formData.append("previewfile", targets.preview);
+	if (previousDoc) formData.append("previousId", previousDoc.id);
 	const res = await fetch("./api/documents", {method: "POST", body: formData});
 	if (res.status !== 200) {
 		const body = await res.json().catch(() => ({}));
 		alert(body.error || "アップロードに失敗しました");
-		return;
+		return null;
 	}
-	loadDocuments();
+	const uploaded = await res.json();
+	await loadDocuments();
+	return uploaded;
 };
+
+// プレビューの「新しい版をアップロード」: 選択した文書を旧版として新しい版をアップロードし、
+// 完了後は新しい版のプレビューに切り替える
+let reviseTargetDoc = null;
+reviseFileInput.addEventListener("change", async () => {
+	const previousDoc = reviseTargetDoc;
+	const files = Array.from(reviseFileInput.files);
+	reviseFileInput.value = "";
+	reviseTargetDoc = null;
+	if (previousDoc == null || files.length === 0) return;
+	const uploaded = await uploadFile(files, previousDoc);
+	if (uploaded == null) return;
+	if (currentView === "projects") loadProjectTree();
+	showPreview(allDocuments.find((d) => d.id === uploaded.id) || uploaded);
+});
 
 uploadDropZone.addEventListener("click", () => uploadFileInput.click());
 uploadFileInput.addEventListener("change", () => {
@@ -3049,7 +3143,8 @@ const HISTORY_ACTION_LABELS = {
 	delete: "アーカイブ",
 	restore: "復元",
 	project_assign: "プロジェクトへ登録",
-	project_unassign: "プロジェクトから解除"
+	project_unassign: "プロジェクトから解除",
+	supersede: "新しい版で置換"
 };
 
 // 履歴の対象ファイル名をクリックしたら、文書一覧(必要ならアーカイブ側)でその文書に
@@ -3551,6 +3646,12 @@ ${vectorSearchEndpoints}
 - \`multipart/form-data\`、実体のフィールド名は \`uploadfile\`
 - 対応拡張子: \`.html\` \`.htm\` \`.mhtml\` \`.mht\` \`.md\` \`.markdown\` \`.pdf\` \`.svg\` \`.png\` \`.jpg\` \`.jpeg\` \`.csv\` \`.tsv\` \`.txt\` \`.log\` \`.json\` \`.drawio\` (単一ファイルのみ)
 - \`.drawio\` のときは、プレビュー用の画像(\`.svg\`/\`.png\`/\`.jpg\`/\`.jpeg\`)を \`previewfile\` フィールドで同時に送れる(任意)。送らない場合はプレビュー不可になるが、ダウンロードは可能。\`.drawio\` 以外では \`previewfile\` は無視される
+- 既存文書の新しい版として登録する場合は \`previousId\` フィールドに旧版の文書IDを指定する(任意)。旧版は自動的にアーカイブされ、タグとプロジェクトの登録(フォルダ・並び順)が新しい版へ引き継がれる。応答の \`previousId\`/\`nextId\` で版同士のつながりが分かる
+  - 指定した旧版が存在しなければ404、既に新しい版がある(最新版ではない)場合は409(応答の \`nextId\` が既存の新しい版)
+
+### 文書の情報・版履歴の取得
+\`GET ${baseUrl}/api/documents/:id\` - 文書1件のメタ情報(アーカイブ済みも取得でき、\`archived\` で判別できる)
+\`GET ${baseUrl}/api/documents/:id/versions\` - その文書を含む一連の版を古い順に返す
 
 ### 文書のプレビュー/ダウンロード
 \`GET ${baseUrl}/api/documents/:id/file\`
@@ -3613,6 +3714,12 @@ curl -X POST "${baseUrl}/api/documents" \\
   -F "uploadfile=@./diagram.drawio" \\
   -F "previewfile=@./diagram.svg"
 
+# 既存文書の新しい版としてアップロード(旧版はアーカイブされ、タグ・プロジェクトを引き継ぐ)
+curl -X POST "${baseUrl}/api/documents" \\
+  -H "Authorization: Bearer <APIキー>" \\
+  -F "uploadfile=@./report_v2.md" \\
+  -F "previousId=<旧版の文書ID>"
+
 # タグ更新
 curl -X PUT "${baseUrl}/api/documents/<id>/tags" \\
   -H "Authorization: Bearer <APIキー>" \\
@@ -3643,6 +3750,9 @@ curl -X PUT "${baseUrl}/api/projects/<projectId>/documents/<documentId>" \\
 ### 「アップして」「これ登録して」「保存しておいて」「アップロードして」
 直前にあなたが作成・提示した文書(Markdown/HTMLなど)を単一ファイルとして保存し、
 上記の「文書アップロード」APIを使ってこのDocument Managerへ登録してください。
+以前このDocument Managerに登録した文書を修正・更新したものであれば、新規登録ではなく
+旧版の文書IDを \`previousId\` に指定して新しい版としてアップロードしてください
+(旧版の文書IDが分からなければ、検索APIでファイル名等から探してください)。
 アップロードが完了したら、登録されたファイル名と文書IDをユーザーに報告してください
 (readonlyロールのキーの場合はアップロードできないので、その旨をユーザーに伝えてください)。
 

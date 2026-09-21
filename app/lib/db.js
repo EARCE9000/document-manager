@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -50,8 +50,14 @@ const createSchema = (targetDb) => {
 			memo TEXT,
 			vector_index_status TEXT,
 			vector_index_error TEXT,
-			vector_indexed_at TEXT
+			vector_indexed_at TEXT,
+			previous_id TEXT
 		)
+	`);
+	// 版の紐付け(v10で追加): previous_idは「この文書が置き換えた旧版」の文書ID。
+	// 旧版→新版の逆引き(nextの解決)に使うためインデックスを張る
+	targetDb.exec(`
+		CREATE INDEX IF NOT EXISTS idx_documents_previous_id ON documents (previous_id)
 	`);
 
 	targetDb.exec(`
@@ -448,6 +454,45 @@ const MIGRATIONS = {
 				SELECT id, chunk_size, chunk_overlap, updated_by, updated_at FROM old.vector_search_settings;
 			`);
 			// vector_search_settings.vectorizerはv8に存在しないため対象外(NULLのまま=環境変数の既定値を使う)
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
+	},
+	10: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at, locked)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at, locked FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at FROM old.project_documents;
+
+				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
+				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
+
+				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
+				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
+			`);
+			// documents.previous_idはv9に存在しないため対象外(NULLのまま=旧版の紐付けなしとして移行される)
 		} finally {
 			newDb.exec("DETACH DATABASE old");
 		}

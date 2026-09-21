@@ -146,4 +146,43 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 			}
 		});
 	});
+
+	// プレビューの「新しい版をアップロード」→旧版のアーカイブ・新版への切り替え・版履歴の表示と
+	// 版履歴から旧版(アーカイブ済み)を開く操作までを実ブラウザで通す
+	test("新しい版のアップロードと版履歴の表示", async ({page}) => {
+		const v1Name = `e2e-版-v1-${Date.now()}.txt`;
+		const v2Name = `e2e-版-v2-${Date.now()}.txt`;
+
+		await page.goto("./");
+		await page.setInputFiles("#uploadfile", {name: v1Name, mimeType: "text/plain", buffer: Buffer.from("version 1")});
+		await page.locator("#documentList li", {hasText: v1Name}).click();
+		await expect(page.locator("#previewTitle")).toHaveText(v1Name);
+		// 紐付けの無い文書では版履歴は出ない
+		await expect(page.locator("#versionHistoryRow")).toBeHidden();
+
+		await test.step("新しい版をアップロードすると旧版は一覧から消え、新しい版のプレビューに切り替わる", async () => {
+			const chooserPromise = page.waitForEvent("filechooser");
+			await page.locator("#previewReviseButton").click();
+			const chooser = await chooserPromise;
+			await chooser.setFiles({name: v2Name, mimeType: "text/plain", buffer: Buffer.from("version 2")});
+			await expect(page.locator("#previewTitle")).toHaveText(v2Name);
+			await expect(page.locator("#documentList li", {hasText: v2Name})).toBeVisible();
+			await expect(page.locator("#documentList li", {hasText: v1Name})).toHaveCount(0);
+		});
+
+		await test.step("版履歴に v1 › v2 が並び、現在の版が強調される", async () => {
+			const row = page.locator("#versionHistoryRow");
+			await expect(row).toBeVisible();
+			await expect(row.locator(".versionChip")).toHaveText([`v1 ${v1Name}`, `v2 ${v2Name}`]);
+			await expect(row.locator(".versionChip.current")).toHaveText(`v2 ${v2Name}`);
+		});
+
+		await test.step("版履歴から旧版を開くとアーカイブ済みとして表示される", async () => {
+			await page.locator("#versionHistoryRow .versionChip", {hasText: v1Name}).click();
+			await expect(page.locator("#previewTitle")).toHaveText(v1Name);
+			await expect(page.locator("#previewRestoreButton")).toBeVisible();
+			await expect(page.locator("#previewReviseButton")).toBeHidden();
+			await expect(page.locator("#versionHistoryRow .versionChip.current")).toHaveText(`v1 ${v1Name}`);
+		});
+	});
 });

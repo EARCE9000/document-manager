@@ -40,8 +40,10 @@ CREATE TABLE IF NOT EXISTS documents (
 	memo TEXT,
 	vector_index_status TEXT,
 	vector_index_error TEXT,
-	vector_indexed_at TEXT
+	vector_indexed_at TEXT,
+	previous_id TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_documents_previous_id ON documents (previous_id);
 
 CREATE TABLE IF NOT EXISTS document_tags (
 	document_id TEXT NOT NULL,
@@ -148,7 +150,12 @@ CREATE INDEX IF NOT EXISTS idx_document_tags_tag_trgm ON document_tags USING gin
 // マイグレーション定義(version昇順)。新しいスキーマ変更はここに追記する。
 // 例) {version: 2, sql: `ALTER TABLE documents ADD COLUMN IF NOT EXISTS foo TEXT;`}
 const MIGRATIONS = [
-	{version: 1, sql: PG_SCHEMA_DDL}
+	{version: 1, sql: PG_SCHEMA_DDL},
+	// 版の紐付け: この文書が置き換えた旧版の文書ID(新規DBはベースDDLで作成済みのためIF NOT EXISTSで冪等)
+	{version: 2, sql: `
+		ALTER TABLE documents ADD COLUMN IF NOT EXISTS previous_id TEXT;
+		CREATE INDEX IF NOT EXISTS idx_documents_previous_id ON documents (previous_id);
+	`}
 ];
 
 /**

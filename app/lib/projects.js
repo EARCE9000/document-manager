@@ -67,6 +67,8 @@ const SQL_UPSERT_PLACEMENT = `
 	ON CONFLICT(project_id, document_id) DO UPDATE SET folder_id = excluded.folder_id, sort_order = excluded.sort_order
 `;
 const SQL_DELETE_PLACEMENT = `DELETE FROM project_documents WHERE project_id = ? AND document_id = ?`;
+const SQL_LIST_PLACEMENTS_BY_DOCUMENT = `SELECT project_id FROM project_documents WHERE document_id = ?`;
+const SQL_TRANSFER_PLACEMENTS = `UPDATE project_documents SET document_id = ? WHERE document_id = ?`;
 // folder_id が NULL(プロジェクト直下)か否かで分岐する(上記と同じ理由で両DB可搬にする)
 const SQL_MAX_DOCUMENT_SORT_ORDER_ROOT = `SELECT MAX(sort_order) AS "maxOrder" FROM project_documents WHERE project_id = ? AND folder_id IS NULL`;
 const SQL_MAX_DOCUMENT_SORT_ORDER_FOLDER = `SELECT MAX(sort_order) AS "maxOrder" FROM project_documents WHERE project_id = ? AND folder_id = ?`;
@@ -263,6 +265,20 @@ module.exports.placeDocument = async (projectId, documentId, folderId, addedBy) 
 		added_at: new Date().toISOString()
 	});
 	return toDocumentPlacementResponse(await ds.get(SQL_GET_PLACEMENT, [projectId, documentId]));
+};
+
+/**
+ * 旧版文書のプロジェクト登録(フォルダ・並び順)を、そのまま新版文書へ付け替える
+ * (新しい版のアップロード時に呼ぶ。旧版はアーカイブされるため、ツリー上では同じ位置が
+ * 新版に置き換わる)。施錠中のプロジェクトも対象にする(配置自体は変えず版を差し替えるだけのため)。
+ * 呼び出し側のトランザクション(tx)内で実行する。戻り値: 付け替えたプロジェクトID一覧
+ */
+module.exports.transferPlacements = async (tx, fromDocumentId, toDocumentId) => {
+	const rows = await tx.all(SQL_LIST_PLACEMENTS_BY_DOCUMENT, [fromDocumentId]);
+	if (rows.length > 0) {
+		await tx.run(SQL_TRANSFER_PLACEMENTS, [toDocumentId, fromDocumentId]);
+	}
+	return rows.map((row) => row.project_id);
 };
 
 module.exports.removeDocument = async (projectId, documentId) => {
