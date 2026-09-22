@@ -1,17 +1,24 @@
 # WebService_DocumentManager
 
 HTML / MHTML / Markdown / PDF / 画像(SVG/PNG/JPEG) / CSV・TSV / テキスト・ログ / JSON / draw.io をアップロードして一覧・プレビューできる社内向けドキュメント管理Webサービス。
+版管理(新しい版のアップロードと版履歴)、タグ・プロジェクトによる整理、全文検索/セマンティック検索、Claude Code・Codex・Antigravity 等のAIエージェントからAPIで登録・検索するための Skill を備える。
 Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite、文書ファイルはローカルディスク)で動くが、メタデータDBを PostgreSQL、文書ファイルを S3 / GCS に切り替えることで、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)のマネージド環境・複数インスタンス構成でも動作する(切り替えは環境変数のみ。詳細は「[マルチクラウド構成の要点](#マルチクラウド構成の要点)」)。
 
 ## スクリーンショット
 
-| 文書一覧・プレビュー | タグ体系 |
+| 文書一覧・プレビュー(版履歴) | タグ体系(draw.io のプレビュー) |
 |---|---|
 | ![文書一覧](docs/screenshots/document-list.png) | ![タグ体系](docs/screenshots/tag-tree.png) |
 
 | プロジェクト | 操作履歴 |
 |---|---|
 | ![プロジェクト](docs/screenshots/projects.png) | ![操作履歴](docs/screenshots/history.png) |
+
+| APIキー管理・AIエージェント用 Skill |
+|---|
+| <img src="docs/screenshots/api-keys-skill.png" alt="APIキー管理とAIエージェント用Skill" width="420"> |
+
+画像はダミーのサンプルデータで撮影したもの。画面が変わったら `npm run screenshots`([docs/screenshots/capture.js](docs/screenshots/capture.js))で撮り直せる。
 
 ## 主な機能
 
@@ -80,13 +87,17 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 
 ### AIエージェント用 Skill・APIクライアント(Claude Code / Codex / Antigravity)
 - [tools/claude-skill/](tools/claude-skill/) に、Claude Code・OpenAI Codex・Google Antigravity から「アップして」「新しい版で上げて」「探して」と話しかけるだけでこのAPIを操作できる Skill(`document-manager`)を同梱している。Skillの形式(`SKILL.md`+`scripts/`)は3つのエージェントで共通のため同じZIPを使い、展開先だけが異なる(Claude Code: `~/.claude/skills/`、Codex: `~/.agents/skills/`、Antigravity: `~/.gemini/config/skills/`)。Python版(`dm_client.py`、標準ライブラリのみ)と Node.js版(`dm_client.mjs`、外部依存なし)のクライアントはどちらも同じコマンドで、単体のCLIとしても使える
-- 画面右上「APIキー管理」→「AIエージェント用 Skill」から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、エージェント別(タブで切り替え)の登録手順・接続先URL入りの登録依頼文のコピーができる。リポジトリからは `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを各エージェントのチャットに渡して「Skillとして登録して」と頼むか、上記の展開先に展開すれば登録できる。GitHub Actions(`skill-package.yml`)が、Skill関連の変更のたびにクライアントの結合テストとZIP作成を行ってアーティファクトに保存し、タグ`skill-v*`のpushでGitHub ReleaseにZIPを公開する詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
+- 画面右上「APIキー管理」→「AIエージェント用 Skill」から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、エージェント別(タブで切り替え)の登録手順・接続先URL入りの登録依頼文のコピーができる。リポジトリからは `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを各エージェントのチャットに渡して「Skillとして登録して」と頼むか、上記の展開先に展開すれば登録できる。GitHub Actions(`skill-package.yml`)が、Skill関連の変更のたびにクライアントの結合テストとZIP作成を行ってアーティファクトに保存し、タグ`skill-v*`のpushでGitHub ReleaseにZIPを公開する。詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
 
 ## ディレクトリ構成
 
 ```
 document-manager/
-├── Dockerfile              # 単一ステージ (node:22-alpine, npm install)
+├── Dockerfile              # 2ステージ (依存のインストールはビルドホスト上で行い、node_modulesだけをターゲット環境のイメージへコピー)
+├── docker-compose.yml      # app + Weaviate + Embedding推論サーバー(セマンティック検索を使う場合)
+├── .github/workflows/
+│   ├── docker-publish.yml    # mainへのpushでDockerイメージ(amd64/arm64)をビルドしDocker Hubへ公開
+│   └── skill-package.yml     # Skillの結合テスト・ZIP作成(アーティファクト保存)、タグskill-v*でGitHub Release公開
 ├── app/                     # アプリケーション本体 (Dockerイメージにコピーされる)
 │   ├── server.js             # エントリポイント
 │   ├── lib/
@@ -102,11 +113,19 @@ document-manager/
 │   │   ├── audit-log.js       # 操作履歴(自分の登録/アーカイブ/復元/プロジェクト操作)の記録・参照
 │   │   ├── storage.js         # 文書ファイルの保存先抽象化 (ローカルディスク/S3/GCS。STORAGE_BACKENDで切替)
 │   │   ├── vector-search.js   # セマンティック検索(Weaviate連携、任意機能。WEAVIATE_URLで有効化)
+│   │   ├── drawio.js          # .drawio(XML/圧縮diagram)からのテキスト抽出(全文検索用)
+│   │   ├── claude-skill.js    # AIエージェント用SkillのZIP生成(api/claude-skill.zip。Node標準のzlibのみ使用)
 │   │   └── logger.js          # 共通ロガー (標準出力のみ)
 │   └── static/index.html     # フロントエンド(単一HTML)
+├── tools/claude-skill/      # AIエージェント用Skill(Dockerイメージにも /app/claude-skill/ としてコピーされる)
+│   ├── document-manager/     # Skill本体(SKILL.md / README.md / scripts/dm_client.py・dm_client.mjs)
+│   ├── build_skill_zip.py    # ZIP作成(dist/に出力。dist/はgit管理外)
+│   └── ci_smoke_test.py      # クライアントとZIPの結合テスト(CIとローカル共通)
+├── test/                    # テスト(Dockerイメージには含めない。「テスト」参照)
+├── docs/screenshots/        # READMEのスクリーンショットと撮影スクリプト(capture.js)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
     ├── documents/<年月>_<UUID>/  # 文書本体 (元ファイル + 変換後preview.html。STORAGE_BACKEND=local時のみ)
-    └── db/document_manager.sqlite  # DATABASE_BACKEND=sqlite時のみ (postgres時はマネージドDB側に保存され、このボリュームは不要)
+    └── db/document_manager_v<N>.sqlite  # DATABASE_BACKEND=sqlite時のみ。<N>はスキーマバージョン(現在v10)で、移行時は旧バージョンのファイルを残したまま新しいファイルを作る(postgres時はマネージドDB側に保存され、このボリュームは不要)
 ```
 
 ## 環境変数
@@ -197,14 +216,17 @@ AUTH_DISABLED=true DATA_DIR=../data node server.js
 npm install        # テスト用依存(@playwright/test)を入れる。アプリ依存は app/ 側で別途 npm install
 npm test           # 層1(純関数)+層2(SQLite結合)。node:test、外部サービス不要
 npm run test:api   # 層3(API)。Playwrightが認証有効のテストサーバを起動しHTTPで検証
+npm run test:e2e   # 層4(ブラウザE2E)。実Chromiumで主要UIフローを操作。要 `npx playwright install chromium`
 npm run test:pg    # Postgres固有(LISTEN/NOTIFY等)。要 DATABASE_BACKEND=postgres + DATABASE_URL(未設定ならスキップ)
+python tools/claude-skill/ci_smoke_test.py  # AIエージェント用Skillのクライアント(Python/Node.js)とZIPの結合テスト
 ```
 
-- **`test/unit.test.js`**: 純関数ユニット(Range計算・SQLプレースホルダ変換・チャンク分割・有効期限計算・ロール判定)
+- **`test/unit.test.js`**: 純関数ユニット(Range計算・SQLプレースホルダ変換・チャンク分割・有効期限計算(無期限キー含む)・ロール判定・draw.ioのテキスト抽出)
 - **`test/integration-sqlite.test.js`**: 一時SQLiteに対する各モジュールのライフサイクル(projects/allowed-users/api-keys/tag-order/audit-log)
 - **`test/integration-postgres.test.js`**: Postgres固有の検証(`schema_migrations`の適用、横断SSEのバックプレーンである`LISTEN/NOTIFY`が実際に通知を届けること)。`DATABASE_BACKEND=postgres`＋`DATABASE_URL`未設定時は全てスキップ(`npm run test:pg`で実行)
-- **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUD、および意味検索(ベクトル検索)を検証する。ブラウザは使わないため `npx playwright install` は不要
+- **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUD、新しい版のアップロード(旧版のアーカイブ・タグとプロジェクト配置の引き継ぎ・版履歴・404/409)(`versions.spec.js`)、無期限APIキー、SkillのZIPダウンロード、および意味検索(ベクトル検索)を検証する。`*.spec.js` はブラウザを使わないため `npx playwright install` は不要
   - `test/api/` の webServer 環境変数はパススルー式(既定は sqlite + local)。`DATABASE_BACKEND=postgres`/`DATABASE_URL`/`STORAGE_BACKEND=s3`/`S3_*`/`AWS_*` を与えれば、同じAPIテストを **Postgres + S3(MinIO等)** 構成でも実行できる(実際にこの構成で全件パスを確認済み)
+  - ブラウザE2E(`*.e2e.js`、`npm run test:e2e`)は、serve.jsが払い出した管理者のログイン済みセッションcookieをChromiumへ注入して操作する。保存型XSSがCSPで実際にブロックされること(`preview-xss.e2e.js`)と、アップロード→検索→タグ付け→プレビュー→APIキー発行・利用、.drawio+プレビュー画像、新しい版のアップロードと版履歴、APIキー管理画面からのSkill ZIPダウンロード(`ui-flow.e2e.js`)を検証する
   - 意味検索のE2E(`vector-search.spec.js`)は `WEAVIATE_URL` を与えたときだけ実行される(未設定時は自動スキップし、代わりに503応答=機能無効を検証)。`WEAVIATE_URL`/`WEAVIATE_GRPC_PORT`/`WEAVIATE_VECTORIZER` を渡すと、アップロード→埋め込み→索引→意味検索ヒットまでを通しで検証する
 
 ## Dockerビルド・起動
@@ -397,7 +419,15 @@ docker run -d \
   earce9000/document-manager:latest
 ```
 
-`Dockerfile` は `node:22-alpine` ベースの単一ステージ構成。`better-sqlite3` はprebuiltバイナリを同梱しているため、ビルドツール(python3/make/g++)は不要。**npmでインストールすること**(yarn classicはprebuiltバイナリの検出ロジックを持たず、常にソースビルドを試みて失敗する)。
+`Dockerfile` は `node:22-alpine` ベースの2ステージ構成。依存のインストール(`npm install`)はビルドホスト本来のアーキテクチャで動く`deps`ステージ(`--platform=$BUILDPLATFORM`)で行い、`npm`の`--os`/`--cpu`/`--libc`でターゲット向けのパッケージを選んでから、`node_modules`だけを実行用イメージへコピーする。arm64イメージをamd64のCIでビルドする際、QEMUエミュレーション上でnodeを動かすとIllegal instruction(exit code 132)で落ちることがあるため、エミュレーション下ではnodeを一切実行しない構成にしている。`better-sqlite3` は全プラットフォームのprebuiltバイナリを同梱しているため、ビルドツール(python3/make/g++)は不要。**npmでインストールすること**(yarn classicはprebuiltバイナリの検出ロジックを持たず、常にソースビルドを試みて失敗する)。
+
+### CI/CD(GitHub Actions)
+
+| ワークフロー | きっかけ | 内容 |
+|---|---|---|
+| [docker-publish.yml](.github/workflows/docker-publish.yml) | `main`へのpush | Dockerイメージ(`linux/amd64`/`linux/arm64`)をビルドし、Docker Hubへ`latest`と`YYYYMMDD_HHmmss`タグで公開 |
+| [skill-package.yml](.github/workflows/skill-package.yml) | Skill関連ファイルを変更したpush/PR、手動実行 | Skillのクライアントの結合テスト・ZIP作成を行い、アーティファクト`document-manager-skill`として保存 |
+| 同上 | タグ`skill-v*`のpush | 上記に加えて、ZIPを添付したGitHub Releaseを作成 |
 
 ## License
 
