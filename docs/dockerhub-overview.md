@@ -5,41 +5,85 @@ Docker Hub (https://hub.docker.com/r/earce9000/document-manager) の
 
 短い説明(Description)欄には次の1行を使う:
 Self-hosted document manager with versioning, tagging, full-text/semantic search, and an API for AI agents.
+
+画像はGitHub(raw.githubusercontent.com)の公開URLを参照している。スクリーンショットを
+撮り直した場合(npm run screenshots)は、pushすればDocker Hub側の表示も自動的に新しくなる。
 -->
 
 # Document Manager
 
-Self-hosted document management service for single-file documents. Upload, preview, search, tag and version
-HTML / MHTML / Markdown / PDF / images (SVG, PNG, JPEG) / CSV / TSV / text / log / JSON / draw.io files.
-Built with Node.js (Express).
+*Self-hosted document management service for single-file documents (HTML / MHTML / Markdown / PDF / images /
+CSV / TSV / text / log / JSON / draw.io). Versioning, tagging, projects, full-text and semantic search, and a
+token-authenticated REST API designed for AI agents. Documentation below is in Japanese; see the
+[GitHub repository](https://github.com/EARCE9000/document-manager) for details.*
 
-Runs as a single container by default (SQLite + local disk). Switching a few environment variables moves the
-metadata to PostgreSQL and the files to S3 or GCS, so the same image also runs on AWS (ECS/Fargate) or
-GCP (Cloud Run / GKE) with multiple instances.
+## どんなシステムか
 
-Source and full documentation (Japanese): **https://github.com/EARCE9000/document-manager**
+社内の資料を1か所に集めて、探して、そのままブラウザで読むためのドキュメント管理サービスです。
+Node.js (Express) 製で、このイメージを起動するだけで動きます。
 
-## Features
+扱うのは「1ファイルで完結する文書」です。HTML / MHTML / Markdown / PDF / 画像(SVG・PNG・JPEG) /
+CSV・TSV / テキスト・ログ / JSON / draw.io に対応していて、どれもダウンロードせずにブラウザ上で
+そのまま閲覧できます。Markdown や MHTML はサーバー側で見やすい形に変換し、PDF はブラウザ標準の
+ビューアで開きます。draw.io は、アップロード時に一緒に渡した画像をプレビューに使います。
 
-- **Preview in the browser** for every supported format. MHTML and Markdown are converted server-side, PDFs open in the browser's own viewer, and `.drawio` files use an image uploaded alongside them
-- **Versioning** — upload a new version of an existing document: the old one is archived automatically and its tags and project placement are carried over. Documents uploaded separately can also be linked as versions afterwards
-- **Related documents** — link documents to each other (no direction, no types); both sides show the link
-- **Organize** — free-form tags, a tag tree, and projects with folders
-- **Search** — full-text search over file names, tags, notes and extracted text (SQLite FTS5 trigram / PostgreSQL pg_trgm), plus optional **semantic search** via [Weaviate](https://weaviate.io/)
-- **Archive instead of delete** — Gmail-style soft delete; documents can always be restored
-- **Real-time updates** — the list refreshes and a popup appears when someone uploads, tags or archives a document (Server-Sent Events)
-- **Authentication** — OpenID Connect (Entra ID, Cognito, Google, Synology SSO, …), an allow-list with admin / readwrite / readonly roles, and API keys for machine access
-- **Audit trail** — access and audit logs on stdout, plus a per-user history screen
-- **Made for AI agents** — a token-authenticated REST API, a machine-readable spec (`GET api/openapi.json`), a Markdown usage guide (`GET api/usage.md`), and a downloadable Agent Skill for Claude Code / OpenAI Codex / Google Antigravity
+![文書一覧とプレビュー](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/document-list.png)
 
-## Tags
+資料は**タグ**と**プロジェクト**で整理します。タグは自由入力で、よく使うタグだけを並べた
+「タグ体系」の画面から一覧できます。プロジェクトはフォルダ階層を持てるので、案件ごとの資料を
+まとめるのに向いています。1つの文書を複数のプロジェクトに置くこともできます。
 
-- `latest` — built from the `main` branch on every push
-- `YYYYMMDD_HHmmss` — build timestamp (Asia/Tokyo). Use this to pin a version or to roll back
+![タグ体系](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/tag-tree.png)
 
-Published for `linux/amd64` and `linux/arm64`.
+**版の管理**ができます。修正した資料を「新しい版」としてアップロードすると、古い版は自動的に
+アーカイブされ、タグとプロジェクトへの登録は新しい版へ引き継がれます。プレビューの上部には
+「v1 › v2 › v3」と版の履歴が並び、過去の版もそのまま開けます。別々に登録してしまった資料を、
+後から新旧の版として結び直すこともできます。版とは別に、見積書と契約書のような**関連文書**どうしを
+結ぶこともできます。
 
-## Quick start
+![プロジェクト](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/projects.png)
+
+**削除はありません。** 「アーカイブ」は Gmail と同じ論理削除で、実ファイルは残り、いつでも元に戻せます。
+誰が何をしたかは操作履歴に残り、他の利用者がアップロードやタグ付けをすると、画面の右下に小さな通知が出ます。
+
+![操作履歴](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/history.png)
+
+**検索**は、ファイル名・タグ・メモ・本文を対象にした部分一致検索が標準です。日本語でも単語の区切りを
+気にせず探せます。加えて、Weaviate を併せて起動すると**意味検索**(言い換えや表記ゆれを含めて近い資料を
+探す)も使えるようになります。
+
+**ログイン**は OpenID Connect です。Entra ID・Cognito・Google・Synology SSO など、標準的なプロバイダなら
+設定を差し替えるだけで使えます。利用できるのは許可リストに登録された人だけで、権限は管理者・読み書き・
+閲覧のみの3種類です。
+
+**AIエージェントから使えます。** ブラウザを介さずに呼べる API キーを画面から発行でき、API の仕様は
+`GET api/openapi.json`(機械可読)と `GET api/usage.md`(説明文)で取得できます。Claude Code・OpenAI Codex・
+Google Antigravity 用の Skill も画面からダウンロードでき、「この資料アップして」「前の版を置き換えて」
+「〜を探して」と話しかけるだけで操作できるようになります。
+
+![APIキー管理とAIエージェント用Skill](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/api-keys-skill.png)
+
+**構成は後から変えられます。** 既定では1コンテナで完結し、文書のメタデータは SQLite、ファイルは
+ローカルディスクに保存します。環境変数を変えるだけで、メタデータを PostgreSQL に、ファイルを S3 や
+GCS に移せるので、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)で複数インスタンス構成にもできます。
+
+## 立ち上げるために必要な作業
+
+### 1. 事前に用意するもの
+
+**OpenID Connect の設定**を、利用しているプロバイダ側で済ませてください。クライアントIDと
+クライアントシークレットを発行し、コールバックURL(`https://<公開するホスト名>/login`)を登録します。
+
+**データの置き場所**として、ホスト側にディレクトリを1つ用意します。ここに SQLite のデータベースと
+文書ファイルが入ります。
+
+**セッションの署名鍵**を生成しておきます。
+
+```bash
+openssl rand -hex 32
+```
+
+### 2. 起動する
 
 ```bash
 docker run -d \
@@ -48,35 +92,45 @@ docker run -d \
   -v "$(pwd)/data:/data" \
   -e BASE_PATH="/" \
   -e OIDC_ISSUER="https://accounts.example.com" \
-  -e OIDC_CLIENT_ID="<client id>" \
-  -e OIDC_CLIENT_SECRET="<client secret>" \
+  -e OIDC_CLIENT_ID="<クライアントID>" \
+  -e OIDC_CLIENT_SECRET="<クライアントシークレット>" \
   -e OIDC_REDIRECT_URI="https://docs.example.com/login" \
   -e ADMIN_EMAIL="admin@example.com" \
-  -e SESSION_SECRET="$(openssl rand -hex 32)" \
+  -e SESSION_SECRET="<手順1で生成した値>" \
   earce9000/document-manager:latest
 ```
 
-Then open `http://localhost:8080/`.
+`http://localhost:8080/` を開くとログイン画面へ転送されます。
 
-- Nobody can sign in until the allow-list has an entry. `ADMIN_EMAIL` is a self-healing bootstrap: that address
-  becomes an admin on sign-in **only while no admin exists**, so you can never lock yourself out.
-- `SESSION_SECRET` is the session signing key. If you leave it unset, a new one is generated on every start and
-  everyone is signed out after a restart.
-- To evaluate without an identity provider, add `-e AUTH_DISABLED=true`. Never use it in production.
-- On Windows + Git Bash, prefix the command with `MSYS_NO_PATHCONV=1` so the `-v` path is not rewritten.
+`SESSION_SECRET` を指定しないと、起動のたびに鍵が変わり、再起動のたびに全員がログアウトされます。
+必ず固定の値を渡してください。
 
-### Behind a reverse proxy
+Windows の Git Bash から実行する場合は、`-v` のパスが書き換えられてしまうため、先頭に
+`MSYS_NO_PATHCONV=1` を付けてください。
 
-Set `BASE_PATH` to the public path prefix (`/` when the service owns the whole host, or e.g.
-`/document_management` for a sub-path) and point `OIDC_REDIRECT_URI` at the public URL. The app builds
-its own URLs from the request, so no other change is needed. Server-Sent Events are used for live
-updates — if your proxy buffers responses, disable buffering for the app (`flushpackets=on` in Apache;
-the app already sends `X-Accel-Buffering: no` for nginx).
+### 3. 最初のログイン
 
-### With semantic search (Weaviate)
+**許可リストが空の間は誰もログインできません。** そこで `ADMIN_EMAIL` が働きます。管理者が1人もいない間に
+限り、そのアドレスでログインした人が自動的に管理者として登録されます。常設の特別扱いではないため、
+管理者を全員削除してしまっても締め出されません。
 
-Three containers: the app, Weaviate, and a self-hosted embedding server (no external API key needed).
-Do not publish the Weaviate ports — anonymous access is enabled, so keep it on the internal network.
+最初のログイン後、画面右上の利用者アイコンから、使う人のメールアドレスを許可リストへ追加してください。
+権限は、管理者(admin)・読み書き(readwrite)・閲覧のみ(readonly)から選べます。
+
+### 4. リバースプロキシの後ろに置く場合
+
+公開するパスを `BASE_PATH` に設定します。ホスト全体をこのサービスに使うなら `/`、
+サブパスで公開するなら `/document_management` のように指定します。`OIDC_REDIRECT_URI` も
+公開URLに合わせてください。アプリはリクエストからURLを組み立てるので、ほかの設定は不要です。
+
+画面の自動更新と通知に Server-Sent Events を使っています。プロキシが応答を溜め込む設定だと通知が
+届かないため、その場合はバッファリングを無効にしてください(Apache なら `flushpackets=on`、
+nginx 向けにはアプリ側から `X-Accel-Buffering: no` を返しています)。
+
+### 5. 意味検索を使う場合
+
+アプリ・Weaviate・埋め込み計算用の推論サーバーの3つを起動します。**Weaviate はポートを公開しないでください。**
+匿名アクセスが有効なため、外部から触れる状態になってしまいます。
 
 ```yaml
 services:
@@ -90,11 +144,11 @@ services:
     environment:
       BASE_PATH: "/"
       OIDC_ISSUER: "https://accounts.example.com"
-      OIDC_CLIENT_ID: "<client id>"
-      OIDC_CLIENT_SECRET: "<client secret>"
+      OIDC_CLIENT_ID: "<クライアントID>"
+      OIDC_CLIENT_SECRET: "<クライアントシークレット>"
       OIDC_REDIRECT_URI: "https://docs.example.com/login"
       ADMIN_EMAIL: "admin@example.com"
-      SESSION_SECRET: "<openssl rand -hex 32>"
+      SESSION_SECRET: "<openssl rand -hex 32 の値>"
       WEAVIATE_URL: "http://weaviate:8080"
       WEAVIATE_GRPC_PORT: "50051"
     depends_on:
@@ -125,60 +179,53 @@ volumes:
   weaviate_data:
 ```
 
-Documents already stored are indexed in the background when Weaviate is first enabled (a few seconds per
-document; progress is shown on the "ベクトル索引" screen). Expect roughly 1.0–1.4 GB of memory for the
-embedding server, which uses several CPU cores while indexing.
+登録済みの文書は、起動後にバックグラウンドで順に索引付けされます(1件あたり数秒。進み具合は画面の
+「ベクトル索引」で確認できます)。推論サーバーは 1.0〜1.4GB 程度のメモリを使い、索引付けの間は
+CPU を複数コア使います。
 
-Instead of the self-hosted embedding server you can use Cohere, OpenAI or Cohere on AWS Bedrock by setting
-`WEAVIATE_VECTORIZER` and the matching credentials; the credentials are passed through to Weaviate per request
-and never stored in the database.
+podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート非公開)は
+[`deploy/compose.yml`](https://github.com/EARCE9000/document-manager/blob/main/deploy/compose.yml)
+にあります。podman では、イメージ名を `docker.io/` から完全に指定してください(短い名前は
+`registries.conf` の検索順で解決されるため、RHEL系ホストでは失敗します)。
 
-A ready-made deployment file (podman, fixed container IP, no published Weaviate ports) is in the repository:
-[`deploy/compose.yml`](https://github.com/EARCE9000/document-manager/blob/main/deploy/compose.yml).
+### 6. 主な環境変数
 
-## Environment variables
-
-| Variable | Default | Description |
+| 変数 | 既定値 | 説明 |
 | --- | --- | --- |
-| `OIDC_ISSUER` | (required) | OpenID Connect issuer URL |
-| `OIDC_CLIENT_ID` | (required) | Client ID |
-| `OIDC_CLIENT_SECRET` | (empty) | Client secret (omit for public clients) |
-| `OIDC_REDIRECT_URI` | (required) | Callback URL, also registered with the provider |
-| `OIDC_SCOPE` | `openid profile email` | Requested scopes |
-| `OIDC_USERNAME_CLAIM` | `email` | Claim used as the user identifier |
-| `ADMIN_EMAIL` | (unset) | Bootstrap admin, active only while no admin exists |
-| `SESSION_SECRET` | (random) | Session signing key — set it explicitly |
-| `SESSION_MAX_AGE_HOURS` | `8` | Session lifetime |
-| `AUTH_DISABLED` | (unset) | `true` bypasses authentication (development only) |
-| `LISTEN_PORT` | `8080` | Listening port |
-| `BASE_PATH` | `/document_management` | Public path prefix behind a reverse proxy |
-| `DATA_DIR` | `/data` | SQLite database, and document files when storage is local |
-| `DATABASE_BACKEND` | `sqlite` | `sqlite` or `postgres` (required for multiple instances) |
-| `DATABASE_URL` | (unset) | PostgreSQL connection string (or use the standard `PG*` variables) |
-| `DATABASE_SSL` | (unset) | `true` to use TLS for PostgreSQL |
-| `STORAGE_BACKEND` | `local` | `local`, `s3` or `gcs` |
-| `S3_BUCKET` / `S3_REGION` / `S3_PREFIX` / `S3_ENDPOINT` | — | S3 settings (`S3_ENDPOINT` for MinIO and other S3-compatible services) |
-| `GCS_BUCKET` / `GCS_PREFIX` | — | Google Cloud Storage settings |
-| `WEAVIATE_URL` | (unset) | Enables semantic search when set |
-| `WEAVIATE_GRPC_PORT` | `50051` | Weaviate gRPC port |
-| `WEAVIATE_VECTORIZER` | `text2vec-transformers` | Embedding provider (`text2vec-cohere` / `text2vec-openai` / `text2vec-aws` also supported) |
-| `UPLOAD_MAX_BYTES` | `268435456` | Upload size limit per file (256MB); larger uploads get a 413 |
-| `CONTENT_TEXT_MAX_CHARS` | `300000` | How much extracted text is kept for search; the rest is not searchable (files are stored in full) |
-| `LOG_LEVEL` | `info` | Log level (pino) |
-| `TZ` | (host) | Time zone, e.g. `Asia/Tokyo` |
+| `OIDC_ISSUER` | (必須) | OpenID Connect の issuer URL |
+| `OIDC_CLIENT_ID` | (必須) | クライアントID |
+| `OIDC_CLIENT_SECRET` | (空) | クライアントシークレット(パブリッククライアントなら不要) |
+| `OIDC_REDIRECT_URI` | (必須) | コールバックURL。プロバイダ側にも同じ値を登録する |
+| `ADMIN_EMAIL` | (未設定) | 管理者が1人もいない間だけ働く、自己修復用のアドレス |
+| `SESSION_SECRET` | (ランダム) | セッションの署名鍵。必ず固定値を指定する |
+| `SESSION_MAX_AGE_HOURS` | `8` | ログインセッションの寿命(時間) |
+| `BASE_PATH` | `/document_management` | 公開時のパスprefix |
+| `DATA_DIR` | `/data` | SQLite とローカル保存時の文書ファイルの置き場所 |
+| `DATABASE_BACKEND` | `sqlite` | `sqlite` / `postgres`(複数インスタンス構成では必須) |
+| `DATABASE_URL` | (未設定) | PostgreSQL の接続文字列(標準の `PG*` 変数でも可) |
+| `STORAGE_BACKEND` | `local` | `local` / `s3` / `gcs` |
+| `WEAVIATE_URL` | (未設定) | 設定すると意味検索が有効になる |
+| `UPLOAD_MAX_BYTES` | `268435456` | 1ファイルのアップロード上限(256MB)。超過時は413 |
+| `CONTENT_TEXT_MAX_CHARS` | `300000` | 検索用に保存する本文の上限。超過分は検索対象外(ファイル自体は全て保存される) |
+| `AUTH_DISABLED` | (未設定) | `true` で認証を無効化(開発用。本番では使わない) |
+| `LOG_LEVEL` | `info` | ログレベル |
+| `TZ` | (ホスト依存) | タイムゾーン(例: `Asia/Tokyo`) |
 
-Credentials for S3 follow the AWS SDK credential chain (IAM roles first); GCS follows Application Default
-Credentials. The repository README lists every variable, including the semantic-search tuning options.
+S3 の認証情報は AWS SDK の標準の取得順(IAMロール優先)、GCS は Application Default Credentials に従います。
+全変数の一覧は GitHub の README にあります。
 
-## Data, upgrades and rollback
+### 7. データの扱いと更新・切り戻し
 
-- Mount `/data` to keep the documents and the SQLite database.
-- The SQLite schema is versioned. On upgrade the app creates a new database file and copies the data across,
-  **leaving the previous file in place** so you can go back to an older image. Back up `/data/db` before upgrading.
-- With `DATABASE_BACKEND=postgres`, migrations are applied automatically at startup.
-- Note that documents added *after* an upgrade are not visible if you roll back to an older image, because the
-  older image reads the older database file.
+`/data` をマウントしておけば、文書と SQLite のデータベースはそこに残ります。
 
-## License
+SQLite のスキーマにはバージョンがあり、更新時には**新しいファイルを作ってデータを移し、古いファイルは
+そのまま残します**。古いイメージへ戻せるようにするためです。更新前に `/data/db` のバックアップを取ってください。
+なお、更新後に登録した文書は、古いイメージへ戻すと見えません(古いイメージは古いファイルを読むためです)。
+
+PostgreSQL 構成の場合、スキーマの更新は起動時に自動で適用されます。
+
+## ライセンス
 
 MIT
+
+ソースコードと詳しいドキュメント: https://github.com/EARCE9000/document-manager
