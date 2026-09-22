@@ -178,6 +178,7 @@ document-manager/
 | `VECTOR_CHUNK_SIZE` | `180` | セマンティック検索の本文チャンク分割サイズ(文字数の既定値)。既定モデル(mpnet-base-v2、最大128トークン)で実測した結果に基づく値([チャンクサイズの実測](#チャンクサイズの実測モデルの最大シーケンス長との関係)参照)。「ベクトル索引」画面からadminロールで上書き保存でき、その場合はDB側の値が優先される |
 | `VECTOR_CHUNK_OVERLAP` | `20` | チャンク分割時のオーバーラップ(文字数の既定値)。上書きの扱いは`VECTOR_CHUNK_SIZE`と同様 |
 | `CONTENT_TEXT_MAX_CHARS` | `300000` | 検索用に保存する本文の上限(文字数)。超過分は全文検索の対象外になる(ファイル自体は影響を受けない)。巨大なログ・CSV等でDBが膨らむのを防ぐための安全弁 |
+| `UPLOAD_MAX_BYTES` | `268435456` | 1ファイルあたりのアップロード上限(バイト。既定256MB)。超過時は413を返す |
 | `LOG_LEVEL` | `info` | ログレベル (pino) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を丸ごとバイパスする開発用フラグ。本番では未設定のこと |
 | `OIDC_ISSUER` | (必須) | OIDCプロバイダのissuer URL。例: `https://login.microsoftonline.com/<TENANT_ID>/v2.0`(EntraID)、`https://cognito-idp.<REGION>.amazonaws.com/<USER_POOL_ID>`(Cognito) |

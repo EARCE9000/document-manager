@@ -202,3 +202,24 @@ test.describe.serial("文書ライフサイクル", () => {
 		expect(list.some((d) => d.id === documentId)).toBe(true);
 	});
 });
+
+test.describe("アップロードサイズ上限", () => {
+	const rw = {Authorization: `Bearer ${loadKeys().readwrite}`};
+
+	test("上限(テストでは1MB)を超えるファイルは413", async ({request}) => {
+		const res = await request.post("api/documents", {
+			headers: rw,
+			multipart: {uploadfile: {name: "大きすぎるファイル.txt", mimeType: "text/plain", buffer: Buffer.alloc(2 * 1024 * 1024, "a")}}
+		});
+		expect(res.status()).toBe(413);
+		expect((await res.json()).error).toContain("ファイルサイズが大きすぎます");
+	});
+
+	test("上限以下のファイルは登録できる", async ({request}) => {
+		const res = await request.post("api/documents", {
+			headers: rw,
+			multipart: {uploadfile: {name: "上限以下.txt", mimeType: "text/plain", buffer: Buffer.alloc(100 * 1024, "a")}}
+		});
+		expect(res.status()).toBe(200);
+	});
+});

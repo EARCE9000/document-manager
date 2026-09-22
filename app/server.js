@@ -67,7 +67,8 @@ if (OIDC_REDIRECT_URI_FOR_PROXY.startsWith("https://")) {
 // ファイル本体の読み取り自体が始まる前に401/403で弾かれるようにする(サイズ上限チェックは
 // api/documents ルート側でfileUpload()自体に持たせている。UPLOAD_MAX_BYTES参照)
 const fileUpload = require('express-fileupload');
-const UPLOAD_MAX_BYTES = 256 * 1024 * 1024; // 256MB
+// 1ファイルあたりのアップロード上限(バイト)。既定256MB
+const UPLOAD_MAX_BYTES = Number(process.env.UPLOAD_MAX_BYTES || 256 * 1024 * 1024);
 
 // セッション管理(express-session)。Cookieの寿命(maxAge)をOIDCプロバイダが発行する
 // access_token自体のTTLから切り離すことで、短命なaccess_token(プロバイダ依存)でも
