@@ -11,7 +11,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
 
 使い方:
   python dm_client.py config                       接続先の確認(キーは伏せて表示)
-  python dm_client.py search [検索語]              一覧・全文検索(アーカイブ済みは除く)
+  python dm_client.py search [検索語] [--archived] 一覧・全文検索(--archivedでアーカイブ済みを対象にする)
   python dm_client.py get <文書ID>                 文書1件の情報(アーカイブ済みも可)
   python dm_client.py versions <文書ID>            版履歴(古い順)
   python dm_client.py upload <ファイル> [--previous-id ID | --replace-same-name]
@@ -131,7 +131,9 @@ def cmd_config(_args):
 
 
 def cmd_search(args):
-    return request("GET", "api/documents", query={"q": args.query} if args.query else None)
+    # --archived はアーカイブ(論理削除)済みの一覧・検索。完全削除ではなく復元できる文書
+    path = "api/documents/archived" if args.archived else "api/documents"
+    return request("GET", path, query={"q": args.query} if args.query else None)
 
 
 def cmd_get(args):
@@ -279,6 +281,7 @@ def main():
     sub.add_parser("config", help="接続先の確認").set_defaults(func=cmd_config)
     p = sub.add_parser("search", help="一覧・検索")
     p.add_argument("query", nargs="?")
+    p.add_argument("--archived", action="store_true", help="アーカイブ済み(復元可能)の文書を対象にする")
     p.set_defaults(func=cmd_search)
     p = sub.add_parser("get", help="文書1件の情報")
     p.add_argument("id")

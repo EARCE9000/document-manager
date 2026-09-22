@@ -2192,7 +2192,7 @@ const loadDocuments = async () => {
 	// セマンティック検索(意味検索)はアクティブな文書一覧でのみ有効(アーカイブ済み文書は
 	// ベクトル索引から除外されているため対象外。トグルUI側も同様に非表示にしている)
 	const useSemanticSearch = currentView === "active" && semanticSearchToggle.checked && q !== "";
-	const basePath = currentView === "archive" ? "./api/documents/trash" : "./api/documents";
+	const basePath = currentView === "archive" ? "./api/documents/archived" : "./api/documents";
 	const url = useSemanticSearch
 		? `./api/documents/search/vector?q=${encodeURIComponent(q)}`
 		: (q === "" ? basePath : `${basePath}?q=${encodeURIComponent(q)}`);
@@ -3850,8 +3850,12 @@ ${vectorSearchEndpoints}
 \`GET ${baseUrl}/api/documents/:id/file\`
 - \`?download=1\`を付けると添付ファイルとしてダウンロードされる(付けない場合はプレビュー用ファイルを返す)
 
-### 文書削除 (要 admin/readwrite ロール、論理削除)
+### 文書のアーカイブ・復元 (要 admin/readwrite ロール)
 \`DELETE ${baseUrl}/api/documents/:id\`
+- **完全削除ではなくアーカイブ(Gmail風の論理削除)**。文書の実体は残り、いつでも復元できる。通常の一覧・検索からは外れる
+\`POST ${baseUrl}/api/documents/:id/restore\` - アーカイブから元に戻す
+\`GET ${baseUrl}/api/documents/archived?q=<検索語>\` - アーカイブ済み文書の一覧・検索(通常の一覧と同じ検索方式)
+- 同じ内容を \`GET ${baseUrl}/api/documents/trash\` でも取得できる(従来のパス。名前が「ゴミ箱」だが完全削除ではない)
 
 ### タグ更新 (要 admin/readwrite ロール、タグ一式を置き換える)
 \`PUT ${baseUrl}/api/documents/:id/tags\`
@@ -3922,9 +3926,12 @@ curl -X PUT "${baseUrl}/api/documents/<id>/tags" \\
   -H "Content-Type: application/json" \\
   -d '{"tags": ["経理", "2026年度"]}'
 
-# 削除
+# アーカイブ(完全削除ではない。復元可能)
 curl -X DELETE "${baseUrl}/api/documents/<id>" \\
   -H "Authorization: Bearer <APIキー>"
+
+# アーカイブ済み一覧
+curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/documents/archived"
 
 # プロジェクト作成
 curl -X POST "${baseUrl}/api/projects" \\

@@ -1579,19 +1579,26 @@ app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async
 });
 
 /**
- * アーカイブ(削除済み)文書一覧・検索。通常一覧と同じ検索方式(FTS5/LIKE)を使う (要 admin/readwrite ロール)
+ * アーカイブ(論理削除)済み文書の一覧・検索。通常一覧と同じ検索方式(FTS5/LIKE)を使う (要 admin/readwrite ロール)
+ *
+ * 同じ処理を2つのパスで公開している:
+ *   - api/documents/archived … 推奨。この機能は「ゴミ箱」ではなくGmail風のアーカイブ(復元可能・実ファイルも残る)
+ *     であり、trash(ゴミ箱)という名前だとAI連携時に「削除済み」「完全削除」と誤解されやすいため
+ *   - api/documents/trash    … 従来のパス。既存の利用者・AIの認識を壊さないよう残している
  */
-app.get(BASE_URL_PATH + 'api/documents/trash', requireAuth, requireWrite, async (req, res) => {
+const listArchivedDocuments = async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		const q = String(req.query.q || "").trim();
 		const rows = q === "" ? await ds.all(SQL_SELECT_DELETED_DOCUMENTS) : await searchDeletedDocuments(q);
 		res.status(200).json(await Promise.all(rows.map(toDeletedDocumentResponse)));
 	} catch (err) {
-		logger.error(err, "::api/documents/trash:list");
+		logger.error(err, "::api/documents/archived:list");
 		res.status(500).json({error: "Internal Error"});
 	}
-});
+};
+app.get(BASE_URL_PATH + 'api/documents/archived', requireAuth, requireWrite, listArchivedDocuments);
+app.get(BASE_URL_PATH + 'api/documents/trash', requireAuth, requireWrite, listArchivedDocuments);
 
 // 単一文書の応答。アーカイブ済みかどうか(archived)も含める(版履歴から旧版を開く場合など、
 // 通常一覧/アーカイブ一覧のどちらに属するかを呼び出し側が知らなくても扱えるようにするため)

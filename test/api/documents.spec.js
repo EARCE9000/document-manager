@@ -174,6 +174,26 @@ test.describe.serial("文書ライフサイクル", () => {
 		expect(trash.some((d) => d.id === documentId)).toBe(true);
 	});
 
+	test("アーカイブ一覧は archived / trash のどちらのパスでも同じ結果を返す", async ({request}) => {
+		const archived = await request.get("api/documents/archived", {headers: rw});
+		expect(archived.status()).toBe(200);
+		const trash = await request.get("api/documents/trash", {headers: rw});
+		expect(await archived.json()).toEqual(await trash.json());
+		expect((await archived.json()).some((d) => d.id === documentId)).toBe(true);
+
+		// 検索条件も同じ挙動(ファイル名の部分一致)
+		const q = "テスト文書";
+		const archivedSearch = await (await request.get(`api/documents/archived?q=${encodeURIComponent(q)}`, {headers: rw})).json();
+		const trashSearch = await (await request.get(`api/documents/trash?q=${encodeURIComponent(q)}`, {headers: rw})).json();
+		expect(archivedSearch).toEqual(trashSearch);
+		expect(archivedSearch.some((d) => d.id === documentId)).toBe(true);
+	});
+
+	test("アーカイブ一覧は readonly キーでは403(trashと同じ)", async ({request}) => {
+		expect((await request.get("api/documents/archived", {headers: ro})).status()).toBe(403);
+		expect((await request.get("api/documents/trash", {headers: ro})).status()).toBe(403);
+	});
+
 	test("復元すると再び一覧に現れる", async ({request}) => {
 		const res = await request.post(`api/documents/${documentId}/restore`, {headers: rw});
 		expect(res.status()).toBe(200);

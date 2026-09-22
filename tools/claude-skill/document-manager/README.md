@@ -107,6 +107,7 @@ Skill を使わず、スクリプトやターミナルから直接呼ぶこと�
 ```bash
 python scripts/dm_client.py config                                   # 接続先の確認
 python scripts/dm_client.py search 設計書                            # 検索
+python scripts/dm_client.py search 設計書 --archived                 # アーカイブ済み(復元可能)から検索
 python scripts/dm_client.py upload ./report.md --tags 経理,2026年度   # 新規アップロード
 python scripts/dm_client.py upload ./report.md --previous-id <旧版ID> # 新しい版として登録(旧版はアーカイブ)
 python scripts/dm_client.py upload ./report.md --replace-same-name   # 同名文書があればその新しい版に

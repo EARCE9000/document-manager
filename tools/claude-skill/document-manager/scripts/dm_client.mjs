@@ -12,7 +12,7 @@
  *
  * 使い方:
  *   node dm_client.mjs config
- *   node dm_client.mjs search [検索語]
+ *   node dm_client.mjs search [検索語] [--archived]
  *   node dm_client.mjs get <文書ID>
  *   node dm_client.mjs versions <文書ID>
  *   node dm_client.mjs upload <ファイル> [--previous-id ID | --replace-same-name] [--preview 画像] [--tags タグ1,タグ2]
@@ -108,7 +108,8 @@ const commands = {
 		const {baseUrl, apiKey} = loadConfig();
 		return {baseUrl, apiKey: `${apiKey.slice(0, 6)}...`, configPath: CONFIG_PATH};
 	},
-	search: async ([query]) => request("GET", "api/documents", {query: query ? {q: query} : undefined}),
+	// --archived はアーカイブ(論理削除)済みの一覧・検索。完全削除ではなく復元できる文書
+	search: async ([query], opts) => request("GET", opts.archived ? "api/documents/archived" : "api/documents", {query: query ? {q: query} : undefined}),
 	get: async ([id]) => request("GET", docPath(requireArg(id, "文書ID"))),
 	versions: async ([id]) => request("GET", docPath(requireArg(id, "文書ID"), "/versions")),
 	upload: async ([file], opts) => {
@@ -260,6 +261,7 @@ const main = async () => {
 			timeout: {type: "string"},
 			action: {type: "string"},
 			all: {type: "boolean"},
+			archived: {type: "boolean"},
 			"no-reconnect": {type: "boolean"}
 		}
 	});

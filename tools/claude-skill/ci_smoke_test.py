@@ -104,6 +104,9 @@ def smoke_clients(env, workdir):
         found = json.loads(run_client(kind, ["search", f"smoke-{kind}"], env).stdout)
         check([d["id"] for d in found] == [v2["id"]], "search: 最新版だけがヒットする")
 
+        archived = json.loads(run_client(kind, ["search", f"smoke-{kind}", "--archived"], env).stdout)
+        check([d["id"] for d in archived] == [v1["id"]], "search --archived: アーカイブ済みの旧版がヒットする")
+
         outdir = os.path.join(workdir, f"dl-{kind}")
         os.makedirs(outdir)
         run_client(kind, ["download", v2["id"], "-o", outdir], env)
