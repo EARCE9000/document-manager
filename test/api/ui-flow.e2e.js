@@ -264,6 +264,44 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		});
 	});
 
+	// アーカイブは押し間違いが多いため、一覧・プレビューのどちらからでも確認ダイアログを挟む
+	test("アーカイブは確認ダイアログを経てから実行される", async ({page}) => {
+		const name = `e2e-確認ダイアログ-${Date.now()}.txt`;
+		await page.goto("./");
+		await page.setInputFiles("#uploadfile", {name, mimeType: "text/plain", buffer: Buffer.from("archive confirm")});
+		const listItem = page.locator("#documentList li", {hasText: name});
+		await expect(listItem).toBeVisible();
+
+		await test.step("一覧のボタン: キャンセルするとアーカイブされない", async () => {
+			await listItem.locator(".archiveButton").click();
+			await expect(page.locator("#confirmOverlay")).toBeVisible();
+			await expect(page.locator("#confirmMessage")).toContainText(name);
+			await expect(page.locator("#confirmMessage")).toContainText("完全削除ではありません");
+			await page.locator("#confirmNoButton").click();
+			await expect(page.locator("#confirmOverlay")).toBeHidden();
+			await expect(listItem).toBeVisible();
+		});
+
+		await test.step("プレビューのボタン: キャンセルするとアーカイブされない", async () => {
+			await listItem.click();
+			await expect(page.locator("#previewTitle")).toHaveText(name);
+			await page.locator("#previewArchiveButton").click();
+			await expect(page.locator("#confirmOverlay")).toBeVisible();
+			await page.locator("#confirmNoButton").click();
+			await expect(page.locator("#documentList li", {hasText: name})).toBeVisible();
+			await expect(page.locator("#previewTitle")).toHaveText(name);
+		});
+
+		await test.step("「はい」を選ぶとアーカイブされ、アーカイブ画面に現れる", async () => {
+			await page.locator("#previewArchiveButton").click();
+			await page.locator("#confirmYesButton").click();
+			await expect(page.locator("#documentList li", {hasText: name})).toHaveCount(0);
+			await page.locator("#menuArchiveLink").click();
+			await expect(page.locator("#documentList li", {hasText: name})).toBeVisible();
+			await page.locator("#menuDocumentsLink").click();
+		});
+	});
+
 	// 本文が大きい文書では、全文検索の対象が先頭までであることを知らせる
 	test("本文が上限を超えた文書に注意書きが出る", async ({page}) => {
 		const name = `e2e-大きい本文-${Date.now()}.txt`;

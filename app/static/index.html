@@ -394,7 +394,7 @@
 	#documentList .itemButtons { display: flex; flex-direction: row; align-items: center; gap: 4px; flex-shrink: 0; }
 	#documentList .openButton:hover { background: #eaf2ff; border-color: #1a56db; color: #1a56db; }
 	/* 誤クリック防止のため、他の操作ボタンから間隔と区切り線を空けて配置する
-	   (ワンクリックで即アーカイブされるため、隣接ボタンとの誤操作を避けたい) */
+	   (確認ダイアログは出るが、隣接ボタンとの押し間違い自体を減らしたい) */
 	#documentList .archiveButton { margin-left: 10px; position: relative; border-color: #e8b74d; color: #b8860b; }
 	#documentList .archiveButton::before {
 		content: "";
@@ -437,7 +437,7 @@
 	.previewActionButton:hover { background: #eaf2ff; border-color: #1a56db; }
 	.previewActionButton svg { width: 18px; height: 18px; display: block; }
 	.previewActionButton:disabled { cursor: not-allowed; opacity: 0.5; }
-	/* アーカイブは即時実行(確認なし)のため、誤クリック防止に間隔と区切り線を空けて配置する */
+	/* アーカイブは確認ダイアログを挟むが、他の操作との押し間違い自体を減らすため、間隔と区切り線を空けて配置する */
 	.previewArchiveAction { margin-left: 10px; position: relative; border-color: #e8b74d; color: #b8860b; }
 	.previewArchiveAction::before {
 		content: "";
@@ -1967,6 +1967,17 @@ const renderVersionHistory = async (doc) => {
 	});
 };
 
+// アーカイブは誤って押されやすいため、どの入口(一覧・プレビュー・プロジェクトのツリー)からでも
+// 必ず確認ダイアログを出す。実行したらtrueを返す
+const confirmAndArchiveDocument = async (documentId, entryFile) => {
+	const name = entryFile || documentId;
+	if (!(await showConfirmDialog(`「${name}」をアーカイブしますか?\n(完全削除ではありません。「アーカイブ」画面からいつでも元に戻せます)`))) {
+		return false;
+	}
+	await fetch("./api/documents/" + encodeURIComponent(documentId), {method: "DELETE"});
+	return true;
+};
+
 // 関連文書(種類・方向を持たない紐付け)。プレビュー上部にチップで表示し、クリックで開ける
 const relatedDocsRow = document.getElementById("relatedDocsRow");
 // 本文が上限を超えた文書は、先頭までしか全文検索の対象になっていないことを知らせる
@@ -2075,7 +2086,7 @@ const showPreview = (doc) => {
 	};
 
 	// タグ編集・アーカイブは通常表示の文書のみ、元に戻すはアーカイブ表示の文書のみ対象。
-	// いずれも一覧行の同名ボタンと同じ挙動(アーカイブ/復元とも確認なしの即時実行)をプレビューからも行えるようにする。
+	// いずれも一覧行の同名ボタンと同じ挙動(アーカイブは確認ダイアログあり、復元は即時)をプレビューからも行えるようにする。
 	// プロジェクトのツリー経由でアーカイブ済み文書を開いた場合(doc.archived)も同様に扱う
 	// 版履歴から開いた文書はarchivedを持つため、表示中の画面(通常/アーカイブ)よりそちらを優先する
 	const isArchived = typeof doc.archived === "boolean" ? doc.archived : currentView === "archive";
@@ -2096,7 +2107,7 @@ const showPreview = (doc) => {
 	previewTagEditButton.onclick = () => openTagEditor(doc);
 	previewArchiveButton.style.display = isArchived ? "none" : "inline-flex";
 	previewArchiveButton.onclick = async () => {
-		await fetch("./api/documents/" + encodeURIComponent(doc.id), {method: "DELETE"});
+		if (!(await confirmAndArchiveDocument(doc.id, doc.entryFile))) return;
 		clearPreview();
 		loadDocuments();
 		if (currentView === "projects") loadProjectTree();
@@ -2282,7 +2293,7 @@ const renderDocumentList = () => {
 	documentList.querySelectorAll(".archiveButton").forEach((btn) => {
 		btn.addEventListener("click", async (ev) => {
 			ev.stopPropagation();
-			await fetch("./api/documents/" + encodeURIComponent(btn.dataset.id), {method: "DELETE"});
+			if (!(await confirmAndArchiveDocument(btn.dataset.id, btn.dataset.name))) return;
 			if (selectedId === btn.dataset.id) clearPreview();
 			loadDocuments();
 			if (currentView === "projects") loadProjectTree();
@@ -2383,7 +2394,7 @@ const wireDocumentListItemButtons = (container) => {
 	container.querySelectorAll(".archiveButton").forEach((btn) => {
 		btn.addEventListener("click", async (ev) => {
 			ev.stopPropagation();
-			await fetch("./api/documents/" + encodeURIComponent(btn.dataset.id), {method: "DELETE"});
+			if (!(await confirmAndArchiveDocument(btn.dataset.id, btn.dataset.name))) return;
 			if (selectedId === btn.dataset.id) clearPreview();
 			loadDocuments();
 		});
