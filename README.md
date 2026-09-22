@@ -80,7 +80,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 
 ### Claude Code 用 Skill・APIクライアント
 - [tools/claude-skill/](tools/claude-skill/) に、Claude Code から「アップして」「新しい版で上げて」「探して」と話しかけるだけでこのAPIを操作できる Skill(`document-manager`)を同梱している。Python版(`dm_client.py`、標準ライブラリのみ)と Node.js版(`dm_client.mjs`、外部依存なし)のクライアントはどちらも同じコマンドで、単体のCLIとしても使える
-- `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを Claude Code のチャットに渡して「Skillとして登録して」と頼むか、`~/.claude/skills/` に展開すれば登録できる。詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
+- 画面右上「APIキー管理」→「Claude Code 用 Skill」から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、登録手順・接続先URL入りの登録依頼文のコピーができる。リポジトリからは `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを Claude Code のチャットに渡して「Skillとして登録して」と頼むか、`~/.claude/skills/` に展開すれば登録できる。詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
 
 ## ディレクトリ構成
 

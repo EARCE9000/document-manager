@@ -147,6 +147,27 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		});
 	});
 
+	// APIキー管理画面から Claude Code 用 Skill のZIPをダウンロードでき、登録手順・依頼文が表示される
+	test("APIキー管理画面からSkillのZIPをダウンロードできる", async ({page}) => {
+		await page.goto("./");
+		await page.locator("#apiKeyManageLink").click();
+		await expect(page.locator("#apiKeyOverlay")).toBeVisible();
+		await page.locator("#claudeSkillBox summary").click();
+		// 接続先URLはこのページの位置から算出される
+		await expect(page.locator("#claudeSkillBaseUrl")).toHaveText(new URL("./", page.url()).href);
+		if (process.env.E2E_SCREENSHOT) {
+			await page.locator("#apiKeyModalBox").screenshot({path: process.env.E2E_SCREENSHOT});
+		}
+		const downloadPromise = page.waitForEvent("download");
+		await page.locator("#claudeSkillDownloadLink").click();
+		const download = await downloadPromise;
+		expect(download.suggestedFilename()).toBe("document-manager-skill.zip");
+		const fs = require("node:fs");
+		const zip = fs.readFileSync(await download.path());
+		expect(zip.subarray(0, 2).toString("latin1")).toBe("PK");
+		expect(zip.includes(Buffer.from("document-manager/SKILL.md"))).toBe(true);
+	});
+
 	// プレビューの「新しい版をアップロード」→旧版のアーカイブ・新版への切り替え・版履歴の表示と
 	// 版履歴から旧版(アーカイブ済み)を開く操作までを実ブラウザで通す
 	test("新しい版のアップロードと版履歴の表示", async ({page}) => {

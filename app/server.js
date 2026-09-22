@@ -336,6 +336,7 @@ app.all(BASE_URL_PATH + 'home', async (req, res) => {
 const initOidcClient = require("./lib/oidc-client.js");
 const TagOrder = require("./lib/tag-order.js");
 const Projects = require("./lib/projects.js");
+const ClaudeSkill = require("./lib/claude-skill.js");
 const AuditLog = require("./lib/audit-log.js");
 
 const OIDC_REDIRECT_URI = process.env.OIDC_REDIRECT_URI || "";
@@ -1726,6 +1727,28 @@ app.get(BASE_URL_PATH + 'api/history', requireAuth, async (req, res) => {
 	APIキーを発行・失効できるようにする。平文キーは発行時のレスポンスでのみ返す。
 */
 /* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+
+/**
+ * Claude Code 用 Skill(document-manager)のZIPをダウンロードする(APIキー管理画面から取得する想定)。
+ * 中身は接続情報を含まないクライアント・手順書のみのため、ロールを問わずログイン済みなら取得できる
+ */
+app.get(BASE_URL_PATH + 'api/claude-skill.zip', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const zip = ClaudeSkill.getSkillZip();
+		if (zip == null) {
+			res.status(404).json({error: "Skillのファイルがこのサーバーに含まれていません"});
+			return;
+		}
+		res.setHeader("Content-Type", "application/zip");
+		res.setHeader("Content-Disposition", `attachment; filename="${ClaudeSkill.SKILL_ZIP_FILENAME}"`);
+		res.setHeader("Content-Length", zip.length);
+		res.status(200).end(zip);
+	} catch (err) {
+		logger.error(err, "::api/claude-skill.zip");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
 
 /**
  * APIキー一覧 (自分が発行したものだけ。平文キーは含まない)

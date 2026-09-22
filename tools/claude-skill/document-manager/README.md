@@ -31,7 +31,7 @@ Claude Code の Skill は、`SKILL.md` を含むフォルダを所定の場所�
 
 ### 方法A: ZIP を Claude Code のチャットに渡して登録してもらう(おすすめ)
 
-1. `document-manager-skill.zip` を用意します(作り方は「4. ZIP の作り方」を参照)。
+1. `document-manager-skill.zip` を用意します。Document Manager の画面右上「APIキー管理」→「Claude Code 用 Skill」の「SkillのZIPをダウンロード」から取得できます(リポジトリから作る場合は「4. ZIP の作り方」を参照)。同じ場所の「登録依頼文をコピー」を使うと、接続先URL入りの依頼文をそのまま貼り付けられます。
 2. Claude Code のチャットに ZIP を添付するかパスを貼り付け、次のように依頼します。
 
    ```

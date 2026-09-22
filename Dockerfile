@@ -35,6 +35,8 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY app/ ./
+# Claude Code 用 Skill(APIキー管理画面からZIPでダウンロードさせる。lib/claude-skill.js参照)
+COPY tools/claude-skill/document-manager/ ./claude-skill/document-manager/
 
 # data (documents / sqlite db) is mounted at runtime, not baked into the image
 VOLUME ["/data"]

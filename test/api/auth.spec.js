@@ -115,3 +115,20 @@ test.describe("APIキーの無期限モード", () => {
 		expect(res.status()).toBe(400);
 	});
 });
+
+test.describe("Claude Code用SkillのZIPダウンロード", () => {
+	test("未認証は401", async ({request}) => {
+		expect((await request.get("api/claude-skill.zip")).status()).toBe(401);
+	});
+
+	test("readonlyキーでもダウンロードでき、document-manager/SKILL.md を含むZIPが返る", async ({request}) => {
+		const res = await request.get("api/claude-skill.zip", {headers: bearer(keys.readonly)});
+		expect(res.status()).toBe(200);
+		expect(res.headers()["content-type"]).toBe("application/zip");
+		expect(res.headers()["content-disposition"]).toContain("document-manager-skill.zip");
+		const body = await res.body();
+		expect(body.subarray(0, 4).toString("latin1")).toBe("PK\u0003\u0004");
+		expect(body.includes(Buffer.from("document-manager/SKILL.md"))).toBe(true);
+		expect(body.includes(Buffer.from("document-manager/scripts/dm_client.py"))).toBe(true);
+	});
+});
