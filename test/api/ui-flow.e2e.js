@@ -264,6 +264,39 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		});
 	});
 
+	// 既に別々に登録された文書同士を、プレビューの「旧版を紐づける」から後追いで紐づける
+	test("後から旧版を紐づけて、解除できる", async ({page}) => {
+		const oldName = `e2e-後追い旧-${Date.now()}.txt`;
+		const newName = `e2e-後追い新-${Date.now()}.txt`;
+		await page.goto("./");
+		await page.setInputFiles("#uploadfile", {name: oldName, mimeType: "text/plain", buffer: Buffer.from("old")});
+		await expect(page.locator("#documentList li", {hasText: oldName})).toBeVisible();
+		await page.setInputFiles("#uploadfile", {name: newName, mimeType: "text/plain", buffer: Buffer.from("new")});
+		await page.locator("#documentList li", {hasText: newName}).click();
+		await expect(page.locator("#previewTitle")).toHaveText(newName);
+		await expect(page.locator("#versionHistoryRow")).toBeHidden();
+
+		await test.step("文書を選んで旧版として紐づけると、版履歴に並び旧版は一覧から消える", async () => {
+			await page.locator("#previewLinkPreviousButton").click();
+			await expect(page.locator("#docPickerOverlay")).toBeVisible();
+			await page.fill("#docPickerInput", oldName);
+			await page.locator(".docPickerItem", {hasText: oldName}).click();
+			await page.locator("#confirmYesButton").click();
+			const row = page.locator("#versionHistoryRow");
+			await expect(row).toBeVisible();
+			await expect(row.locator(".versionChip")).toHaveText([`v1 ${oldName}`, `v2 ${newName}`]);
+			await expect(page.locator("#documentList li", {hasText: oldName})).toHaveCount(0);
+		});
+
+		await test.step("解除すると版履歴が消える(旧版はアーカイブされたまま)", async () => {
+			await expect(page.locator("#previewLinkPreviousButton")).toHaveAttribute("title", "旧版の紐付けを解除");
+			await page.locator("#previewLinkPreviousButton").click();
+			await page.locator("#confirmYesButton").click();
+			await expect(page.locator("#versionHistoryRow")).toBeHidden();
+			await expect(page.locator("#previewLinkPreviousButton")).toHaveAttribute("title", "旧版を紐づける");
+		});
+	});
+
 	// プレビューの「新しい版をアップロード」→旧版のアーカイブ・新版への切り替え・版履歴の表示と
 	// 版履歴から旧版(アーカイブ済み)を開く操作までを実ブラウザで通す
 	test("新しい版のアップロードと版履歴の表示", async ({page}) => {

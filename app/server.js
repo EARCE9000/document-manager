@@ -952,6 +952,8 @@ const SQL_RESTORE_DOCUMENT = `
 `;
 
 const SQL_UPDATE_DOCUMENT_MEMO = `UPDATE documents SET memo = ? WHERE id = ?`;
+// 後から版を紐づける/解除する(アップロード時以外でprevious_idを書き換えるのはここだけ)
+const SQL_UPDATE_DOCUMENT_PREVIOUS_ID = `UPDATE documents SET previous_id = ? WHERE id = ?`;
 
 const SQL_SELECT_TAGS_BY_DOCUMENT_ID = `SELECT tag FROM document_tags WHERE document_id = ? ORDER BY tag`;
 const SQL_DELETE_TAGS_BY_DOCUMENT_ID = `DELETE FROM document_tags WHERE document_id = ?`;
@@ -1624,6 +1626,136 @@ app.get(BASE_URL_PATH + 'api/documents/:id', requireAuth, async (req, res) => {
 		res.status(200).json(await toSingleDocumentResponse(document));
 	} catch (err) {
 		logger.error(err, "::api/documents/:id:get");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+// 後から版を紐づけるとき用。循環(A→B→…→A)を作らないよう、対象文書から新版方向へ辿る
+const collectNewerVersionIds = async (documentId) => {
+	const ids = new Set([documentId]);
+	let cursor = documentId;
+	while (ids.size < MAX_VERSION_CHAIN) {
+		const nextId = (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [cursor]))?.id;
+		if (nextId == null || ids.has(nextId)) break;
+		ids.add(nextId);
+		cursor = nextId;
+	}
+	return ids;
+};
+
+/**
+ * 既にある文書同士を、後から「旧版 → この文書」として紐づける (要 admin/readwrite ロール)
+ * アップロード時の previousId と同じ結果にする: 旧版をアーカイブし、タグとプロジェクトの登録を引き継ぐ。
+ * ただし後からの紐付けでは新版が既に自分のタグ・配置を持つため、タグは和集合にし、
+ * 配置は新版が未登録のプロジェクトだけ付け替える(登録済みなら旧版側の登録を外す)
+ */
+app.put(BASE_URL_PATH + 'api/documents/:id/previous', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
+		if (document == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const previousId = String(req.body?.previousId ?? "").trim();
+		if (previousId === "") {
+			res.status(400).json({error: "previousId is required"});
+			return;
+		}
+		if (previousId === document.id) {
+			res.status(400).json({error: "自分自身を旧版として指定することはできません"});
+			return;
+		}
+		const previousDocument = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [previousId]);
+		if (previousDocument == null) {
+			res.status(404).json({error: "previousId で指定された旧版の文書が見つかりません"});
+			return;
+		}
+		if (document.previous_id === previousId) {
+			res.status(200).json(await toSingleDocumentResponse(document));
+			return;
+		}
+		if (document.previous_id != null) {
+			res.status(409).json({error: "この文書には既に旧版が紐づいています。先に紐付けを解除してください", previousId: document.previous_id});
+			return;
+		}
+		const existingNextId = (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [previousId]))?.id;
+		if (existingNextId != null) {
+			res.status(409).json({error: "指定された旧版には既に新しい版があります。最新版に対して紐づけてください", nextId: existingNextId});
+			return;
+		}
+		// 旧版が「この文書の新版側」にいると版履歴が循環するため拒否する
+		if ((await collectNewerVersionIds(document.id)).has(previousId)) {
+			res.status(409).json({error: "指定された文書はこの文書の新しい版のため、旧版として紐づけられません"});
+			return;
+		}
+
+		let archivedPrevious = false;
+		let transferredProjectIds = [];
+		await ds.transaction(async (tx) => {
+			await tx.run(SQL_UPDATE_DOCUMENT_PREVIOUS_ID, [previousId, document.id]);
+			// 旧版のタグのうち、新版が持っていないものを足す(新版のタグは消さない)
+			const currentTags = new Set((await tx.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [document.id])).map((row) => row.tag));
+			for (const tagRow of await tx.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [previousId])) {
+				if (!currentTags.has(tagRow.tag)) {
+					await tx.run(SQL_INSERT_TAG, [document.id, tagRow.tag]);
+				}
+			}
+			transferredProjectIds = await Projects.transferPlacements(tx, previousId, document.id);
+			const archiveResult = await tx.run(SQL_SOFT_DELETE_DOCUMENT, {
+				id: previousId,
+				deleted_at: new Date().toISOString(),
+				deleted_by: req.authData.user_identifier
+			});
+			archivedPrevious = archiveResult.changes > 0;
+		});
+
+		if (archivedPrevious) {
+			VectorSearch.removeDocument(previousId).catch((err) => logger.error({err, documentId: previousId}, "::api/documents/:id/previous:removePreviousDocument"));
+			AuditLog.record({userIdentifier: req.authData.user_identifier, action: "supersede", documentId: previousId, entryFile: previousDocument.entry_file});
+		}
+		logger.info({
+			audit: "link_version",
+			user: req.authData.user_identifier,
+			documentId: document.id,
+			previousId,
+			archivedPrevious,
+			projectIds: transferredProjectIds
+		}, "audit");
+		broadcastDocumentsChanged();
+		if (transferredProjectIds.length > 0) {
+			broadcastProjectsChanged();
+		}
+		broadcastActivity(req, {action: "link_version", documentId: document.id, entryFile: document.entry_file});
+		res.status(200).json(await toSingleDocumentResponse(await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [document.id])));
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/previous:link");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 版の紐付けを解除する (要 admin/readwrite ロール)
+ * 紐付けを外すだけで、アーカイブ済みの旧版は自動では戻さない(必要なら復元APIを使う)
+ */
+app.delete(BASE_URL_PATH + 'api/documents/:id/previous', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
+		if (document == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		if (document.previous_id == null) {
+			res.status(404).json({error: "この文書には旧版が紐づいていません"});
+			return;
+		}
+		await ds.run(SQL_UPDATE_DOCUMENT_PREVIOUS_ID, [null, document.id]);
+		logger.info({audit: "unlink_version", user: req.authData.user_identifier, documentId: document.id, previousId: document.previous_id}, "audit");
+		broadcastDocumentsChanged();
+		res.status(200).json(await toSingleDocumentResponse(await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [document.id])));
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/previous:unlink");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

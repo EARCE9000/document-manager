@@ -68,7 +68,7 @@ const SQL_UPSERT_PLACEMENT = `
 `;
 const SQL_DELETE_PLACEMENT = `DELETE FROM project_documents WHERE project_id = ? AND document_id = ?`;
 const SQL_LIST_PLACEMENTS_BY_DOCUMENT = `SELECT project_id FROM project_documents WHERE document_id = ?`;
-const SQL_TRANSFER_PLACEMENTS = `UPDATE project_documents SET document_id = ? WHERE document_id = ?`;
+const SQL_TRANSFER_PLACEMENT = `UPDATE project_documents SET document_id = ? WHERE project_id = ? AND document_id = ?`;
 // folder_id が NULL(プロジェクト直下)か否かで分岐する(上記と同じ理由で両DB可搬にする)
 const SQL_MAX_DOCUMENT_SORT_ORDER_ROOT = `SELECT MAX(sort_order) AS "maxOrder" FROM project_documents WHERE project_id = ? AND folder_id IS NULL`;
 const SQL_MAX_DOCUMENT_SORT_ORDER_FOLDER = `SELECT MAX(sort_order) AS "maxOrder" FROM project_documents WHERE project_id = ? AND folder_id = ?`;
@@ -275,8 +275,18 @@ module.exports.placeDocument = async (projectId, documentId, folderId, addedBy) 
  */
 module.exports.transferPlacements = async (tx, fromDocumentId, toDocumentId) => {
 	const rows = await tx.all(SQL_LIST_PLACEMENTS_BY_DOCUMENT, [fromDocumentId]);
-	if (rows.length > 0) {
-		await tx.run(SQL_TRANSFER_PLACEMENTS, [toDocumentId, fromDocumentId]);
+	if (rows.length === 0) {
+		return [];
+	}
+	// 新版が既にそのプロジェクトに登録されている場合(後から版を紐づけたケース)は、
+	// 主キー(project_id+document_id)が衝突するため付け替えず、旧版の登録を外すだけにする
+	const existing = new Set((await tx.all(SQL_LIST_PLACEMENTS_BY_DOCUMENT, [toDocumentId])).map((row) => row.project_id));
+	for (const row of rows) {
+		if (existing.has(row.project_id)) {
+			await tx.run(SQL_DELETE_PLACEMENT, [row.project_id, fromDocumentId]);
+		} else {
+			await tx.run(SQL_TRANSFER_PLACEMENT, [toDocumentId, row.project_id, fromDocumentId]);
+		}
 	}
 	return rows.map((row) => row.project_id);
 };

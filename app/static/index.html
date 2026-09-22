@@ -837,6 +837,27 @@
 	@keyframes activityToastIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 	#activityNotifyToggle.muted { opacity: 0.55; }
 
+	/* 文書選択モーダル(旧版の紐づけ等で、既存の文書から1件選ぶ) */
+	#docPickerResults { max-height: 320px; overflow-y: auto; margin-top: 8px; }
+	#docPickerResults .docPickerItem {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		width: 100%;
+		text-align: left;
+		background: #fff;
+		border: 1px solid #ddd;
+		border-radius: 4px;
+		padding: 6px 8px;
+		margin-bottom: 6px;
+		cursor: pointer;
+		font-size: 0.9em;
+	}
+	#docPickerResults .docPickerItem:hover { background: #eaf2ff; border-color: #9cc2ff; }
+	#docPickerResults .docPickerItem .name { font-weight: 600; word-break: break-all; }
+	#docPickerResults .docPickerItem .meta { color: #888; font-size: 0.9em; white-space: nowrap; }
+	#docPickerEmpty { color: #888; font-size: 0.9em; padding: 8px 2px; }
+
 	/* ベクトル索引ページ(モーダルではなく#mainArea全体を使うページ表示。件数が多い想定のため) */
 	#vectorIndexPaneHeader { padding: 14px 20px; border-bottom: 1px solid #ddd; flex-shrink: 0; }
 	#vectorIndexPaneHeader h2 { margin: 0 0 6px; font-size: 1.05em; }
@@ -1169,6 +1190,9 @@
 					<button type="button" id="previewReviseButton" class="previewActionButton previewWriteAction" title="新しい版をアップロード(この文書はアーカイブされ、タグ・プロジェクトは新しい版へ引き継がれます)" aria-label="新しい版をアップロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 					</button>
+					<button type="button" id="previewLinkPreviousButton" class="previewActionButton previewWriteAction" title="旧版を紐づける" aria-label="旧版を紐づける" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+					</button>
 					<input type="file" id="reviseFileInput" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio" multiple style="display:none;">
 					<button type="button" id="previewTagEditButton" class="previewActionButton previewWriteAction" title="タグを編集" aria-label="タグを編集" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.59a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
@@ -1291,6 +1315,19 @@
 		<div class="modalButtons">
 			<button id="promptCancelButton" type="button" class="modalButton">キャンセル</button>
 			<button id="promptOkButton" type="button" class="modalButton save">OK</button>
+		</div>
+	</div>
+</div>
+
+<div id="docPickerOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="docPickerModalBox">
+		<p id="docPickerTitle">文書を選択</p>
+		<div class="docMeta" id="docPickerDescription"></div>
+		<input type="text" id="docPickerInput" placeholder="ファイル名・本文・タグで検索..." style="width:100%; margin-top:8px;">
+		<div id="docPickerResults"></div>
+		<div id="docPickerEmpty" style="display:none;">該当する文書がありません。</div>
+		<div class="modalButtons">
+			<button id="docPickerCancelButton" type="button" class="modalButton">キャンセル</button>
 		</div>
 	</div>
 </div>
@@ -1745,6 +1782,121 @@ const renderSimilarFiles = (doc) => {
 	});
 };
 
+// 既存の文書から1件選ぶモーダル(旧版の紐づけ等で使う)。選ばれた文書を返し、閉じられたらnullを返す
+const docPickerOverlay = document.getElementById("docPickerOverlay");
+const docPickerInput = document.getElementById("docPickerInput");
+const docPickerResults = document.getElementById("docPickerResults");
+const docPickerEmpty = document.getElementById("docPickerEmpty");
+const docPickerTitle = document.getElementById("docPickerTitle");
+const docPickerDescription = document.getElementById("docPickerDescription");
+let docPickerResolve = null;
+let docPickerExcludeIds = new Set();
+let docPickerSearchTimer = null;
+
+const closeDocPicker = (selected) => {
+	docPickerOverlay.style.display = "none";
+	docPickerResults.innerHTML = "";
+	clearTimeout(docPickerSearchTimer);
+	const resolve = docPickerResolve;
+	docPickerResolve = null;
+	if (resolve) resolve(selected ?? null);
+};
+
+// 通常の文書とアーカイブ済みの文書の両方から探す(アーカイブ済みも旧版として紐づけられるようにする)
+const searchDocPickerCandidates = async (query) => {
+	const params = query ? `?q=${encodeURIComponent(query)}` : "";
+	const [active, archived] = await Promise.all([
+		fetch(`./api/documents${params}`).then((res) => (res.status === 200 ? res.json() : [])),
+		fetch(`./api/documents/archived${params}`).then((res) => (res.status === 200 ? res.json() : []))
+	]);
+	return [...active, ...archived.map((doc) => ({...doc, archived: true}))]
+		.filter((doc) => !docPickerExcludeIds.has(doc.id))
+		.sort((a, b) => new Date(b.modified) - new Date(a.modified))
+		.slice(0, 50);
+};
+
+const renderDocPickerResults = async () => {
+	const candidates = await searchDocPickerCandidates(docPickerInput.value.trim());
+	docPickerEmpty.style.display = candidates.length === 0 ? "block" : "none";
+	docPickerResults.innerHTML = candidates.map((doc) => `
+		<button type="button" class="docPickerItem" data-id="${escapeHtml(doc.id)}">
+			<span class="name">${escapeHtml(doc.entryFile)}</span>
+			<span class="meta">${escapeHtml(formatDateTime(doc.modified))}${doc.archived ? "・アーカイブ済み" : ""}</span>
+		</button>
+	`).join("");
+	docPickerResults.querySelectorAll(".docPickerItem").forEach((btn) => {
+		btn.addEventListener("click", () => closeDocPicker(candidates.find((doc) => doc.id === btn.dataset.id)));
+	});
+};
+
+const openDocPicker = ({title, description, excludeIds}) => {
+	docPickerTitle.textContent = title;
+	docPickerDescription.textContent = description;
+	docPickerExcludeIds = new Set(excludeIds || []);
+	docPickerInput.value = "";
+	docPickerResults.innerHTML = "";
+	docPickerEmpty.style.display = "none";
+	docPickerOverlay.style.display = "flex";
+	docPickerInput.focus();
+	renderDocPickerResults();
+	return new Promise((resolve) => {
+		docPickerResolve = resolve;
+	});
+};
+
+docPickerInput.addEventListener("input", () => {
+	clearTimeout(docPickerSearchTimer);
+	docPickerSearchTimer = setTimeout(renderDocPickerResults, 250);
+});
+document.getElementById("docPickerCancelButton").addEventListener("click", () => closeDocPicker(null));
+docPickerOverlay.addEventListener("click", (ev) => {
+	if (ev.target === docPickerOverlay) closeDocPicker(null);
+});
+
+// 後から版を紐づける/解除する(アップロード時に紐づけ損ねた文書・この機能より前の文書のため)
+const previewLinkPreviousButton = document.getElementById("previewLinkPreviousButton");
+
+const linkPreviousVersion = async (doc) => {
+	// 循環しないよう、自分と自分の新版はこのモーダルでは選べないようにする
+	const versions = doc.previousId != null || doc.nextId != null
+		? await (await fetch(`./api/documents/${encodeURIComponent(doc.id)}/versions`)).json()
+		: [doc];
+	const selected = await openDocPicker({
+		title: "旧版を紐づける",
+		description: `「${doc.entryFile}」の1つ前の版にあたる文書を選んでください。選んだ文書はアーカイブされ、タグとプロジェクトへの登録が引き継がれます。`,
+		excludeIds: versions.map((version) => version.id)
+	});
+	if (selected == null) return;
+	if (!(await showConfirmDialog(`「${selected.entryFile}」を「${doc.entryFile}」の旧版として紐づけますか?\n(「${selected.entryFile}」はアーカイブされます)`))) return;
+	const res = await fetch(`./api/documents/${encodeURIComponent(doc.id)}/previous`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({previousId: selected.id})
+	});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "紐づけに失敗しました");
+		return;
+	}
+	const updated = await res.json();
+	await loadDocuments();
+	if (currentView === "projects") loadProjectTree();
+	showPreview(allDocuments.find((d) => d.id === updated.id) || updated);
+};
+
+const unlinkPreviousVersion = async (doc) => {
+	if (!(await showConfirmDialog("この文書と旧版の紐付けを解除しますか?\n(アーカイブされた旧版は元に戻りません。必要ならアーカイブ画面から戻してください)"))) return;
+	const res = await fetch(`./api/documents/${encodeURIComponent(doc.id)}/previous`, {method: "DELETE"});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "解除に失敗しました");
+		return;
+	}
+	const updated = await res.json();
+	await loadDocuments();
+	showPreview(allDocuments.find((d) => d.id === updated.id) || updated);
+};
+
 // 版履歴(アップロード時に旧版を指定して紐付けた一連の版)を古い順に表示する。
 // 旧版はアーカイブ済みのため通常一覧(allDocuments)には無く、APIから都度取得する
 const renderVersionHistory = async (doc) => {
@@ -1781,6 +1933,7 @@ const clearPreview = () => {
 	downloadLink.style.display = "none";
 	copyLinkButton.style.display = "none";
 	previewReviseButton.style.display = "none";
+	previewLinkPreviousButton.style.display = "none";
 	previewTagEditButton.style.display = "none";
 	previewArchiveButton.style.display = "none";
 	previewRestoreButton.style.display = "none";
@@ -1818,6 +1971,11 @@ const showPreview = (doc) => {
 	const isArchived = typeof doc.archived === "boolean" ? doc.archived : currentView === "archive";
 	// 新しい版のアップロードは最新版(新版がまだ無い通常表示の文書)のみ対象
 	previewReviseButton.style.display = isArchived || doc.nextId != null ? "none" : "inline-flex";
+	// 旧版の紐づけ(まだ旧版が無い文書)/紐付けの解除(既に旧版がある文書)
+	previewLinkPreviousButton.style.display = isArchived ? "none" : "inline-flex";
+	previewLinkPreviousButton.title = doc.previousId == null ? "旧版を紐づける" : "旧版の紐付けを解除";
+	previewLinkPreviousButton.setAttribute("aria-label", previewLinkPreviousButton.title);
+	previewLinkPreviousButton.onclick = () => (doc.previousId == null ? linkPreviousVersion(doc) : unlinkPreviousVersion(doc));
 	previewReviseButton.onclick = () => {
 		reviseTargetDoc = doc;
 		reviseFileInput.click();
@@ -3842,6 +4000,7 @@ const describeActivity = (activity) => {
 		case "revise": return `${file}の新しい版をアップロードしました`;
 		case "archive": return `${file}をアーカイブしました`;
 		case "restore": return `${file}を元に戻しました`;
+		case "link_version": return `${file}に旧版を紐づけました`;
 		case "tags":
 			return activity.tags && activity.tags.length > 0
 				? `${file}にタグ${activity.tags.map((tag) => `「${escapeHtml(tag)}」`).join("")}を付けました`

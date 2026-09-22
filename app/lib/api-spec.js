@@ -78,6 +78,18 @@ const OPERATIONS = [
 		summary: "版履歴(古い順)"
 	},
 	{
+		id: "linkPreviousVersion", method: "put", path: "/api/documents/:id/previous", role: "readwrite", tag: "文書",
+		summary: "既にある文書同士を、後から旧版として紐づける",
+		description: "アップロード時に`previousId`を付け忘れた場合や、この機能より前に登録した文書のための後追い紐付け。旧版はアーカイブされ、タグは和集合になり、プロジェクトへの登録は新版が未登録のプロジェクトだけ引き継ぐ",
+		body: {schema: {type: "object", required: ["previousId"], properties: {previousId: {type: "string", description: "旧版にする文書のID"}}}},
+		responses: {400: "previousIdが未指定、または自分自身を指定した", 409: "この文書に既に旧版がある / 指定した旧版に既に新版がある / 版履歴が循環する"}
+	},
+	{
+		id: "unlinkPreviousVersion", method: "delete", path: "/api/documents/:id/previous", role: "readwrite", tag: "文書",
+		summary: "版の紐付けを解除する",
+		description: "紐付けを外すだけで、アーカイブ済みの旧版は自動では戻さない(必要なら復元APIを使う)"
+	},
+	{
 		id: "subscribeEvents", method: "get", path: "/api/documents/events", role: "readonly", tag: "通知",
 		summary: "操作の通知の購読(Server-Sent Events)",
 		description: "接続を開いたままにすると、誰かが文書を操作するたびにイベントが届く。`document-activity`の`data`は`{action, documentId, entryFile, tags, user, viaApiKey, at}`のJSON",
@@ -274,6 +286,18 @@ const GUIDE_SECTIONS = [
 		entries: [
 			{id: "getDocument", trail: "文書1件のメタ情報(アーカイブ済みも取得でき、`archived` で判別できる)"},
 			{id: "listVersions", trail: "その文書を含む一連の版を古い順に返す"}
+		]
+	},
+	{
+		title: "後からの版の紐づけ・解除", roleNote: ROLE_NOTES.readwrite,
+		entries: [
+			{id: "linkPreviousVersion", trail: "JSONボディ: `{\"previousId\": \"<旧版の文書ID>\"}`"},
+			{id: "unlinkPreviousVersion", trail: "この文書と旧版の紐付けを解除する(アーカイブ済みの旧版は戻らない)"}
+		],
+		notes: [
+			"アップロード時に `previousId` を付け忘れた文書や、既に別々に登録済みの文書同士を、後から新旧の版として紐づける",
+			"紐づけると旧版はアーカイブされ、タグは両方の和集合になり、プロジェクトへの登録は新版が未登録のプロジェクトだけ引き継がれる",
+			"この文書に既に旧版がある場合・指定した旧版に既に新版がある場合・版履歴が循環する場合は409"
 		]
 	},
 	{

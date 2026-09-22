@@ -115,6 +115,70 @@ test.describe.serial("版の紐付け", () => {
 		expect((await request.get("api/documents/no-such-id/versions", {headers: rw})).status()).toBe(404);
 	});
 
+	test("後から版を紐づけられる(旧版のアーカイブ・タグの和集合・プロジェクト配置の引き継ぎ)", async ({request}) => {
+		// 別々に登録した2つの文書を、後から新旧の版として紐づける
+		const oldDoc = (await (await uploadText(request, "後追い_旧.txt", "old")).json());
+		const newDoc = (await (await uploadText(request, "後追い_新.txt", "new")).json());
+		await request.put(`api/documents/${oldDoc.id}/tags`, {headers: rw, data: {tags: ["共通", "旧だけ"]}});
+		await request.put(`api/documents/${newDoc.id}/tags`, {headers: rw, data: {tags: ["共通", "新だけ"]}});
+		const project = await (await request.post("api/projects", {headers: rw, data: {name: "後追い紐付けPJ"}})).json();
+		await request.put(`api/projects/${project.id}/documents/${oldDoc.id}`, {headers: rw, data: {folderId: null}});
+
+		const res = await request.put(`api/documents/${newDoc.id}/previous`, {headers: rw, data: {previousId: oldDoc.id}});
+		expect(res.status()).toBe(200);
+		const linked = await res.json();
+		expect(linked.previousId).toBe(oldDoc.id);
+		expect([...linked.tags].sort()).toEqual(["共通", "新だけ", "旧だけ"]); // タグは和集合
+
+		// 旧版はアーカイブされ、版履歴でつながる
+		expect((await (await request.get(`api/documents/${oldDoc.id}`, {headers: rw})).json()).archived).toBe(true);
+		const versions = await (await request.get(`api/documents/${newDoc.id}/versions`, {headers: rw})).json();
+		expect(versions.map((v) => v.id)).toEqual([oldDoc.id, newDoc.id]);
+
+		// プロジェクトの配置は新版へ引き継がれる
+		const tree = await (await request.get(`api/projects/${project.id}/tree`, {headers: rw})).json();
+		expect(tree.documents.map((d) => d.documentId)).toEqual([newDoc.id]);
+	});
+
+	test("後追いの紐づけは、既に新版/旧版がある場合・自分自身・循環する場合に拒否される", async ({request}) => {
+		const a = await (await uploadText(request, "検証A.txt", "a")).json();
+		const b = await (await uploadText(request, "検証B.txt", "b")).json();
+		const c = await (await uploadText(request, "検証C.txt", "c")).json();
+
+		// 自分自身は400、存在しないIDは404、未指定は400
+		expect((await request.put(`api/documents/${a.id}/previous`, {headers: rw, data: {previousId: a.id}})).status()).toBe(400);
+		expect((await request.put(`api/documents/${a.id}/previous`, {headers: rw, data: {previousId: "no-such-id"}})).status()).toBe(404);
+		expect((await request.put(`api/documents/${a.id}/previous`, {headers: rw, data: {}})).status()).toBe(400);
+		expect((await request.put("api/documents/no-such-id/previous", {headers: rw, data: {previousId: b.id}})).status()).toBe(404);
+
+		// b の旧版に a を紐づけたあと…
+		expect((await request.put(`api/documents/${b.id}/previous`, {headers: rw, data: {previousId: a.id}})).status()).toBe(200);
+		// b には既に旧版があるので409
+		expect((await request.put(`api/documents/${b.id}/previous`, {headers: rw, data: {previousId: c.id}})).status()).toBe(409);
+		// a には既に新版(b)があるので409
+		expect((await request.put(`api/documents/${c.id}/previous`, {headers: rw, data: {previousId: a.id}})).status()).toBe(409);
+		// a の旧版に b(= a の新版)を指定すると循環するので409
+		expect((await request.put(`api/documents/${a.id}/previous`, {headers: rw, data: {previousId: b.id}})).status()).toBe(409);
+
+		// readonlyキーでは変更できない
+		expect((await request.put(`api/documents/${c.id}/previous`, {headers: ro, data: {previousId: a.id}})).status()).toBe(403);
+	});
+
+	test("紐付けを解除できる(アーカイブ済みの旧版は戻らない)", async ({request}) => {
+		const older = await (await uploadText(request, "解除_旧.txt", "old")).json();
+		const newer = await (await uploadText(request, "解除_新.txt", "new")).json();
+		await request.put(`api/documents/${newer.id}/previous`, {headers: rw, data: {previousId: older.id}});
+
+		const res = await request.delete(`api/documents/${newer.id}/previous`, {headers: rw});
+		expect(res.status()).toBe(200);
+		expect((await res.json()).previousId).toBeNull();
+		// 解除後は版履歴が自分だけになり、旧版はアーカイブ済みのまま
+		expect((await (await request.get(`api/documents/${newer.id}/versions`, {headers: rw})).json()).map((v) => v.id)).toEqual([newer.id]);
+		expect((await (await request.get(`api/documents/${older.id}`, {headers: rw})).json()).archived).toBe(true);
+		// 紐付けが無い文書の解除は404
+		expect((await request.delete(`api/documents/${newer.id}/previous`, {headers: rw})).status()).toBe(404);
+	});
+
 	test("操作履歴に旧版の置換が記録される", async ({request}) => {
 		const history = await (await request.get("api/history", {headers: rw})).json();
 		expect(history.some((h) => h.action === "supersede" && h.documentId === v1Id)).toBe(true);
