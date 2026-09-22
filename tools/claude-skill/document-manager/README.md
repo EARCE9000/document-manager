@@ -127,6 +127,36 @@ node scripts/dm_client.mjs search 設計書                             # Node.j
 python tools/claude-skill/build_skill_zip.py
 ```
 
+### CI/CD(GitHub Actions)
+
+`.github/workflows/skill-package.yml` で、Skill の検証と ZIP 作成を自動で行います。
+
+| きっかけ | 実行内容 |
+|---|---|
+| `main` への push / Pull Request(Skill・関連ファイルの変更時) | クライアントの構文チェック → テストサーバーに対する結合テスト(Python版・Node.js版の両方) → ZIP 作成・検証 → Actions のアーティファクト `document-manager-skill` として保存 |
+| タグ `skill-v*` の push | 上記に加えて、GitHub Release を作成して ZIP を添付・公開 |
+| 手動実行(Actions 画面の「Run workflow」) | push 時と同じ |
+
+リリースの例:
+
+```bash
+git tag skill-v1.0.0
+git push origin skill-v1.0.0
+```
+
+結合テストは `tools/claude-skill/ci_smoke_test.py` です。ローカルでも同じように実行できます(`app/` で `npm install` 済みであること)。
+
+```bash
+python tools/claude-skill/ci_smoke_test.py
+```
+
+このテストでは次の点も確認します。
+
+- `SKILL.md` の `name` / `description` が Agent Skills の制約(小文字・ハイフン、1024 文字以内)を満たしている
+- ZIP の中身が `document-manager/` フォルダ 1 つで、リポジトリのファイルと同一である
+- `scripts/` 配下に実行ビットが付いている
+- CI で作った ZIP と、サーバーが画面から配信する ZIP(`api/claude-skill.zip`)の中身が一致している
+
 ZIP の中身は `document-manager/` フォルダ 1 つです。claude.ai の Skill アップロード(設定 → 機能 → Skills)にもそのまま使える形式です。
 ただし claude.ai 上ではネットワーク制限により社内の Document Manager に届かないことがあるため、主な用途はローカルで動くエージェント(Claude Code / Codex / Antigravity)です。
 

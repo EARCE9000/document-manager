@@ -1,0 +1,88 @@
+name: Skill Package
+
+# AIエージェント用 Skill(tools/claude-skill/document-manager)の検証とZIP化。
+# - push(main)/pull_request: 同梱クライアントの結合テスト + ZIP作成 → Actions のアーティファクトとして保存
+# - タグ skill-v* の push: 上記に加えて GitHub Release を作成し、ZIPを添付して公開する
+#   (例: git tag skill-v1.0.0 && git push origin skill-v1.0.0)
+# Dockerイメージ側(サーバーが配信するZIP)は docker-publish.yml でビルドされる。ここでは両者の中身が
+# 一致することも確認する(ci_smoke_test.py)。
+
+on:
+  push:
+    branches: [main]
+    tags: ["skill-v*"]
+    paths:
+      - "tools/claude-skill/**"
+      - "app/lib/claude-skill.js"
+      - "app/server.js"
+      - "app/package.json"
+      - ".github/workflows/skill-package.yml"
+  pull_request:
+    paths:
+      - "tools/claude-skill/**"
+      - "app/lib/claude-skill.js"
+      - "app/server.js"
+      - "app/package.json"
+      - ".github/workflows/skill-package.yml"
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # ランナーで確実に入手できる最新の3系。クライアント自体は標準ライブラリのみ(Python 3.8+)
+          python-version: "3.x"
+
+      - name: Install app dependencies (test server)
+        working-directory: app
+        run: npm install --omit=dev --no-audit --no-fund
+
+      - name: Syntax check clients
+        run: |
+          python -m py_compile tools/claude-skill/document-manager/scripts/dm_client.py
+          node --check tools/claude-skill/document-manager/scripts/dm_client.mjs
+
+      - name: Smoke test (clients + ZIP)
+        run: python tools/claude-skill/ci_smoke_test.py
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: document-manager-skill
+          path: tools/claude-skill/dist/document-manager-skill.zip
+          if-no-files-found: error
+
+  release:
+    # タグ skill-v* のときだけ、検証済みのZIPを GitHub Release として公開する
+    if: startsWith(github.ref, 'refs/tags/skill-v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download ZIP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: document-manager-skill
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" document-manager-skill.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Document Manager Skill $GITHUB_REF_NAME" \
+            --notes "AIエージェント(Claude Code / Codex / Antigravity)用 Skill です。ZIPを各エージェントのskillsフォルダに展開するか、チャットに渡して登録を依頼してください。手順は tools/claude-skill/document-manager/README.md を参照。"
