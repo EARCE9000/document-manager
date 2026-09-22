@@ -155,6 +155,15 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		await page.locator("#claudeSkillBox summary").click();
 		// 接続先URLはこのページの位置から算出される
 		await expect(page.locator("#claudeSkillBaseUrl")).toHaveText(new URL("./", page.url()).href);
+		// エージェントを切り替えると展開先(手順・手動コマンド)が切り替わる
+		const expectedDirs = {claude: "~/.claude/skills", codex: "~/.agents/skills", antigravity: "~/.gemini/config/skills"};
+		for (const [agent, dir] of Object.entries(expectedDirs)) {
+			await page.locator(`#claudeSkillBox .skillAgentTab[data-agent="${agent}"]`).click();
+			await expect(page.locator(`#claudeSkillBox .skillAgentTab[data-agent="${agent}"]`)).toHaveClass(/selected/);
+			await expect(page.locator("#claudeSkillSteps")).toContainText(`${dir}/document-manager/`);
+			await expect(page.locator("#claudeSkillManual")).toContainText(`-d ${dir}/`);
+		}
+		await page.locator('#claudeSkillBox .skillAgentTab[data-agent="codex"]').click();
 		if (process.env.E2E_SCREENSHOT) {
 			await page.locator("#apiKeyModalBox").screenshot({path: process.env.E2E_SCREENSHOT});
 		}

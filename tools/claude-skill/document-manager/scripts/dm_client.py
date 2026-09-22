@@ -2,7 +2,7 @@
 """
 dm_client.py : Document Manager の API クライアント(Python 3.8+ / 標準ライブラリのみ)
 
-Claude Code の Skill から呼び出す想定のコマンドラインツール。結果は JSON で標準出力へ出す。
+AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出す想定のコマンドラインツール。結果は JSON で標準出力へ出す。
 
 接続情報(いずれか。上から優先):
   1. 環境変数 DM_BASE_URL / DM_API_KEY

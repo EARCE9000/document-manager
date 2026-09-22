@@ -955,6 +955,20 @@
 	#claudeSkillBox pre { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 8px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; font-size: 0.95em; }
 	#claudeSkillBox .claudeSkillActions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
 	#claudeSkillBox .claudeSkillActions .modalButton { font-size: 0.95em; padding: 5px 12px; text-decoration: none; }
+	#claudeSkillBox .skillAgentTabs { display: flex; gap: 4px; margin-top: 8px; border-bottom: 1px solid #d0d7de; }
+	#claudeSkillBox .skillAgentTab {
+		background: none;
+		border: 1px solid transparent;
+		border-bottom: none;
+		border-radius: 4px 4px 0 0;
+		padding: 4px 12px;
+		font-size: 0.95em;
+		color: #555;
+		cursor: pointer;
+		margin-bottom: -1px;
+	}
+	#claudeSkillBox .skillAgentTab:hover { color: #1a56db; }
+	#claudeSkillBox .skillAgentTab.selected { background: #fff; border-color: #d0d7de; color: #1a56db; font-weight: 600; }
 	.apiKeyNewBoxButtons .modalButton { font-size: 0.95em; padding: 6px 14px; }
 	#apiKeyList { list-style: none; margin: 10px 0; padding: 0; max-height: 240px; overflow-y: auto; }
 	#apiKeyList li {
@@ -1262,23 +1276,19 @@
 		</div>
 		<ul id="apiKeyList"></ul>
 		<details id="claudeSkillBox">
-			<summary>Claude Code 用 Skill(アップロード・検索をClaudeに任せる)</summary>
-			<div style="margin-top:6px;">Claude Code に「この資料アップして」「前の版を置き換えて」「〜を探して」と話しかけるだけで、このDocument Managerを操作できるようにするSkillです(Python/Node.jsのAPIクライアント同梱)。</div>
+			<summary>AIエージェント用 Skill(Claude Code / Codex / Antigravity からアップロード・検索)</summary>
+			<div style="margin-top:6px;">AIエージェントに「この資料アップして」「前の版を置き換えて」「〜を探して」と話しかけるだけで、このDocument Managerを操作できるようにするSkillです(Python/Node.jsのAPIクライアント同梱)。Skillの形式は共通のため、どのエージェントでも同じZIPを使えます(置き場所だけが違います)。</div>
+			<div class="skillAgentTabs" role="tablist">
+				<button type="button" class="skillAgentTab" data-agent="claude" role="tab">Claude Code</button>
+				<button type="button" class="skillAgentTab" data-agent="codex" role="tab">Codex</button>
+				<button type="button" class="skillAgentTab" data-agent="antigravity" role="tab">Antigravity</button>
+			</div>
 			<div class="claudeSkillActions">
 				<a id="claudeSkillDownloadLink" class="modalButton save" href="./api/claude-skill.zip" download>SkillのZIPをダウンロード</a>
 				<button type="button" id="claudeSkillCopyPromptButton" class="modalButton">登録依頼文をコピー</button>
 			</div>
-			<ol>
-				<li>上のボタンで <code>document-manager-skill.zip</code> をダウンロードします。</li>
-				<li>この画面で、ロール <code>readwrite</code>・有効期限「無期限」のAPIキーを発行し、キーを控えます(継続して使うため)。</li>
-				<li>Claude Code のチャットにZIPを添付(またはZIPのパスを貼り付け)し、「登録依頼文をコピー」でコピーした文を貼り付けて送ります。ZIPが <code>~/.claude/skills/document-manager/</code> に展開されます。</li>
-				<li>接続先URLを聞かれたら <code id="claudeSkillBaseUrl"></code> を、APIキーを聞かれたら手順2のキーを伝えます(<code>~/.document-manager.json</code> に保存されます)。</li>
-				<li>Claude Code で <code>/skills</code> を実行し、<code>document-manager</code> が表示されれば完了です。新しいセッションから使えます。</li>
-			</ol>
-			<div>手動で登録する場合は、ZIPを次の場所に展開します(自分の全プロジェクトで有効)。特定のプロジェクトだけで使う場合は <code>&lt;プロジェクト&gt;/.claude/skills/</code> に展開します。</div>
-			<pre>unzip document-manager-skill.zip -d ~/.claude/skills/</pre>
-			<pre>Expand-Archive document-manager-skill.zip -DestinationPath "$env:USERPROFILE\.claude\skills"</pre>
-			<div>(上: macOS/Linux、下: Windows PowerShell)</div>
+			<ol id="claudeSkillSteps"></ol>
+			<div id="claudeSkillManual"></div>
 		</details>
 		<div class="modalButtons">
 			<button id="apiKeyCloseButton" type="button" class="modalButton">閉じる</button>
@@ -3025,16 +3035,87 @@ const loadApiKeys = async () => {
 	});
 };
 
-// Claude Code 用 Skill: 接続先URL(このページの位置から算出。BASE_PATH配下にも対応)と、
-// Claude Code のチャットに貼り付ける登録依頼文。APIキーはチャット履歴に残さないよう含めない
+// AIエージェント用 Skill: 接続先URL(このページの位置から算出。BASE_PATH配下にも対応)と、
+// エージェントごとの登録手順・チャットに貼り付ける登録依頼文。Skillの形式(SKILL.md)は
+// Claude Code / Codex / Antigravity 共通で、違うのは展開先だけ。依頼文にはAPIキーを
+// チャット履歴に残さないよう含めない(キーはエージェントから聞かれたときに渡す)
 const claudeSkillBaseUrl = new URL(".", window.location.href).href;
-document.getElementById("claudeSkillBaseUrl").textContent = claudeSkillBaseUrl;
-const buildClaudeSkillInstallPrompt = () => `添付した document-manager-skill.zip を Claude Code のSkillとして登録してください。
+const SKILL_AGENTS = {
+	claude: {
+		label: "Claude Code",
+		dir: "~/.claude/skills",
+		winDir: ".claude\\skills",
+		projectDir: ".claude/skills",
+		check: "Claude Code で <code>/skills</code> を実行し、<code>document-manager</code> が表示されれば完了です。新しいセッションから使えます。"
+	},
+	codex: {
+		label: "Codex",
+		dir: "~/.agents/skills",
+		winDir: ".agents\\skills",
+		projectDir: ".agents/skills",
+		check: "Codex で <code>/skills</code> を実行するか <code>$</code> を入力し、<code>document-manager</code> が候補に出れば完了です(出ない場合はCodexを再起動)。実行時にネットワークアクセスの承認を求められたら許可してください。"
+	},
+	antigravity: {
+		label: "Antigravity",
+		dir: "~/.gemini/config/skills",
+		winDir: ".gemini\\config\\skills",
+		projectDir: ".agents/skills",
+		check: "Antigravity のチャットで <code>/document-manager</code> と入力し、候補に出れば完了です。Antigravity CLI の場合の展開先は <code>~/.gemini/antigravity-cli/skills/</code> です。"
+	}
+};
+const SKILL_AGENT_STORAGE_KEY = "dm.skillAgent";
+let selectedSkillAgent = "claude";
+try {
+	const saved = localStorage.getItem(SKILL_AGENT_STORAGE_KEY);
+	if (saved in SKILL_AGENTS) selectedSkillAgent = saved;
+} catch (err) {
+	// localStorageが使えない環境(プライベートモード等)では既定のClaude Codeのまま
+}
 
-- ZIPの中身は document-manager/ フォルダ1つです。~/.claude/skills/ に展開してください(Windowsでは %USERPROFILE%\\.claude\\skills\\)。既に同名のフォルダがあれば、中身を置き換えてよいか確認してください。
+const buildClaudeSkillInstallPrompt = () => {
+	const agent = SKILL_AGENTS[selectedSkillAgent];
+	return `添付した document-manager-skill.zip を ${agent.label} のSkillとして登録してください。
+
+- ZIPの中身は document-manager/ フォルダ1つです。${agent.dir}/ に展開してください(Windowsでは %USERPROFILE%\\${agent.winDir}\\)。展開後は ${agent.dir}/document-manager/SKILL.md の形になります。既に同名のフォルダがあれば、中身を置き換えてよいか確認してください。
 - 展開後、document-manager/SKILL.md を読んで内容を把握してください。
-- 接続先URLは ${claudeSkillBaseUrl} です。APIキーはこのあと私に確認してから、~/.document-manager.json に {"baseUrl": "...", "apiKey": "..."} の形式で保存してください。
-- 最後に scripts/dm_client.py(または dm_client.mjs)の config コマンドで接続を確認し、結果を教えてください。`;
+- 接続先URLは ${claudeSkillBaseUrl} です。APIキーはこのあと私に確認してから、~/.document-manager.json に {"baseUrl": "...", "apiKey": "..."} の形式で保存してください(既にこのファイルがあれば、内容を確認して使ってください)。
+- 最後に scripts/dm_client.py(または dm_client.mjs)の config コマンドと search コマンドで接続を確認し、結果を教えてください。`;
+};
+
+const renderSkillAgentGuide = () => {
+	const agent = SKILL_AGENTS[selectedSkillAgent];
+	document.querySelectorAll("#claudeSkillBox .skillAgentTab").forEach((tab) => {
+		const selected = tab.dataset.agent === selectedSkillAgent;
+		tab.classList.toggle("selected", selected);
+		tab.setAttribute("aria-selected", String(selected));
+	});
+	document.getElementById("claudeSkillSteps").innerHTML = `
+		<li>上のボタンで <code>document-manager-skill.zip</code> をダウンロードします。</li>
+		<li>この画面で、ロール <code>readwrite</code>・有効期限「無期限」のAPIキーを発行し、キーを控えます(継続して使うため。既に他のエージェント用に発行・設定済みなら不要)。</li>
+		<li>${escapeHtml(agent.label)} のチャットにZIPを添付(またはZIPのパスを貼り付け)し、「登録依頼文をコピー」でコピーした文を貼り付けて送ります。ZIPが <code>${escapeHtml(agent.dir)}/document-manager/</code> に展開されます。</li>
+		<li>接続先URLは <code id="claudeSkillBaseUrl">${escapeHtml(claudeSkillBaseUrl)}</code> です(依頼文に含まれています)。APIキーを聞かれたら手順2のキーを伝えます(<code>~/.document-manager.json</code> に保存され、他のエージェントとも共有されます)。</li>
+		<li>${agent.check}</li>
+	`;
+	document.getElementById("claudeSkillManual").innerHTML = `
+		<div>手動で登録する場合は、ZIPを次の場所に展開します(自分の全プロジェクトで有効)。特定のプロジェクトだけで使う場合は <code>&lt;プロジェクト&gt;/${escapeHtml(agent.projectDir)}/</code> に展開します。</div>
+		<pre>unzip document-manager-skill.zip -d ${escapeHtml(agent.dir)}/</pre>
+		<pre>Expand-Archive document-manager-skill.zip -DestinationPath "$env:USERPROFILE\\${escapeHtml(agent.winDir)}"</pre>
+		<div>(上: macOS/Linux、下: Windows PowerShell)</div>
+	`;
+};
+
+document.querySelectorAll("#claudeSkillBox .skillAgentTab").forEach((tab) => {
+	tab.addEventListener("click", () => {
+		selectedSkillAgent = tab.dataset.agent;
+		try {
+			localStorage.setItem(SKILL_AGENT_STORAGE_KEY, selectedSkillAgent);
+		} catch (err) {
+			// 保存できなくても表示の切り替え自体は行う
+		}
+		renderSkillAgentGuide();
+	});
+});
+renderSkillAgentGuide();
 document.getElementById("claudeSkillCopyPromptButton").addEventListener("click", (ev) => {
 	copyTextWithFeedback(buildClaudeSkillInstallPrompt(), ev.currentTarget);
 });

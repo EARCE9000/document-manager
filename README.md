@@ -78,9 +78,9 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 - 画面右上のヘルプアイコンから、Claude Desktop・Antigravity・Cowork等のデスクトップ/エージェント型AIにこのAPIの使い方を教えるためのMarkdown(接続情報・エンドポイント一覧・curl例・AIへの指示)を表示・コピーできる。ベースURLは実際のアクセス元(`location.href`)から動的に算出するため、リバースプロキシ配下の `BASE_PATH` にも自動的に対応する
 - セマンティック検索・ベクトル索引関連のエンドポイント説明は、`WEAVIATE_URL`が設定されている(=実際に使える)環境でアクセスした場合にのみ含まれる。未設定の環境では、存在しないAPIをAIに教えないようこれらの記述ごと省かれる
 
-### Claude Code 用 Skill・APIクライアント
-- [tools/claude-skill/](tools/claude-skill/) に、Claude Code から「アップして」「新しい版で上げて」「探して」と話しかけるだけでこのAPIを操作できる Skill(`document-manager`)を同梱している。Python版(`dm_client.py`、標準ライブラリのみ)と Node.js版(`dm_client.mjs`、外部依存なし)のクライアントはどちらも同じコマンドで、単体のCLIとしても使える
-- 画面右上「APIキー管理」→「Claude Code 用 Skill」から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、登録手順・接続先URL入りの登録依頼文のコピーができる。リポジトリからは `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを Claude Code のチャットに渡して「Skillとして登録して」と頼むか、`~/.claude/skills/` に展開すれば登録できる。詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
+### AIエージェント用 Skill・APIクライアント(Claude Code / Codex / Antigravity)
+- [tools/claude-skill/](tools/claude-skill/) に、Claude Code・OpenAI Codex・Google Antigravity から「アップして」「新しい版で上げて」「探して」と話しかけるだけでこのAPIを操作できる Skill(`document-manager`)を同梱している。Skillの形式(`SKILL.md`+`scripts/`)は3つのエージェントで共通のため同じZIPを使い、展開先だけが異なる(Claude Code: `~/.claude/skills/`、Codex: `~/.agents/skills/`、Antigravity: `~/.gemini/config/skills/`)。Python版(`dm_client.py`、標準ライブラリのみ)と Node.js版(`dm_client.mjs`、外部依存なし)のクライアントはどちらも同じコマンドで、単体のCLIとしても使える
+- 画面右上「APIキー管理」→「AIエージェント用 Skill」から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、エージェント別(タブで切り替え)の登録手順・接続先URL入りの登録依頼文のコピーができる。リポジトリからは `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを各エージェントのチャットに渡して「Skillとして登録して」と頼むか、上記の展開先に展開すれば登録できる。詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
 
 ## ディレクトリ構成
 

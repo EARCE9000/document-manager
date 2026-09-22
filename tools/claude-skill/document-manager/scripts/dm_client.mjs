@@ -2,7 +2,7 @@
 /*!
  * dm_client.mjs : Document Manager の API クライアント(Node.js 18+ / 外部依存なし)
  *
- * Claude Code の Skill から呼び出す想定のコマンドラインツール。結果は JSON で標準出力へ出す。
+ * AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出す想定のコマンドラインツール。結果は JSON で標準出力へ出す。
  * コマンド・オプション・接続情報の与え方は dm_client.py と同じ。
  *
  * 接続情報(いずれか。上から優先):

@@ -1,11 +1,13 @@
-# Document Manager Skill (Claude Code 用)
+# Document Manager Skill (Claude Code / Codex / Antigravity 用)
 
-Claude Code から Document Manager へ、ファイルのアップロード・新しい版の登録・検索・版履歴の確認・ダウンロードを行うための Skill です。
-「この資料アップして」「前の版を置き換えて」「Document Manager で〜を探して」と話しかけるだけで、Claude Code が同梱のクライアントを使って API を呼び出します。
+AIエージェントから Document Manager へ、ファイルのアップロード・新しい版の登録・検索・版履歴の確認・ダウンロードを行うための Skill です。
+「この資料アップして」「前の版を置き換えて」「Document Manager で〜を探して」と話しかけるだけで、エージェントが同梱のクライアントを使って API を呼び出します。
+
+Skill の形式(`SKILL.md` + `scripts/`)は Claude Code・OpenAI Codex・Google Antigravity で共通のため、**同じZIP(同じフォルダ)をそのまま使えます**。違うのは置き場所だけです。
 
 ```
 document-manager/
-├── SKILL.md              … Skill本体(Claude Codeが読む指示書。名前・発動条件・使い方)
+├── SKILL.md              … Skill本体(エージェントが読む指示書。名前・発動条件・使い方)
 ├── README.md             … このファイル(人間向けの導入手順)
 └── scripts/
     ├── dm_client.py      … Pythonクライアント(Python 3.8+、標準ライブラリのみ)
@@ -15,58 +17,71 @@ document-manager/
 ## 1. 事前準備: APIキーの発行
 
 1. Document Manager にブラウザでログインし、画面右上の「APIキー管理」を開きます。
-2. ロールは `readwrite` を選びます。有効期限は、Claude Code から継続して使う場合は「無期限」がおすすめです。
+2. ロールは `readwrite` を選びます。有効期限は、AIエージェントから継続して使う場合は「無期限」がおすすめです。
 3. 発行されたキー(`dm_...`)を控えておきます。キーは発行直後にしか表示されません。
 
 無期限キーは、失効操作をするまで使い続けられます。漏れた場合は、同じ画面ですぐに失効させてください。
 
 ## 2. Skill として登録する
 
-Claude Code の Skill は、`SKILL.md` を含むフォルダを所定の場所に置くだけで認識されます。
+どのエージェントも、`SKILL.md` を含むフォルダを所定の場所に置くだけで認識します。ZIP の中身は `document-manager/` フォルダ 1 つなので、下表の「展開先」に展開すれば `…/document-manager/SKILL.md` の形になります。
 
-| 置き場所 | 有効範囲 |
-|---|---|
-| `~/.claude/skills/document-manager/` (Windows: `%USERPROFILE%\.claude\skills\document-manager\`) | 自分のすべてのプロジェクト |
-| `<プロジェクト>/.claude/skills/document-manager/` | そのプロジェクトのみ(git にコミットすればチームで共有できる) |
+| エージェント | 展開先(自分の全プロジェクトで有効) | プロジェクト単位の展開先 | 確認方法 |
+|---|---|---|---|
+| Claude Code | `~/.claude/skills/` | `<プロジェクト>/.claude/skills/` | `/skills` |
+| Codex (CLI / IDE拡張 / アプリ) | `~/.agents/skills/` | `<プロジェクト>/.agents/skills/` | `/skills` または `$` で候補表示 |
+| Antigravity (IDE / 2.0) | `~/.gemini/config/skills/` | `<プロジェクト>/.agents/skills/` | `/document-manager` で明示呼び出し |
+| Antigravity CLI | `~/.gemini/antigravity-cli/skills/` | `<プロジェクト>/.agents/skills/` | 同上 |
 
-### 方法A: ZIP を Claude Code のチャットに渡して登録してもらう(おすすめ)
+- Windows では `~` を `%USERPROFILE%` (PowerShell では `$env:USERPROFILE`) に読み替えます。
+- Codex と Antigravity はプロジェクト単位の置き場所(`.agents/skills/`)が共通です。リポジトリにコミットすれば、両方の利用者で共有できます。
+- 古いバージョンの Codex は `~/.codex/skills/`、古い Antigravity は `~/.gemini/antigravity/skills/` を見ます。上表の場所で認識されない場合はこちらに置いてください。
 
-1. `document-manager-skill.zip` を用意します。Document Manager の画面右上「APIキー管理」→「Claude Code 用 Skill」の「SkillのZIPをダウンロード」から取得できます(リポジトリから作る場合は「4. ZIP の作り方」を参照)。同じ場所の「登録依頼文をコピー」を使うと、接続先URL入りの依頼文をそのまま貼り付けられます。
-2. Claude Code のチャットに ZIP を添付するかパスを貼り付け、次のように依頼します。
+### 方法A: ZIP をエージェントのチャットに渡して登録してもらう(おすすめ)
+
+1. `document-manager-skill.zip` を用意します。Document Manager の画面右上「APIキー管理」→「AIエージェント用 Skill」の「SkillのZIPをダウンロード」から取得できます(リポジトリから作る場合は「4. ZIP の作り方」を参照)。
+2. 同じ画面で使うエージェント(Claude Code / Codex / Antigravity)を選び、「登録依頼文をコピー」を押します。接続先URLと、そのエージェント用の展開先が入った依頼文がコピーされます。
+3. エージェントのチャットに ZIP を添付するかパスを貼り付け、コピーした依頼文を貼り付けて送ります。手で書く場合は次のように依頼します(展開先は上表を参照)。
 
    ```
-   このZIPをClaude CodeのSkillとして登録して(~/.claude/skills/ に展開)。
+   このZIPをSkillとして登録して(~/.agents/skills/ に展開)。
    Document ManagerのURLは https://docs.example.com/ 、APIキーは後で聞いて。
    ```
 
-3. Claude Code が ZIP を `~/.claude/skills/` に展開します。ZIP の中身は `document-manager/` フォルダ 1 つです。
-4. 続けて URL と API キーを渡すと、`~/.document-manager.json` に保存されます。
+4. エージェントが ZIP を展開します。続けて API キーを渡すと、`~/.document-manager.json` に保存されます。
 
 ### 方法B: 手動でコピーする
 
-ZIP を展開して、`document-manager` フォルダを上の表のどちらかの場所に置きます。
+ZIP を上の表の展開先に展開します。例は Codex の場合です。Claude Code なら `.claude/skills`、Antigravity なら `.gemini/config/skills` に読み替えてください。
 
 ```bash
-mkdir -p ~/.claude/skills
-unzip document-manager-skill.zip -d ~/.claude/skills/
+mkdir -p ~/.agents/skills
+unzip document-manager-skill.zip -d ~/.agents/skills/
 ```
 
 Windows(PowerShell)の場合:
 
 ```powershell
-Expand-Archive document-manager-skill.zip -DestinationPath "$env:USERPROFILE\.claude\skills"
+Expand-Archive document-manager-skill.zip -DestinationPath "$env:USERPROFILE\.agents\skills"
 ```
 
 リポジトリをクローン済みなら、`tools/claude-skill/document-manager` をそのままコピーしても同じです。
 
 ### 登録の確認
 
-Claude Code を再起動(または新しいセッションを開始)し、`/skills` で `document-manager` が一覧に出れば完了です。
+新しいセッションを開始し、上表の「確認方法」で `document-manager` が出れば完了です。表示されない場合はエージェントを再起動してください。
 「Document Managerで〇〇を探して」と話しかけると、この Skill が使われます。
+
+### Codex を使う場合の注意
+
+Codex の既定のサンドボックスでは、コマンドからのネットワークアクセスが制限されていることがあります。
+その場合、アップロードや検索の実行時にネットワークアクセスの承認を求められるので、許可してください。
+毎回の承認を省きたい場合は、Codex の設定でサンドボックスのネットワークアクセスを有効にします。
 
 ## 3. 接続情報の設定
 
-接続情報は次のどちらかで与えます。Skill を初めて使うときに未設定であれば、Claude Code から入力を求められます。
+接続情報は次のどちらかで与えます。Skill を初めて使うときに未設定であれば、エージェントから入力を求められます。
+設定はエージェント共通です。一度保存すれば、Claude Code・Codex・Antigravity のどれからでも使えます。
 
 設定ファイル `~/.document-manager.json`(Windows: `%USERPROFILE%\.document-manager.json`)を作る場合:
 
@@ -113,9 +128,9 @@ python tools/claude-skill/build_skill_zip.py
 ```
 
 ZIP の中身は `document-manager/` フォルダ 1 つです。claude.ai の Skill アップロード(設定 → 機能 → Skills)にもそのまま使える形式です。
-ただし claude.ai 上ではネットワーク制限により社内の Document Manager に届かないことがあるため、主な用途は Claude Code です。
+ただし claude.ai 上ではネットワーク制限により社内の Document Manager に届かないことがあるため、主な用途はローカルで動くエージェント(Claude Code / Codex / Antigravity)です。
 
 ## カスタマイズ
 
-- 発動のしかたを変えたい場合は、`SKILL.md` 冒頭の `description` を編集します。Claude はこの文を見て、いつ Skill を使うかを判断します。
+- 発動のしかたを変えたい場合は、`SKILL.md` 冒頭の `description` を編集します。どのエージェントも、この文を見ていつ Skill を使うかを判断します。
 - 手順(新規か新しい版かの判断、報告内容など)を変えたい場合は、`SKILL.md` の本文を編集します。
