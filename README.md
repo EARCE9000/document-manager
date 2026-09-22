@@ -134,6 +134,10 @@ document-manager/
 │   │   ├── document-links.js  # 関連文書(種類・方向を持たない文書同士の紐付け)
 │   │   └── logger.js          # 共通ロガー (標準出力のみ)
 │   └── static/index.html     # フロントエンド(単一HTML)
+├── deploy/                  # 運用サーバ(podman + リバースプロキシ)向けのcompose構成
+│   ├── compose.yml           # 公開イメージ + Weaviate + 推論サーバー(Weaviate側はポート非公開)
+│   ├── compose.sh            # 起動用ラッパー(up/down/logs/ps。必須設定が無ければ止める)
+│   └── compose.env.example   # サイト固有の値のひな形(実ファイルはGit管理外)
 ├── tools/claude-skill/      # AIエージェント用Skill(Dockerイメージにも /app/claude-skill/ としてコピーされる)
 │   ├── document-manager/     # Skill本体(SKILL.md / README.md / scripts/dm_client.py・dm_client.mjs)
 │   ├── build_skill_zip.py    # ZIP作成(dist/に出力。dist/はgit管理外)
@@ -142,7 +146,7 @@ document-manager/
 ├── docs/screenshots/        # READMEのスクリーンショットと撮影スクリプト(capture.js)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
     ├── documents/<年月>_<UUID>/  # 文書本体 (元ファイル + 変換後preview.html。STORAGE_BACKEND=local時のみ)
-    └── db/document_manager_v<N>.sqlite  # DATABASE_BACKEND=sqlite時のみ。<N>はスキーマバージョン(現在v11)で、移行時は旧バージョンのファイルを残したまま新しいファイルを作る(postgres時はマネージドDB側に保存され、このボリュームは不要)
+    └── db/document_manager_v<N>.sqlite  # DATABASE_BACKEND=sqlite時のみ。<N>はスキーマバージョン(現在v12)で、移行時は旧バージョンのファイルを残したまま新しいファイルを作る(postgres時はマネージドDB側に保存され、このボリュームは不要)
 ```
 
 ## 環境変数
@@ -292,6 +296,8 @@ COHERE_APIKEY=<Cohereで発行したAPIキー>
 
 初回起動時、Weaviateがコレクションを自動作成し、以後のアップロードから自動的に索引付けされる。`WEAVIATE_URL`を設定しなければこれらのコンテナは不要で、機能自体が無効化される(既存の単一コンテナ運用に影響しない)。
 
+> **podmanで実行する場合**: イメージ名は `docker.io/` から完全指定すること(下記の手順は指定済み)。podmanは短い名前を`/etc/containers/registries.conf`の`unqualified-search-registries`から解決するため、RHEL系ホストでは`registry.access.redhat.com`を先に探して`Repo not found`で失敗する。
+
 ### `docker compose`を使わずにWeaviateも起動する場合
 
 Kubernetes等、`docker compose`を前提にできない環境向けに、[docker-compose.yml](docker-compose.yml)と同じ構成(コンテナ間の環境変数・ポート・ボリューム)を`docker run`だけで再現する手順。コンテナ名で名前解決できるよう、まずユーザー定義ネットワークを作成する。
@@ -307,7 +313,7 @@ docker run -d \
   --network document-manager-net \
   --restart unless-stopped \
   -e ENABLE_CUDA=0 \
-  semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-mpnet-base-v2
+  docker.io/semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-mpnet-base-v2
 
 # 3. Weaviate本体(REST:8081→8080, gRPC:50051→50051でホストに公開。無くても動くが
 #    動作確認・デバッグ用に外部からも叩けるようにしている)
@@ -325,7 +331,7 @@ docker run -d \
   -e DEFAULT_VECTORIZER_MODULE=text2vec-transformers \
   -e TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080 \
   -e CLUSTER_HOSTNAME=node1 \
-  semitechnologies/weaviate:latest
+  docker.io/semitechnologies/weaviate:latest
 
 # 4. document-manager本体(同じネットワークに参加させ、WEAVIATE_URLはコンテナ名で指定)
 docker build -t document-manager .

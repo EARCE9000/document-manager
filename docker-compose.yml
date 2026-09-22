@@ -21,6 +21,8 @@
 #
 # weaviate/t2v-transformersのイメージタグは:latest相当(具体的なモデル名タグ)にしている。
 # 自己ホスト運用では動作確認後にバージョンを固定することを推奨する。
+# イメージ名は docker.io/ から完全指定している(podmanは短い名前をregistries.confの
+# unqualified-search-registriesから解決するため、RHEL系ホストではDocker Hub以外を先に探して失敗する)。
 
 services:
   app:
@@ -51,7 +53,7 @@ services:
 
   # ベクトルDB本体。REST(8080)とgRPC(50051)の両方をappコンテナから使う
   weaviate:
-    image: semitechnologies/weaviate:latest
+    image: docker.io/semitechnologies/weaviate:latest
     restart: unless-stopped
     ports:
       - "8081:8080"
@@ -76,7 +78,7 @@ services:
   # (既定)の場合のみ使われる。日本語を含む多言語文書のため多言語sentence-transformers
   # モデルを使用する。外部APIキーは不要
   t2v-transformers:
-    image: semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-mpnet-base-v2
+    image: docker.io/semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-mpnet-base-v2
     restart: unless-stopped
     environment:
       - ENABLE_CUDA=0
