@@ -1076,11 +1076,17 @@ VectorSearch.setStatusChangeListener(broadcastDocumentsChanged);
 
 /**
  * 文書一覧変更通知 (SSE)
+ * ブラウザ(ログインセッション)だけでなく、APIキー(Authorization: Bearer)でも購読できる
+ * (readonlyキー可)。イベント: documents-changed / projects-changed(中身は{}。再取得のきっかけ)、
+ * document-activity(誰が・どの文書に・何をしたか。JSON)。30秒ごとにコメント行(:heartbeat)を送る。
+ * 切断中のイベントは再送しない(Last-Event-IDは未対応)ため、再接続後は必要に応じて一覧を取り直すこと
  */
 app.get(BASE_URL_PATH + 'api/documents/events', requireAuth, (req, res) => {
 	setHTTPHeaders(res);
 	res.setHeader("Content-Type", "text/event-stream");
 	res.setHeader("Connection", "keep-alive");
+	// nginx等のリバースプロキシがレスポンスをバッファリングしてイベントが遅延・滞留しないようにする
+	res.setHeader("X-Accel-Buffering", "no");
 	res.flushHeaders();
 	res.write(":connected\n\n");
 

@@ -113,11 +113,22 @@ python scripts/dm_client.py upload ./report.md --replace-same-name   # 同名文
 python scripts/dm_client.py upload ./構成図.drawio --preview ./構成図.svg
 python scripts/dm_client.py versions <文書ID>                        # 版履歴
 python scripts/dm_client.py download <文書ID> -o ./downloads/
+python scripts/dm_client.py watch                                    # 操作の通知を待ち受け(Ctrl+Cで終了)
+python scripts/dm_client.py watch --count 1 --timeout 300 --action upload,revise  # 次のアップロードを1件待つ
 
 node scripts/dm_client.mjs search 設計書                             # Node.js版も同じ
 ```
 
 新しい版として登録すると、旧版は自動でアーカイブされます。タグと、プロジェクトへの登録(フォルダ・並び順)は新しい版へ引き継がれます。
+
+`watch` は、画面右下のポップアップ通知と同じ内容(誰が・どの文書に・何をしたか)を、1件ずつ1行の JSON で出力します。
+接続が切れても自動で再接続しますが、切れている間の通知は再送されません。スクリプトから使う場合は、例えば次のように次の処理へ渡せます。
+
+```bash
+python scripts/dm_client.py watch --action upload,revise | while read -r line; do
+  echo "$line"   # ここで通知(Slack送信など)や後続処理を行う
+done
+```
 
 ## 4. ZIP の作り方
 

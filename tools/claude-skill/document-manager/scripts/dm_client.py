@@ -17,13 +17,18 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py upload <ファイル> [--previous-id ID | --replace-same-name]
                                        [--preview 画像] [--tags タグ1,タグ2]
   python dm_client.py download <文書ID> [-o 保存先]
+  python dm_client.py watch [--count N] [--timeout 秒] [--action upload,revise,...] [--all]
+                                       操作の通知(SSE)を待ち受け、1イベント1行のJSONで出力する
 """
 
 import argparse
 import json
 import mimetypes
 import os
+import socket
 import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -169,6 +174,105 @@ def cmd_download(args):
     return {"id": doc["id"], "entryFile": doc["entryFile"], "savedTo": os.path.abspath(out), "size": len(payload)}
 
 
+# SSEはサーバーが30秒ごとにハートビートを送るため、それより十分長く無通信なら切れたとみなして再接続する
+WATCH_IDLE_TIMEOUT = 75
+WATCH_ACTIVITY_EVENT = "document-activity"
+
+
+def iter_sse_events(res):
+    """SSEのレスポンスから (event名, dataの文字列) を順に返す。コメント行(:heartbeat 等)は読み捨てる"""
+    event, data = "message", []
+    while True:
+        line = res.readline()
+        if not line:
+            return  # サーバー側で切断された
+        line = line.decode("utf-8").rstrip("\r\n")
+        if line == "":
+            if data:
+                yield event, "\n".join(data)
+            event, data = "message", []
+        elif line.startswith(":"):
+            continue
+        elif line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            data.append(line[5:].lstrip())
+
+
+def shutdown_socket(res):
+    """レスポンスの下にあるソケットを shutdown し、ブロック中の読み取りを即座に終わらせる"""
+    try:
+        sock = socket.socket(fileno=res.fileno())
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        finally:
+            sock.detach()  # fdの所有権は元のレスポンス側に残す(二重closeを避ける)
+    except (OSError, ValueError):
+        pass
+
+
+def cmd_watch(args):
+    """操作の通知を待ち受けて、1イベント1行のJSON(NDJSON)で標準出力へ流す。
+    切断されたら自動で再接続する(切断中のイベントは再送されない)"""
+    base_url, api_key = load_config()
+    actions = {a.strip() for a in args.action.split(",") if a.strip()} if args.action else None
+    deadline = time.monotonic() + args.timeout if args.timeout else None
+    printed = 0
+    backoff = 1
+    while True:
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            print("タイムアウトしました", file=sys.stderr)
+            return None
+        req = urllib.request.Request(urllib.parse.urljoin(base_url, "api/documents/events"),
+                                     headers={"Authorization": f"Bearer {api_key}", "Accept": "text/event-stream"})
+        timer = None
+        try:
+            with urllib.request.urlopen(req, timeout=WATCH_IDLE_TIMEOUT) as res:
+                backoff = 1
+                if remaining is not None:
+                    # 全体の期限が来たら接続を切って、待ち受け中の読み取りを終わらせる
+                    # (別スレッドからの close() ではWindowsで読み取りが解除されないため、ソケットをshutdownする)
+                    timer = threading.Timer(remaining, shutdown_socket, args=(res,))
+                    timer.daemon = True
+                    timer.start()
+                for event, data in iter_sse_events(res):
+                    if event != WATCH_ACTIVITY_EVENT and not args.all:
+                        continue
+                    try:
+                        payload = json.loads(data) if data else {}
+                    except ValueError:
+                        payload = {"data": data}
+                    if event == WATCH_ACTIVITY_EVENT and actions is not None and payload.get("action") not in actions:
+                        continue
+                    print(json.dumps({"event": event, **payload}, ensure_ascii=False), flush=True)
+                    printed += 1
+                    if args.count and printed >= args.count:
+                        return None
+        except urllib.error.HTTPError as err:
+            if err.code in (401, 403):
+                raise DmError(json.dumps({"status": err.code, "error": err.read().decode("utf-8", "replace")}, ensure_ascii=False)) from None
+            print(f"接続エラー(HTTP {err.code})。再接続します", file=sys.stderr)
+        except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError, ValueError, AttributeError) as err:
+            if deadline is not None and time.monotonic() >= deadline:
+                print("タイムアウトしました", file=sys.stderr)
+                return None
+            if args.no_reconnect:
+                raise DmError(f"接続が切れました: {err}") from None
+            print(f"接続が切れました({err})。{backoff}秒後に再接続します", file=sys.stderr)
+        else:
+            if deadline is not None and time.monotonic() >= deadline:
+                print("タイムアウトしました", file=sys.stderr)
+                return None
+            if args.no_reconnect:
+                raise DmError("サーバーが接続を閉じました")
+        finally:
+            if timer is not None:
+                timer.cancel()
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Document Manager API client")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -194,6 +298,13 @@ def main():
     p.add_argument("id")
     p.add_argument("-o", "--output", help="保存先(ファイルまたはディレクトリ。省略時はカレントに元のファイル名で保存)")
     p.set_defaults(func=cmd_download)
+    p = sub.add_parser("watch", help="操作の通知(SSE)を待ち受ける")
+    p.add_argument("--count", type=int, help="この件数のイベントを受け取ったら終了する")
+    p.add_argument("--timeout", type=float, help="この秒数が経ったら終了する")
+    p.add_argument("--action", help="通知する操作の種類(カンマ区切り): upload,revise,tags,archive,restore")
+    p.add_argument("--all", action="store_true", help="一覧の変更通知(documents-changed/projects-changed)も出力する")
+    p.add_argument("--no-reconnect", action="store_true", help="切断されたら再接続せずに終了する")
+    p.set_defaults(func=cmd_watch, streaming=True)
 
     # Windows(cp932等)のコンソールでも日本語のJSON・エラーメッセージが化けないようUTF-8で出す
     sys.stdout.reconfigure(encoding="utf-8")
@@ -204,6 +315,10 @@ def main():
     except DmError as err:
         print(str(err), file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    if getattr(args, "streaming", False):
+        return
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

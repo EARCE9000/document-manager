@@ -1,6 +1,6 @@
 ---
 name: document-manager
-description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索・版履歴の確認・ダウンロードを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io等の成果物をDocument Managerへ保存・更新するときに使う。
+description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索・版履歴の確認・ダウンロード・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io等の成果物をDocument Managerへ保存・更新するときに使う。
 ---
 
 # Document Manager
@@ -47,6 +47,7 @@ APIキーはチャットの応答やコミットに書き出さない。
 | `versions <文書ID>` | その文書を含む一連の版を古い順に返す |
 | `upload <ファイル> [オプション]` | アップロード(下記) |
 | `download <文書ID> [-o 保存先]` | 元ファイルをダウンロード |
+| `watch [--count N] [--timeout 秒] [--action 種類,...]` | 操作の通知を待ち受け、1件1行のJSONで出力する(下記) |
 
 `upload` のオプション:
 
@@ -73,6 +74,20 @@ APIキーはチャットの応答やコミットに書き出さない。
 
 `search <キーワード>` を実行する。見つかった文書のファイル名・タグ・更新日時・文書ID・閲覧用URLを一覧で報告する。
 3文字未満のキーワードでも検索できる。
+
+### 「新しい資料が上がったら教えて」「〜が更新されるまで待って」
+
+`watch` で操作の通知(誰が・どの文書に・何をしたか)を待ち受ける。1件ごとに次のような1行のJSONが出る。
+
+```json
+{"event": "document-activity", "action": "upload", "documentId": "...", "entryFile": "報告書.md", "user": "tanaka@example.com", "viaApiKey": false, "at": "2026-09-22T05:00:00.000Z"}
+```
+
+- `action` は `upload`(新規) / `revise`(新しい版) / `tags`(タグ付け。追加したタグが `tags` に入る) / `archive` / `restore`。
+- **必ず `--count` か `--timeout` を付けて、終わるコマンドとして実行する**(付けないと待ち続ける)。エージェントのコマンド実行時間の上限を超えないよう、`--timeout` は長くても数分(例: 300)にし、来なければもう一度実行するか、ユーザーに状況を伝える。
+- 例: 次のアップロードを1件待つ → `watch --count 1 --timeout 300 --action upload,revise`
+- 自分(このAPIキー)の操作も `viaApiKey: true` で流れてくる。他の人の操作だけを見たいときは `user` が自分でないものを使う。
+- 接続が切れても自動で再接続するが、切れている間の通知は再送されない。取りこぼしが困る場合は、あとで `search` で一覧を確認する。
 
 ### 「版履歴を見せて」「前の版は?」
 

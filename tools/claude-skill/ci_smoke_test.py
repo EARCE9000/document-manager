@@ -115,6 +115,41 @@ def smoke_clients(env, workdir):
         bad = run_client(kind, ["search"], {**env, "DM_API_KEY": "dm_invalid"}, expect_ok=False)
         check(bad.returncode == 1 and "401" in bad.stderr, "不正なキーはエラー(401)")
 
+        smoke_watch(kind, env, workdir)
+
+
+def start_watch(kind, args, env):
+    cmd = [sys.executable, PY_CLIENT] if kind == "python" else ["node", NODE_CLIENT]
+    return subprocess.Popen(cmd + ["watch"] + args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+
+
+def smoke_watch(kind, env, workdir):
+    # --action upload で絞り込み、タグ変更は無視してアップロードだけを1件受け取って終了する
+    watcher = start_watch(kind, ["--count", "1", "--timeout", "30", "--action", "upload"], env)
+    time.sleep(2)  # SSE接続が張られるのを待つ(接続前のイベントは届かない)
+    name = f"watch-{kind}.txt"
+    path = os.path.join(workdir, name)
+    open(path, "w", encoding="utf-8").write("watch")
+    target = json.loads(run_client(kind, ["upload", path], env).stdout)
+    run_client(kind, ["upload", path, "--replace-same-name"], env)  # revise は --action で除外される
+    out, err = watcher.communicate(timeout=40)
+    lines = [json.loads(line) for line in out.splitlines() if line.strip()]
+    check(watcher.returncode == 0 and len(lines) == 1, f"watch: --count 1 で1件受け取って終了する ({err.strip()})")
+    event = lines[0] if lines else {}
+    check(event.get("event") == "document-activity" and event.get("action") == "upload"
+          and event.get("documentId") == target["id"] and event.get("entryFile") == name, "watch: アップロードの通知内容(操作・文書ID・ファイル名)")
+    check(event.get("viaApiKey") is True, "watch: APIキー経由の操作として通知される")
+
+    started = time.monotonic()
+    idle = start_watch(kind, ["--timeout", "2"], env)
+    idle.communicate(timeout=20)
+    elapsed = time.monotonic() - started
+    check(idle.returncode == 0 and elapsed < 10, f"watch: --timeout で期限どおりに終了する ({elapsed:.1f}秒)")
+
+    denied = start_watch(kind, ["--timeout", "5"], {**env, "DM_API_KEY": "dm_invalid"})
+    _, denied_err = denied.communicate(timeout=20)
+    check(denied.returncode == 1 and "401" in denied_err, "watch: 不正なキーは再接続せずエラー(401)")
+
 
 def main():
     data_dir = tempfile.mkdtemp(prefix="dm-skill-smoke-")

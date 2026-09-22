@@ -3839,6 +3839,13 @@ ${vectorSearchEndpoints}
 \`GET ${baseUrl}/api/documents/:id\` - 文書1件のメタ情報(アーカイブ済みも取得でき、\`archived\` で判別できる)
 \`GET ${baseUrl}/api/documents/:id/versions\` - その文書を含む一連の版を古い順に返す
 
+### 操作の通知の購読 (SSE)
+\`GET ${baseUrl}/api/documents/events\`
+- Server-Sent Events。APIキー(readonlyでも可)で購読できる。接続を開いたままにすると、誰かが文書を操作するたびにイベントが届く
+- \`event: document-activity\` の \`data\` は \`{"action": "upload|revise|tags|archive|restore", "documentId", "entryFile", "tags", "user", "viaApiKey", "at"}\` のJSON(\`tags\` はタグ付けで追加されたタグ)
+- ほかに一覧の再取得のきっかけとして \`documents-changed\` / \`projects-changed\`(中身は \`{}\`)が届く。30秒ごとに \`:heartbeat\` のコメント行が届く
+- 切断中のイベントは再送されないため、再接続後は必要に応じて一覧を取り直す
+
 ### 文書のプレビュー/ダウンロード
 \`GET ${baseUrl}/api/documents/:id/file\`
 - \`?download=1\`を付けると添付ファイルとしてダウンロードされる(付けない場合はプレビュー用ファイルを返す)
@@ -3905,6 +3912,9 @@ curl -X POST "${baseUrl}/api/documents" \\
   -H "Authorization: Bearer <APIキー>" \\
   -F "uploadfile=@./report_v2.md" \\
   -F "previousId=<旧版の文書ID>"
+
+# 操作の通知を待ち受ける(SSE。-N でバッファリングを無効にする)
+curl -N -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/documents/events"
 
 # タグ更新
 curl -X PUT "${baseUrl}/api/documents/<id>/tags" \\

@@ -17,6 +17,8 @@
  *   node dm_client.mjs versions <文書ID>
  *   node dm_client.mjs upload <ファイル> [--previous-id ID | --replace-same-name] [--preview 画像] [--tags タグ1,タグ2]
  *   node dm_client.mjs download <文書ID> [-o 保存先]
+ *   node dm_client.mjs watch [--count N] [--timeout 秒] [--action upload,revise,...] [--all]
+ *       操作の通知(SSE)を待ち受け、1イベント1行のJSONで出力する
  */
 
 import fs from "node:fs";
@@ -141,6 +143,105 @@ const commands = {
 	}
 };
 
+// SSEはサーバーが30秒ごとにハートビートを送るため、それより十分長く無通信なら切れたとみなして再接続する
+const WATCH_IDLE_TIMEOUT_MS = 75 * 1000;
+const WATCH_ACTIVITY_EVENT = "document-activity";
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// SSEのレスポンスボディから {event, data} を順に返す。コメント行(:heartbeat 等)は読み捨てる。
+// データを受け取るたびに onActivity() を呼び、無通信の監視に使う
+async function* iterSseEvents(body, onActivity) {
+	const decoder = new TextDecoder();
+	let buffer = "";
+	let event = "message";
+	let data = [];
+	for await (const chunk of body) {
+		onActivity();
+		buffer += decoder.decode(chunk, {stream: true});
+		let index;
+		while ((index = buffer.indexOf("\n")) >= 0) {
+			const line = buffer.slice(0, index).replace(/\r$/, "");
+			buffer = buffer.slice(index + 1);
+			if (line === "") {
+				if (data.length > 0) yield {event, data: data.join("\n")};
+				event = "message";
+				data = [];
+			} else if (line.startsWith(":")) {
+				continue;
+			} else if (line.startsWith("event:")) {
+				event = line.slice(6).trim();
+			} else if (line.startsWith("data:")) {
+				data.push(line.slice(5).trimStart());
+			}
+		}
+	}
+}
+
+// 操作の通知を待ち受けて、1イベント1行のJSON(NDJSON)で標準出力へ流す。
+// 切断されたら自動で再接続する(切断中のイベントは再送されない)
+const watch = async (opts) => {
+	const {baseUrl, apiKey} = loadConfig();
+	const count = opts.count ? Number(opts.count) : null;
+	const actions = opts.action ? new Set(opts.action.split(",").map((a) => a.trim()).filter(Boolean)) : null;
+	const deadline = opts.timeout ? Date.now() + Number(opts.timeout) * 1000 : null;
+	let printed = 0;
+	let backoffMs = 1000;
+	for (;;) {
+		if (deadline != null && Date.now() >= deadline) {
+			console.error("タイムアウトしました");
+			return;
+		}
+		const controller = new AbortController();
+		let idleTimer = null;
+		const resetIdle = () => {
+			clearTimeout(idleTimer);
+			idleTimer = setTimeout(() => controller.abort(new Error("無通信のため切断")), WATCH_IDLE_TIMEOUT_MS);
+		};
+		// 全体の期限が来たら接続を閉じて、待ち受けを終わらせる
+		const deadlineTimer = deadline == null ? null : setTimeout(() => controller.abort(new Error("timeout")), Math.max(0, deadline - Date.now()));
+		try {
+			resetIdle();
+			const res = await fetch(new URL("api/documents/events", baseUrl), {
+				headers: {Authorization: `Bearer ${apiKey}`, Accept: "text/event-stream"},
+				signal: controller.signal
+			});
+			if (res.status === 401 || res.status === 403) {
+				throw new DmError(JSON.stringify({status: res.status, error: await res.text()}));
+			}
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			backoffMs = 1000;
+			for await (const {event, data} of iterSseEvents(res.body, resetIdle)) {
+				if (event !== WATCH_ACTIVITY_EVENT && !opts.all) continue;
+				let payload;
+				try {
+					payload = data ? JSON.parse(data) : {};
+				} catch {
+					payload = {data};
+				}
+				if (event === WATCH_ACTIVITY_EVENT && actions != null && !actions.has(payload.action)) continue;
+				process.stdout.write(`${JSON.stringify({event, ...payload})}\n`);
+				printed++;
+				if (count != null && printed >= count) return;
+			}
+			if (opts["no-reconnect"]) throw new DmError("サーバーが接続を閉じました");
+		} catch (err) {
+			if (err instanceof DmError) throw err;
+			if (deadline != null && Date.now() >= deadline) {
+				console.error("タイムアウトしました");
+				return;
+			}
+			if (opts["no-reconnect"]) throw new DmError(`接続が切れました: ${err.message}`);
+			console.error(`接続が切れました(${err.cause?.message || err.message})。${backoffMs / 1000}秒後に再接続します`);
+		} finally {
+			clearTimeout(idleTimer);
+			clearTimeout(deadlineTimer);
+			controller.abort();
+		}
+		await sleep(backoffMs);
+		backoffMs = Math.min(backoffMs * 2, 30000);
+	}
+};
+
 function requireArg(value, label) {
 	if (!value) throw new DmError(`${label}を指定してください`);
 	return value;
@@ -154,12 +255,28 @@ const main = async () => {
 			"replace-same-name": {type: "boolean"},
 			preview: {type: "string"},
 			tags: {type: "string"},
-			output: {type: "string", short: "o"}
+			output: {type: "string", short: "o"},
+			count: {type: "string"},
+			timeout: {type: "string"},
+			action: {type: "string"},
+			all: {type: "boolean"},
+			"no-reconnect": {type: "boolean"}
 		}
 	});
 	const [command, ...rest] = positionals;
+	if (command === "watch") {
+		// watchは自分で1行ずつ出力するため、最後のJSON一括出力はしない
+		try {
+			await watch(values);
+			process.exit(0);
+		} catch (err) {
+			if (!(err instanceof DmError)) throw err;
+			console.error(err.message);
+			process.exit(1);
+		}
+	}
 	if (!commands[command]) {
-		console.error(`使い方: node dm_client.mjs <${Object.keys(commands).join("|")}> ...`);
+		console.error(`使い方: node dm_client.mjs <${[...Object.keys(commands), "watch"].join("|")}> ...`);
 		process.exit(2);
 	}
 	try {
