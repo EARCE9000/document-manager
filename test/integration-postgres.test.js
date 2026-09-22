@@ -34,7 +34,13 @@ test("LISTEN/NOTIFY: notify が subscribe ハンドラへ届く", {skip}, async 
 	await ds.init();
 
 	const received = [];
-	ds.subscribe(["documents_changed", "projects_changed"], (channel) => received.push(channel));
+	const payloads = [];
+	// server.js と同じく、使うチャンネルは1回の subscribe でまとめて購読する
+	// (LISTEN接続は最初の subscribe で確立されるため)
+	ds.subscribe(["documents_changed", "projects_changed", "document_activity"], (channel, payload) => {
+		received.push(channel);
+		payloads.push({channel, payload});
+	});
 
 	// 専用LISTEN接続が確立されるのを少し待つ(subscribeは非同期に接続を張る)
 	await new Promise((r) => setTimeout(r, 1200));
@@ -55,6 +61,15 @@ test("LISTEN/NOTIFY: notify が subscribe ハンドラへ届く", {skip}, async 
 		await new Promise((r) => setTimeout(r, 100));
 	}
 	assert.ok(received.includes("documents_changed"), "documents_changed の通知がLISTENハンドラへ届く");
+
+	// 操作のポップアップ通知用: ペイロード(JSON文字列)がそのままハンドラへ届く
+	const activity = JSON.stringify({action: "upload", documentId: "d1", entryFile: "報告書.md", user: "a@example.com", viaApiKey: false});
+	await ds.notify("document_activity", activity);
+	const deadline3 = Date.now() + 5000;
+	while (!received.includes("document_activity") && Date.now() < deadline3) {
+		await new Promise((r) => setTimeout(r, 100));
+	}
+	assert.equal(payloads.find((p) => p.channel === "document_activity")?.payload, activity, "document_activity のペイロードが届く");
 });
 
 test.after(async () => {

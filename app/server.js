@@ -1019,6 +1019,13 @@ const deliverProjectsChanged = () => {
 		client.write("event: projects-changed\ndata: {}\n\n");
 	}
 };
+// 誰かの操作(アップロード・新しい版・タグ付け・アーカイブ・復元)を画面右下のポップアップ通知用に配信する。
+// payloadは broadcastActivity() が作るJSON文字列(改行を含まない)をそのまま流す
+const deliverDocumentActivity = (payload) => {
+	for (const client of sseClients) {
+		client.write(`event: document-activity\ndata: ${payload}\n\n`);
+	}
+};
 
 // 変更通知は datastore の pub/sub 経由で発火する。SQLite(単一インスタンス)ではプロセス内で
 // 即座にローカル配信され、Postgres(複数インスタンス)ではLISTEN/NOTIFYで全インスタンスへ伝播し、
@@ -1031,12 +1038,34 @@ const broadcastProjectsChanged = () => {
 	ds.notify("projects_changed").catch((err) => logger.error({err}, "::notify:projects_changed"));
 };
 
+// 操作通知(ポップアップ用)のペイロードは Postgres の NOTIFY 上限(8000バイト)に収まるよう、
+// ファイル名・タグを切り詰めて小さく保つ。userは操作者(APIキー経由ならキーの発行者)、
+// viaApiKeyはAPIキー(AIエージェント等)経由の操作かどうか(自分自身の操作でも、APIキー経由なら
+// 画面に通知を出すための判定に使う)
+const ACTIVITY_MAX_TEXT = 200;
+const ACTIVITY_MAX_TAGS = 20;
+const truncateText = (value) => (value == null ? null : String(value).slice(0, ACTIVITY_MAX_TEXT));
+const broadcastActivity = (req, {action, documentId, entryFile, tags}) => {
+	const payload = JSON.stringify({
+		action,
+		documentId,
+		entryFile: truncateText(entryFile),
+		tags: Array.isArray(tags) ? tags.slice(0, ACTIVITY_MAX_TAGS).map((tag) => String(tag).slice(0, 50)) : undefined,
+		user: truncateText(req.authData.user_identifier),
+		viaApiKey: req.authData.viaApiKey != null,
+		at: new Date().toISOString()
+	});
+	ds.notify("document_activity", payload).catch((err) => logger.error({err}, "::notify:document_activity"));
+};
+
 // 通知チャンネルを購読し、受信したら対応するローカル配信を行う
-ds.subscribe(["documents_changed", "projects_changed"], (channel) => {
+ds.subscribe(["documents_changed", "projects_changed", "document_activity"], (channel, payload) => {
 	if (channel === "documents_changed") {
 		deliverDocumentsChanged();
 	} else if (channel === "projects_changed") {
 		deliverProjectsChanged();
+	} else if (channel === "document_activity" && payload) {
+		deliverDocumentActivity(payload);
 	}
 });
 
@@ -1398,6 +1427,7 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		if (transferredProjectIds.length > 0) {
 			broadcastProjectsChanged();
 		}
+		broadcastActivity(req, {action: previousDocument != null ? "revise" : "upload", documentId: id, entryFile: originalName});
 
 		res.status(200).json(await toDocumentResponse(row));
 	} catch (err) {
@@ -1526,13 +1556,15 @@ app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async
 			user: req.authData.user_identifier,
 			documentId: req.params.id
 		}, "audit");
+		const archivedEntryFile = (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]))?.entry_file ?? null;
 		AuditLog.record({
 			userIdentifier: req.authData.user_identifier,
 			action: "delete",
 			documentId: req.params.id,
-			entryFile: (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]))?.entry_file ?? null
+			entryFile: archivedEntryFile
 		});
 		broadcastDocumentsChanged();
+		broadcastActivity(req, {action: "archive", documentId: req.params.id, entryFile: archivedEntryFile});
 		res.status(204).end();
 	} catch (err) {
 		logger.error(err, "::api/documents/:id:delete");
@@ -1641,13 +1673,15 @@ app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite,
 			user: req.authData.user_identifier,
 			documentId: req.params.id
 		}, "audit");
+		const restoredEntryFile = (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]))?.entry_file ?? null;
 		AuditLog.record({
 			userIdentifier: req.authData.user_identifier,
 			action: "restore",
 			documentId: req.params.id,
-			entryFile: (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]))?.entry_file ?? null
+			entryFile: restoredEntryFile
 		});
 		broadcastDocumentsChanged();
+		broadcastActivity(req, {action: "restore", documentId: req.params.id, entryFile: restoredEntryFile});
 		res.status(200).json({id: req.params.id});
 	} catch (err) {
 		logger.error(err, "::api/documents/:id/restore");
@@ -1669,8 +1703,14 @@ app.put(BASE_URL_PATH + 'api/documents/:id/tags', requireAuth, requireWrite, asy
 		const rawTags = Array.isArray(req.body.tags) ? req.body.tags : [];
 		const tags = [...new Set(rawTags.map((tag) => String(tag).trim()).filter((tag) => tag !== ""))];
 
+		const previousTags = (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [document.id])).map((row) => row.tag);
 		await replaceDocumentTags(document.id, tags);
 		broadcastDocumentsChanged();
+		// 実際に変わったときだけ通知する。追加されたタグがあればそれを、削除だけなら空配列を載せる
+		const addedTags = tags.filter((tag) => !previousTags.includes(tag));
+		if (addedTags.length > 0 || previousTags.some((tag) => !tags.includes(tag))) {
+			broadcastActivity(req, {action: "tags", documentId: document.id, entryFile: document.entry_file, tags: addedTags});
+		}
 		res.status(200).json({tags});
 	} catch (err) {
 		logger.error(err, "::api/documents/:id/tags");

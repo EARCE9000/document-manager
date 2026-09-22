@@ -177,6 +177,61 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		expect(zip.includes(Buffer.from("document-manager/SKILL.md"))).toBe(true);
 	});
 
+	// 他の人(ここでは自分名義のAPIキー=AIエージェント相当)の操作が右下のポップアップで通知され、
+	// クリックで文書を開ける。ブラウザ上の自分の操作は通知されず、ベルでオフにできる
+	test("操作のポップアップ通知", async ({page, request}) => {
+		const rw = {Authorization: `Bearer ${keys.readwrite}`};
+		const name = `e2e-通知-${Date.now()}.txt`;
+		await page.goto("./");
+		await expect(page.locator("#uploadDropZone")).toBeVisible();
+		// SSE接続が張られるのを待つ(接続前のイベントは届かないため)
+		await page.waitForTimeout(500);
+
+		let docId;
+		await test.step("APIキー経由のアップロードが通知され、クリックで文書が開く", async () => {
+			const res = await request.post("api/documents", {headers: rw, multipart: {uploadfile: {name, mimeType: "text/plain", buffer: Buffer.from("notify")}}});
+			docId = (await res.json()).id;
+			const toast = page.locator(".activityToast", {hasText: name});
+			await expect(toast).toBeVisible();
+			await expect(toast).toContainText("をアップロードしました");
+			await expect(toast).toContainText("APIキー経由");
+			await toast.click();
+			await expect(page.locator("#previewTitle")).toHaveText(name);
+			await expect(toast).toHaveCount(0);
+		});
+
+		await test.step("APIキー経由のタグ付けは追加したタグ付きで通知される", async () => {
+			await request.put(`api/documents/${docId}/tags`, {headers: rw, data: {tags: ["通知テスト"]}});
+			await expect(page.locator(".activityToast", {hasText: "「通知テスト」"})).toBeVisible();
+		});
+
+		await test.step("ブラウザ上の自分の操作は通知されない", async () => {
+			await page.locator(".activityToastClose").first().click();
+			await expect(page.locator(".activityToast")).toHaveCount(0);
+			await page.locator("#previewTagEditButton").click();
+			await page.fill("#tagEditInput", "自分で追加");
+			await page.press("#tagEditInput", "Enter");
+			await page.locator("#tagSaveButton").click();
+			await expect(page.locator("#tagEditOverlay")).toBeHidden();
+			await page.waitForTimeout(800);
+			await expect(page.locator(".activityToast")).toHaveCount(0);
+		});
+
+		await test.step("ベルでオフにすると通知されない(設定はリロード後も保持)", async () => {
+			await page.locator("#activityNotifyToggle").click();
+			await expect(page.locator("#activityNotifyToggle")).toHaveAttribute("aria-pressed", "false");
+			await page.reload();
+			await expect(page.locator("#activityNotifyToggle")).toHaveAttribute("aria-pressed", "false");
+			await page.waitForTimeout(500);
+			await request.delete(`api/documents/${docId}`, {headers: rw});
+			await page.waitForTimeout(800);
+			await expect(page.locator(".activityToast")).toHaveCount(0);
+			// 後続テストのため元に戻す
+			await page.locator("#activityNotifyToggle").click();
+			await expect(page.locator("#activityNotifyToggle")).toHaveAttribute("aria-pressed", "true");
+		});
+	});
+
 	// プレビューの「新しい版をアップロード」→旧版のアーカイブ・新版への切り替え・版履歴の表示と
 	// 版履歴から旧版(アーカイブ済み)を開く操作までを実ブラウザで通す
 	test("新しい版のアップロードと版履歴の表示", async ({page}) => {

@@ -74,11 +74,12 @@ const createSqliteDatastore = () => {
 			subscribers.push(handler);
 		},
 
-		// 変更を通知する。単一プロセスなので登録ハンドラを同期的に呼ぶ
-		async notify(channel) {
+		// 変更を通知する。単一プロセスなので登録ハンドラを同期的に呼ぶ。
+		// payloadは任意の文字列(Postgresと同じくハンドラの第2引数で渡る)
+		async notify(channel, payload = "") {
 			for (const handler of subscribers) {
 				try {
-					handler(channel);
+					handler(channel, payload);
 				} catch (err) {
 					logger.error({err, channel}, "notify handler failed");
 				}
@@ -234,7 +235,7 @@ const createPostgresDatastore = () => {
 			client.on("notification", (msg) => {
 				for (const handler of listenHandlers) {
 					try {
-						handler(msg.channel);
+						handler(msg.channel, msg.payload ?? "");
 					} catch (err) {
 						logger.error({err, channel: msg.channel}, "notify handler failed");
 					}
@@ -277,9 +278,10 @@ const createPostgresDatastore = () => {
 			ensureListenClient().catch((err) => logger.error({err}, "ensureListenClient failed"));
 		},
 
-		// 変更を全インスタンスへ通知する(pg_notify。チャンネル名を安全に渡せる)
-		async notify(channel) {
-			await pool.query("SELECT pg_notify($1, '')", [channel]);
+		// 変更を全インスタンスへ通知する(pg_notify。チャンネル名・ペイロードを安全に渡せる)。
+		// ペイロードはPostgresの制約で8000バイト未満にすること(呼び出し側で小さく保つ)
+		async notify(channel, payload = "") {
+			await pool.query("SELECT pg_notify($1, $2)", [channel, payload]);
 		},
 
 		// プール・LISTEN接続を閉じる(graceful shutdown / テストのプロセス終了用)

@@ -793,6 +793,50 @@
 	#historyTable .historyActionBadge.project_unassign { background: #f4f5f7; color: #666; }
 	#historyTable .historyActionBadge.supersede { background: #fff3cd; color: #b8860b; }
 
+	/* 他の利用者(またはAPIキー経由のAIエージェント)の操作を知らせる右下のポップアップ通知 */
+	#activityToastStack {
+		position: fixed;
+		right: 16px;
+		bottom: 40px;
+		z-index: 2000;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 8px;
+		pointer-events: none;
+	}
+	.activityToast {
+		pointer-events: auto;
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		width: 320px;
+		max-width: calc(100vw - 32px);
+		box-sizing: border-box;
+		background: #fff;
+		border: 1px solid #d0d7de;
+		border-left: 4px solid #1a56db;
+		border-radius: 6px;
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+		padding: 8px 10px;
+		font-size: 0.85em;
+		line-height: 1.5;
+		cursor: pointer;
+		animation: activityToastIn 0.2s ease-out;
+	}
+	.activityToast.archive { border-left-color: #b8860b; }
+	.activityToast.restore, .activityToast.revise { border-left-color: #2f9e44; }
+	.activityToast.leaving { opacity: 0; transform: translateY(6px); transition: opacity 0.25s, transform 0.25s; }
+	.activityToast:hover { background: #f6f8fa; }
+	.activityToastBody { flex: 1; min-width: 0; }
+	.activityToastBody .who { font-weight: 600; }
+	.activityToastBody .file { word-break: break-all; }
+	.activityToastBody .meta { color: #888; font-size: 0.9em; margin-top: 2px; }
+	.activityToastClose { background: none; border: none; color: #888; cursor: pointer; font-size: 1.1em; line-height: 1; padding: 0 2px; }
+	.activityToastClose:hover { color: #333; }
+	@keyframes activityToastIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+	#activityNotifyToggle.muted { opacity: 0.55; }
+
 	/* ベクトル索引ページ(モーダルではなく#mainArea全体を使うページ表示。件数が多い想定のため) */
 	#vectorIndexPaneHeader { padding: 14px 20px; border-bottom: 1px solid #ddd; flex-shrink: 0; }
 	#vectorIndexPaneHeader h2 { margin: 0 0 6px; font-size: 1.05em; }
@@ -1024,6 +1068,10 @@
 		<div class="topBarTitle">Document Manager</div>
 		<div id="topBarActions">
 			<span id="userIdentifier"></span>
+			<button type="button" id="activityNotifyToggle" class="topBarIconButton" title="他の人の操作をポップアップで通知: オン" aria-label="操作通知のオン/オフ" aria-pressed="true">
+				<svg class="bellOn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+				<svg class="bellOff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.9 17.9 0 0 1 18 8"/><path d="M6.26 6.26A5.9 5.9 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+			</button>
 			<button type="button" id="helpButton" class="topBarIconButton" title="ヘルプ(AIからの利用方法)" aria-label="ヘルプ">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
 			</button>
@@ -1041,6 +1089,7 @@
 			</a>
 		</div>
 	</header>
+	<div id="activityToastStack" aria-live="polite"></div>
 	<nav id="breadcrumbBar">
 		<a href="#" id="menuDocumentsLink" class="menuLink active">文書一覧</a><a href="#" id="menuTagTreeLink" class="menuLink">タグ体系</a><a href="#" id="menuProjectsLink" class="menuLink">プロジェクト</a><a href="#" id="menuVectorIndexLink" class="menuLink">ベクトル索引</a><a href="#" id="menuArchiveLink" class="menuLink">アーカイブ</a>
 	</nav>
@@ -3926,6 +3975,132 @@ const subscribeDocumentEvents = () => {
 	eventSource.addEventListener("projects-changed", () => {
 		if (currentView === "projects") loadProjects();
 	});
+	eventSource.addEventListener("document-activity", (ev) => {
+		try {
+			showActivityToast(JSON.parse(ev.data));
+		} catch (err) {
+			// 壊れた通知は無視する(一覧の更新自体は documents-changed で行われる)
+		}
+	});
+};
+
+// ---- 操作のポップアップ通知(画面右下) ----
+// 他の利用者の操作と、自分でもAPIキー経由(AIエージェント等)の操作を通知する。
+// 自分がこの画面で行った操作は通知しない(自分で分かっているため)。
+// ベルのボタンでオン/オフでき、設定はこのブラウザにだけ保存する
+const activityToastStack = document.getElementById("activityToastStack");
+const activityNotifyToggle = document.getElementById("activityNotifyToggle");
+const ACTIVITY_TOAST_MS = 6000;
+const ACTIVITY_TOAST_MAX = 4;
+const ACTIVITY_MUTE_STORAGE_KEY = "dm.activityToastsMuted";
+let currentUserIdentifier = null;
+let activityToastsMuted = false;
+try {
+	activityToastsMuted = localStorage.getItem(ACTIVITY_MUTE_STORAGE_KEY) === "1";
+} catch (err) {
+	// localStorageが使えない環境では既定(オン)のまま
+}
+
+const renderActivityNotifyToggle = () => {
+	activityNotifyToggle.classList.toggle("muted", activityToastsMuted);
+	activityNotifyToggle.setAttribute("aria-pressed", String(!activityToastsMuted));
+	activityNotifyToggle.title = `他の人の操作をポップアップで通知: ${activityToastsMuted ? "オフ" : "オン"}`;
+	activityNotifyToggle.querySelector(".bellOn").style.display = activityToastsMuted ? "none" : "";
+	activityNotifyToggle.querySelector(".bellOff").style.display = activityToastsMuted ? "" : "none";
+};
+activityNotifyToggle.addEventListener("click", () => {
+	activityToastsMuted = !activityToastsMuted;
+	try {
+		localStorage.setItem(ACTIVITY_MUTE_STORAGE_KEY, activityToastsMuted ? "1" : "0");
+	} catch (err) {
+		// 保存できなくてもこのページ内では切り替える
+	}
+	if (activityToastsMuted) activityToastStack.innerHTML = "";
+	renderActivityNotifyToggle();
+});
+renderActivityNotifyToggle();
+
+// メールアドレス形式の識別子は @ より前だけを表示する(全体はツールチップで見せる)
+const shortUserName = (identifier) => String(identifier || "").split("@")[0] || "だれか";
+
+const describeActivity = (activity) => {
+	const file = `「${escapeHtml(activity.entryFile || "(不明な文書)")}」`;
+	switch (activity.action) {
+		case "upload": return `${file}をアップロードしました`;
+		case "revise": return `${file}の新しい版をアップロードしました`;
+		case "archive": return `${file}をアーカイブしました`;
+		case "restore": return `${file}を元に戻しました`;
+		case "tags":
+			return activity.tags && activity.tags.length > 0
+				? `${file}にタグ${activity.tags.map((tag) => `「${escapeHtml(tag)}」`).join("")}を付けました`
+				: `${file}のタグを変更しました`;
+		default: return `${file}を更新しました`;
+	}
+};
+
+const dismissActivityToast = (toast) => {
+	if (!toast.isConnected || toast.classList.contains("leaving")) return;
+	toast.classList.add("leaving");
+	setTimeout(() => toast.remove(), 250);
+};
+
+// 通知から文書を開く。アーカイブ済みの文書も開けるよう、1件取得APIで最新の状態を引いてから表示する
+const openDocumentFromActivity = async (documentId) => {
+	const res = await fetch(`./api/documents/${encodeURIComponent(documentId)}`);
+	if (res.status !== 200) {
+		alert("対象の文書が見つかりませんでした。");
+		return;
+	}
+	const doc = await res.json();
+	// プレビュー欄の無い「ベクトル索引」画面にいるときだけ文書一覧へ切り替える
+	// (他の画面はプレビュー欄を持ち、archivedの有無に応じた表示もshowPreview側で行われる)
+	if (currentView === "vectorIndex") {
+		setView("active");
+		await loadDocuments();
+	}
+	showPreview(doc);
+};
+
+const showActivityToast = (activity) => {
+	if (activityToastsMuted || activity == null) return;
+	const isSelf = currentUserIdentifier != null && activity.user === currentUserIdentifier;
+	if (isSelf && !activity.viaApiKey) return;
+
+	const toast = document.createElement("div");
+	toast.className = `activityToast ${escapeHtml(activity.action || "")}`;
+	toast.setAttribute("role", "status");
+	const who = isSelf
+		? `<span class="who">あなた</span>`
+		: `<span class="who" title="${escapeHtml(activity.user || "")}">${escapeHtml(shortUserName(activity.user))}</span> さん`;
+	toast.innerHTML = `
+		<div class="activityToastBody">
+			${who}が${describeActivity(activity)}
+			<div class="meta">${activity.viaApiKey ? "APIキー経由(AIエージェント等)・" : ""}${escapeHtml(formatDateTime(activity.at))}</div>
+		</div>
+		<button type="button" class="activityToastClose" title="閉じる" aria-label="閉じる">×</button>
+	`;
+	toast.querySelector(".activityToastClose").addEventListener("click", (ev) => {
+		ev.stopPropagation();
+		dismissActivityToast(toast);
+	});
+	if (activity.documentId) {
+		toast.title = "クリックで文書を開く";
+		toast.addEventListener("click", () => {
+			dismissActivityToast(toast);
+			openDocumentFromActivity(activity.documentId);
+		});
+	}
+	// マウスを乗せている間は消さない(読んでいる途中で消えないように)
+	let timer = setTimeout(() => dismissActivityToast(toast), ACTIVITY_TOAST_MS);
+	toast.addEventListener("mouseenter", () => clearTimeout(timer));
+	toast.addEventListener("mouseleave", () => {
+		timer = setTimeout(() => dismissActivityToast(toast), ACTIVITY_TOAST_MS / 2);
+	});
+
+	activityToastStack.appendChild(toast);
+	// 一括アップロード等で大量に来ても画面を埋めないよう、古いものから消して上限件数に抑える
+	const visible = [...activityToastStack.querySelectorAll(".activityToast:not(.leaving)")];
+	visible.slice(0, Math.max(0, visible.length - ACTIVITY_TOAST_MAX)).forEach(dismissActivityToast);
 };
 
 // ヘッダーに小さく表示するバージョン(認証不要のエンドポイントなので、ログイン状態を待たずに取得する)
@@ -3940,6 +4115,7 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 	if (res.status === 200) {
 		const authData = await res.json();
 		currentUserRole = authData.role;
+		currentUserIdentifier = authData.user_identifier;
 		vectorSearchEnabled = !!authData.vectorSearchEnabled;
 		userIdentifier.textContent = authData.user_identifier + (authData.isAdmin ? "" : ` (${ROLE_LABELS[authData.role] || authData.role})`);
 		if (!authData.isAdmin) {
