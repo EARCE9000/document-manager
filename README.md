@@ -83,9 +83,17 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 - **レート制限**(`express-rate-limit`、超過時は429): `api/*`は認証状態で上限を分けている。未認証(総当たり・スクレイピング等が主目的)はIPごとに5分間300リクエスト、認証済み(ログインセッション・APIキー)は利用者ごとに5分間1000リクエストと大幅に緩め、複数文書の一括操作等を行うAI連携の実利用でも制限に達しにくくしている(認証済み側はIPではなく利用者識別子でカウントするため、社内共有ネットワーク等で複数人が同一IPに見える環境でも互いに影響しない)。無効なAPIキーでの試行は未認証側の枠でカウントされる。`/login`(OIDCログイン開始・コールバック)には15分間20リクエスト/IPの上限を別途設けている(実際のパスワード入力はOIDCプロバイダ側で行われるため、これは認可コード交換の仕組み自体への連打対策という位置づけ)
 - **アップロードサイズ上限**: 1ファイル`UPLOAD_MAX_BYTES`(既定256MB)まで。超過時は413を返す。認証チェック(`requireAuth`/`requireWrite`)をmultipartパース(`express-fileupload`)より先に行う構成のため、未認証のリクエストはファイル本体の読み取りが始まる前に401/403で弾かれる(サイズ判定にすら到達しない)
 
+### API仕様の配信(OpenAPI / AI向けガイド)
+- API仕様は[app/lib/api-spec.js](app/lib/api-spec.js)に一元化し、そこから2つの形式で配信する(どちらもログイン済みまたはAPIキーで取得可)
+  - `GET api/openapi.json`: OpenAPI 3.1。ツール・AIエージェント向けの機械可読な仕様。全APIを網羅し、ロール(`x-role`)とAPIキーから実行できるか(`x-api-key-usable`)も含む
+  - `GET api/usage.md`: AI向けの利用ガイド(Markdown)。接続情報・エンドポイント一覧・curl例・「アップして」と言われたときの振る舞い等の指示を含む
+- 「アップして」「探して」等のAIへの指示も仕様の一部として同じ場所で管理し、OpenAPIの`info.description`・`x-ai-instructions`と利用ガイドの双方に反映される
+- ベースURLは`?baseUrl=`で指定でき(画面は自分のURLを渡す)、省略時はリクエストから組み立てる。リバースプロキシ配下の`BASE_PATH`にも対応する
+- セマンティック検索・ベクトル索引関連は、`WEAVIATE_URL`が設定されている環境でのみ仕様に含まれる(存在しないAPIをAIに教えないため)
+- **実装とのずれ防止**: Expressに登録済みの`api/*`ルートと仕様の突き合わせを[test/api-spec.test.js](test/api-spec.test.js)で検証する(APIを追加して仕様を更新し忘れるとテストが落ちる)
+
 ### AI連携ヘルプ
-- 画面右上のヘルプアイコンから、Claude Desktop・Antigravity・Cowork等のデスクトップ/エージェント型AIにこのAPIの使い方を教えるためのMarkdown(接続情報・エンドポイント一覧・curl例・AIへの指示)を表示・コピーできる。ベースURLは実際のアクセス元(`location.href`)から動的に算出するため、リバースプロキシ配下の `BASE_PATH` にも自動的に対応する
-- セマンティック検索・ベクトル索引関連のエンドポイント説明は、`WEAVIATE_URL`が設定されている(=実際に使える)環境でアクセスした場合にのみ含まれる。未設定の環境では、存在しないAPIをAIに教えないようこれらの記述ごと省かれる
+- 画面右上のヘルプアイコンから、上記の利用ガイド(`api/usage.md`)を表示・コピーできる。Claude Desktop・Antigravity・Cowork等のデスクトップ/エージェント型AIに、このAPIの使い方をそのまま渡せる。APIキー発行直後の「AIチャット貼り付け用にコピー」も同じガイドに実際のキーを埋め込んだもの
 
 ### AIエージェント用 Skill・APIクライアント(Claude Code / Codex / Antigravity)
 - [tools/claude-skill/](tools/claude-skill/) に、Claude Code・OpenAI Codex・Google Antigravity から「アップして」「新しい版で上げて」「探して」と話しかけるだけでこのAPIを操作できる Skill(`document-manager`)を同梱している。Skillの形式(`SKILL.md`+`scripts/`)は3つのエージェントで共通のため同じZIPを使い、展開先だけが異なる(Claude Code: `~/.claude/skills/`、Codex: `~/.agents/skills/`、Antigravity: `~/.gemini/config/skills/`)。Python版(`dm_client.py`、標準ライブラリのみ)と Node.js版(`dm_client.mjs`、外部依存なし)のクライアントはどちらも同じコマンドで、単体のCLIとしても使える
@@ -117,6 +125,7 @@ document-manager/
 │   │   ├── vector-search.js   # セマンティック検索(Weaviate連携、任意機能。WEAVIATE_URLで有効化)
 │   │   ├── drawio.js          # .drawio(XML/圧縮diagram)からのテキスト抽出(全文検索用)
 │   │   ├── claude-skill.js    # AIエージェント用SkillのZIP生成(api/claude-skill.zip。Node標準のzlibのみ使用)
+│   │   ├── api-spec.js        # API仕様の単一の情報源(OpenAPI・AI向け利用ガイド・AIへの指示を生成)
 │   │   └── logger.js          # 共通ロガー (標準出力のみ)
 │   └── static/index.html     # フロントエンド(単一HTML)
 ├── tools/claude-skill/      # AIエージェント用Skill(Dockerイメージにも /app/claude-skill/ としてコピーされる)
@@ -223,6 +232,7 @@ npm run test:pg    # Postgres固有(LISTEN/NOTIFY等)。要 DATABASE_BACKEND=pos
 python tools/claude-skill/ci_smoke_test.py  # AIエージェント用Skillのクライアント(Python/Node.js)とZIPの結合テスト
 ```
 
+- **`test/api-spec.test.js`**: API仕様([app/lib/api-spec.js](app/lib/api-spec.js))とExpressに登録済みルートの突き合わせ(過不足の検出)、OpenAPI・利用ガイドの生成結果の検証
 - **`test/unit.test.js`**: 純関数ユニット(Range計算・SQLプレースホルダ変換・チャンク分割・有効期限計算(無期限キー含む)・ロール判定・draw.ioのテキスト抽出)
 - **`test/integration-sqlite.test.js`**: 一時SQLiteに対する各モジュールのライフサイクル(projects/allowed-users/api-keys/tag-order/audit-log)
 - **`test/integration-postgres.test.js`**: Postgres固有の検証(`schema_migrations`の適用、横断SSEのバックプレーンである`LISTEN/NOTIFY`が実際に通知を届けること)。`DATABASE_BACKEND=postgres`＋`DATABASE_URL`未設定時は全てスキップ(`npm run test:pg`で実行)

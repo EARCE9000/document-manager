@@ -147,6 +147,38 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		});
 	});
 
+	// ヘルプ(AI連携ガイド)はサーバーのAPI仕様(api/usage.md)から取得され、APIキー発行後の
+	// 「AIチャット貼り付け用にコピー」も同じガイドにキーを埋め込んだものになる
+	test("AI連携ヘルプはサーバーのAPI仕様から取得される", async ({page, context}) => {
+		await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+		await page.goto("./");
+
+		await test.step("ヘルプに利用ガイドが表示され、実際のアクセス元URLが埋まる", async () => {
+			await page.locator("#helpButton").click();
+			await expect(page.locator("#helpOverlay")).toBeVisible();
+			const guide = page.locator("#helpMarkdownText");
+			await expect(guide).toHaveValue(/^# Document Manager API 利用ガイド/);
+			const markdown = await guide.inputValue();
+			expect(markdown).toContain(`- ベースURL: \`${new URL("./", page.url()).href.replace(/\/$/, "")}\``);
+			expect(markdown).toContain("## AIへの指示");
+			expect(markdown).toContain("/api/documents/archived");
+			await page.locator("#helpCloseButton").click();
+		});
+
+		await test.step("APIキー発行後のコピー内容は、キーを埋め込んだ同じガイドになる", async () => {
+			await page.locator("#apiKeyManageLink").click();
+			await page.selectOption("#apiKeyRoleInput", "readwrite");
+			await page.locator("#apiKeyCreateButton").click();
+			const rawKey = (await page.locator(".apiKeyValue").textContent())?.trim();
+			await page.locator("#apiKeyCopyChatButton").click();
+			await expect.poll(async () => page.evaluate(() => navigator.clipboard.readText())).toContain(rawKey);
+			const copied = await page.evaluate(() => navigator.clipboard.readText());
+			expect(copied).toContain("Document ManagerのAPIキーを発行しました");
+			expect(copied).toContain("# Document Manager API 利用ガイド (AI向け)");
+			expect(copied).not.toContain("<APIキー>");
+		});
+	});
+
 	// APIキー管理画面から Claude Code 用 Skill のZIPをダウンロードでき、登録手順・依頼文が表示される
 	test("APIキー管理画面からSkillのZIPをダウンロードできる", async ({page}) => {
 		await page.goto("./");

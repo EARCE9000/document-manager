@@ -132,3 +132,49 @@ test.describe("Claude Code用SkillのZIPダウンロード", () => {
 		expect(body.includes(Buffer.from("document-manager/scripts/dm_client.py"))).toBe(true);
 	});
 });
+
+test.describe("API仕様の取得", () => {
+	const rw = bearer(keys.readwrite);
+
+	test("未認証は401", async ({request}) => {
+		expect((await request.get("api/openapi.json")).status()).toBe(401);
+		expect((await request.get("api/usage.md")).status()).toBe(401);
+	});
+
+	test("readonlyキーでOpenAPIを取得でき、主要なAPIと権限情報が含まれる", async ({request}) => {
+		const res = await request.get("api/openapi.json", {headers: bearer(keys.readonly)});
+		expect(res.status()).toBe(200);
+		const spec = await res.json();
+		expect(spec.openapi).toBe("3.1.0");
+		expect(spec.paths["/api/documents"].get.operationId).toBe("listDocuments");
+		expect(spec.paths["/api/documents/{id}/versions"].get).toBeTruthy();
+		expect(spec.paths["/api/documents/archived"].get).toBeTruthy();
+		// adminロールの操作はAPIキーからは実行できないことが分かる
+		expect(spec.paths["/api/allowed_users"].get["x-api-key-usable"]).toBe(false);
+		// AIへの指示も仕様に含まれる
+		expect(spec.info.description).toContain("アップして");
+		expect(Array.isArray(spec["x-ai-instructions"])).toBe(true);
+	});
+
+	test("利用ガイド(Markdown)を取得できる", async ({request}) => {
+		const res = await request.get("api/usage.md", {headers: rw});
+		expect(res.status()).toBe(200);
+		expect(res.headers()["content-type"]).toContain("text/markdown");
+		const markdown = await res.text();
+		expect(markdown.startsWith("# Document Manager API 利用ガイド (AI向け)")).toBe(true);
+		expect(markdown).toContain("## AIへの指示");
+	});
+
+	test("baseUrlを指定するとその値が使われ、不正な値は無視される", async ({request}) => {
+		const specified = await (await request.get("api/usage.md?baseUrl=https%3A%2F%2Fdocs.example.com%2Fsub%2F", {headers: rw})).text();
+		expect(specified).toContain("- ベースURL: `https://docs.example.com/sub`");
+		expect(specified).toContain("`GET https://docs.example.com/sub/api/documents?q=<検索語>`");
+
+		// http/https以外・壊れた値はリクエストから組み立てた既定値にフォールバックする
+		for (const bad of ["javascript:alert(1)", "not-a-url"]) {
+			const fallback = await (await request.get(`api/usage.md?baseUrl=${encodeURIComponent(bad)}`, {headers: rw})).text();
+			expect(fallback).not.toContain(bad);
+			expect(fallback).toContain("- ベースURL: `http://127.0.0.1:");
+		}
+	});
+});

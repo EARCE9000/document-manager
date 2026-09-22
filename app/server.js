@@ -337,6 +337,7 @@ const initOidcClient = require("./lib/oidc-client.js");
 const TagOrder = require("./lib/tag-order.js");
 const Projects = require("./lib/projects.js");
 const ClaudeSkill = require("./lib/claude-skill.js");
+const ApiSpec = require("./lib/api-spec.js");
 const AuditLog = require("./lib/audit-log.js");
 
 const OIDC_REDIRECT_URI = process.env.OIDC_REDIRECT_URI || "";
@@ -1780,6 +1781,57 @@ app.get(BASE_URL_PATH + 'api/history', requireAuth, async (req, res) => {
 	APIキーを発行・失効できるようにする。平文キーは発行時のレスポンスでのみ返す。
 */
 /* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+
+/**
+ * API仕様の提供。OpenAPI(機械可読)とAI向け利用ガイド(Markdown)を、同じ定義(lib/api-spec.js)から返す。
+ *
+ * ベースURL(応答に載せる絶対URL)は、リバースプロキシ配下でも正しくなるよう、呼び出し側が
+ * `?baseUrl=` で自分のURLを渡せる(画面はこれを使う)。省略時はリクエストから組み立てる。
+ * 値は本文のテキストにしか使わないが、念のため http/https のURLだけを受け付ける
+ */
+const resolveSpecBaseUrl = (req) => {
+	const requested = String(req.query.baseUrl || "").trim();
+	if (requested !== "" && requested.length <= 500) {
+		try {
+			const url = new URL(requested);
+			if (url.protocol === "http:" || url.protocol === "https:") {
+				return url.href.replace(/\/$/, "");
+			}
+		} catch {
+			// 不正な値は無視して、リクエストから組み立てた既定値を使う
+		}
+	}
+	const base = `${req.protocol}://${req.get("host") || ""}${BASE_URL_PATH}`;
+	return base.replace(/\/$/, "");
+};
+
+app.get(BASE_URL_PATH + 'api/openapi.json', requireAuth, (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(ApiSpec.buildOpenApi({
+			baseUrl: resolveSpecBaseUrl(req),
+			vectorSearchEnabled: VectorSearch.isEnabled(),
+			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0"
+		}));
+	} catch (err) {
+		logger.error(err, "::api/openapi.json");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+app.get(BASE_URL_PATH + 'api/usage.md', requireAuth, (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+		res.status(200).send(ApiSpec.buildUsageMarkdown({
+			baseUrl: resolveSpecBaseUrl(req),
+			vectorSearchEnabled: VectorSearch.isEnabled()
+		}));
+	} catch (err) {
+		logger.error(err, "::api/usage.md");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
 
 /**
  * Claude Code 用 Skill(document-manager)のZIPをダウンロードする(APIキー管理画面から取得する想定)。
