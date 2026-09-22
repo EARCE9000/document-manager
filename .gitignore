@@ -6,3 +6,4 @@
 # Playwrightの実行結果・レポート
 /test-results
 /playwright-report
+deploy/compose.env

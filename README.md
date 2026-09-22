@@ -359,6 +359,47 @@ docker network rm document-manager-net
 docker volume rm weaviate_data
 ```
 
+## 運用サーバ(podman + Apacheリバースプロキシ)へのcompose導入
+
+既に `podman run` で単体運用しているサーバに、セマンティック検索(Weaviate)を足してcompose運用へ移す場合の手順。
+[deploy/compose.yml](deploy/compose.yml) と [deploy/compose.sh](deploy/compose.sh) を用意してある(リポジトリ直下の
+`docker-compose.yml` は開発・お試し用で、ソースからビルドしWeaviateのポートもホストへ公開する)。
+
+運用向けの構成として、次の点を変えてある。
+
+- アプリはビルドせず公開イメージ(`docker.io/earce9000/document-manager`)を使う
+- **Weaviate・推論サーバーはホストにポートを公開しない**(内部ネットワークのみ)。Weaviateは匿名アクセス有効のため、公開すると外部から触れてしまう
+- **アプリは既存の外部ネットワークに固定IPで参加する**ため、**Apache側の設定変更は不要**
+- データはホストのディレクトリに置く(文書・SQLite: 既存のまま / Weaviate: `/var/db/weaviate`)
+
+```bash
+# 1. 設定ファイルを用意する(サイト固有の値。リポジトリにはコミットしない)
+cp deploy/compose.env.example /etc/application-auth/document-manager.env
+chmod 600 /etc/application-auth/document-manager.env
+vi /etc/application-auth/document-manager.env   # ドメイン・固定IP・データの場所・シークレットを記入
+
+# 2. Weaviateのデータ用ディレクトリ(初回のみ。パスは上の設定に合わせる)
+mkdir -p /var/lib/document-manager/weaviate
+
+# 3. podman-compose(未導入なら)
+dnf install -y podman-compose   # または pip install podman-compose
+
+# 4. 起動(既存の podman run 版コンテナは停止・削除しておく)
+podman rm -f document_manager
+./deploy/compose.sh up
+```
+
+- **サイト固有の値(ドメイン・内部IP・データの場所・シークレット)はリポジトリに置かない**。`deploy/compose.env.example` をコピーしてサーバ上のGit管理外の場所(既定は `/etc/application-auth/document-manager.env`、権限は600)に置き、そこに書く。置き場所は `DOCUMENT_MANAGER_ENV` で変更できる
+- 既に `/etc/application-auth/*.sh` 等で `OIDC_*` を `export` している場合は、それを `source` してから `./deploy/compose.sh up` を呼んでもよい(環境変数が優先される)
+- 必須の値(`OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_REDIRECT_URI` / `SESSION_SECRET` / `DOCUMENT_MANAGER_IP`)が欠けている場合は起動せずにエラーを出す
+- 切り戻したい場合はイメージのタグを指定する: `DOCUMENT_MANAGER_TAG=<日時タグ> ./deploy/compose.sh up`
+- SELinuxが有効(`getenforce` が `Enforcing`)なホストでは、ボリュームの `:z` が必要(compose.ymlには付けてある)
+- 外部ネットワーク(`application_network`)はcomposeでは作成しない(`external: true`)。既存のものをそのまま使うため、Apacheのリバースプロキシ設定は変更不要
+
+導入後、**既存の文書がバックグラウンドで順次索引付けされる**(1件あたり数秒。実測で約5.5秒/件)。進行状況は画面の「ベクトル索引」から確認できる。索引付け中はCPUを複数コア使い切るため、同居サービスがある場合は業務時間外に始めるか、`compose.yml` の `cpus`/`mem_limit` で上限を設けるとよい。
+
+必要なメモリの目安は、Weaviate本体が数百MB、推論サーバーが約1.0〜1.4GB(負荷に応じて増減)。
+
 ## 性能検証結果(実測)
 
 Docker Desktop(Windows 11、GPU無し)の実機で、SQLite単体・ベクトル検索の2パターンを実測した記録。テストデータは実際の文学作品106件(青空文庫スタイルの日本語作品+Project Gutenbergの英語原文、合計約1.1MB・平均約10KB/件)。合成的な短文ではなく実文書での結果である点に注意。

@@ -1,0 +1,102 @@
+# compose.yml : 本番サーバ(podman)向けの構成 — Document Manager + セマンティック検索(Weaviate)
+# Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
+# MIT Licensed
+#
+# リポジトリ直下の docker-compose.yml は開発・お試し用(ソースからビルドし、Weaviateのポートも
+# ホストへ公開する)。こちらは運用サーバ向けで、次の点が異なる:
+#   - アプリはビルドせず、公開イメージ(docker.io/earce9000/document-manager)を使う
+#   - Weaviate・推論サーバーはホストにポートを公開せず、内部ネットワークだけで通信する
+#   - アプリは既存の外部ネットワーク(Apacheのリバースプロキシが向いている固定IP)に参加する
+#     → Apache側の設定変更は不要
+#   - データはホストのディレクトリに置く(/var/db 配下)
+#
+# 使い方(deploy/compose.sh 経由での起動を推奨):
+#   ./deploy/compose.sh up
+#
+# サイト固有の値(ドメイン・内部IP・データの場所・シークレット)はこのファイルには書かず、
+# Git管理外の設定ファイルから環境変数として渡す。ひな形は deploy/compose.env.example を参照
+
+services:
+  app:
+    image: ${DOCUMENT_MANAGER_IMAGE:-docker.io/earce9000/document-manager}:${DOCUMENT_MANAGER_TAG:-latest}
+    container_name: ${DOCUMENT_MANAGER_CONTAINER:-document_manager}
+    restart: always
+    logging:
+      driver: journald
+    volumes:
+      # SELinuxが有効(Enforcing)なホストでは末尾の :z が必要。無効なら付けたままでも害はない
+      - ${DOCUMENT_MANAGER_DATA_DIR:?データ用ディレクトリを設定してください}:/data:z
+    environment:
+      TZ: ${TZ:-Asia/Tokyo}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BASE_PATH: ${BASE_PATH:-/}
+      OIDC_ISSUER: ${OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_SCOPE: ${OIDC_SCOPE:-openid profile email}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_MAX_AGE_HOURS: ${SESSION_MAX_AGE_HOURS:-8}
+      # セマンティック検索(この構成の本題)。コンテナ名で解決する
+      WEAVIATE_URL: http://weaviate:8080
+      WEAVIATE_GRPC_PORT: "50051"
+      WEAVIATE_VECTORIZER: ${WEAVIATE_VECTORIZER:-text2vec-transformers}
+    networks:
+      # Apacheのリバースプロキシが向いている既存ネットワーク(固定IPを維持する)
+      application_network:
+        ipv4_address: ${DOCUMENT_MANAGER_IP:?リバースプロキシが向いている固定IPを設定してください}
+      # Weaviate・推論サーバーとの通信用(外部には出さない)
+      document_manager_internal:
+    depends_on:
+      - weaviate
+
+  # ベクトルDB本体。ホストにポートを公開せず、内部ネットワークからのみ使う
+  # (公開すると匿名アクセス有効のまま外部から触れてしまうため)
+  weaviate:
+    image: semitechnologies/weaviate:${WEAVIATE_VERSION:-latest}
+    container_name: ${DOCUMENT_MANAGER_CONTAINER:-document_manager}_weaviate
+    restart: always
+    logging:
+      driver: journald
+    environment:
+      QUERY_DEFAULTS_LIMIT: "25"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      ENABLE_MODULES: text2vec-transformers,text2vec-cohere,text2vec-openai,text2vec-aws
+      DEFAULT_VECTORIZER_MODULE: text2vec-transformers
+      TRANSFORMERS_INFERENCE_API: http://t2v-transformers:8080
+      CLUSTER_HOSTNAME: node1
+    volumes:
+      - ${WEAVIATE_DATA_DIR:?Weaviateのデータ用ディレクトリを設定してください}:/var/lib/weaviate:z
+    networks:
+      - document_manager_internal
+    depends_on:
+      - t2v-transformers
+
+  # Embedding計算を行う推論サーバー(多言語sentence-transformers、外部APIキー不要)。
+  # 1件の計算でも複数コアを使い切るため、他サービスと同居する場合はCPU上限の設定を検討する
+  # (下の cpus/mem_limit のコメントを参照)
+  t2v-transformers:
+    image: semitechnologies/transformers-inference:${T2V_MODEL_TAG:-sentence-transformers-paraphrase-multilingual-mpnet-base-v2}
+    container_name: ${DOCUMENT_MANAGER_CONTAINER:-document_manager}_t2v
+    restart: always
+    logging:
+      driver: journald
+    environment:
+      ENABLE_CUDA: "0"
+    networks:
+      - document_manager_internal
+    # 同居する他サービスへの影響を抑えたい場合は、次の2行のコメントを外して調整する
+    # (podman-composeのバージョンによっては未対応。その場合はsystemd/cgroupやpodman updateで設定する)
+    # cpus: 4.0
+    # mem_limit: 4g
+
+networks:
+  # 既存のネットワーク(podman network create <名前> で作成済みのもの)を使う。
+  # 新規作成はしないため、リバースプロキシが向いている固定IPはそのまま維持される
+  application_network:
+    external: true
+    name: ${DOCUMENT_MANAGER_NETWORK:-application_network}
+  # このスタック専用の内部ネットワーク(compose が作成する)
+  document_manager_internal:
