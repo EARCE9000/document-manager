@@ -45,6 +45,14 @@ const WEAVIATE_GRPC_PORT = Number(process.env.WEAVIATE_GRPC_PORT || 50051);
 const WEAVIATE_VECTORIZER_DEFAULT = process.env.WEAVIATE_VECTORIZER || "text2vec-transformers";
 // AWS Bedrock経由のベクトライザー(text2vec-aws, service: "bedrock")用の設定。
 // リージョンは必須。モデルは既定でCohereの多言語埋め込みモデル(Titan等に変更も可能)
+// 1回のinsertMany(=Weaviateへの1リクエスト)で送るチャンク数。Weaviateはリクエスト単位で
+// タイムアウト(既定90秒)を持つため、大きな文書の全チャンクを一度に送ると、CPUでの埋め込み計算が
+// 間に合わずタイムアウトする(実測: 書籍1冊分のPDFで発生)。小分けにして1リクエストあたりの
+// 計算量を抑える。数を増やすほどリクエスト数は減るが、1回あたりの所要時間は伸びる
+const VECTOR_INSERT_BATCH_SIZE = Math.max(1, Number(process.env.VECTOR_INSERT_BATCH_SIZE || 50));
+// Weaviateクライアントのタイムアウト(秒)。CPU実行の埋め込みは遅いため、既定より長めに取る
+const VECTOR_INSERT_TIMEOUT_SECONDS = Math.max(1, Number(process.env.VECTOR_INSERT_TIMEOUT_SECONDS || 180));
+
 const AWS_BEDROCK_REGION = process.env.AWS_BEDROCK_REGION || "";
 const AWS_BEDROCK_MODEL = process.env.AWS_BEDROCK_MODEL || "cohere.embed-multilingual-v3";
 
@@ -292,7 +300,9 @@ const getClient = () => {
 				grpcPort: WEAVIATE_GRPC_PORT,
 				grpcSecure: httpSecure,
 				headers: buildConnectionHeaders(),
-				skipInitChecks: true
+				skipInitChecks: true,
+				// insert(埋め込み計算を伴う)は時間がかかるため、既定より長い上限にする
+				timeout: {init: 30, query: 60, insert: VECTOR_INSERT_TIMEOUT_SECONDS}
 			});
 			await ensureCollection(weaviate, client);
 			return client;
@@ -501,8 +511,15 @@ const indexDocument = (documentId, contentText) => {
 			const collection = client.collections.use(COLLECTION_NAME);
 			await removeDocumentChunks(collection, documentId);
 			const chunks = await chunkText(contentText);
-			if (chunks.length > 0) {
-				await collection.data.insertMany(chunks.map((text, chunkIndex) => ({documentId, chunkIndex, text})));
+			// 1リクエストあたりの埋め込み計算量を抑えるため、小分けにして登録する
+			// (全チャンクを一度に送ると、大きな文書ではWeaviate側のタイムアウトに達する)
+			for (let offset = 0; offset < chunks.length; offset += VECTOR_INSERT_BATCH_SIZE) {
+				const batch = chunks.slice(offset, offset + VECTOR_INSERT_BATCH_SIZE);
+				await collection.data.insertMany(batch.map((text, indexInBatch) => ({
+					documentId,
+					chunkIndex: offset + indexInBatch,
+					text
+				})));
 			}
 			await recordIndexResult(documentId, "ok", null);
 		} catch (err) {
