@@ -499,6 +499,35 @@
 	.versionChip.archived { color: #888; border-color: #ccc; }
 	.versionChip.current { background: #1a56db; border-color: #1a56db; color: #fff; cursor: default; }
 	.versionArrow { color: #aaa; }
+	/* 関連文書(種類・方向を持たない対等な紐付け)。版履歴と同じ行の見た目に揃える */
+	#relatedDocsRow {
+		padding: 8px 16px;
+		border-bottom: 1px solid #ddd;
+		background: #fafbfc;
+		display: none;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.8em;
+	}
+	.relatedDocChip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		background: #fff;
+		color: #1a56db;
+		border: 1px solid #9cc2ff;
+		border-radius: 999px;
+		padding: 2px 6px 2px 10px;
+		font-size: 0.95em;
+		max-width: 280px;
+	}
+	.relatedDocChip.archived { color: #888; border-color: #ccc; }
+	.relatedDocChip .name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.relatedDocChip .name:hover { text-decoration: underline; }
+	.relatedDocChip .unlink { background: none; border: none; color: #888; cursor: pointer; padding: 0 2px; line-height: 1; }
+	.relatedDocChip .unlink:hover { color: #d9480f; }
+	#appShell.readOnlyMode .relatedDocChip .unlink { display: none; }
 	#previewFrame { flex: 1; border: none; width: 100%; background: #fff; }
 	#previewPlaceholder { padding: 2em; color: #888; }
 	#previewOpenExternalBox {
@@ -1190,8 +1219,11 @@
 					<button type="button" id="previewReviseButton" class="previewActionButton previewWriteAction" title="新しい版をアップロード(この文書はアーカイブされ、タグ・プロジェクトは新しい版へ引き継がれます)" aria-label="新しい版をアップロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 					</button>
+					<button type="button" id="previewAddRelatedButton" class="previewActionButton previewWriteAction" title="関連文書を紐づける" aria-label="関連文書を紐づける" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h8"/><path d="M18 11v6"/><path d="M15 14h6"/><polyline points="14 2 14 8 20 8"/></svg>
+					</button>
 					<button type="button" id="previewLinkPreviousButton" class="previewActionButton previewWriteAction" title="旧版を紐づける" aria-label="旧版を紐づける" style="display:none;">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
 					</button>
 					<input type="file" id="reviseFileInput" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio" multiple style="display:none;">
 					<button type="button" id="previewTagEditButton" class="previewActionButton previewWriteAction" title="タグを編集" aria-label="タグを編集" style="display:none;">
@@ -1207,6 +1239,7 @@
 			</div>
 			<div id="similarFilesRow"></div>
 			<div id="versionHistoryRow"></div>
+			<div id="relatedDocsRow"></div>
 			<iframe id="previewFrame" style="display:none;" sandbox="allow-same-origin"></iframe>
 			<div id="previewOpenExternalBox" style="display:none;">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -1924,6 +1957,58 @@ const renderVersionHistory = async (doc) => {
 	});
 };
 
+// 関連文書(種類・方向を持たない紐付け)。プレビュー上部にチップで表示し、クリックで開ける
+const relatedDocsRow = document.getElementById("relatedDocsRow");
+const previewAddRelatedButton = document.getElementById("previewAddRelatedButton");
+
+const renderRelatedDocs = async (doc) => {
+	relatedDocsRow.style.display = "none";
+	relatedDocsRow.innerHTML = "";
+	const res = await fetch(`./api/documents/${encodeURIComponent(doc.id)}/links`);
+	if (res.status !== 200 || selectedId !== doc.id) return;
+	const links = await res.json();
+	if (links.length === 0) return;
+	relatedDocsRow.innerHTML = `
+		<span class="similarFilesLabel">関連文書:</span>
+		${links.map((link) => `
+			<span class="relatedDocChip ${link.archived ? "archived" : ""}">
+				<span class="name" data-id="${escapeHtml(link.id)}"
+					title="${escapeHtml(`${link.entryFile} (${formatDateTime(link.modified)}${link.archived ? "・アーカイブ済み" : ""})`)}">${escapeHtml(link.entryFile)}</span>
+				<button type="button" class="unlink" data-id="${escapeHtml(link.id)}" title="関連を解除" aria-label="関連を解除">×</button>
+			</span>
+		`).join("")}
+	`;
+	relatedDocsRow.style.display = "flex";
+	relatedDocsRow.querySelectorAll(".relatedDocChip .name").forEach((el) => {
+		el.addEventListener("click", () => openDocumentFromActivity(el.dataset.id));
+	});
+	relatedDocsRow.querySelectorAll(".relatedDocChip .unlink").forEach((btn) => {
+		btn.addEventListener("click", async () => {
+			const target = links.find((link) => link.id === btn.dataset.id);
+			if (!(await showConfirmDialog(`「${target.entryFile}」との関連を解除しますか?(文書自体は消えません)`))) return;
+			await fetch(`./api/documents/${encodeURIComponent(doc.id)}/links/${encodeURIComponent(btn.dataset.id)}`, {method: "DELETE"});
+			renderRelatedDocs(doc);
+		});
+	});
+};
+
+const addRelatedDocument = async (doc) => {
+	const linked = await (await fetch(`./api/documents/${encodeURIComponent(doc.id)}/links`)).json();
+	const selected = await openDocPicker({
+		title: "関連文書を紐づける",
+		description: `「${doc.entryFile}」に関連する文書を選んでください。どちらから見ても相手が表示されます(文書自体は変わりません)。`,
+		excludeIds: [doc.id, ...linked.map((link) => link.id)]
+	});
+	if (selected == null) return;
+	const res = await fetch(`./api/documents/${encodeURIComponent(doc.id)}/links/${encodeURIComponent(selected.id)}`, {method: "PUT"});
+	if (res.status !== 200) {
+		const body = await res.json().catch(() => ({}));
+		alert(body.error || "関連づけに失敗しました");
+		return;
+	}
+	renderRelatedDocs(doc);
+};
+
 const clearPreview = () => {
 	selectedId = null;
 	projectTreeList.querySelectorAll(".treeDocRow.selected").forEach((li) => li.classList.remove("selected"));
@@ -1940,6 +2025,8 @@ const clearPreview = () => {
 	previewTitle.textContent = "左の一覧から文書を選択してください。";
 	similarFilesRow.style.display = "none";
 	versionHistoryRow.style.display = "none";
+	relatedDocsRow.style.display = "none";
+	previewAddRelatedButton.style.display = "none";
 	memoArea.style.display = "none";
 	memoTextarea.value = "";
 };
@@ -1976,6 +2063,8 @@ const showPreview = (doc) => {
 	previewLinkPreviousButton.title = doc.previousId == null ? "旧版を紐づける" : "旧版の紐付けを解除";
 	previewLinkPreviousButton.setAttribute("aria-label", previewLinkPreviousButton.title);
 	previewLinkPreviousButton.onclick = () => (doc.previousId == null ? linkPreviousVersion(doc) : unlinkPreviousVersion(doc));
+	previewAddRelatedButton.style.display = isArchived ? "none" : "inline-flex";
+	previewAddRelatedButton.onclick = () => addRelatedDocument(doc);
 	previewReviseButton.onclick = () => {
 		reviseTargetDoc = doc;
 		reviseFileInput.click();
@@ -1999,6 +2088,7 @@ const showPreview = (doc) => {
 
 	renderSimilarFiles(doc);
 	renderVersionHistory(doc);
+	renderRelatedDocs(doc);
 
 	memoArea.style.display = "flex";
 	memoTextarea.value = doc.memo || "";
@@ -4001,6 +4091,10 @@ const describeActivity = (activity) => {
 		case "archive": return `${file}をアーカイブしました`;
 		case "restore": return `${file}を元に戻しました`;
 		case "link_version": return `${file}に旧版を紐づけました`;
+		case "link_documents":
+			return activity.relatedEntryFile
+				? `${file}と「${escapeHtml(activity.relatedEntryFile)}」を関連づけました`
+				: `${file}に関連文書を紐づけました`;
 		case "tags":
 			return activity.tags && activity.tags.length > 0
 				? `${file}にタグ${activity.tags.map((tag) => `「${escapeHtml(tag)}」`).join("")}を付けました`

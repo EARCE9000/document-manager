@@ -51,6 +51,15 @@ CREATE TABLE IF NOT EXISTS document_tags (
 	PRIMARY KEY (document_id, tag)
 );
 
+CREATE TABLE IF NOT EXISTS document_links (
+	document_id_a TEXT NOT NULL,
+	document_id_b TEXT NOT NULL,
+	created_by TEXT,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (document_id_a, document_id_b)
+);
+CREATE INDEX IF NOT EXISTS idx_document_links_b ON document_links (document_id_b);
+
 CREATE TABLE IF NOT EXISTS api_keys (
 	id TEXT PRIMARY KEY,
 	label TEXT NOT NULL,
@@ -155,6 +164,17 @@ const MIGRATIONS = [
 	{version: 2, sql: `
 		ALTER TABLE documents ADD COLUMN IF NOT EXISTS previous_id TEXT;
 		CREATE INDEX IF NOT EXISTS idx_documents_previous_id ON documents (previous_id);
+	`},
+	// 関連文書(文書同士の対等な紐付け)
+	{version: 3, sql: `
+		CREATE TABLE IF NOT EXISTS document_links (
+			document_id_a TEXT NOT NULL,
+			document_id_b TEXT NOT NULL,
+			created_by TEXT,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (document_id_a, document_id_b)
+		);
+		CREATE INDEX IF NOT EXISTS idx_document_links_b ON document_links (document_id_b);
 	`}
 ];
 

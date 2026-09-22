@@ -338,6 +338,7 @@ const TagOrder = require("./lib/tag-order.js");
 const Projects = require("./lib/projects.js");
 const ClaudeSkill = require("./lib/claude-skill.js");
 const ApiSpec = require("./lib/api-spec.js");
+const DocumentLinks = require("./lib/document-links.js");
 const AuditLog = require("./lib/audit-log.js");
 
 const OIDC_REDIRECT_URI = process.env.OIDC_REDIRECT_URI || "";
@@ -1048,11 +1049,12 @@ const broadcastProjectsChanged = () => {
 const ACTIVITY_MAX_TEXT = 200;
 const ACTIVITY_MAX_TAGS = 20;
 const truncateText = (value) => (value == null ? null : String(value).slice(0, ACTIVITY_MAX_TEXT));
-const broadcastActivity = (req, {action, documentId, entryFile, tags}) => {
+const broadcastActivity = (req, {action, documentId, entryFile, tags, relatedEntryFile}) => {
 	const payload = JSON.stringify({
 		action,
 		documentId,
 		entryFile: truncateText(entryFile),
+		relatedEntryFile: relatedEntryFile == null ? undefined : truncateText(relatedEntryFile),
 		tags: Array.isArray(tags) ? tags.slice(0, ACTIVITY_MAX_TAGS).map((tag) => String(tag).slice(0, 50)) : undefined,
 		user: truncateText(req.authData.user_identifier),
 		viaApiKey: req.authData.viaApiKey != null,
@@ -1642,6 +1644,72 @@ const collectNewerVersionIds = async (documentId) => {
 	}
 	return ids;
 };
+
+/**
+ * 関連文書の一覧。種類も方向も持たない対等な紐付けで、どちらから引いても相手が返る。
+ * アーカイブ済みの文書も含む(archivedで判別できる)
+ */
+app.get(BASE_URL_PATH + 'api/documents/:id/links', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if ((await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id])) == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		res.status(200).json(await DocumentLinks.listLinks(req.params.id));
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/links:list");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 関連文書として紐づける (要 admin/readwrite ロール)。既に紐づいていれば何もしない(冪等)
+ */
+app.put(BASE_URL_PATH + 'api/documents/:id/links/:relatedId', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const {id, relatedId} = req.params;
+		if (id === relatedId) {
+			res.status(400).json({error: "同じ文書同士は関連づけられません"});
+			return;
+		}
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [id]);
+		const related = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [relatedId]);
+		if (document == null || related == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		await DocumentLinks.link(id, relatedId, req.authData.user_identifier);
+		logger.info({audit: "link_documents", user: req.authData.user_identifier, documentId: id, relatedId}, "audit");
+		broadcastDocumentsChanged();
+		broadcastActivity(req, {action: "link_documents", documentId: id, entryFile: document.entry_file, relatedEntryFile: related.entry_file});
+		res.status(200).json(await DocumentLinks.listLinks(id));
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/links:link");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 関連文書の紐付けを解除する (要 admin/readwrite ロール)。文書自体には影響しない
+ */
+app.delete(BASE_URL_PATH + 'api/documents/:id/links/:relatedId', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const {id, relatedId} = req.params;
+		if (!(await DocumentLinks.unlink(id, relatedId))) {
+			res.status(404).json({error: "この2つの文書は関連づけられていません"});
+			return;
+		}
+		logger.info({audit: "unlink_documents", user: req.authData.user_identifier, documentId: id, relatedId}, "audit");
+		broadcastDocumentsChanged();
+		res.status(200).json(await DocumentLinks.listLinks(id));
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/links:unlink");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
 
 /**
  * 既にある文書同士を、後から「旧版 → この文書」として紐づける (要 admin/readwrite ロール)

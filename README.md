@@ -49,6 +49,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - **既存文書のバックフィル**: `WEAVIATE_URL`を設定してサーバーを起動すると、この機能を導入する前にアップロード済みだった文書も自動的に差分索引付けされる(既にWeaviate側に登録済みの文書は再処理しない)
   - **索引状態の確認・再実行**: パンくずメニューの「ベクトル索引」(要 admin/readwrite ロール。件数が多くなる想定のためモーダルではなくページ全体で表示)から、索引付けに失敗した文書の一覧確認・個別/一括での再実行ができる。チャンク分割方法や埋め込みモデルを変更した場合など、既に成功している文書も含めて作り直したい場合は「全件を再索引」から一括で再実行できる(`GET api/documents/vector-index/status` / `POST api/documents/:id/vector-index/retry`)
   - **チャンク分割設定**: 本文を分割する単位(チャンクサイズ・オーバーラップ)は`VECTOR_CHUNK_SIZE`/`VECTOR_CHUNK_OVERLAP`環境変数で既定値を指定できるほか、「ベクトル索引」画面から admin ロールで上書き保存できる(GUIでの変更はサーバー再起動不要、`GET/PUT/DELETE api/vector-index/settings`)。**変更は新規に索引付けする文書からのみ反映される**ため、既存の索引付け済み文書にも適用したい場合は変更後に「全件を再索引」を行うこと
+- **関連文書**: 文書同士を、種類も方向も持たない「関連」として紐づけられる(見積書と契約書、仕様書とその議事録など)。プレビュー右上のボタンで相手の文書を選ぶと、どちらから見ても相手がチップで表示され、クリックで開ける(チップの×で解除。文書自体には影響しない)。新旧の版の関係(`previous_id`)とは別で、`document_links`テーブルに(小さいID, 大きいID)へ正規化した1行として持つため、方向違いの二重登録は起きない。アーカイブ済みの文書との関連もそのまま残る(`archived`で判別)。API: `GET api/documents/:id/links` / `PUT`・`DELETE api/documents/:id/links/:relatedId`
 - **タグ**: 文書ごとに自由入力のタグを付与できる。他の文書に付けた既存タグを候補として選択することも可能(個数上限なし)
 - **メモ**: プレビュー下部に、文書ごとの備忘録として自由記述メモを入力・保存できる(要 admin/readwrite ロール。アーカイブ表示では閲覧のみ)。検索対象にも含まれる
 - **登録日検索**: アップロード日時のFrom〜Toで絞り込み。初期表示は「2か月前 〜 (Toは空欄)」
@@ -113,7 +114,7 @@ document-manager/
 │   ├── server.js             # エントリポイント
 │   ├── lib/
 │   │   ├── datastore.js       # DBアクセスの非同期抽象層 (DATABASE_BACKENDでsqlite/postgresを切替。各libはこれ経由でアクセス)
-│   │   ├── db.js              # SQLite初期化・スキーマバージョン管理 (documents/document_tags/api_keys/allowed_users/tag_order/projects/project_folders/project_documents/audit_log/vector_search_settings)
+│   │   ├── db.js              # SQLite初期化・スキーマバージョン管理 (documents/document_tags/document_links/api_keys/allowed_users/tag_order/projects/project_folders/project_documents/audit_log/vector_search_settings)
 │   │   ├── schema-pg.js       # Postgresバックエンド用スキーマDDL (pg_trgm/GIN含む。datastore.initで冪等作成)
 │   │   ├── session-store.js   # express-session用の永続セッションストア (sqlite/postgres。MemoryStore不使用)
 │   │   ├── oidc-client.js     # OIDC Discovery + Configuration初期化
@@ -127,6 +128,7 @@ document-manager/
 │   │   ├── drawio.js          # .drawio(XML/圧縮diagram)からのテキスト抽出(全文検索用)
 │   │   ├── claude-skill.js    # AIエージェント用SkillのZIP生成(api/claude-skill.zip。Node標準のzlibのみ使用)
 │   │   ├── api-spec.js        # API仕様の単一の情報源(OpenAPI・AI向け利用ガイド・AIへの指示を生成)
+│   │   ├── document-links.js  # 関連文書(種類・方向を持たない文書同士の紐付け)
 │   │   └── logger.js          # 共通ロガー (標準出力のみ)
 │   └── static/index.html     # フロントエンド(単一HTML)
 ├── tools/claude-skill/      # AIエージェント用Skill(Dockerイメージにも /app/claude-skill/ としてコピーされる)
@@ -137,7 +139,7 @@ document-manager/
 ├── docs/screenshots/        # READMEのスクリーンショットと撮影スクリプト(capture.js)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
     ├── documents/<年月>_<UUID>/  # 文書本体 (元ファイル + 変換後preview.html。STORAGE_BACKEND=local時のみ)
-    └── db/document_manager_v<N>.sqlite  # DATABASE_BACKEND=sqlite時のみ。<N>はスキーマバージョン(現在v10)で、移行時は旧バージョンのファイルを残したまま新しいファイルを作る(postgres時はマネージドDB側に保存され、このボリュームは不要)
+    └── db/document_manager_v<N>.sqlite  # DATABASE_BACKEND=sqlite時のみ。<N>はスキーマバージョン(現在v11)で、移行時は旧バージョンのファイルを残したまま新しいファイルを作る(postgres時はマネージドDB側に保存され、このボリュームは不要)
 ```
 
 ## 環境変数

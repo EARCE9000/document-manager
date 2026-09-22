@@ -78,6 +78,22 @@ const OPERATIONS = [
 		summary: "版履歴(古い順)"
 	},
 	{
+		id: "listDocumentLinks", method: "get", path: "/api/documents/:id/links", role: "readonly", tag: "文書",
+		summary: "関連文書の一覧",
+		description: "種類も方向も持たない対等な紐付け。どちらの文書から引いても相手が返る。アーカイブ済みの文書も含む(`archived`で判別)"
+	},
+	{
+		id: "linkDocuments", method: "put", path: "/api/documents/:id/links/:relatedId", role: "readwrite", tag: "文書",
+		summary: "関連文書として紐づける",
+		description: "既に紐づいていれば何もしない(冪等)。応答は紐付け後の関連文書一覧",
+		responses: {400: "同じ文書同士を指定した"}
+	},
+	{
+		id: "unlinkDocuments", method: "delete", path: "/api/documents/:id/links/:relatedId", role: "readwrite", tag: "文書",
+		summary: "関連文書の紐付けを解除する",
+		description: "紐付けを外すだけで、文書自体には影響しない"
+	},
+	{
 		id: "linkPreviousVersion", method: "put", path: "/api/documents/:id/previous", role: "readwrite", tag: "文書",
 		summary: "既にある文書同士を、後から旧版として紐づける",
 		description: "アップロード時に`previousId`を付け忘れた場合や、この機能より前に登録した文書のための後追い紐付け。旧版はアーカイブされ、タグは和集合になり、プロジェクトへの登録は新版が未登録のプロジェクトだけ引き継ぐ",
@@ -286,6 +302,18 @@ const GUIDE_SECTIONS = [
 		entries: [
 			{id: "getDocument", trail: "文書1件のメタ情報(アーカイブ済みも取得でき、`archived` で判別できる)"},
 			{id: "listVersions", trail: "その文書を含む一連の版を古い順に返す"}
+		]
+	},
+	{
+		title: "関連文書の参照・紐づけ・解除",
+		entries: [
+			{id: "listDocumentLinks", trail: "この文書に紐づく関連文書の一覧(アーカイブ済みも含む)"},
+			{id: "linkDocuments", trail: "2つの文書を関連として紐づける(要 admin/readwrite ロール。既に紐付け済みなら何もしない)"},
+			{id: "unlinkDocuments", trail: "関連の紐付けを解除する(要 admin/readwrite ロール。文書自体は消えない)"}
+		],
+		notes: [
+			"種類も方向も持たない対等な紐付け。どちらの文書から引いても相手が返る(見積書と契約書、仕様書とその議事録など)",
+			"新旧の版の関係(`previousId`)とは別物。版として扱いたい場合は下記の「後からの版の紐づけ・解除」を使う"
 		]
 	},
 	{

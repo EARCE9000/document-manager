@@ -264,6 +264,43 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		});
 	});
 
+	// 関連文書(種類・方向を持たない紐付け)の追加・表示・解除
+	test("関連文書を紐づけて、双方から辿れて、解除できる", async ({page}) => {
+		const aName = `e2e-関連A-${Date.now()}.txt`;
+		const bName = `e2e-関連B-${Date.now()}.txt`;
+		await page.goto("./");
+		await page.setInputFiles("#uploadfile", {name: aName, mimeType: "text/plain", buffer: Buffer.from("a")});
+		await expect(page.locator("#documentList li", {hasText: aName})).toBeVisible();
+		await page.setInputFiles("#uploadfile", {name: bName, mimeType: "text/plain", buffer: Buffer.from("b")});
+		await page.locator("#documentList li", {hasText: bName}).click();
+		await expect(page.locator("#previewTitle")).toHaveText(bName);
+		await expect(page.locator("#relatedDocsRow")).toBeHidden();
+
+		await test.step("文書を選んで関連づけるとチップに出る", async () => {
+			await page.locator("#previewAddRelatedButton").click();
+			await expect(page.locator("#docPickerOverlay")).toBeVisible();
+			await page.fill("#docPickerInput", aName);
+			await page.locator(".docPickerItem", {hasText: aName}).click();
+			await expect(page.locator("#relatedDocsRow")).toBeVisible();
+			await expect(page.locator("#relatedDocsRow .relatedDocChip .name")).toHaveText([aName]);
+		});
+
+		await test.step("チップから相手を開くと、相手側にもこちらが関連として出る(双方向)", async () => {
+			await page.locator("#relatedDocsRow .relatedDocChip .name").click();
+			await expect(page.locator("#previewTitle")).toHaveText(aName);
+			await expect(page.locator("#relatedDocsRow .relatedDocChip .name")).toHaveText([bName]);
+		});
+
+		await test.step("解除すると両方から消える", async () => {
+			await page.locator("#relatedDocsRow .relatedDocChip .unlink").click();
+			await page.locator("#confirmYesButton").click();
+			await expect(page.locator("#relatedDocsRow")).toBeHidden();
+			await page.locator("#documentList li", {hasText: bName}).click();
+			await expect(page.locator("#previewTitle")).toHaveText(bName);
+			await expect(page.locator("#relatedDocsRow")).toBeHidden();
+		});
+	});
+
 	// 既に別々に登録された文書同士を、プレビューの「旧版を紐づける」から後追いで紐づける
 	test("後から旧版を紐づけて、解除できる", async ({page}) => {
 		const oldName = `e2e-後追い旧-${Date.now()}.txt`;

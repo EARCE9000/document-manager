@@ -138,6 +138,10 @@ const seed = async () => {
 	const specV2 = await upload("仕様書_文書管理システム.md", SPEC_V2, {previousId: specV1.id});
 	await api("PUT", `api/documents/${specV2.id}/memo`, {memo: "第2版で版管理とAIエージェント連携の章を追加。レビュー済み。"});
 
+	// 関連文書(種類・方向を持たない紐付け): 仕様書と、その内容を決めた議事録・構成図
+	await api("PUT", `api/documents/${specV2.id}/links/${minutes.id}`);
+	await api("PUT", `api/documents/${specV2.id}/links/${drawio.id}`);
+
 	await api("PUT", "api/tag_order", {tags: ["仕様書", "設計", "見積書", "議事録", "顧客管理"]});
 	return {specV2, project};
 };
