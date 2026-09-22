@@ -9,6 +9,9 @@
 #   - アプリは既存の外部ネットワーク(Apacheのリバースプロキシが向いている固定IP)に参加する
 #     → Apache側の設定変更は不要
 #   - データはホストのディレクトリに置く(/var/db 配下)
+#   - イメージ名はすべて docker.io/ から完全指定する(podmanは短い名前を
+#     registries.conf の unqualified-search-registries から探すため、RHEL系のホストでは
+#     registry.access.redhat.com を先に見て "Repo not found" になる)
 #
 # 使い方(deploy/compose.sh 経由での起動を推奨):
 #   ./deploy/compose.sh up
@@ -54,7 +57,7 @@ services:
   # ベクトルDB本体。ホストにポートを公開せず、内部ネットワークからのみ使う
   # (公開すると匿名アクセス有効のまま外部から触れてしまうため)
   weaviate:
-    image: semitechnologies/weaviate:${WEAVIATE_VERSION:-latest}
+    image: docker.io/semitechnologies/weaviate:${WEAVIATE_VERSION:-latest}
     container_name: ${DOCUMENT_MANAGER_CONTAINER:-document_manager}_weaviate
     restart: always
     logging:
@@ -78,7 +81,7 @@ services:
   # 1件の計算でも複数コアを使い切るため、他サービスと同居する場合はCPU上限の設定を検討する
   # (下の cpus/mem_limit のコメントを参照)
   t2v-transformers:
-    image: semitechnologies/transformers-inference:${T2V_MODEL_TAG:-sentence-transformers-paraphrase-multilingual-mpnet-base-v2}
+    image: docker.io/semitechnologies/transformers-inference:${T2V_MODEL_TAG:-sentence-transformers-paraphrase-multilingual-mpnet-base-v2}
     container_name: ${DOCUMENT_MANAGER_CONTAINER:-document_manager}_t2v
     restart: always
     logging:
