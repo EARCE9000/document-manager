@@ -23,7 +23,9 @@ const serverEnv = {
 	DATA_DIR: TEST_DATA_DIR,
 	LISTEN_PORT: String(PORT),
 	SESSION_SECRET: "test-secret",
-	LOG_LEVEL: process.env.LOG_LEVEL || "warn"
+	LOG_LEVEL: process.env.LOG_LEVEL || "warn",
+	// 本文の保存上限。テストでは小さくして、超過時の挙動(切り詰め・検索対象外)を検証する
+	CONTENT_TEXT_MAX_CHARS: process.env.CONTENT_TEXT_MAX_CHARS || "5000"
 };
 // 指定があるものだけ引き継ぐ(DB/ストレージの接続情報・認証情報)
 for (const key of [

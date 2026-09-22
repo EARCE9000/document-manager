@@ -29,7 +29,7 @@ const OPERATIONS = [
 	{
 		id: "listDocuments", method: "get", path: "/api/documents", role: "readonly", tag: "文書",
 		summary: "文書の一覧・全文検索",
-		description: "`q`省略時は全件(アーカイブ済みを除く)を返す。ファイル名・タグ・メモ・本文(抽出済みプレーンテキスト)を対象に部分一致検索する",
+		description: "`q`省略時は全件(アーカイブ済みを除く)を返す。ファイル名・タグ・メモ・本文(抽出済みプレーンテキスト)を対象に部分一致検索する。本文が大きい文書は先頭のみが検索対象(応答の`contentTruncated`が`true`。上限は`contentTextMaxChars`)",
 		params: [{name: "q", in: "query", description: "検索語(省略時は全件)"}]
 	},
 	{
@@ -71,7 +71,7 @@ const OPERATIONS = [
 	{
 		id: "getDocument", method: "get", path: "/api/documents/:id", role: "readonly", tag: "文書",
 		summary: "文書1件のメタ情報",
-		description: "アーカイブ済みも取得でき、`archived`で判別できる。`previousId`/`nextId`で前後の版が分かる"
+		description: "アーカイブ済みも取得でき、`archived`で判別できる。`previousId`/`nextId`で前後の版が分かる。`contentTruncated`が`true`の文書は、本文が大きいため先頭(`contentTextMaxChars`文字)までしか全文検索の対象になっていない"
 	},
 	{
 		id: "listVersions", method: "get", path: "/api/documents/:id/versions", role: "readonly", tag: "文書",
@@ -263,7 +263,8 @@ const GUIDE_SECTIONS = [
 		entries: [{id: "listDocuments", suffix: "?q=<検索語>"}],
 		notes: [
 			"`q`省略時は全件(論理削除済みを除く)を返す",
-			"ファイル名・タグ・本文(抽出済みプレーンテキスト)を対象に部分一致検索する"
+			"ファイル名・タグ・本文(抽出済みプレーンテキスト)を対象に部分一致検索する",
+			"本文が大きい文書は先頭のみが検索対象になる(応答の `contentTruncated` が `true`、上限は `contentTextMaxChars`)。見つからない場合はファイル名やタグでも検索してみること"
 		]
 	},
 	{
@@ -348,7 +349,7 @@ const GUIDE_SECTIONS = [
 		entries: [
 			{id: "archiveDocument", notes: ["**完全削除ではなくアーカイブ(Gmail風の論理削除)**。文書の実体は残り、いつでも復元できる。通常の一覧・検索からは外れる"]},
 			{id: "restoreDocument", trail: "アーカイブから元に戻す"},
-			{id: "listArchivedDocuments", suffix: "?q=<検索語>", trail: "アーカイブ済み文書の一覧・検索(通常の一覧と同じ検索方式)"},
+			{id: "listArchivedDocuments", suffix: "?q=<検索語>", trail: "アーカイブ済み文書の一覧・検索(アーカイブ済みは全文検索の索引から外れているため、本文の照合で検索する)"},
 			{id: "listTrashDocuments", noLine: true, notes: ["同じ内容を {{line}} でも取得できる(従来のパス。名前が「ゴミ箱」だが完全削除ではない)"]}
 		]
 	},

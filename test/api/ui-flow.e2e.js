@@ -264,6 +264,25 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		});
 	});
 
+	// 本文が大きい文書では、全文検索の対象が先頭までであることを知らせる
+	test("本文が上限を超えた文書に注意書きが出る", async ({page}) => {
+		const name = `e2e-大きい本文-${Date.now()}.txt`;
+		await page.goto("./");
+		// テストサーバの上限は5000文字(playwright.config.js)
+		await page.setInputFiles("#uploadfile", {name, mimeType: "text/plain", buffer: Buffer.from(`先頭${"あ".repeat(6000)}`)});
+		await page.locator("#documentList li", {hasText: name}).click();
+		await expect(page.locator("#previewTitle")).toHaveText(name);
+		await expect(page.locator("#contentTruncatedRow")).toBeVisible();
+		await expect(page.locator("#contentTruncatedRow")).toContainText("全文検索の対象は先頭5,000文字まで");
+
+		// 上限以下の文書では出ない
+		const smallName = `e2e-小さい本文-${Date.now()}.txt`;
+		await page.setInputFiles("#uploadfile", {name: smallName, mimeType: "text/plain", buffer: Buffer.from("短い本文")});
+		await page.locator("#documentList li", {hasText: smallName}).click();
+		await expect(page.locator("#previewTitle")).toHaveText(smallName);
+		await expect(page.locator("#contentTruncatedRow")).toBeHidden();
+	});
+
 	// 関連文書(種類・方向を持たない紐付け)の追加・表示・解除
 	test("関連文書を紐づけて、双方から辿れて、解除できる", async ({page}) => {
 		const aName = `e2e-関連A-${Date.now()}.txt`;

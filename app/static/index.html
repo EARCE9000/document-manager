@@ -499,6 +499,15 @@
 	.versionChip.archived { color: #888; border-color: #ccc; }
 	.versionChip.current { background: #1a56db; border-color: #1a56db; color: #fff; cursor: default; }
 	.versionArrow { color: #aaa; }
+	/* 本文が大きく、全文検索の対象が先頭までに切り詰められている場合の注意書き */
+	#contentTruncatedRow {
+		display: none;
+		padding: 6px 16px;
+		border-bottom: 1px solid #ddd;
+		background: #fff8e6;
+		color: #8a6d00;
+		font-size: 0.8em;
+	}
 	/* 関連文書(種類・方向を持たない対等な紐付け)。版履歴と同じ行の見た目に揃える */
 	#relatedDocsRow {
 		padding: 8px 16px;
@@ -1240,6 +1249,7 @@
 			<div id="similarFilesRow"></div>
 			<div id="versionHistoryRow"></div>
 			<div id="relatedDocsRow"></div>
+			<div id="contentTruncatedRow"></div>
 			<iframe id="previewFrame" style="display:none;" sandbox="allow-same-origin"></iframe>
 			<div id="previewOpenExternalBox" style="display:none;">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -1959,6 +1969,18 @@ const renderVersionHistory = async (doc) => {
 
 // 関連文書(種類・方向を持たない紐付け)。プレビュー上部にチップで表示し、クリックで開ける
 const relatedDocsRow = document.getElementById("relatedDocsRow");
+// 本文が上限を超えた文書は、先頭までしか全文検索の対象になっていないことを知らせる
+// (ファイル自体は全て保存されており、プレビュー・ダウンロードには影響しない)
+const contentTruncatedRow = document.getElementById("contentTruncatedRow");
+const renderContentTruncatedNotice = (doc) => {
+	if (!doc.contentTruncated) {
+		contentTruncatedRow.style.display = "none";
+		return;
+	}
+	const chars = doc.contentTextMaxChars ? `先頭${doc.contentTextMaxChars.toLocaleString()}文字` : "先頭の一部";
+	contentTruncatedRow.textContent = `この文書は本文が大きいため、全文検索の対象は${chars}までです(ファイル自体は全て保存されており、プレビュー・ダウンロードには影響しません。ファイル名・タグ・メモは全て検索できます)。`;
+	contentTruncatedRow.style.display = "block";
+};
 const previewAddRelatedButton = document.getElementById("previewAddRelatedButton");
 
 const renderRelatedDocs = async (doc) => {
@@ -2026,6 +2048,7 @@ const clearPreview = () => {
 	similarFilesRow.style.display = "none";
 	versionHistoryRow.style.display = "none";
 	relatedDocsRow.style.display = "none";
+	contentTruncatedRow.style.display = "none";
 	previewAddRelatedButton.style.display = "none";
 	memoArea.style.display = "none";
 	memoTextarea.value = "";
@@ -2089,6 +2112,7 @@ const showPreview = (doc) => {
 	renderSimilarFiles(doc);
 	renderVersionHistory(doc);
 	renderRelatedDocs(doc);
+	renderContentTruncatedNotice(doc);
 
 	memoArea.style.display = "flex";
 	memoTextarea.value = doc.memo || "";

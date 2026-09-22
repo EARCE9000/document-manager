@@ -776,9 +776,21 @@ const extractContentText = async (documentId, originalName, extension, previewFi
 	}
 };
 
+// 検索用に保存する本文の上限(文字数)。巨大なログ・CSV等を1つ登録しただけでDBが膨らむのを防ぐ。
+// 超過分は検索対象から外れるだけで、ファイルの登録・プレビュー・ダウンロードには影響しない
+// (ファイル名・タグ・メモは量に関係なく検索できる)
+const CONTENT_TEXT_MAX_CHARS = Number(process.env.CONTENT_TEXT_MAX_CHARS || 300000);
+
+const truncateContentText = (contentText) => {
+	if (contentText == null || contentText.length <= CONTENT_TEXT_MAX_CHARS) {
+		return {contentText, truncated: false};
+	}
+	return {contentText: contentText.slice(0, CONTENT_TEXT_MAX_CHARS), truncated: true};
+};
+
 const SQL_INSERT_DOCUMENT = `
-	INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, previous_id)
-	VALUES (@id, @entry_file, @preview_file, @content_text, @size, @uploaded_by, @uploaded_at, @previous_id)
+	INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, previous_id, content_truncated)
+	VALUES (@id, @entry_file, @preview_file, @content_text, @size, @uploaded_by, @uploaded_at, @previous_id, @content_truncated)
 `;
 
 const SQL_INSERT_DOCUMENT_FTS = `
@@ -786,8 +798,18 @@ const SQL_INSERT_DOCUMENT_FTS = `
 	VALUES (@id, @entry_file, @content_text)
 `;
 
+// アーカイブ(論理削除)された文書は全文検索の索引から外し、復元時に documents の本文から入れ直す。
+// これでアーカイブがいくら増えても索引は「アクティブな文書の分」だけに保たれる(SQLite専用。
+// Postgresは pg_trgm の部分インデックス(deleted_at IS NULL)で同じ効果を得ている)
+const SQL_DELETE_DOCUMENT_FTS = `DELETE FROM documents_fts WHERE id = ?`;
+const SQL_REINSERT_DOCUMENT_FTS = `
+	INSERT INTO documents_fts (id, entry_file, content_text)
+	SELECT id, entry_file, content_text FROM documents
+	WHERE id = ? AND id NOT IN (SELECT id FROM documents_fts)
+`;
+
 const SQL_SELECT_ACTIVE_DOCUMENTS = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, content_truncated
 	FROM documents
 	WHERE deleted_at IS NULL
 	ORDER BY uploaded_at DESC
@@ -878,18 +900,6 @@ const SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE = `
 	ORDER BY d.deleted_at DESC
 `;
 
-const SQL_SEARCH_DELETED_DOCUMENTS_BY_FTS = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo, d.previous_id
-	FROM documents d
-	WHERE d.deleted_at IS NOT NULL
-	AND (
-		d.id IN (SELECT id FROM documents_fts WHERE documents_fts MATCH @ftsQuery)
-		OR d.memo LIKE '%' || @q || '%'
-		OR d.id IN (SELECT document_id FROM document_tags WHERE tag LIKE '%' || @q || '%')
-	)
-	ORDER BY d.deleted_at DESC
-`;
-
 const SQL_SEARCH_DELETED_DOCUMENTS_PG = `
 	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo, d.previous_id
 	FROM documents d
@@ -904,30 +914,25 @@ const SQL_SEARCH_DELETED_DOCUMENTS_PG = `
 	ORDER BY d.deleted_at DESC
 `;
 
+// アーカイブ済みはFTSの索引に載せていないため、本文へのLIKEで検索する(索引なしの走査だが、
+// 1万件規模でも実測で100ms未満。アーカイブ画面は利用頻度も低い)。Postgresも本文の索引は
+// アクティブ限定のため、こちらは索引なしのILIKEになる
 const searchDeletedDocuments = async (q) => {
 	if (ds.backend === "postgres") {
 		return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_PG, {q});
 	}
-	if (q.length < MIN_FTS_QUERY_LENGTH) {
-		return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE, {q});
-	}
-	try {
-		return await ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_FTS, {ftsQuery: toFtsPhraseQuery(q), q});
-	} catch (err) {
-		logger.error(err, "::searchDeletedDocuments:fts_fallback");
-		return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE, {q});
-	}
+	return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE, {q});
 };
 
 const SQL_SELECT_ACTIVE_DOCUMENT_BY_ID = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, content_truncated
 	FROM documents
 	WHERE id = ? AND deleted_at IS NULL
 `;
 
 // アーカイブ済み文書もプレビュー/ダウンロードできるよう、状態を問わずidだけで引く
 const SQL_SELECT_DOCUMENT_BY_ID = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, deleted_by, deleted_at
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, deleted_by, deleted_at, content_truncated
 	FROM documents
 	WHERE id = ?
 `;
@@ -941,7 +946,7 @@ const SQL_SOFT_DELETE_DOCUMENT = `
 `;
 
 const SQL_SELECT_DELETED_DOCUMENTS = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, previous_id
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, previous_id, content_truncated
 	FROM documents
 	WHERE deleted_at IS NOT NULL
 	ORDER BY deleted_at DESC
@@ -985,6 +990,8 @@ const toDocumentResponse = async (row) => ({
 	memo: row.memo,
 	previousId: row.previous_id ?? null,
 	nextId: (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [row.id]))?.id ?? null,
+	contentTruncated: row.content_truncated === 1,
+	contentTextMaxChars: CONTENT_TEXT_MAX_CHARS,
 	tags: (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [row.id])).map((tagRow) => tagRow.tag)
 });
 
@@ -1376,7 +1383,11 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		const previewFile = isDrawio
 			? await storeDrawioPreview(id, previewUpload)
 			: await buildPreviewFile(id, originalName, extension);
-		const contentText = await extractContentText(id, originalName, extension, previewFile);
+		const extractedText = await extractContentText(id, originalName, extension, previewFile);
+		const {contentText, truncated} = truncateContentText(extractedText);
+		if (truncated) {
+			logger.info({documentId: id, entryFile: originalName, chars: extractedText.length, kept: CONTENT_TEXT_MAX_CHARS}, "::api/documents:upload:contentTextTruncated");
+		}
 
 		const row = {
 			id,
@@ -1386,7 +1397,8 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 			size: uploadfile.size,
 			uploaded_by: req.authData.user_identifier,
 			uploaded_at: new Date().toISOString(),
-			previous_id: previousId
+			previous_id: previousId,
+			content_truncated: truncated ? 1 : 0
 		};
 		// 新版の登録と旧版のアーカイブ・引き継ぎは1トランザクションで行い、途中で失敗しても
 		// 「新版だけ登録されて旧版が残る」等の中途半端な状態にしない
@@ -1410,6 +1422,9 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 					deleted_by: req.authData.user_identifier
 				});
 				archivedPrevious = archiveResult.changes > 0;
+				if (archivedPrevious && ds.backend === "sqlite") {
+					await tx.run(SQL_DELETE_DOCUMENT_FTS, [previousId]);
+				}
 			}
 		});
 		// ベクトル検索(Weaviate)への索引登録はベストエフォート・非同期(埋め込み計算に数秒
@@ -1560,6 +1575,9 @@ app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async
 		if (result.changes === 0) {
 			res.status(404).json({error: "not found"});
 			return;
+		}
+		if (ds.backend === "sqlite") {
+			await ds.run(SQL_DELETE_DOCUMENT_FTS, [req.params.id]);
 		}
 		VectorSearch.removeDocument(req.params.id).catch((err) => logger.error({err, documentId: req.params.id}, "::api/documents/:id:delete:removeDocument"));
 		logger.info({
@@ -1776,6 +1794,9 @@ app.put(BASE_URL_PATH + 'api/documents/:id/previous', requireAuth, requireWrite,
 				deleted_by: req.authData.user_identifier
 			});
 			archivedPrevious = archiveResult.changes > 0;
+			if (archivedPrevious && ds.backend === "sqlite") {
+				await tx.run(SQL_DELETE_DOCUMENT_FTS, [previousId]);
+			}
 		});
 
 		if (archivedPrevious) {
@@ -1878,6 +1899,10 @@ app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite,
 		if (result.changes === 0) {
 			res.status(404).json({error: "not found"});
 			return;
+		}
+		// アーカイブ時に全文検索の索引から外しているため、documentsの本文から入れ直す
+		if (ds.backend === "sqlite") {
+			await ds.run(SQL_REINSERT_DOCUMENT_FTS, [req.params.id]);
 		}
 		// 論理削除時にWeaviate側のチャンクは削除済みのため、content_textから再登録する
 		VectorSearch.indexDocument(req.params.id, (await ds.get(SQL_SELECT_CONTENT_TEXT_BY_ID, [req.params.id]))?.content_text ?? null)

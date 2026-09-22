@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -51,7 +51,8 @@ const createSchema = (targetDb) => {
 			vector_index_status TEXT,
 			vector_index_error TEXT,
 			vector_indexed_at TEXT,
-			previous_id TEXT
+			previous_id TEXT,
+			content_truncated INTEGER NOT NULL DEFAULT 0
 		)
 	`);
 	// 版の紐付け(v10で追加): previous_idは「この文書が置き換えた旧版」の文書ID。
@@ -184,7 +185,8 @@ const createSchema = (targetDb) => {
 	// 部分一致検索できるが、3文字未満のクエリはヒットしない制約があるため、
 	// 短いクエリはアプリ側でLIKE検索にフォールバックする)。
 	// タグは元々短い文字列でLIKEでも十分高速なため、ここには含めない。
-	// 論理削除された文書の行もそのまま残す(検索時にdocuments.deleted_atで絞り込む)。
+	// アーカイブ(論理削除)された文書はこの索引から外す(アーカイブが増えても索引が肥大しないように)。
+	// アーカイブ済みの検索は documents.content_text へのLIKEで行い、復元時にここへ入れ直す。
 	targetDb.exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 			id UNINDEXED,
@@ -551,6 +553,48 @@ const MIGRATIONS = {
 		} finally {
 			newDb.exec("DETACH DATABASE old");
 		}
+	},
+	12: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at, locked)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at, locked FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at FROM old.project_documents;
+
+				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
+				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
+
+				INSERT INTO document_links (document_id_a, document_id_b, created_by, created_at)
+				SELECT document_id_a, document_id_b, created_by, created_at FROM old.document_links;
+
+				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
+				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
+			`);
+			// documents.content_truncatedはv11に存在しないため対象外(0=切り詰めなしとして移行される)
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
 	}
 };
 
@@ -586,12 +630,17 @@ const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 createSchema(db);
 
-// 既存のdocuments行のうち、documents_ftsにまだ無いものを取り込む
-// (起動のたびに実行しても安全な差分バックフィル。移行直後のデータもここで拾われる)
+// 全文検索の索引を「アーカイブされていない文書だけ」の状態に揃える(起動のたびに実行して安全な差分処理)。
+// 1) まだ索引に無いアクティブな文書を取り込む(移行直後・この対応より前のデータもここで拾われる)
+// 2) 既に索引に入っているアーカイブ済み文書を外す(本文はdocumentsに残るため、復元時に入れ直せる)
 db.exec(`
 	INSERT INTO documents_fts (id, entry_file, content_text)
 	SELECT id, entry_file, content_text FROM documents
-	WHERE id NOT IN (SELECT id FROM documents_fts)
+	WHERE deleted_at IS NULL AND id NOT IN (SELECT id FROM documents_fts)
+`);
+db.exec(`
+	DELETE FROM documents_fts
+	WHERE id IN (SELECT id FROM documents WHERE deleted_at IS NOT NULL)
 `);
 
 logger.info({DB_PATH: DB_PATH, SCHEMA_VERSION}, "sqlite database ready");

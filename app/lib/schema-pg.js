@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS documents (
 	vector_index_status TEXT,
 	vector_index_error TEXT,
 	vector_indexed_at TEXT,
-	previous_id TEXT
+	previous_id TEXT,
+	content_truncated INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_documents_previous_id ON documents (previous_id);
 
@@ -148,10 +149,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
 
 -- 全文部分一致検索(SQLiteのFTS5 trigramの代替)。pg_trgmのGINインデックスで
--- entry_file/content_text/memo/tag のILIKE '%...%' 部分一致を高速化する
+-- entry_file/content_text/memo/tag のILIKE '%...%' 部分一致を高速化する。
+-- ファイル名・本文はアーカイブ(論理削除)されていない文書だけの部分インデックスにする
+-- (アーカイブが増えても索引が肥大しないように。アーカイブ済みの検索は索引なしの走査になる)
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE INDEX IF NOT EXISTS idx_documents_entry_file_trgm ON documents USING gin (entry_file gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_documents_content_text_trgm ON documents USING gin (content_text gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_documents_entry_file_trgm ON documents USING gin (entry_file gin_trgm_ops) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_documents_content_text_trgm ON documents USING gin (content_text gin_trgm_ops) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_documents_memo_trgm ON documents USING gin (memo gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_document_tags_tag_trgm ON document_tags USING gin (tag gin_trgm_ops);
 `;
@@ -175,6 +178,15 @@ const MIGRATIONS = [
 			PRIMARY KEY (document_id_a, document_id_b)
 		);
 		CREATE INDEX IF NOT EXISTS idx_document_links_b ON document_links (document_id_b);
+	`},
+	// 本文の切り詰め記録と、ファイル名・本文の索引のアクティブ限定(部分インデックス)化。
+	// 既存の索引は作り直す必要があるため、DROPしてから貼り直す
+	{version: 4, sql: `
+		ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_truncated INTEGER NOT NULL DEFAULT 0;
+		DROP INDEX IF EXISTS idx_documents_entry_file_trgm;
+		DROP INDEX IF EXISTS idx_documents_content_text_trgm;
+		CREATE INDEX IF NOT EXISTS idx_documents_entry_file_trgm ON documents USING gin (entry_file gin_trgm_ops) WHERE deleted_at IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_documents_content_text_trgm ON documents USING gin (content_text gin_trgm_ops) WHERE deleted_at IS NULL;
 	`}
 ];
 

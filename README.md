@@ -41,6 +41,9 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - リンクのコピー・「別ウィンドウで開く」・一覧の別ウィンドウアイコンは、いずれも `api/documents/:id/viewer` を指す。`api/documents/:id/file`(APIキー連携クライアント向け。未認証時はJSONの401のみを返す)とは別系統で、未ログイン状態でこのURLを開くとログイン画面へ自動的に迂回し、ログイン完了後に元のURLへ戻ってから文書を表示する。他の人にリンクを共有する場合はこちらが使われる
   - プレビュー上部に、ファイル名が似ている他の文書(現在表示中の一覧内、文字3-gramのDice係数で判定)をチップ表示し、クリックでそちらのプレビューに切り替えられる(バージョン違い等の関連文書を見つけやすくする)
 - **全文検索**: ファイル名・本文(抽出済みプレーンテキスト)はFTS5(`trigram`トークナイザ)で部分一致検索する。単語分割不要で日本語等CJKにも強いが、3文字未満のクエリはヒットしない制約があるため、その場合は自動的に `LIKE` 検索にフォールバックする。タグ・メモは元々短い文字列のため常に `LIKE` で検索する
+  - **索引に載せるのはアーカイブされていない文書だけ**: アーカイブ時に索引から外し、復元時に`documents.content_text`から入れ直す(本文はDBに残るため情報は失われない)。版管理で旧版が増えても索引が肥大しない。アーカイブ済みの検索は索引を使わない走査(SQLiteは`LIKE`、Postgresは`ILIKE`)で行う。Postgresでは本文・ファイル名のGIN trigramインデックスを`WHERE deleted_at IS NULL`の部分インデックスにして同じ効果を得ている
+  - **本文の保存量に上限**: 検索用に保存する本文は`CONTENT_TEXT_MAX_CHARS`(既定30万文字)まで。超過分は検索対象外になるだけで、ファイルの登録・プレビュー・ダウンロードには影響しない(ファイル名・タグ・メモは全て検索できる)。上限に達した文書はプレビュー上部にその旨を表示し、APIの応答にも`contentTruncated`/`contentTextMaxChars`が入る。1ファイル256MBまで登録できるため、巨大なログ・CSVを1つ入れただけでDBが数百MB膨らむのを防ぐ
+  - **実測(1万件・本文2,000文字/件・7割アーカイブ)**: DBファイル 168MB → **101MB**、全文検索の索引 94MB → **28MB**、通常の全文検索 103ms → **59ms**、アーカイブ検索(索引なしの走査) 76ms。一覧の取得は3,000件で37ms
 - **セマンティック検索(任意機能)**: `WEAVIATE_URL`環境変数を設定すると、キーワードの部分一致ではなく言い換え・表記ゆれを含めて意味的に近い文書を検索できるようになる(`GET api/documents/search/vector?q=...`)。ベクトルDBには[Weaviate](https://weaviate.io/)(OSS)を別コンテナで使用する。`WEAVIATE_URL`未設定の間はこの機能自体が無効化され、既存のキーワード検索・文書管理には一切影響しない。文書一覧画面の「セマンティック検索」チェックボックス、またはAPI(`api/documents/search/vector`)から利用できる。詳細は[docker-compose.yml](docker-compose.yml)を参照
   - **Embeddingプロバイダの切り替え**: 既定は自己ホストの`text2vec-transformers`(多言語sentence-transformersモデル、外部APIキー不要)。`text2vec-cohere`(Cohere SaaS、要`COHERE_APIKEY`)・`text2vec-openai`(要`OPENAI_APIKEY`)・`text2vec-aws`(Cohere on AWS Bedrock、要`AWS_BEDROCK_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)に切り替えると、Weaviateが直接各社のEmbedding APIを呼ぶ構成になり、`t2v-transformers`コンテナは不要になる。認証情報はこのアプリの環境変数からWeaviateへのリクエストヘッダーとして都度渡され、Weaviateコンテナ自体・DBのいずれにも保持させない(AWSの認証情報はECS等のタスク定義でSecrets Managerから環境変数へ注入する構成を想定している)。
     - 既定値は`WEAVIATE_VECTORIZER`環境変数で指定するほか、「ベクトル索引」画面から admin ロールでGUI上書きもできる(`GET/PUT/DELETE api/vector-index/vectorizer`)。選択肢には必要な環境変数が揃っているものだけが選べる状態で表示され(未設定のものは「(未設定)」と表示され選択不可)、GUI自体は認証情報の値を一切扱わない(表示もしない)
@@ -170,6 +173,7 @@ document-manager/
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | (未設定) | `text2vec-aws`を使う場合に必須。Bedrockの呼び出し権限を持つIAMユーザーの認証情報(S3の`STORAGE_BACKEND=s3`利用時とは別に、Weaviateへのリクエストヘッダーとして都度渡される)。AWS上で稼働させる場合は、ECSタスク定義の`secrets`等でAWS Secrets Managerの値をコンテナ起動時に注入する構成を推奨する |
 | `VECTOR_CHUNK_SIZE` | `180` | セマンティック検索の本文チャンク分割サイズ(文字数の既定値)。既定モデル(mpnet-base-v2、最大128トークン)で実測した結果に基づく値([チャンクサイズの実測](#チャンクサイズの実測モデルの最大シーケンス長との関係)参照)。「ベクトル索引」画面からadminロールで上書き保存でき、その場合はDB側の値が優先される |
 | `VECTOR_CHUNK_OVERLAP` | `20` | チャンク分割時のオーバーラップ(文字数の既定値)。上書きの扱いは`VECTOR_CHUNK_SIZE`と同様 |
+| `CONTENT_TEXT_MAX_CHARS` | `300000` | 検索用に保存する本文の上限(文字数)。超過分は全文検索の対象外になる(ファイル自体は影響を受けない)。巨大なログ・CSV等でDBが膨らむのを防ぐための安全弁 |
 | `LOG_LEVEL` | `info` | ログレベル (pino) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を丸ごとバイパスする開発用フラグ。本番では未設定のこと |
 | `OIDC_ISSUER` | (必須) | OIDCプロバイダのissuer URL。例: `https://login.microsoftonline.com/<TENANT_ID>/v2.0`(EntraID)、`https://cognito-idp.<REGION>.amazonaws.com/<USER_POOL_ID>`(Cognito) |
