@@ -122,12 +122,17 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 			await expect(li.locator(".docTag")).toHaveText("DRAWIO");
 		});
 
-		await test.step("svgプレビューが表示され、ダウンロードは.drawio実体を指す", async () => {
+		// .drawio は画像化せず、同梱のdraw.ioビューアがXMLをそのまま描画する
+		// (添付されたプレビュー画像は、ビューアが使えなかったときの退避先として残る)
+		await test.step("ビューアが図をそのまま描画し、ダウンロードは.drawio実体を指す", async () => {
 			await page.locator("#documentList li", {hasText: drawioName}).click();
 			await expect(page.locator("#previewTitle")).toHaveText(drawioName);
 			const frame = page.locator("#previewFrame");
 			await expect(frame).toBeVisible();
-			await expect(frame).toHaveAttribute("src", /api\/documents\/.+\/file$/);
+			await expect(frame).toHaveAttribute("src", /drawio-viewer\.html\?id=/);
+			// 図の中のラベルがSVGとして描かれる(画像の貼り付けではない)
+			await expect(page.frameLocator("#previewFrame").locator("svg")).toBeVisible();
+			await expect(page.frameLocator("#previewFrame").locator("#viewer")).toContainText("E2Eドローアイオーラベル");
 			// ダウンロードリンクは元ファイル(.drawio)を返す ?download=1
 			await expect(page.locator("#downloadLink")).toHaveAttribute("href", /api\/documents\/.+\/file\?download=1$/);
 		});
@@ -144,6 +149,53 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 			if (created) {
 				await request.delete(`api/documents/${created.id}`, {headers: {Authorization: `Bearer ${keys.readwrite}`}});
 			}
+		});
+	});
+
+	// 画像を添えない .drawio でも、同梱のdraw.ioビューアが図をそのまま描画する。
+	// 複数ページはツールバーのページ送りで切り替えられ、別ウィンドウでも同じビューアが開く
+	test("プレビュー画像なしの.drawioをビューアで表示し、ページを切り替えられる", async ({page, request}) => {
+		const name = `e2e-多ページ-${Date.now()}.drawio`;
+		const pageXml = (no) => `<diagram id="p${no}" name="第${no}ページ"><mxGraphModel><root>`
+			+ `<mxCell id="0"/><mxCell id="1" parent="0"/>`
+			+ `<mxCell id="n${no}" value="ページ${no}の図形" style="rounded=1;html=1;" vertex="1" parent="1">`
+			+ `<mxGeometry x="20" y="20" width="160" height="60" as="geometry"/></mxCell></root></mxGraphModel></diagram>`;
+		const xml = `<mxfile>${pageXml(1)}${pageXml(2)}</mxfile>`;
+
+		await page.goto("./");
+		await page.setInputFiles("#uploadfile", {name, mimeType: "application/xml", buffer: Buffer.from(xml)});
+		await page.locator("#documentList li", {hasText: name}).click();
+		const viewer = page.frameLocator("#previewFrame");
+
+		await test.step("画像が無くてもビューアで描画される", async () => {
+			await expect(page.locator("#previewTitle")).toHaveText(name);
+			await expect(page.locator("#previewFrame")).toHaveAttribute("src", /drawio-viewer\.html\?id=/);
+			await expect(viewer.locator("#viewer")).toContainText("ページ1の図形");
+			// 別ウィンドウで開くボタンも使える(従来はプレビュー画像が無いと押せなかった)
+			await expect(page.locator("#documentList li", {hasText: name}).locator(".openButton")).toBeEnabled();
+		});
+
+		await test.step("ツールバーからページを切り替えられる", async () => {
+			const toolbar = viewer.locator('div[style*="z-index: 999"]').first();
+			await expect(toolbar).toContainText("1 / 2");
+			await toolbar.locator("div").filter({hasNot: page.locator("img")}).first().waitFor();
+			// ページ送り(右向き)のボタンは、ページ表示の直後にある
+			await viewer.locator('div[style*="z-index: 999"] img').nth(1).click();
+			await expect(toolbar).toContainText("2 / 2");
+			await expect(viewer.locator("#viewer")).toContainText("ページ2の図形");
+		});
+
+		await test.step("別ウィンドウ用のURLは同じビューアへ送られる", async () => {
+			const list = await (await request.get("api/documents", {headers: {Authorization: `Bearer ${keys.readwrite}`}})).json();
+			const created = list.find((d) => d.entryFile === name);
+			// viewerはブラウザ向け(セッション認証)のため、ログイン済みのcookieを付けて確かめる
+			const res = await request.get(`api/documents/${created.id}/viewer`, {
+				maxRedirects: 0,
+				headers: {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(keys.sessionCookie)}`}
+			});
+			expect(res.status()).toBe(302);
+			expect(res.headers()["location"]).toContain(`drawio-viewer.html?id=${created.id}`);
+			await request.delete(`api/documents/${created.id}`, {headers: {Authorization: `Bearer ${keys.readwrite}`}});
 		});
 	});
 

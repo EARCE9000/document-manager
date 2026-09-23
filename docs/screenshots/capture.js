@@ -100,9 +100,17 @@ const MINUTES = `# 定例会議 議事録
 
 const CUSTOMERS = "顧客ID,会社名,担当者,地域\nC001,サンプル商事,山田,東京\nC002,テスト工業,佐藤,大阪\nC003,デモ物産,鈴木,名古屋\n";
 
-const DRAWIO = `<mxfile><diagram name="システム構成"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
-<mxCell id="2" value="ブラウザ" vertex="1" parent="1"/><mxCell id="3" value="Document Manager" vertex="1" parent="1"/>
-<mxCell id="4" value="SQLite / PostgreSQL" vertex="1" parent="1"/></root></mxGraphModel></diagram></mxfile>`;
+// 画面では同梱のdraw.ioビューアがこのXMLをそのまま描画するため、座標・スタイルも入れておく
+const DRAWIO = `<mxfile><diagram name="システム構成" id="p1"><mxGraphModel pageWidth="850" pageHeight="500"><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="2" value="ブラウザ" style="rounded=1;html=1;fillColor=#e8f0fe;strokeColor=#1a56db;" vertex="1" parent="1"><mxGeometry x="40" y="160" width="160" height="60" as="geometry"/></mxCell>
+<mxCell id="3" value="Document Manager" style="rounded=1;html=1;fillColor=#fff3cd;strokeColor=#b8860b;" vertex="1" parent="1"><mxGeometry x="280" y="160" width="200" height="60" as="geometry"/></mxCell>
+<mxCell id="4" value="SQLite / PostgreSQL" style="rounded=1;html=1;fillColor=#eaf7ea;strokeColor=#2f9e44;" vertex="1" parent="1"><mxGeometry x="560" y="80" width="180" height="60" as="geometry"/></mxCell>
+<mxCell id="5" value="文書ストレージ" style="rounded=1;html=1;fillColor=#eaf7ea;strokeColor=#2f9e44;" vertex="1" parent="1"><mxGeometry x="560" y="240" width="180" height="60" as="geometry"/></mxCell>
+<mxCell id="6" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="2" target="3"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="7" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="3" target="4"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="8" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="3" target="5"><mxGeometry relative="1" as="geometry"/></mxCell>
+</root></mxGraphModel></diagram></mxfile>`;
 
 const DRAWIO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="260" viewBox="0 0 640 260" font-family="sans-serif" font-size="16">
 <rect width="640" height="260" fill="#fff"/>
@@ -187,10 +195,11 @@ const main = async () => {
 		await shot("document-list");
 
 		// 2. タグ体系
-		// (draw.io 文書を選び、添付したプレビュー画像が表示される様子も写す)
+		// (draw.io 文書を選び、同梱のビューアが図をそのまま描画する様子も写す)
 		await page.locator("#menuTagTreeLink").click();
 		await page.locator("#documentList li", {hasText: "システム構成図.drawio"}).first().click();
-		await page.frameLocator("#previewFrame").locator("svg").waitFor();
+		await page.frameLocator("#previewFrame").locator("#viewer svg").waitFor();
+		await page.waitForTimeout(600); // 図の描画・縮小の完了待ち
 		await shot("tag-tree");
 
 		// 3. プロジェクト(フォルダ階層。新しい版がフォルダ内の同じ位置に引き継がれている)

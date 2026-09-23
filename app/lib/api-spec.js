@@ -114,14 +114,17 @@ const OPERATIONS = [
 	{
 		id: "getDocumentFile", method: "get", path: "/api/documents/:id/file", role: "readonly", tag: "文書",
 		summary: "文書のプレビュー/ダウンロード",
-		description: "`?download=1`で元ファイルを添付ファイルとして返す(付けない場合はプレビュー用ファイル)。Rangeリクエストに対応",
-		params: [{name: "download", in: "query", description: "1を指定すると元ファイルをダウンロードする"}],
+		description: "`?download=1`で元ファイルを添付ファイルとして返す(付けない場合はプレビュー用ファイル)。Rangeリクエストに対応。`?source=1`は`.drawio`専用で、図のXMLをそのまま返す(画面のビューアが使う。ダウンロード扱いにはならない)",
+		params: [
+			{name: "download", in: "query", description: "1を指定すると元ファイルをダウンロードする"},
+			{name: "source", in: "query", description: "1を指定すると.drawioの図のXMLを返す(.drawio以外では400)"}
+		],
 		produces: "application/octet-stream"
 	},
 	{
 		id: "viewDocument", method: "get", path: "/api/documents/:id/viewer", role: "public", tag: "文書",
 		summary: "文書のプレビュー(人へのリンク共有用)",
-		description: "未ログインで開くとログイン画面へ迂回し、ログイン後に元のURLへ戻る。人にURLを共有する場合はこちら(`/file`はAPIクライアント向けで、未認証時はJSONの401を返すだけ)",
+		description: "未ログインで開くとログイン画面へ迂回し、ログイン後に元のURLへ戻る。人にURLを共有する場合はこちら(`/file`はAPIクライアント向けで、未認証時はJSONの401を返すだけ)。`.drawio`は同梱のdraw.ioビューアのページへリダイレクトする",
 		produces: "application/octet-stream", aiGuide: false
 	},
 	{

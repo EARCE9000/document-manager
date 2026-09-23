@@ -141,15 +141,35 @@ test.describe.serial("文書ライフサイクル", () => {
 		await request.delete(`api/documents/${drawioId}`, {headers: rw});
 	});
 
-	test(".drawio はプレビュー画像なしでもアップロードできる(プレビュー不可)", async ({request}) => {
+	// 画像を添えなくても、画面では同梱のdraw.ioビューアがXMLをそのまま描画する
+	// (?source=1 がそのXMLの取得口。ダウンロードではないので監査ログにも残さない)
+	test(".drawio はプレビュー画像なしでもアップロードでき、図のXMLを取得できる", async ({request}) => {
+		const xml = "<mxfile><diagram name='x'><mxGraphModel/></diagram></mxfile>";
 		const uploaded = await request.post("api/documents", {
 			headers: rw,
-			multipart: {uploadfile: {name: "素の図.drawio", mimeType: "application/xml", buffer: Buffer.from("<mxfile><diagram name='x'><mxGraphModel/></diagram></mxfile>")}}
+			multipart: {uploadfile: {name: "素の図.drawio", mimeType: "application/xml", buffer: Buffer.from(xml)}}
 		});
 		expect(uploaded.status()).toBe(200);
 		const body = await uploaded.json();
 		expect(body.previewFile).toBeNull();
+
+		const source = await request.get(`api/documents/${body.id}/file?source=1`, {headers: rw});
+		expect(source.status()).toBe(200);
+		expect(await source.text()).toBe(xml);
+		// ブラウザが直接開いてもマークアップとして解釈されないようにする
+		expect(source.headers()["content-type"]).toContain("text/plain");
+		expect(source.headers()["content-security-policy"]).toContain("script-src 'none'");
+		expect(source.headers()["content-disposition"]).toContain("inline");
+
+		// プレビュー画像は無いので、従来どおり ?source=1 無しは404
+		expect((await request.get(`api/documents/${body.id}/file`, {headers: rw})).status()).toBe(404);
+
 		await request.delete(`api/documents/${body.id}`, {headers: rw});
+	});
+
+	test("source=1 は .drawio 以外では400", async ({request}) => {
+		const res = await request.get(`api/documents/${documentId}/file?source=1`, {headers: rw});
+		expect(res.status()).toBe(400);
 	});
 
 	test("プレビュー画像(previewfile)が svg/png 以外だと400", async ({request}) => {

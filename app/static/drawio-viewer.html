@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>draw.io プレビュー</title>
+<!--
+	.drawio を画像化せずにブラウザ上で描画するためのページ。本体(index.html)のプレビュー用
+	iframeから `drawio-viewer.html?id=<文書ID>` として読み込む。
+
+	draw.ioの図はラベルにHTMLを書けるため、図の中身は信用できない入力として扱う。
+	このページはサーバー側で `script-src 'self'` のCSPを付けて配信しており(server.js参照)、
+	図に仕込まれたインラインのスクリプトは実行されない。そのためスクリプトは全て外部ファイルに置く。
+
+	stencil等の取得先は自ドメイン配下へ差し替えてあり、外部(viewer.diagrams.net)への通信は行わない。
+-->
+<link rel="stylesheet" href="./drawio-viewer.css">
+</head>
+<body>
+<div id="viewer"></div>
+<div id="status"></div>
+<script src="./drawio-viewer-boot.js"></script>
+<script src="./vendor/drawio/viewer-static.min.js"></script>
+<script src="./drawio-viewer.js"></script>
+</body>
+</html>

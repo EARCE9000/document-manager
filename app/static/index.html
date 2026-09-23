@@ -1236,7 +1236,7 @@
 				<div id="uploadDropZone">
 					<div class="uploadHint">ここにファイルをドラッグ&amp;ドロップ<br>またはクリックして選択</div>
 					<div class="uploadExt">.html / .htm / .mhtml / .mht / .md / .markdown / .pdf / .svg / .png / .jpg / .jpeg / .csv / .tsv / .txt / .log / .json / .drawio</div>
-					<div class="uploadExt">.drawio はプレビュー用の画像(.svg/.png)を一緒に選ぶと、その画像がプレビュー表示されます</div>
+					<div class="uploadExt">.drawio はそのままプレビューできます(画像は不要。一緒に画像を選んだ場合は、表示できないときの代わりに使われます)</div>
 					<input type="file" id="uploadfile" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio" multiple style="display:none;">
 				</div>
 			</div>
@@ -2108,8 +2108,57 @@ const addRelatedDocument = async (doc) => {
 	renderRelatedDocs(doc);
 };
 
+// .drawio のプレビュー(drawio-viewer.html)へ図のXMLを渡すための状態。
+// ビューア側はsandboxでオリジンを持たない(=APIを呼べない)ため、XMLはこちらで取得して渡す
+let drawioPreview = null;
+
+// 別の文書へ移ったときに、前の文書のXMLが遅れて届いても反映しないようにする
+const cancelDrawioPreview = () => {
+	drawioPreview = null;
+};
+
+// .drawio を画像化せずビューアで描画する。ビューアが使えなかった場合だけ、
+// 従来どおりアップロード時に添付されたプレビュー画像へ切り替える
+const showDrawioPreview = (doc) => {
+	const request = {documentId: doc.id};
+	drawioPreview = request;
+	previewFrame.style.display = "block";
+	// 図のラベルにはHTMLを書けるため、ビューアのページはCSPでスクリプトの出どころを
+	// 自分自身に限定して配信している(server.jsのDRAWIO_VIEWER_CSP)。図のXMLの取得には
+	// ログイン状態が要るので、ここではオリジンを保ったまま読み込む
+	previewFrame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups");
+	previewFrame.src = `./drawio-viewer.html?id=${encodeURIComponent(doc.id)}`;
+};
+
+// プレビューできる文書か(.drawio はプレビュー画像が無くてもビューアで描画できる)
+const canPreviewDocument = (doc) => doc.previewFile != null || extOfName(doc.entryFile) === "drawio";
+
+// ビューアで描画できなかったときの退避先(添付画像があればそれ、無ければプレビュー不可)
+const showDrawioFallback = (request, doc) => {
+	if (drawioPreview !== request) return;
+	drawioPreview = null;
+	if (doc.previewFile == null) {
+		previewFrame.style.display = "none";
+		previewFrame.removeAttribute("src");
+		previewTitle.textContent = `${doc.entryFile} (プレビュー不可。ダウンロードして確認してください)`;
+		return;
+	}
+	previewFrame.setAttribute("sandbox", "allow-same-origin");
+	previewFrame.src = `./api/documents/${encodeURIComponent(doc.id)}/file`;
+};
+
+// ビューア(iframe)からの通知。描画できなかったときだけ受け取って、添付画像へ切り替える
+window.addEventListener("message", (event) => {
+	const request = drawioPreview;
+	if (request == null || event.origin !== window.location.origin || event.source !== previewFrame.contentWindow) return;
+	if (event.data == null || event.data.type !== "drawio-viewer-failed") return;
+	const doc = allDocuments.find((d) => d.id === request.documentId);
+	if (doc != null) showDrawioFallback(request, doc);
+});
+
 const clearPreview = () => {
 	selectedId = null;
+	cancelDrawioPreview();
 	projectTreeList.querySelectorAll(".treeDocRow.selected").forEach((li) => li.classList.remove("selected"));
 	previewFrame.style.display = "none";
 	previewFrame.removeAttribute("src");
@@ -2132,6 +2181,7 @@ const clearPreview = () => {
 };
 
 const showPreview = (doc) => {
+	cancelDrawioPreview();
 	selectedId = doc.id;
 	documentList.querySelectorAll("li").forEach((li) => {
 		li.classList.toggle("selected", li.dataset.id === doc.id);
@@ -2197,6 +2247,14 @@ const showPreview = (doc) => {
 	memoSavedIndicator.style.display = "none";
 
 	previewOpenExternalBox.style.display = "none";
+
+	// .drawio は画像化を挟まず、同梱のdraw.ioビューアでXMLをそのまま描画する
+	// (図の大きさ・ページ数に左右されず、複数ページも切り替えて見られる)
+	if (extOfName(doc.entryFile) === "drawio") {
+		previewTitle.textContent = doc.entryFile;
+		showDrawioPreview(doc);
+		return;
+	}
 
 	if (doc.previewFile == null) {
 		previewFrame.style.display = "none";
@@ -2292,14 +2350,14 @@ const renderDocumentList = () => {
 			: `<span class="userTagChip">${escapeHtml(tag)}<button type="button" class="removeTagButton" data-id="${escapeHtml(doc.id)}" data-tag="${escapeHtml(tag)}" title="タグを削除" aria-label="タグを削除">&times;</button></span>`
 		).join("");
 		const actionButtonsHtml = isArchive ? `
-				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${doc.previewFile == null ? "disabled" : ""}>
+				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${canPreviewDocument(doc) ? "" : "disabled"}>
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
 				</button>
 				<button data-id="${doc.id}" class="iconButton restoreButton" type="button" title="元に戻す" aria-label="元に戻す">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
 				</button>
 			` : `
-				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${doc.previewFile == null ? "disabled" : ""}>
+				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${canPreviewDocument(doc) ? "" : "disabled"}>
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
 				</button>
 				<button data-id="${doc.id}" class="iconButton tagEditButton" type="button" title="タグを編集" aria-label="タグを編集">
@@ -2406,7 +2464,7 @@ const buildDocumentListItem = (doc) => {
 		<div class="docRow">
 			<span class="docTag ${tagClass}">${tagClass.toUpperCase()}</span>
 			<div class="itemButtons">
-				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${doc.previewFile == null ? "disabled" : ""}>
+				<button data-id="${doc.id}" class="iconButton openButton" type="button" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${canPreviewDocument(doc) ? "" : "disabled"}>
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
 				</button>
 				<button data-id="${doc.id}" class="iconButton tagEditButton" type="button" title="タグを編集" aria-label="タグを編集">

@@ -131,6 +131,28 @@ app.use((req, res, next) => {
 app.use(express.json({limit: '50mb'}));
 app.use(express.urlencoded({extended: false}));
 
+// .drawio をブラウザ上で描画するビューアのページ(static配信より前に置いてヘッダーを足す)。
+// 図のラベルにはHTMLを書けるため、このページだけはスクリプトの出どころを自分自身に限定し、
+// 図に仕込まれたスクリプト(インラインのイベントハンドラ等)が動かないようにする。
+// (iframeのsandboxでオリジンごと落とす手も取れるが、オリジンを持たない文書では
+//  ビューア本体のスクリプトを読み込めないため、同一オリジンのままCSPで閉じる)
+const DRAWIO_VIEWER_CSP = [
+	"default-src 'none'",
+	"script-src 'self'",
+	"style-src 'self' 'unsafe-inline'",
+	"img-src 'self' data: blob:",
+	"font-src 'self' data:",
+	"connect-src 'self'",
+	"frame-ancestors 'self'",
+	"base-uri 'none'",
+	"form-action 'none'"
+].join("; ");
+app.get(BASE_URL_PATH + 'drawio-viewer.html', (req, res) => {
+	res.setHeader("Content-Security-Policy", DRAWIO_VIEWER_CSP);
+	res.setHeader("X-Content-Type-Options", "nosniff");
+	res.sendFile(path.join(__dirname, 'static', 'drawio-viewer.html'));
+});
+
 // static contents (frontend shell; actual data access is gated by requireAuth on api/*)
 app.use(express.static(path.join(__dirname, 'static')));
 
@@ -1517,7 +1539,15 @@ const serveDocumentFile = async (req, res) => {
 		return;
 	}
 	const isDownload = "download" in req.query;
-	const targetFile = isDownload ? document.entry_file : document.preview_file;
+	// ?source=1 は .drawio の原本(XML)をブラウザ上のビューアへ渡すためのもの。
+	// 画像化を挟まず描画するために使う(drawio-viewer.html参照)。ダウンロードではないため
+	// 監査ログは残さず、添付ファイル扱いにもしない。他の形式では使えない
+	const isDrawioSource = "source" in req.query && DRAWIO_EXTENSIONS.includes(path.extname(document.entry_file || "").toLowerCase());
+	if ("source" in req.query && !isDrawioSource) {
+		res.status(400).json({error: "source=1 は .drawio でのみ使えます"});
+		return;
+	}
+	const targetFile = isDownload || isDrawioSource ? document.entry_file : document.preview_file;
 	if (targetFile == null) {
 		res.status(404).json({error: "preview not available"});
 		return;
@@ -1527,11 +1557,13 @@ const serveDocumentFile = async (req, res) => {
 		return;
 	}
 	const extension = path.extname(targetFile).toLowerCase();
-	res.setHeader("Content-Type", CONTENT_TYPE_BY_EXTENSION[extension] || "application/octet-stream");
+	// .drawio の原本はXMLだが、ブラウザが直接開いたときにマークアップとして解釈しないよう
+	// テキストとして返す(取り込み先のビューアはfetchで文字列として読む)
+	res.setHeader("Content-Type", isDrawioSource ? "text/plain; charset=utf-8" : (CONTENT_TYPE_BY_EXTENSION[extension] || "application/octet-stream"));
 	// スクリプトを実行し得る形式(html/htm/svg)は、inline配信・別ウィンドウ・直接アクセスの
 	// いずれでもスクリプトが走らないようCSPで無効化する(保存型XSS対策)。画像/CSS等の描画には
 	// 影響しないためプレビュー表示は従来どおり。ダウンロード(attachment)時も念のため付けておく
-	if (ACTIVE_CONTENT_EXTENSIONS.includes(extension)) {
+	if (ACTIVE_CONTENT_EXTENSIONS.includes(extension) || isDrawioSource) {
 		res.setHeader("Content-Security-Policy", ACTIVE_CONTENT_CSP);
 	}
 	if (isDownload) {
@@ -1575,6 +1607,15 @@ app.get(BASE_URL_PATH + 'api/documents/:id/viewer', async (req, res) => {
 				return;
 			}
 			req.authData = {user_identifier: req.session.user.identifier, role};
+		}
+		// .drawio は画像化していないため、ブラウザ上で描画するビューアのページへ送る
+		// (ログインの確認はここで済ませてある。ビューア側が図のXMLを取りに来る)
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
+		if (document != null && DRAWIO_EXTENSIONS.includes(path.extname(document.entry_file || "").toLowerCase())) {
+			// 相対パスで返す(このURLは api/documents/<id>/viewer なので3つ上がアプリのルート)。
+			// リバースプロキシ配下でも、実際に開かれているURLを基準に解決される
+			res.redirect(`../../../drawio-viewer.html?id=${encodeURIComponent(document.id)}`);
+			return;
 		}
 		await serveDocumentFile(req, res);
 	} catch (err) {
