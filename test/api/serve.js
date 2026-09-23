@@ -32,6 +32,9 @@ fs.mkdirSync(DATA_DIR, {recursive: true});
 const converterStub = require("./converter-stub.js");
 const stubPort = Number(process.env.CONVERTER_STUB_PORT || 18096);
 process.env.OFFICE_RENDER_URL = process.env.OFFICE_RENDER_URL || `http://127.0.0.1:${stubPort}`;
+// 「サーバーに新しいクライアントがある」状態を作り、更新のお知らせを検証できるようにする
+// (同梱のクライアントと同じ版のままでは、お知らせが出る経路を通れないため)
+process.env.SKILL_CLIENT_VERSION = process.env.SKILL_CLIENT_VERSION || "9.9.9";
 
 // require時にdb.jsがDATA_DIR上にSQLiteを作成する
 const ds = require("../../app/lib/datastore.js");

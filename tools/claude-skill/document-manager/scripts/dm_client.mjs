@@ -19,7 +19,8 @@
  *   node dm_client.mjs upload <ファイル> [--previous-id ID | --replace-same-name] [--tags タグ1,タグ2]
  *                                        [--preview 画像(.drawioの代替表示用。通常は不要)]
  *                                        [--project プロジェクト] [--folder フォルダ]
- *   node dm_client.mjs download <文書ID> [-o 保存先]
+ *   node dm_client.mjs download <文書ID> [-o 保存先] [--render]
+ *       --render で「体裁つき」のPDFを取得する(Office文書のみ)
  *   node dm_client.mjs tags <文書ID> [--add A,B | --remove A,B | --set A,B]
  *   node dm_client.mjs memo <文書ID> <メモ本文>
  *   node dm_client.mjs archive <文書ID> / restore <文書ID>
@@ -46,10 +47,25 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.0.0";
+const CLIENT_VERSION = "1.1.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
+
+// サーバーが「より新しいクライアントがある」と知らせてきたら、1度だけ標準エラーへ出す。
+// AIエージェントはこの文面を読み、利用者へ更新を促せる
+let updateNotified = false;
+const notifyIfOutdated = (res, baseUrl) => {
+	const latest = res.headers.get("x-skill-latest-version");
+	if (!latest || updateNotified || latest === CLIENT_VERSION) return;
+	updateNotified = true;
+	console.error(
+		`[更新のお知らせ] このDocument Manager用クライアントは ${CLIENT_VERSION} ですが、サーバーには ${latest} があります。\n`
+		+ `  更新方法: ${baseUrl}api/claude-skill.zip を取得し、いま使っている document-manager フォルダを中身ごと置き換えてください`
+		+ `(画面右上の「APIキー管理」→「AIエージェント用 Skill」からも取得できます)。\n`
+		+ `  この作業は利用者の環境で行う必要があります。ユーザーに伝えてください。`
+	);
+};
 
 const MIME_BY_EXT = {
 	".html": "text/html", ".htm": "text/html", ".mhtml": "multipart/related", ".mht": "multipart/related",
@@ -98,6 +114,7 @@ const request = async (method, apiPath, {query, json, formData, raw = false} = {
 	} catch (err) {
 		throw new DmError(`接続できません: ${url} (${err.cause?.message || err.message})`);
 	}
+	notifyIfOutdated(res, baseUrl);
 	if (!res.ok) {
 		const text = await res.text();
 		let detail;
@@ -217,11 +234,23 @@ const commands = {
 	download: async ([id], opts) => {
 		requireArg(id, "文書ID");
 		const doc = await request("GET", docPath(id));
-		const payload = await request("GET", docPath(id, "/file"), {query: {download: "1"}, raw: true});
-		let out = opts.output || doc.entryFile;
-		if (fs.existsSync(out) && fs.statSync(out).isDirectory()) out = path.join(out, doc.entryFile);
+		// --render はOffice文書を元の体裁のまま見るためのPDF(サーバー側で変換済みのもの)
+		if (opts.render && doc.renderStatus !== "ok") {
+			throw new DmError(JSON.stringify({
+				error: "体裁つきのPDFは用意されていません",
+				renderStatus: doc.renderStatus ?? null,
+				hint: "対象はExcel/Word/PowerPoint。変換中(pending)なら少し待つ。failedなら管理者に再実行を依頼する"
+			}));
+		}
+		const payload = await request("GET", docPath(id, "/file"), {
+			query: opts.render ? {render: "1"} : {download: "1"},
+			raw: true
+		});
+		const name = opts.render ? `${path.basename(doc.entryFile, path.extname(doc.entryFile))}.pdf` : doc.entryFile;
+		let out = opts.output || name;
+		if (fs.existsSync(out) && fs.statSync(out).isDirectory()) out = path.join(out, name);
 		fs.writeFileSync(out, payload);
-		return {id: doc.id, entryFile: doc.entryFile, savedTo: path.resolve(out), size: payload.length};
+		return {id: doc.id, entryFile: doc.entryFile, savedTo: path.resolve(out), size: payload.length, rendered: Boolean(opts.render)};
 	},
 	// タグAPIは一式置き換えのため、--add/--remove はここで現在のタグと合成する
 	tags: async ([id], opts) => {
@@ -404,6 +433,14 @@ const watch = async (opts) => {
 	}
 };
 
+// 異常終了。process.exit は使わない: Windowsでは標準エラーへの書き込みが残っている状態で
+// 呼ぶと libuv の assertion でクラッシュし、終了コードが意図した値にならないことがある。
+// exitCode を立てておけば、出力を吐き切ってから終了する
+function fail(message, code = 1) {
+	console.error(message);
+	process.exitCode = code;
+}
+
 function requireArg(value, label) {
 	if (!value) throw new DmError(`${label}を指定してください`);
 	return value;
@@ -432,6 +469,7 @@ const main = async () => {
 			folder: {type: "string"},
 			parent: {type: "string"},
 			openapi: {type: "boolean"},
+			render: {type: "boolean"},
 			version: {type: "boolean", short: "V"},
 			"no-reconnect": {type: "boolean"}
 		}
@@ -439,40 +477,37 @@ const main = async () => {
 	const [command, ...rest] = positionals;
 	if (values.version && command == null) {
 		console.log(`dm_client.mjs ${CLIENT_VERSION}`);
-		process.exit(0);
+		return;
 	}
 	if (command === "spec") {
 		// specはMarkdown/JSONをそのまま流すため、最後のJSON一括出力はしない
 		try {
 			await spec(values);
-			process.exit(0);
 		} catch (err) {
 			if (!(err instanceof DmError)) throw err;
-			console.error(err.message);
-			process.exit(1);
+			fail(err.message);
 		}
+		return;
 	}
 	if (command === "watch") {
 		// watchは自分で1行ずつ出力するため、最後のJSON一括出力はしない
 		try {
 			await watch(values);
-			process.exit(0);
 		} catch (err) {
 			if (!(err instanceof DmError)) throw err;
-			console.error(err.message);
-			process.exit(1);
+			fail(err.message);
 		}
+		return;
 	}
 	if (!commands[command]) {
-		console.error(`使い方: node dm_client.mjs <${[...Object.keys(commands), "watch", "spec"].join("|")}> ...`);
-		process.exit(2);
+		fail(`使い方: node dm_client.mjs <${[...Object.keys(commands), "watch", "spec"].join("|")}> ...`, 2);
+		return;
 	}
 	try {
 		console.log(JSON.stringify(await commands[command](rest, values), null, 2));
 	} catch (err) {
 		if (!(err instanceof DmError)) throw err;
-		console.error(err.message);
-		process.exit(1);
+		fail(err.message);
 	}
 };
 

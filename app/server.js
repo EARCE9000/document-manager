@@ -248,6 +248,49 @@ const loginRateLimiter = rateLimit({
 	legacyHeaders: false,
 	message: RATE_LIMIT_MESSAGE
 });
+// AIエージェント用クライアント(Skill同梱のdm_client)が古いとき、応答ヘッダーで新しい版を知らせる。
+// クライアントはこれを見て、利用者(とそれを操作しているAI)へ更新を促す。
+// 判定は User-Agent の "document-manager-skill/<版>" で行い、他の利用者には何も付けない
+const SKILL_USER_AGENT = /^document-manager-skill\/(\d+)\.(\d+)\.(\d+)/;
+
+// 数字3つの版を比較する(大きいほど新しい)。解釈できない版は比較しない
+const parseVersion = (value) => {
+	const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(value || "").trim());
+	return match == null ? null : [Number(match[1]), Number(match[2]), Number(match[3])];
+};
+const isOlder = (a, b) => {
+	const left = parseVersion(a);
+	const right = parseVersion(b);
+	if (left == null || right == null) return false;
+	for (let i = 0; i < 3; i++) {
+		if (left[i] !== right[i]) return left[i] < right[i];
+	}
+	return false;
+};
+
+// 同梱クライアントの版は起動後に1度だけ読む(リクエストごとにファイルを読まない)
+let bundledSkillClientVersionCache;
+const bundledSkillClientVersion = () => {
+	if (bundledSkillClientVersionCache === undefined) {
+		bundledSkillClientVersionCache = ClaudeSkill.getBundledClientVersion();
+	}
+	return bundledSkillClientVersionCache;
+};
+
+app.use(BASE_URL_PATH + 'api/', (req, res, next) => {
+	const match = SKILL_USER_AGENT.exec(String(req.headers["user-agent"] || ""));
+	if (match == null) {
+		next();
+		return;
+	}
+	const bundled = bundledSkillClientVersion();
+	if (bundled != null && isOlder(match[0].split("/")[1], bundled)) {
+		// 値はASCIIのみ(ヘッダーに日本語は載せられない)。文面はクライアント側で組み立てる
+		res.setHeader("X-Skill-Latest-Version", bundled);
+	}
+	next();
+});
+
 app.use(BASE_URL_PATH + 'api/', resolveAuth, apiRateLimiterAnonymous, apiRateLimiterAuthenticated);
 app.use(BASE_URL_PATH + 'login', loginRateLimiter);
 

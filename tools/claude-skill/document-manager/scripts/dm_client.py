@@ -18,7 +18,8 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py upload <ファイル> [--previous-id ID | --replace-same-name]
                                        [--preview 画像(.drawioの代替表示用。通常は不要)] [--tags タグ1,タグ2]
                                        [--project プロジェクト] [--folder フォルダ]
-  python dm_client.py download <文書ID> [-o 保存先]
+  python dm_client.py download <文書ID> [-o 保存先] [--render]
+                                       --render で「体裁つき」のPDFを取得する(Office文書のみ)
   python dm_client.py tags <文書ID> [--add A,B | --remove A,B | --set A,B]   タグの確認・変更
   python dm_client.py memo <文書ID> <メモ本文>     メモの更新(全文置き換え)
   python dm_client.py archive <文書ID>             アーカイブ(論理削除。restoreで戻せる)
@@ -59,12 +60,34 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.0.0"
+CLIENT_VERSION = "1.1.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
 class DmError(Exception):
     pass
+
+
+# サーバーが「より新しいクライアントがある」と知らせてきたら、1度だけ標準エラーへ出す。
+# AIエージェントはこの文面を読み、利用者へ更新を促せる
+_update_notified = False
+
+
+def notify_if_outdated(headers, base_url):
+    global _update_notified
+    latest = headers.get("X-Skill-Latest-Version") if headers else None
+    if not latest or _update_notified or latest == CLIENT_VERSION:
+        return
+    _update_notified = True
+    print(
+        f"[更新のお知らせ] このDocument Manager用クライアントは {CLIENT_VERSION} ですが、"
+        f"サーバーには {latest} があります。\n"
+        f"  更新方法: {base_url}api/claude-skill.zip を取得し、"
+        f"いま使っている document-manager フォルダを中身ごと置き換えてください"
+        f"(画面右上の「APIキー管理」→「AIエージェント用 Skill」からも取得できます)。\n"
+        f"  この作業は利用者の環境で行う必要があります。ユーザーに伝えてください。",
+        file=sys.stderr
+    )
 
 
 def load_config():
@@ -104,10 +127,12 @@ def request(method, path, *, query=None, body=None, content_type=None, raw=False
     try:
         with urllib.request.urlopen(req) as res:
             payload = res.read()
+            notify_if_outdated(res.headers, base_url)
             if raw:
                 return payload, res.headers
             return json.loads(payload) if payload else None
     except urllib.error.HTTPError as err:
+        notify_if_outdated(err.headers, base_url)
         text = err.read().decode("utf-8", "replace")
         try:
             detail = json.loads(text)
@@ -260,13 +285,25 @@ def cmd_upload(args):
 
 def cmd_download(args):
     doc = cmd_get(args)
-    payload, _headers = request("GET", f"api/documents/{urllib.parse.quote(args.id, safe='')}/file", query={"download": "1"}, raw=True)
-    out = args.output or doc["entryFile"]
+    # --render はOffice文書を元の体裁のまま見るためのPDF(サーバー側で変換済みのもの)
+    if args.render:
+        if doc.get("renderStatus") != "ok":
+            raise DmError(json.dumps({
+                "error": "体裁つきのPDFは用意されていません",
+                "renderStatus": doc.get("renderStatus"),
+                "hint": "対象はExcel/Word/PowerPoint。変換中(pending)なら少し待つ。failedなら管理者に再実行を依頼する"
+            }, ensure_ascii=False))
+        payload, _headers = request("GET", f"api/documents/{quote_id(args.id)}/file", query={"render": "1"}, raw=True)
+        name = os.path.splitext(doc["entryFile"])[0] + ".pdf"
+    else:
+        payload, _headers = request("GET", f"api/documents/{quote_id(args.id)}/file", query={"download": "1"}, raw=True)
+        name = doc["entryFile"]
+    out = args.output or name
     if os.path.isdir(out):
-        out = os.path.join(out, doc["entryFile"])
+        out = os.path.join(out, name)
     with open(out, "wb") as f:
         f.write(payload)
-    return {"id": doc["id"], "entryFile": doc["entryFile"], "savedTo": os.path.abspath(out), "size": len(payload)}
+    return {"id": doc["id"], "entryFile": doc["entryFile"], "savedTo": os.path.abspath(out), "size": len(payload), "rendered": bool(args.render)}
 
 
 def cmd_tags(args):
@@ -495,6 +532,7 @@ def main():
     p = sub.add_parser("download", help="ダウンロード")
     p.add_argument("id")
     p.add_argument("-o", "--output", help="保存先(ファイルまたはディレクトリ。省略時はカレントに元のファイル名で保存)")
+    p.add_argument("--render", action="store_true", help="Office文書の体裁つきPDFを取得する(元ファイルの代わり)")
     p.set_defaults(func=cmd_download)
     p = sub.add_parser("tags", help="タグの確認・変更")
     p.add_argument("id")

@@ -9,7 +9,7 @@ Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキス�
 Excel・Word・PowerPoint をアップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
 このSkillのディレクトリにある `scripts/` の同梱クライアントを使う。curlを直接組み立てる必要はない。
 
-このSkillのバージョン: 1.0.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
+このSkillのバージョン: 1.1.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
 不具合を報告するときはこの値を添える)
 
 ## クライアントの選び方
@@ -50,7 +50,7 @@ APIキーはチャットの応答やコミットに書き出さない。
 | `get <文書ID>` | 文書1件の情報(アーカイブ済みも可。`archived` / `previousId` / `nextId` を含む) |
 | `versions <文書ID>` | その文書を含む一連の版を古い順に返す |
 | `upload <ファイル> [オプション]` | アップロード(下記) |
-| `download <文書ID> [-o 保存先]` | 元ファイルをダウンロード |
+| `download <文書ID> [-o 保存先] [--render]` | 元ファイルをダウンロード。`--render` はOffice文書の**体裁つきPDF**(下記) |
 | `tags <文書ID> [--add A,B \| --remove A,B \| --set A,B]` | タグの確認・変更(オプション無しなら現在のタグを返す) |
 | `memo <文書ID> <本文>` | メモの更新(全文置き換え。検索対象にも含まれる) |
 | `archive <文書ID>` / `restore <文書ID>` | アーカイブ(論理削除)と復元 |
@@ -75,8 +75,23 @@ APIキーはチャットの応答やコミットに書き出さない。
 
 対応拡張子: `.html .htm .mhtml .mht .md .markdown .pdf .svg .png .jpg .jpeg .csv .tsv .txt .log .json .drawio .xlsx .xlsm .docx .docm .pptx .pptm`(1ファイルずつ)
 
-Excel / Word / PowerPoint もそのままアップロードしてよい。中身のテキスト(セル・段落・スライド・発表者ノート)が
-全文検索の対象になり、画面では内容の概要が表示される(書式・図・グラフは再現されない)。
+### Excel / Word / PowerPoint
+
+そのままアップロードしてよい。中身のテキスト(セル・段落・スライド・発表者ノート)が全文検索の対象になり、
+画面では**内容の概要**が表示される(書式・図・グラフは再現されない)。
+
+サーバーに変換サービスが構成されている場合は、**元の体裁のままのPDF**も自動で用意される。
+`get <文書ID>` の `renderStatus` で状態が分かる。
+
+| `renderStatus` | 意味 | どうするか |
+|---|---|---|
+| `ok` | 体裁つきPDFがある | `download <文書ID> --render` で取得できる |
+| `pending` | 変換中 | 数秒待ってから `get` し直す |
+| `failed` | 変換に失敗した | `renderError` を添えてユーザーに伝える(再実行は画面から行える) |
+| `null` | 対象外 | Office以外、マクロ付き、サイズ超過、または変換サービスが無い構成 |
+
+**「中身を知りたい」だけなら `get`/`search` で十分**(テキストは全文検索の対象に入っている)。
+`--render` は「図表や体裁を人が目で確認したい」「PDFとして受け取りたい」と言われたときに使う。
 
 ### draw.io の図(`.drawio`)
 

@@ -126,6 +126,8 @@ def smoke_clients(env, workdir):
 
         smoke_edit_commands(kind, env, v2["id"], v1["id"])
         smoke_project_commands(kind, env, workdir, v2["id"])
+        smoke_update_notice(kind, env)
+        smoke_render(kind, env, workdir)
         smoke_spec(kind, env)
         smoke_watch(kind, env, workdir)
 
@@ -185,6 +187,41 @@ def smoke_project_commands(kind, env, workdir, doc_id):
     uploaded = json.loads(run_client(kind, ["upload", path, "--project", project_name], env).stdout)
     check(uploaded["project"]["projectId"] == project["id"] and uploaded["project"]["folderId"] is None,
           "upload --project: アップロードと同時にプロジェクト直下へ登録できる")
+
+
+def smoke_update_notice(kind, env):
+    """サーバーに新しいクライアントがあるとき、更新方法つきで知らせる(AIが利用者へ伝えられるように)"""
+    # テストサーバーは SKILL_CLIENT_VERSION=9.9.9 を名乗る(serve.js参照)
+    proc = run_client(kind, ["search"], env)
+    check("[更新のお知らせ]" in proc.stderr, "古いクライアントには更新のお知らせが出る")
+    check("api/claude-skill.zip" in proc.stderr, "更新方法(ZIPの取得先)が示される")
+    check("9.9.9" in proc.stderr, "サーバー側の版が示される")
+    check(proc.returncode == 0, "お知らせが出ても、コマンド自体は成功する")
+    check(proc.stdout.lstrip().startswith("["), "お知らせは標準エラーに出す(標準出力のJSONを壊さない)")
+
+
+def smoke_render(kind, env, workdir):
+    """Office文書の体裁つきPDF。テストサーバーには変換サービスのスタブが繋がっている"""
+    fixture = os.path.join(REPO, "test", "fixtures", "office", "sample.xlsx")
+    uploaded = json.loads(run_client(kind, ["upload", fixture], env).stdout)
+    # 変換は裏で走るため、状態が確定するまで待つ
+    status = None
+    for _ in range(50):
+        status = json.loads(run_client(kind, ["get", uploaded["id"]], env).stdout).get("renderStatus")
+        if status == "ok":
+            break
+        time.sleep(0.2)
+    check(status == "ok", f"upload: Office文書は体裁つきPDFが用意される (renderStatus={status})")
+
+    out = os.path.join(workdir, f"rendered-{kind}.pdf")
+    run_client(kind, ["download", uploaded["id"], "--render", "-o", out], env)
+    with open(out, "rb") as f:
+        head = f.read(5)
+    check(head == b"%PDF-", "download --render: PDFとして保存される")
+
+    plain = json.loads(run_client(kind, ["upload", os.path.join(workdir, f"smoke-{kind}.md")], env).stdout)
+    denied = run_client(kind, ["download", plain["id"], "--render"], env, expect_ok=False)
+    check(denied.returncode == 1 and "体裁つき" in denied.stderr, "download --render: 対象外の文書ははっきり断る")
 
 
 def smoke_spec(kind, env):

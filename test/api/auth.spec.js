@@ -141,6 +141,38 @@ test.describe("APIキーの有効期限(最長1年)", () => {
 	});
 });
 
+// 手元のクライアント(Skill同梱のdm_client)が古いとき、サーバーは応答ヘッダーで新しい版を知らせる。
+// クライアントはこれを見て、利用者とAIへ更新を促す
+test.describe("クライアントの更新のお知らせ", () => {
+	const skillAgent = (version) => ({"User-Agent": `document-manager-skill/${version} (python 3.13)`});
+
+	test("古いクライアントには新しい版を知らせる", async ({request}) => {
+		const res = await request.get("api/documents", {headers: {...bearer(keys.readonly), ...skillAgent("1.0.0")}});
+		expect(res.status()).toBe(200);
+		expect(res.headers()["x-skill-latest-version"]).toBe("9.9.9");
+	});
+
+	test("同じ版・新しい版のクライアントには知らせない", async ({request}) => {
+		for (const version of ["9.9.9", "10.0.0"]) {
+			const res = await request.get("api/documents", {headers: {...bearer(keys.readonly), ...skillAgent(version)}});
+			expect(res.headers()["x-skill-latest-version"], version).toBeUndefined();
+		}
+	});
+
+	test("クライアント以外(ブラウザ等)には何も付けない", async ({request}) => {
+		const res = await request.get("api/documents", {
+			headers: {...bearer(keys.readonly), "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+		});
+		expect(res.headers()["x-skill-latest-version"]).toBeUndefined();
+	});
+
+	test("認証に失敗した応答にも付く(期限切れでも更新に気づける)", async ({request}) => {
+		const res = await request.get("api/documents", {headers: {...bearer(keys.expired), ...skillAgent("1.0.0")}});
+		expect(res.status()).toBe(401);
+		expect(res.headers()["x-skill-latest-version"]).toBe("9.9.9");
+	});
+});
+
 test.describe("Claude Code用SkillのZIPダウンロード", () => {
 	test("未認証は401", async ({request}) => {
 		expect((await request.get("api/claude-skill.zip")).status()).toBe(401);

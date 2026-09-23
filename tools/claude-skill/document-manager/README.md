@@ -119,6 +119,7 @@ python scripts/dm_client.py upload ./売上報告.xlsx                   # Excel
 python scripts/dm_client.py upload ./report.md --project 顧客管理 --folder 設計  # 登録と同時にプロジェクトへ配置
 python scripts/dm_client.py versions <文書ID>                        # 版履歴
 python scripts/dm_client.py download <文書ID> -o ./downloads/
+python scripts/dm_client.py download <文書ID> --render                # Office文書の体裁つきPDF(あれば)
 python scripts/dm_client.py search 権限の考え方 --semantic            # 意味検索(言い換え・表記ゆれを含む)
 python scripts/dm_client.py tags <文書ID> --add 経理                  # タグの追加(--remove / --set もある)
 python scripts/dm_client.py memo <文書ID> "次回レビューで確認"         # メモの更新
@@ -151,10 +152,10 @@ done
 
 ## バージョン
 
-現在のバージョンは **1.0.0** です。手元のものを確認するには次のいずれかを実行してください。
+現在のバージョンは **1.1.0** です。手元のものを確認するには次のいずれかを実行してください。
 
 ```bash
-python scripts/dm_client.py --version     # → dm_client.py 1.0.0
+python scripts/dm_client.py --version     # → dm_client.py 1.1.0
 python scripts/dm_client.py config        # → clientVersion を含む JSON
 ```
 

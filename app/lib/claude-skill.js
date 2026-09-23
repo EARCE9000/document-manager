@@ -119,5 +119,22 @@ module.exports.getSkillZip = () => {
 	return cachedZip;
 };
 
+/**
+ * 同梱しているクライアント(dm_client.py)のバージョンを読む。
+ * 利用者の手元にある古いクライアントへ「新しい版がある」と知らせるために使う。
+ * 通常は同梱ファイルから読むが、SKILL_CLIENT_VERSION で上書きできる(検証・テスト用)。
+ */
+module.exports.getBundledClientVersion = () => {
+	if (process.env.SKILL_CLIENT_VERSION) return process.env.SKILL_CLIENT_VERSION;
+	const dir = findSkillDir();
+	if (dir == null) return null;
+	try {
+		const source = fs.readFileSync(path.join(dir, "scripts", "dm_client.py"), "utf-8");
+		return /CLIENT_VERSION\s*=\s*"([^"]+)"/.exec(source)?.[1] ?? null;
+	} catch {
+		return null;
+	}
+};
+
 module.exports.SKILL_ZIP_FILENAME = `${SKILL_NAME}-skill.zip`;
 module.exports.buildZip = buildZip;
