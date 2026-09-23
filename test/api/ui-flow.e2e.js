@@ -378,10 +378,10 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 			await page.locator("#confirmYesButton").click();
 			const row = page.locator("#versionHistoryRow");
 			await expect(row).toBeVisible();
-			// 既定は畳まれているため、一覧は「すべての版」を開いてから確かめる
+			// 既定は畳まれているため、一覧は「すべての版」を開いてから確かめる(新しい版が左)
 			await expect(row.locator(".versionPosition")).toHaveText("v2 / 全2版");
 			await row.locator(".versionToggle").click();
-			await expect(row.locator(".versionChip")).toHaveText([`v1 ${oldName}`, `v2 ${newName}`]);
+			await expect(row.locator(".versionChip")).toHaveText([`v2 ${newName}`, `v1 ${oldName}`]);
 			await expect(page.locator("#documentList li", {hasText: oldName})).toHaveCount(0);
 		});
 
@@ -433,10 +433,10 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 			await expect(page.locator("#previewTitle")).toHaveText(v2Name);
 		});
 
-		await test.step("すべての版を開くと v1 › v2 が並び、現在の版が強調される", async () => {
+		await test.step("すべての版を開くと新しい版から順に並び、現在の版が強調される", async () => {
 			const row = page.locator("#versionHistoryRow");
 			await row.locator(".versionToggle").click();
-			await expect(row.locator(".versionChip")).toHaveText([`v1 ${v1Name}`, `v2 ${v2Name}`]);
+			await expect(row.locator(".versionChip")).toHaveText([`v2 ${v2Name}`, `v1 ${v1Name}`]);
 			await expect(row.locator(".versionChip.current")).toHaveText(`v2 ${v2Name}`);
 		});
 

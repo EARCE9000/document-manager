@@ -1970,7 +1970,8 @@ const unlinkPreviousVersion = async (doc) => {
 // 版履歴の一覧を開いたままにするか。版を渡り歩いても保たれるよう、文書ごとではなく画面で1つ持つ
 let versionHistoryExpanded = false;
 
-// 版履歴(アップロード時に旧版を指定して紐付けた一連の版)を古い順に表示する。
+// 版履歴(アップロード時に旧版を指定して紐付けた一連の版)を新しい順に表示する
+// (APIは古い順に返すので、表示の直前で反転する。vの番号は古い方から数えたまま)。
 // 旧版はアーカイブ済みのため通常一覧(allDocuments)には無く、APIから都度取得する。
 // 版の数だけチップを並べるとヘッダーが何行にも膨らむため、既定は現在位置と前後への移動だけの
 // 1行に畳み、「すべての版」を押したときだけ全ての版を並べる
@@ -1993,8 +1994,8 @@ const renderVersionHistory = async (doc) => {
 		if (versionHistoryExpanded) {
 			versionHistoryRow.innerHTML = `
 				<span class="similarFilesLabel">版履歴:</span>
-				${versions.map((v, i) => `
-					${i > 0 ? `<span class="versionArrow">›</span>` : ""}
+				${versions.map((v, i) => ({v, i})).reverse().map(({v, i}, position) => `
+					${position > 0 ? `<span class="versionArrow">‹</span>` : ""}
 					<button type="button" class="versionChip ${v.id === doc.id ? "current" : ""} ${v.archived ? "archived" : ""}" data-id="${escapeHtml(v.id)}"
 						title="${versionTitle(v, i)}">v${i + 1} ${escapeHtml(v.entryFile)}</button>
 				`).join("")}
@@ -2006,11 +2007,11 @@ const renderVersionHistory = async (doc) => {
 			const latest = versions[versions.length - 1];
 			versionHistoryRow.innerHTML = `
 				<span class="similarFilesLabel">版履歴:</span>
-				<button type="button" class="versionNavButton" aria-label="1つ前の版へ"
-					${previous ? `data-id="${escapeHtml(previous.id)}" title="${versionTitle(previous, currentIndex - 1)}"` : "disabled"}>‹</button>
-				<span class="versionPosition">v${currentIndex + 1} / 全${versions.length}版</span>
 				<button type="button" class="versionNavButton" aria-label="1つ後の版へ"
-					${next ? `data-id="${escapeHtml(next.id)}" title="${versionTitle(next, currentIndex + 1)}"` : "disabled"}>›</button>
+					${next ? `data-id="${escapeHtml(next.id)}" title="${versionTitle(next, currentIndex + 1)}"` : "disabled"}>‹</button>
+				<span class="versionPosition">v${currentIndex + 1} / 全${versions.length}版</span>
+				<button type="button" class="versionNavButton" aria-label="1つ前の版へ"
+					${previous ? `data-id="${escapeHtml(previous.id)}" title="${versionTitle(previous, currentIndex - 1)}"` : "disabled"}>›</button>
 				${latest.id === doc.id ? "" : `<button type="button" class="versionChip" data-id="${escapeHtml(latest.id)}"
 					title="${versionTitle(latest, versions.length - 1)}">最新版へ</button>`}
 				<button type="button" class="versionToggle" data-toggle="1">すべての版</button>
