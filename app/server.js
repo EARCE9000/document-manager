@@ -2093,8 +2093,7 @@ app.get(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
 			role: row.role,
 			createdBy: row.created_by,
 			createdAt: row.created_at,
-			// 無期限キーはnull
-			expiresAt: ApiKeys.toPublicExpiresAt(row.expires_at),
+			expiresAt: row.expires_at,
 			lastUsedAt: row.last_used_at
 		}));
 		res.status(200).json(keys);
@@ -2131,7 +2130,7 @@ app.post(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
 			return;
 		}
 		if (!ApiKeys.isValidExpiryOption(expiryOption)) {
-			res.status(400).json({error: "expiryOption must be one of today/30d/90d/unlimited"});
+			res.status(400).json({error: "expiryOption must be one of today/30d/90d/365d"});
 			return;
 		}
 		const created = await ApiKeys.createApiKey(label, role, expiryOption, req.authData.user_identifier);
@@ -2695,6 +2694,8 @@ const main = async () => {
 	// 前回の起動時に強制終了等でバックグラウンド処理中(processing)のまま残った文書があれば
 	// 未処理に戻す(プロセス内キューの情報は再起動で失われるため)。バックフィルより先に行うことで、
 	// 未処理へ戻った文書もバックフィル/以後の索引付けで正しく再処理の対象になるようにする
+	// 「無期限」を選べた頃に発行されたAPIキーがあれば、現在の上限(1年)へ切り詰める
+	await ApiKeys.capUnlimitedKeys();
 	await VectorSearch.recoverStaleProcessing();
 	// 過去にアップロードされた(このベクトル検索機能の導入前からある)文書を差分バックフィルする。
 	// サーバー起動をブロックしないよう非同期で流す。WEAVIATE_URL未設定時はisEnabled()の時点で

@@ -92,27 +92,31 @@ test.describe("requireAdmin: APIキー(最大readwrite)では管理APIに到達�
 	});
 });
 
-test.describe("APIキーの無期限モード", () => {
+test.describe("APIキーの有効期限(最長1年)", () => {
 	const rw = bearer(keys.readwrite);
-	test("無期限キーを発行でき(expiresAt=null)、使え、失効させると401になる", async ({request}) => {
-		const created = await request.post("api/apikeys", {headers: rw, data: {label: "unlimited-test", role: "readonly", expiryOption: "unlimited"}});
+	test("1年のキーを発行でき、使え、失効させると401になる", async ({request}) => {
+		const created = await request.post("api/apikeys", {headers: rw, data: {label: "one-year-test", role: "readonly", expiryOption: "365d"}});
 		expect(created.status()).toBe(200);
 		const body = await created.json();
-		expect(body.expiresAt).toBeNull();
+		// 1年後(前後1分の誤差を許容)
+		const expected = Date.now() + 365 * 24 * 60 * 60 * 1000;
+		expect(Math.abs(new Date(body.expiresAt).getTime() - expected)).toBeLessThan(60 * 1000);
 
-		const unlimited = {Authorization: `Bearer ${body.apiKey}`};
-		expect((await request.get("api/documents", {headers: unlimited})).status()).toBe(200);
+		const key = {Authorization: `Bearer ${body.apiKey}`};
+		expect((await request.get("api/documents", {headers: key})).status()).toBe(200);
 
 		const list = await (await request.get("api/apikeys", {headers: rw})).json();
-		expect(list.find((k) => k.id === body.id).expiresAt).toBeNull();
+		expect(list.find((k) => k.id === body.id).expiresAt).toBe(body.expiresAt);
 
 		expect((await request.delete(`api/apikeys/${body.id}`, {headers: rw})).status()).toBe(204);
-		expect((await request.get("api/documents", {headers: unlimited})).status()).toBe(401);
+		expect((await request.get("api/documents", {headers: key})).status()).toBe(401);
 	});
 
-	test("不正な expiryOption は400", async ({request}) => {
-		const res = await request.post("api/apikeys", {headers: rw, data: {role: "readonly", expiryOption: "forever"}});
-		expect(res.status()).toBe(400);
+	test("無期限(unlimited)や不正な expiryOption は400", async ({request}) => {
+		for (const expiryOption of ["unlimited", "forever", "3650d"]) {
+			const res = await request.post("api/apikeys", {headers: rw, data: {role: "readonly", expiryOption}});
+			expect(res.status(), `expiryOption=${expiryOption}`).toBe(400);
+		}
 	});
 });
 

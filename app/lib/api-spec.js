@@ -212,8 +212,8 @@ const OPERATIONS = [
 	{id: "listApiKeys", method: "get", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの一覧", aiGuide: false},
 	{
 		id: "createApiKey", method: "post", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "APIキーの発行", aiGuide: false,
-		description: "ロールは発行者自身のロール以下(readonly/readwriteのみ。adminキーは発行不可)。有効期限は today/30d/90d/unlimited",
-		body: {schema: {type: "object", required: ["role", "expiryOption"], properties: {label: {type: "string"}, role: {enum: ["readonly", "readwrite"]}, expiryOption: {enum: ["today", "30d", "90d", "unlimited"]}}}}
+		description: "ロールは発行者自身のロール以下(readonly/readwriteのみ。adminキーは発行不可)。有効期限は today/30d/90d/365d(無期限キーは発行できない。最長1年)",
+		body: {schema: {type: "object", required: ["role", "expiryOption"], properties: {label: {type: "string"}, role: {enum: ["readonly", "readwrite"]}, expiryOption: {enum: ["today", "30d", "90d", "365d"]}}}}
 	},
 	{id: "revokeApiKey", method: "delete", path: "/api/apikeys/:id", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの失効", aiGuide: false},
 	{id: "listTagOrder", method: "get", path: "/api/tag_order", role: "readonly", tag: "タグ体系", summary: "タグ体系(表示するタグと並び順)の取得", aiGuide: false},

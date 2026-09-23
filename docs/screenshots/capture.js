@@ -70,7 +70,7 @@ const SPEC_V2 = `# 文書管理システム 仕様書 (第2版)
 - タグによる分類・タグ体系での一覧
 - プロジェクト単位でのフォルダ管理
 - 操作履歴の確認
-- APIキー(無期限キー対応)と AIエージェント用 Skill
+- APIキー(最長1年)と AIエージェント用 Skill
 
 ## 改訂履歴
 | 版 | 内容 |
@@ -209,7 +209,7 @@ const main = async () => {
 		await page.locator("#apiKeyManageLink").click();
 		await page.selectOption("#apiKeyRoleInput", "readwrite");
 		await page.locator("#apiKeyExpirySummaryButton").click();
-		await page.locator('.expiryRadioPill[data-value="unlimited"]').click();
+		await page.locator('.expiryRadioPill[data-value="365d"]').click();
 		await page.locator("#apiKeyCreateButton").click();
 		await page.locator(".apiKeyValue").waitFor();
 		// 公開READMEにキー形式の文字列を載せないよう、表示中の平文キーを伏せ字にしてから撮る

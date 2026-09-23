@@ -25,7 +25,7 @@ Windowsで `python` が無ければ `py`、macOS/Linuxで無ければ `python3` 
 
 1. Document ManagerのURL(例: `https://docs.example.com/` 。サブパス配下ならそのパスまで含める)
 2. APIキー(`dm_` で始まる文字列)。Document Managerの画面右上「APIキー管理」で発行できる。
-   ロールは書き込みができる `readwrite` にする。AIエージェントから継続して使う場合は、有効期限に「無期限」を選ぶとよい。
+   ロールは書き込みができる `readwrite` にする。AIエージェントから継続して使う場合は、有効期限に最長の「1年」を選ぶとよい(期限が切れたら発行し直す)。
 
 受け取ったら、ユーザーの了承を得たうえで `~/.document-manager.json` に保存する
 (Windowsでは `%USERPROFILE%\.document-manager.json`)。

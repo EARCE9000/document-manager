@@ -89,11 +89,12 @@ test("calculateExpiresAt: today は min(now+12h, 翌日02:00 JST)", () => {
 	assert.equal(ApiKeys.calculateExpiresAt("today", now).toISOString(), "2026-01-01T12:00:00.000Z");
 });
 
-test("calculateExpiresAt: unlimited は null(無期限)", () => {
-	assert.equal(ApiKeys.calculateExpiresAt("unlimited", new Date()), null);
-	assert.equal(ApiKeys.isValidExpiryOption("unlimited"), true);
-	assert.equal(ApiKeys.toPublicExpiresAt("9999-12-31T23:59:59.999Z"), null);
-	assert.equal(ApiKeys.toPublicExpiresAt("2026-01-31T00:00:00.000Z"), "2026-01-31T00:00:00.000Z");
+test("calculateExpiresAt: 365d は1年後(発行できる最長)。無期限は選べない", () => {
+	const now = new Date("2026-01-01T00:00:00.000Z");
+	assert.equal(ApiKeys.calculateExpiresAt("365d", now).toISOString(), "2027-01-01T00:00:00.000Z");
+	assert.equal(ApiKeys.isValidExpiryOption("365d"), true);
+	assert.equal(ApiKeys.isValidExpiryOption("unlimited"), false, "無期限は発行できない");
+	assert.equal(ApiKeys.MAX_EXPIRY_DAYS, 365);
 });
 
 test("calculateExpiresAt: 不正な選択肢は例外", () => {

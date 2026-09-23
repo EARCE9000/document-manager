@@ -78,7 +78,8 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 - **認証判定のログ**: ログイン(コールバック)のたびに、入力メールアドレスの正規化結果・`ADMIN_EMAIL`との一致有無・ホワイトリストの一致行・ブートストラップ発動の有無・最終的なロールを`"msg":"::login:auth_check"`としてログ出力する。許可/拒否どちらの場合も出力されるため、意図通りに判定されているか標準出力から確認できる
 - **アクセス許可ユーザー(ホワイトリスト)とロール**: ホワイトリストに登録されたメールアドレスのみログイン可能で、0件の間は誰もログインできない(常に閉じている)。ロールは3種類: `admin`(ホワイトリストの追加・削除・ロール変更が可能) / `readwrite`(文書の追加・削除・タグ編集が可能) / `readonly`(閲覧のみ)。`ADMIN_EMAIL` は常設の特別アカウントではなく、**adminロールのユーザーが1人もいない場合にだけ働く自己修復型のブートストラップ**で、該当メールアドレスでのログイン試行時に自動的にadminとして登録される(誤って全adminを削除してもロックアウトしない)
 - **APIキー(マシン間認証)**: ブラウザの対話的ログインを経ずに `Authorization: Bearer <キー>` でapiを呼び出せる。ログイン済みユーザーが自分名義で発行・失効でき、そのキー経由の操作は発行者本人の名義で記録される
-  - 有効期限の選択肢は「当日限り」(`now+12時間`と「翌日02:00(JST)」の早い方。チャット等に貼り付けて使う一時利用向け)/「30日」/「90日」/「無期限」。無期限キーはスクリプト・Claude Code等のツールからの継続利用向けで、失効操作をするまで有効(DB上は`expires_at`に番兵値`9999-12-31T23:59:59.999Z`を保存し、APIの応答では`expiresAt: null`として返す)。漏えい時は画面から失効させること
+  - 有効期限の選択肢は「当日限り」(`now+12時間`と「翌日02:00(JST)」の早い方。チャット等に貼り付けて使う一時利用向け)/「30日」/「90日」/「1年」。**最長1年で、無期限キーは発行できない**(漏えいしたキーが際限なく使われるのを防ぐため)。スクリプト・Claude Code等のツールから継続利用する場合は、期限切れ前に発行し直す。漏えい時は画面から失効させること
+  - 以前は「無期限」を選べたため、その頃のキーは`expires_at`に番兵値(`9999-12-31T23:59:59.999Z`)を持つ。起動時に上限(1年)へ自動的に切り詰める(`capUnlimitedKeys`)
   - キーには発行時にreadonly/readwriteいずれかのロールを固定で持たせる(adminロールのキーは発行不可)。選べるのは発行者自身のロール以下のみで、権限判定は発行者の"現在の"ロールではなく常にキーに記録されたロールを見る(発行者が後で昇格/降格しても既存キーの権限は変わらない)
   - 期限切れキーでの認証は401(「APIキーの有効期限が切れています」と明示)、有効なキーでもreadonlyロールでの書き込み系API呼び出しは403になる
   - 発行直後の画面から、キー本体のコピーとは別に「AIチャット貼り付け用」のテキスト(接続情報・エンドポイント一覧・実際のキーを埋め込んだ利用ガイド)もコピーできる
@@ -248,10 +249,10 @@ python tools/claude-skill/ci_smoke_test.py  # AIエージェント用Skillのク
 ```
 
 - **`test/api-spec.test.js`**: API仕様([app/lib/api-spec.js](app/lib/api-spec.js))とExpressに登録済みルートの突き合わせ(過不足の検出)、OpenAPI・利用ガイドの生成結果の検証
-- **`test/unit.test.js`**: 純関数ユニット(Range計算・SQLプレースホルダ変換・チャンク分割・有効期限計算(無期限キー含む)・ロール判定・draw.ioのテキスト抽出)
+- **`test/unit.test.js`**: 純関数ユニット(Range計算・SQLプレースホルダ変換・チャンク分割・有効期限計算(最長1年)・ロール判定・draw.ioのテキスト抽出)
 - **`test/integration-sqlite.test.js`**: 一時SQLiteに対する各モジュールのライフサイクル(projects/allowed-users/api-keys/tag-order/audit-log)
 - **`test/integration-postgres.test.js`**: Postgres固有の検証(`schema_migrations`の適用、横断SSEのバックプレーンである`LISTEN/NOTIFY`が実際に通知を届けること)。`DATABASE_BACKEND=postgres`＋`DATABASE_URL`未設定時は全てスキップ(`npm run test:pg`で実行)
-- **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUD、新しい版のアップロード(旧版のアーカイブ・タグとプロジェクト配置の引き継ぎ・版履歴・404/409)(`versions.spec.js`)、無期限APIキー、SkillのZIPダウンロード、および意味検索(ベクトル検索)を検証する。`*.spec.js` はブラウザを使わないため `npx playwright install` は不要
+- **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUD、新しい版のアップロード(旧版のアーカイブ・タグとプロジェクト配置の引き継ぎ・版履歴・404/409)(`versions.spec.js`)、APIキーの有効期限(最長1年)、SkillのZIPダウンロード、および意味検索(ベクトル検索)を検証する。`*.spec.js` はブラウザを使わないため `npx playwright install` は不要
   - `test/api/` の webServer 環境変数はパススルー式(既定は sqlite + local)。`DATABASE_BACKEND=postgres`/`DATABASE_URL`/`STORAGE_BACKEND=s3`/`S3_*`/`AWS_*` を与えれば、同じAPIテストを **Postgres + S3(MinIO等)** 構成でも実行できる(実際にこの構成で全件パスを確認済み)
   - ブラウザE2E(`*.e2e.js`、`npm run test:e2e`)は、serve.jsが払い出した管理者のログイン済みセッションcookieをChromiumへ注入して操作する。保存型XSSがCSPで実際にブロックされること(`preview-xss.e2e.js`)と、アップロード→検索→タグ付け→プレビュー→APIキー発行・利用、.drawio+プレビュー画像、新しい版のアップロードと版履歴、APIキー管理画面からのSkill ZIPダウンロード(`ui-flow.e2e.js`)を検証する
   - 意味検索のE2E(`vector-search.spec.js`)は `WEAVIATE_URL` を与えたときだけ実行される(未設定時は自動スキップし、代わりに503応答=機能無効を検証)。`WEAVIATE_URL`/`WEAVIATE_GRPC_PORT`/`WEAVIATE_VECTORIZER` を渡すと、アップロード→埋め込み→索引→意味検索ヒットまでを通しで検証する
