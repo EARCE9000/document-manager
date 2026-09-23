@@ -180,6 +180,8 @@ const main = async () => {
 		// 1. 文書一覧・プレビュー(新しい版の文書を選択し、版履歴を表示)
 		await page.goto(BASE_URL);
 		await page.locator("#documentList li", {hasText: "仕様書_文書管理システム.md"}).click();
+		// 版履歴は既定で1行に畳まれているため、README用には「すべての版」を開いた状態を写す
+		await page.locator("#versionHistoryRow .versionToggle").click();
 		await page.locator("#versionHistoryRow .versionChip.current").waitFor();
 		await page.frameLocator("#previewFrame").locator("h1").waitFor();
 		await shot("document-list");

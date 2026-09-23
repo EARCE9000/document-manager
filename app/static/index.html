@@ -499,6 +499,33 @@
 	.versionChip.archived { color: #888; border-color: #ccc; }
 	.versionChip.current { background: #1a56db; border-color: #1a56db; color: #fff; cursor: default; }
 	.versionArrow { color: #aaa; }
+	/* 折りたたみ時は前後への移動だけを1行に収め、版が増えてもヘッダーの高さが変わらないようにする */
+	#versionHistoryRow.collapsed { flex-wrap: nowrap; }
+	/* 展開時も版が多いと際限なく伸びるため、数行で頭打ちにして中をスクロールさせる */
+	#versionHistoryRow.expanded { max-height: 88px; overflow-y: auto; }
+	.versionNavButton {
+		background: #fff;
+		color: #1a56db;
+		border: 1px solid #9cc2ff;
+		border-radius: 999px;
+		padding: 1px 8px;
+		font-size: 1.1em;
+		line-height: 1.2;
+		cursor: pointer;
+	}
+	.versionNavButton:hover:not(:disabled) { background: #eaf2ff; }
+	.versionNavButton:disabled { color: #bbb; border-color: #ddd; cursor: default; }
+	.versionPosition { color: #555; white-space: nowrap; }
+	.versionToggle {
+		background: none;
+		border: none;
+		color: #1a56db;
+		cursor: pointer;
+		padding: 2px 4px;
+		font-size: 0.95em;
+		white-space: nowrap;
+	}
+	.versionToggle:hover { text-decoration: underline; }
 	/* 本文が大きく、全文検索の対象が先頭までに切り詰められている場合の注意書き */
 	#contentTruncatedRow {
 		display: none;
@@ -1940,8 +1967,13 @@ const unlinkPreviousVersion = async (doc) => {
 	showPreview(allDocuments.find((d) => d.id === updated.id) || updated);
 };
 
+// 版履歴の一覧を開いたままにするか。版を渡り歩いても保たれるよう、文書ごとではなく画面で1つ持つ
+let versionHistoryExpanded = false;
+
 // 版履歴(アップロード時に旧版を指定して紐付けた一連の版)を古い順に表示する。
-// 旧版はアーカイブ済みのため通常一覧(allDocuments)には無く、APIから都度取得する
+// 旧版はアーカイブ済みのため通常一覧(allDocuments)には無く、APIから都度取得する。
+// 版の数だけチップを並べるとヘッダーが何行にも膨らむため、既定は現在位置と前後への移動だけの
+// 1行に畳み、「すべての版」を押したときだけ全ての版を並べる
 const renderVersionHistory = async (doc) => {
 	versionHistoryRow.style.display = "none";
 	versionHistoryRow.innerHTML = "";
@@ -1950,21 +1982,54 @@ const renderVersionHistory = async (doc) => {
 	if (res.status !== 200 || selectedId !== doc.id) return;
 	const versions = await res.json();
 	if (versions.length < 2) return;
-	versionHistoryRow.innerHTML = `
-		<span class="similarFilesLabel">版履歴:</span>
-		${versions.map((v, i) => `
-			${i > 0 ? `<span class="versionArrow">›</span>` : ""}
-			<button type="button" class="versionChip ${v.id === doc.id ? "current" : ""} ${v.archived ? "archived" : ""}" data-id="${escapeHtml(v.id)}"
-				title="${escapeHtml(`${v.entryFile} (${formatDateTime(v.modified)}${v.archived ? "・アーカイブ済み" : ""})`)}">v${i + 1} ${escapeHtml(v.entryFile)}</button>
-		`).join("")}
-	`;
-	versionHistoryRow.style.display = "flex";
-	versionHistoryRow.querySelectorAll(".versionChip:not(.current)").forEach((btn) => {
-		btn.addEventListener("click", () => {
-			const target = versions.find((v) => v.id === btn.dataset.id);
-			if (target) showPreview(target);
+	const currentIndex = versions.findIndex((v) => v.id === doc.id);
+	const versionTitle = (v, i) => escapeHtml(
+		`v${i + 1} ${v.entryFile} (${formatDateTime(v.modified)}${v.archived ? "・アーカイブ済み" : ""})`
+	);
+
+	const render = () => {
+		versionHistoryRow.classList.toggle("collapsed", !versionHistoryExpanded);
+		versionHistoryRow.classList.toggle("expanded", versionHistoryExpanded);
+		if (versionHistoryExpanded) {
+			versionHistoryRow.innerHTML = `
+				<span class="similarFilesLabel">版履歴:</span>
+				${versions.map((v, i) => `
+					${i > 0 ? `<span class="versionArrow">›</span>` : ""}
+					<button type="button" class="versionChip ${v.id === doc.id ? "current" : ""} ${v.archived ? "archived" : ""}" data-id="${escapeHtml(v.id)}"
+						title="${versionTitle(v, i)}">v${i + 1} ${escapeHtml(v.entryFile)}</button>
+				`).join("")}
+				<button type="button" class="versionToggle" data-toggle="1">閉じる</button>
+			`;
+		} else {
+			const previous = versions[currentIndex - 1];
+			const next = versions[currentIndex + 1];
+			const latest = versions[versions.length - 1];
+			versionHistoryRow.innerHTML = `
+				<span class="similarFilesLabel">版履歴:</span>
+				<button type="button" class="versionNavButton" aria-label="1つ前の版へ"
+					${previous ? `data-id="${escapeHtml(previous.id)}" title="${versionTitle(previous, currentIndex - 1)}"` : "disabled"}>‹</button>
+				<span class="versionPosition">v${currentIndex + 1} / 全${versions.length}版</span>
+				<button type="button" class="versionNavButton" aria-label="1つ後の版へ"
+					${next ? `data-id="${escapeHtml(next.id)}" title="${versionTitle(next, currentIndex + 1)}"` : "disabled"}>›</button>
+				${latest.id === doc.id ? "" : `<button type="button" class="versionChip" data-id="${escapeHtml(latest.id)}"
+					title="${versionTitle(latest, versions.length - 1)}">最新版へ</button>`}
+				<button type="button" class="versionToggle" data-toggle="1">すべての版</button>
+			`;
+		}
+		versionHistoryRow.querySelectorAll("[data-id]:not(.current)").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const target = versions.find((v) => v.id === btn.dataset.id);
+				if (target) showPreview(target);
+			});
 		});
-	});
+		versionHistoryRow.querySelector("[data-toggle]").addEventListener("click", () => {
+			versionHistoryExpanded = !versionHistoryExpanded;
+			render();
+		});
+	};
+
+	render();
+	versionHistoryRow.style.display = "flex";
 };
 
 // アーカイブは誤って押されやすいため、どの入口(一覧・プレビュー・プロジェクトのツリー)からでも
