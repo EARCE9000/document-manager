@@ -118,7 +118,73 @@ def smoke_clients(env, workdir):
         bad = run_client(kind, ["search"], {**env, "DM_API_KEY": "dm_invalid"}, expect_ok=False)
         check(bad.returncode == 1 and "401" in bad.stderr, "不正なキーはエラー(401)")
 
+        smoke_edit_commands(kind, env, v2["id"], v1["id"])
+        smoke_project_commands(kind, env, workdir, v2["id"])
+        smoke_spec(kind, env)
         smoke_watch(kind, env, workdir)
+
+
+def smoke_edit_commands(kind, env, doc_id, archived_id):
+    """タグ・メモ・関連文書・アーカイブ/復元。いずれも文書の状態を読み直して結果を確かめる"""
+    tags = json.loads(run_client(kind, ["tags", doc_id, "--add", "追加タグ"], env).stdout)["tags"]
+    check(set(tags) == {"smoke", "v2", "追加タグ"}, "tags --add: 既存のタグを残して追加する")
+    tags = json.loads(run_client(kind, ["tags", doc_id, "--remove", "追加タグ,v2"], env).stdout)["tags"]
+    check(tags == ["smoke"], "tags --remove: 指定したタグだけ外す")
+    tags = json.loads(run_client(kind, ["tags", doc_id], env).stdout)["tags"]
+    check(tags == ["smoke"], "tags: 変更オプション無しなら現在のタグを返す")
+
+    run_client(kind, ["memo", doc_id, "スモークテストのメモ"], env)
+    check(json.loads(run_client(kind, ["get", doc_id], env).stdout).get("memo") == "スモークテストのメモ", "memo: メモを更新できる")
+
+    run_client(kind, ["link", doc_id, archived_id], env)
+    links = json.loads(run_client(kind, ["links", doc_id], env).stdout)
+    check([link["id"] for link in links] == [archived_id], "link/links: 関連文書として紐づけて一覧できる")
+    run_client(kind, ["unlink", doc_id, archived_id], env)
+    check(json.loads(run_client(kind, ["links", doc_id], env).stdout) == [], "unlink: 関連文書の紐付けを解除できる")
+
+    run_client(kind, ["archive", doc_id], env)
+    check(json.loads(run_client(kind, ["get", doc_id], env).stdout)["archived"] is True, "archive: アーカイブできる(文書は残る)")
+    run_client(kind, ["restore", doc_id], env)
+    check(json.loads(run_client(kind, ["get", doc_id], env).stdout)["archived"] is False, "restore: アーカイブから戻せる")
+
+
+def smoke_project_commands(kind, env, workdir, doc_id):
+    """プロジェクト・フォルダはIDでも名前でも指定できる(AIが一覧の名前をそのまま渡せる)"""
+    project_name = f"smoke-project-{kind}"
+    project = json.loads(run_client(kind, ["project-create", project_name], env).stdout)
+    folder = json.loads(run_client(kind, ["folder-create", project_name, "設計"], env).stdout)
+    check(folder.get("name") == "設計", "folder-create: プロジェクト名を指定してフォルダを作れる")
+
+    placed = json.loads(run_client(kind, ["place", project_name, doc_id, "--folder", "設計"], env).stdout)
+    check(placed["projectId"] == project["id"] and placed["folderId"] == folder["id"], "place: 名前で指定したプロジェクト・フォルダへ登録できる")
+    tree = json.loads(run_client(kind, ["tree", project_name], env).stdout)
+    check([(d["documentId"], d["folderId"]) for d in tree["documents"]] == [(doc_id, folder["id"])], "tree: 配置がツリーに反映される")
+
+    run_client(kind, ["unplace", project_name, doc_id], env)
+    check(json.loads(run_client(kind, ["tree", project_name], env).stdout)["documents"] == [], "unplace: プロジェクトから外せる")
+    check(json.loads(run_client(kind, ["get", doc_id], env).stdout)["id"] == doc_id, "unplace: 文書自体は残る")
+
+    missing = run_client(kind, ["place", "存在しないプロジェクト", doc_id], env, expect_ok=False)
+    check(missing.returncode == 1 and "プロジェクトが見つかりません" in missing.stderr, "place: 存在しないプロジェクト名はエラー")
+
+    # アップロードと同時に配置する(新規登録の定番の流れ)
+    name = f"in-project-{kind}.md"
+    path = os.path.join(workdir, name)
+    open(path, "w", encoding="utf-8").write("# プロジェクト直下\n")
+    uploaded = json.loads(run_client(kind, ["upload", path, "--project", project_name], env).stdout)
+    check(uploaded["project"]["projectId"] == project["id"] and uploaded["project"]["folderId"] is None,
+          "upload --project: アップロードと同時にプロジェクト直下へ登録できる")
+
+
+def smoke_spec(kind, env):
+    """同梱コマンドに無い操作を呼ぶための、サーバー配信のAPI仕様"""
+    usage = run_client(kind, ["spec"], env).stdout
+    check(usage.startswith("# Document Manager API"), "spec: AI向け利用ガイド(Markdown)を取得できる")
+    check("Authorization: Bearer" in usage, "spec: 認証の説明を含む")
+    openapi = json.loads(run_client(kind, ["spec", "--openapi"], env).stdout)
+    check(openapi.get("openapi", "").startswith("3.1"), "spec --openapi: OpenAPI 3.1のJSONを取得できる")
+    create_key = openapi["paths"]["/api/apikeys"]["post"]
+    check(create_key.get("x-api-key-usable") is False, "spec --openapi: APIキーの発行はAPIキーからは実行不可と示される")
 
 
 def start_watch(kind, args, env):

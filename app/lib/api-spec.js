@@ -209,13 +209,15 @@ const OPERATIONS = [
 	{id: "getSkillZip", method: "get", path: "/api/claude-skill.zip", role: "readonly", tag: "その他", summary: "AIエージェント用SkillのZIP取得", produces: "application/zip", aiGuide: false},
 	{id: "getOpenApi", method: "get", path: "/api/openapi.json", role: "readonly", tag: "その他", summary: "このAPIの仕様(OpenAPI 3.1)", aiGuide: false},
 	{id: "getUsageMarkdown", method: "get", path: "/api/usage.md", role: "readonly", tag: "その他", summary: "AI向け利用ガイド(Markdown)", produces: "text/markdown", aiGuide: false},
-	{id: "listApiKeys", method: "get", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの一覧", aiGuide: false},
+	// APIキー管理は画面(ログイン)からのみ。APIキーでAPIキーを発行できると、期限が切れる前に
+	// キー自身が新しいキーを作り直せてしまい、有効期限の上限(最長1年)が意味を持たなくなる
+	{id: "listApiKeys", method: "get", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの一覧", aiGuide: false, sessionOnly: true},
 	{
-		id: "createApiKey", method: "post", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "APIキーの発行", aiGuide: false,
-		description: "ロールは発行者自身のロール以下(readonly/readwriteのみ。adminキーは発行不可)。有効期限は today/30d/90d/365d(無期限キーは発行できない。最長1年)",
+		id: "createApiKey", method: "post", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "APIキーの発行", aiGuide: false, sessionOnly: true,
+		description: "画面(ログイン)からのみ実行できる。APIキーでの呼び出しは403。ロールは発行者自身のロール以下(readonly/readwriteのみ。adminキーは発行不可)。有効期限は today/30d/90d/365d(無期限キーは発行できない。最長1年)",
 		body: {schema: {type: "object", required: ["role", "expiryOption"], properties: {label: {type: "string"}, role: {enum: ["readonly", "readwrite"]}, expiryOption: {enum: ["today", "30d", "90d", "365d"]}}}}
 	},
-	{id: "revokeApiKey", method: "delete", path: "/api/apikeys/:id", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの失効", aiGuide: false},
+	{id: "revokeApiKey", method: "delete", path: "/api/apikeys/:id", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの失効", aiGuide: false, sessionOnly: true},
 	{id: "listTagOrder", method: "get", path: "/api/tag_order", role: "readonly", tag: "タグ体系", summary: "タグ体系(表示するタグと並び順)の取得", aiGuide: false},
 	{
 		id: "updateTagOrder", method: "put", path: "/api/tag_order", role: "admin", tag: "タグ体系", summary: "タグ体系の更新", aiGuide: false,
@@ -500,7 +502,8 @@ const INTRO = `このサービスは HTML / MHTML / Markdown / PDF (単一ファ
 const CONNECTION_NOTES = [
 	"- 認証: HTTPヘッダー `Authorization: Bearer <APIキー>`",
 	"  - APIキーは画面右上の「APIキー管理」からユーザー自身が発行する(このAIに渡す用に1つ発行してもらってください)",
-	"  - APIキーは発行者本人のロール(admin/readwrite/readonly)をそのまま引き継ぐ。readonlyのキーでは書き込み系APIは403になる"
+	"  - APIキーは発行者本人のロール(admin/readwrite/readonly)をそのまま引き継ぐ。readonlyのキーでは書き込み系APIは403になる",
+	"  - APIキーの発行・一覧・失効は画面(ログイン)からのみ行える。APIキーで `api/apikeys` を呼ぶと403になるため、期限が切れたらユーザーに発行し直してもらう"
 ];
 
 // 箇条書き1行を整形する。既にインデント済み(入れ子)の行はそのまま使う
@@ -607,7 +610,8 @@ module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, version}) => {
 			...Object.fromEntries(Object.entries(op.responses || {}).map(([status, description]) => [status, {description}]))
 		};
 		for (const [status, description] of Object.entries(COMMON_RESPONSES)) {
-			if (status === "403" && (op.role === "public" || op.role === "readonly")) continue;
+			// sessionOnlyの操作はロールに関わらず403がありうる(APIキーからの呼び出しを断る)
+			if (status === "403" && op.sessionOnly !== true && (op.role === "public" || op.role === "readonly")) continue;
 			if (status === "401" && op.role === "public") continue;
 			if (responses[status] == null) responses[status] = {description};
 		}
@@ -617,7 +621,7 @@ module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, version}) => {
 			...(op.description ? {description: op.description} : {}),
 			tags: [op.tag],
 			"x-role": op.role,
-			"x-api-key-usable": op.role !== "admin",
+			"x-api-key-usable": op.role !== "admin" && op.sessionOnly !== true,
 			...(parameters.length > 0 ? {parameters} : {}),
 			...(op.body ? {
 				requestBody: {

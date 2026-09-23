@@ -80,6 +80,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 - **APIキー(マシン間認証)**: ブラウザの対話的ログインを経ずに `Authorization: Bearer <キー>` でapiを呼び出せる。ログイン済みユーザーが自分名義で発行・失効でき、そのキー経由の操作は発行者本人の名義で記録される
   - 有効期限の選択肢は「当日限り」(`now+12時間`と「翌日02:00(JST)」の早い方。チャット等に貼り付けて使う一時利用向け)/「30日」/「90日」/「1年」。**最長1年で、無期限キーは発行できない**(漏えいしたキーが際限なく使われるのを防ぐため)。スクリプト・Claude Code等のツールから継続利用する場合は、期限切れ前に発行し直す。漏えい時は画面から失効させること
   - 以前は「無期限」を選べたため、その頃のキーは`expires_at`に番兵値(`9999-12-31T23:59:59.999Z`)を持つ。起動時に上限(1年)へ自動的に切り詰める(`capUnlimitedKeys`)
+  - **キーの管理(`api/apikeys`の発行・一覧・失効)はブラウザのログインセッションからのみ行える**(`requireSession`。APIキーで呼ぶと403)。APIキーでAPIキーを発行できると、期限が切れる前にキー自身が新しいキーを作り直せてしまい、上記の上限(最長1年)が意味を持たなくなるため。AIエージェントは自分でキーを作り直せず、期限切れ時は利用者に発行し直してもらう
   - キーには発行時にreadonly/readwriteいずれかのロールを固定で持たせる(adminロールのキーは発行不可)。選べるのは発行者自身のロール以下のみで、権限判定は発行者の"現在の"ロールではなく常にキーに記録されたロールを見る(発行者が後で昇格/降格しても既存キーの権限は変わらない)
   - 期限切れキーでの認証は401(「APIキーの有効期限が切れています」と明示)、有効なキーでもreadonlyロールでの書き込み系API呼び出しは403になる
   - 発行直後の画面から、キー本体のコピーとは別に「AIチャット貼り付け用」のテキスト(接続情報・エンドポイント一覧・実際のキーを埋め込んだ利用ガイド)もコピーできる
@@ -104,6 +105,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 
 ### AIエージェント用 Skill・APIクライアント(Claude Code / Codex / Antigravity)
 - [tools/claude-skill/](tools/claude-skill/) に、Claude Code・OpenAI Codex・Google Antigravity から「アップして」「新しい版で上げて」「探して」と話しかけるだけでこのAPIを操作できる Skill(`document-manager`)を同梱している。Skillの形式(`SKILL.md`+`scripts/`)は3つのエージェントで共通のため同じZIPを使い、展開先だけが異なる(Claude Code: `~/.claude/skills/`、Codex: `~/.agents/skills/`、Antigravity: `~/.gemini/config/skills/`)。Python版(`dm_client.py`、標準ライブラリのみ)と Node.js版(`dm_client.mjs`、外部依存なし)のクライアントはどちらも同じコマンドで、単体のCLIとしても使える
+- クライアントのコマンド: `config` / `search`(全文・`--semantic`で意味検索・`--archived`) / `get` / `versions` / `upload`(`--previous-id`・`--replace-same-name`・`--tags`・`--preview`・`--project`/`--folder`) / `download` / `tags`(`--add`/`--remove`/`--set`) / `memo` / `archive` / `restore` / `links`・`link`・`unlink` / `link-previous`・`unlink-previous` / `projects`・`project-create`・`tree`・`folder-create`・`place`・`unplace` / `watch`(SSE) / `spec`(`api/usage.md`、`--openapi`で`api/openapi.json`)。プロジェクト・フォルダはIDでも名前でも指定できる。ここに無い操作(タグ体系の管理など)は`spec`でAPI仕様を読んで直接呼ぶ
 - 画面右上「APIキー管理」→「AIエージェント用 Skill」から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、エージェント別(タブで切り替え)の登録手順・接続先URL入りの登録依頼文のコピーができる。リポジトリからは `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを各エージェントのチャットに渡して「Skillとして登録して」と頼むか、上記の展開先に展開すれば登録できる。GitHub Actions(`skill-package.yml`)が、Skill関連の変更のたびにクライアントの結合テストとZIP作成を行ってアーティファクトに保存し、タグ`skill-v*`のpushでGitHub ReleaseにZIPを公開する。詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
 
 ## ディレクトリ構成

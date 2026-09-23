@@ -551,6 +551,19 @@ const requireAdmin = (req, res, next) => {
 };
 
 /**
+ * ブラウザでログインしたセッションからのみ許可する操作の前段ミドルウェア。requireAuthの後段で使う。
+ * APIキー管理(発行・一覧・失効)に使う。APIキーでAPIキーを発行できると、期限が切れる前に
+ * キー自身が新しいキーを作り直せてしまい、有効期限の上限(最長1年)が意味を持たなくなるため。
+ */
+const requireSession = (req, res, next) => {
+	if (req.authData.viaApiKey == null) {
+		next();
+		return;
+	}
+	res.status(403).json({error: "APIキーの管理は画面(ログイン)からのみ行えます"});
+};
+
+/**
  * 書き込み(文書の追加・削除・タグ編集)が可能なロール(admin/readwrite)限定の
  * 前段ミドルウェア。requireAuthの後段で使う。readonlyロールは閲覧のみ許可する。
  */
@@ -2091,7 +2104,7 @@ app.get(BASE_URL_PATH + 'api/claude-skill.zip', requireAuth, async (req, res) =>
 /**
  * APIキー一覧 (自分が発行したものだけ。平文キーは含まない)
  */
-app.get(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
+app.get(BASE_URL_PATH + 'api/apikeys', requireAuth, requireSession, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		const keys = (await ApiKeys.listApiKeys(req.authData.user_identifier)).map((row) => ({
@@ -2121,7 +2134,7 @@ const API_KEY_ROLE_RANK = {
 /**
  * APIキー発行 (平文キーはこのレスポンスでのみ取得可能)
  */
-app.post(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
+app.post(BASE_URL_PATH + 'api/apikeys', requireAuth, requireSession, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		// 用途(label)は備考的な位置づけの任意項目(未入力可)。一覧では発行日時を主に表示する
@@ -2151,7 +2164,7 @@ app.post(BASE_URL_PATH + 'api/apikeys', requireAuth, async (req, res) => {
 /**
  * APIキー失効 (自分が発行したものだけ失効可能)
  */
-app.delete(BASE_URL_PATH + 'api/apikeys/:id', requireAuth, async (req, res) => {
+app.delete(BASE_URL_PATH + 'api/apikeys/:id', requireAuth, requireSession, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		const revoked = await ApiKeys.revokeApiKeyById(req.params.id, req.authData.user_identifier);

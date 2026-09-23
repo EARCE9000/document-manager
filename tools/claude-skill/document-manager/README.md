@@ -22,6 +22,9 @@ document-manager/
 
 キーが漏れた場合は、同じ画面ですぐに失効させてください。
 
+APIキーの発行・一覧・失効は、この画面(ログイン)からのみ行えます。APIキーで `api/apikeys` を呼ぶと403になるため、
+AIエージェントが自分でキーを作り直すことはできません(期限の上限を実質的に無効化させないための制限です)。
+
 ## 2. Skill として登録する
 
 どのエージェントも、`SKILL.md` を含むフォルダを所定の場所に置くだけで認識します。ZIP の中身は `document-manager/` フォルダ 1 つなので、下表の「展開先」に展開すれば `…/document-manager/SKILL.md` の形になります。
@@ -112,13 +115,27 @@ python scripts/dm_client.py upload ./report.md --tags 経理,2026年度   # 新�
 python scripts/dm_client.py upload ./report.md --previous-id <旧版ID> # 新しい版として登録(旧版はアーカイブ)
 python scripts/dm_client.py upload ./report.md --replace-same-name   # 同名文書があればその新しい版に
 python scripts/dm_client.py upload ./構成図.drawio --preview ./構成図.svg
+python scripts/dm_client.py upload ./report.md --project 顧客管理 --folder 設計  # 登録と同時にプロジェクトへ配置
 python scripts/dm_client.py versions <文書ID>                        # 版履歴
 python scripts/dm_client.py download <文書ID> -o ./downloads/
+python scripts/dm_client.py search 権限の考え方 --semantic            # 意味検索(言い換え・表記ゆれを含む)
+python scripts/dm_client.py tags <文書ID> --add 経理                  # タグの追加(--remove / --set もある)
+python scripts/dm_client.py memo <文書ID> "次回レビューで確認"         # メモの更新
+python scripts/dm_client.py archive <文書ID>                         # アーカイブ(restore で戻せる)
+python scripts/dm_client.py link <文書ID> <相手の文書ID>              # 関連文書として紐づける
+python scripts/dm_client.py link-previous <新版ID> <旧版ID>           # 後から新旧の版として紐づける
+python scripts/dm_client.py projects                                 # プロジェクト一覧
+python scripts/dm_client.py tree 顧客管理                            # フォルダ階層と文書の配置
+python scripts/dm_client.py place 顧客管理 <文書ID> --folder 設計      # プロジェクトへ登録・移動
 python scripts/dm_client.py watch                                    # 操作の通知を待ち受け(Ctrl+Cで終了)
 python scripts/dm_client.py watch --count 1 --timeout 300 --action upload,revise  # 次のアップロードを1件待つ
+python scripts/dm_client.py spec                                     # APIの仕様(AI向けMarkdown。--openapi でOpenAPI)
 
 node scripts/dm_client.mjs search 設計書                             # Node.js版も同じ
 ```
+
+プロジェクト・フォルダは ID でも名前でも指定できます(同じ名前が複数あるときは ID で指定してください)。
+`tags` は `--add` / `--remove` なら現在のタグとの差分、`--set` なら丸ごと置き換えです(変更オプション無しなら現在のタグを表示)。
 
 新しい版として登録すると、旧版は自動でアーカイブされます。タグと、プロジェクトへの登録(フォルダ・並び順)は新しい版へ引き継がれます。
 

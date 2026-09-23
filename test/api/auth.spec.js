@@ -92,8 +92,29 @@ test.describe("requireAdmin: APIキー(最大readwrite)では管理APIに到達�
 	});
 });
 
+// APIキー管理(発行・一覧・失効)はブラウザのログインセッションからのみ行える。
+// APIキーでAPIキーを発行できると、期限が切れる前にキー自身が新しいキーを作り直せてしまい、
+// 有効期限の上限(最長1年)が意味を持たなくなるため
+test.describe("APIキー管理はセッション限定", () => {
+	const apiKeyRoutes = [
+		{name: "一覧", call: (request, headers) => request.get("api/apikeys", {headers})},
+		{name: "発行", call: (request, headers) => request.post("api/apikeys", {headers, data: {role: "readonly", expiryOption: "30d"}})},
+		{name: "失効", call: (request, headers) => request.delete("api/apikeys/00000000-0000-0000-0000-000000000000", {headers})}
+	];
+	for (const route of apiKeyRoutes) {
+		for (const role of ["readonly", "readwrite"]) {
+			test(`${role}キーでの${route.name}は403`, async ({request}) => {
+				const res = await route.call(request, bearer(keys[role]));
+				expect(res.status()).toBe(403);
+				expect((await res.json()).error).toContain("画面");
+			});
+		}
+	}
+});
+
 test.describe("APIキーの有効期限(最長1年)", () => {
-	const rw = bearer(keys.readwrite);
+	// 発行はセッション(ブラウザでログイン済みの管理者)からのみ行える
+	const rw = {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(keys.sessionCookie)}`};
 	test("1年のキーを発行でき、使え、失効させると401になる", async ({request}) => {
 		const created = await request.post("api/apikeys", {headers: rw, data: {label: "one-year-test", role: "readonly", expiryOption: "365d"}});
 		expect(created.status()).toBe(200);
