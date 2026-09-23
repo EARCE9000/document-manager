@@ -77,6 +77,17 @@ slide.shapes.title.text = "効果"
 box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(2))
 box.text_frame.text = "検索で見つかるようになる"
 box.text_frame.add_paragraph().text = "版の取り違えが無くなる"
+slide = prs.slides.add_slide(prs.slide_layouts[5])
+slide.shapes.title.text = "確認事項"
+# 表(graphicFrame)。スライド本文が表だけ、という資料は実務で多い
+table = slide.shapes.add_table(3, 3, Inches(0.5), Inches(1.8), Inches(9), Inches(2)).table
+for column, header in enumerate(["#", "確認事項", "ご回答欄"]):
+    table.cell(0, column).text = header
+table.cell(1, 0).text = "1"
+table.cell(1, 1).text = "接続要件の確認"
+table.cell(2, 0).text = "2"
+table.cell(2, 1).text = "保守経路の確認"
+
 prs.save(os.path.join(OUT, "sample.pptx"))
 
 for name in ("sample.xlsx", "sample.docx", "sample.pptx"):

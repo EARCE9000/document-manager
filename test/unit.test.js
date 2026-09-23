@@ -181,7 +181,12 @@ test("convertOfficeDocument: PowerPoint(スライド順・タイトル・ノー�
 	assert.match(result.bodyHtml, /<h2>2\. 課題<\/h2>/);
 	assert.match(result.bodyHtml, /<li>最新版がどれか分からない<\/li>/);
 	assert.match(result.bodyHtml, /ノート: ここで実際の調査結果を紹介する/, "発表者ノートも出す");
+	assert.doesNotMatch(result.bodyHtml, /ノート: \d+</, "ノート用スライドのページ番号をノート本文として拾わない");
 	assert.match(result.text, /退職者の資料が引き継がれない/);
+	// スライドの中身が表(graphicFrame)だけ、という資料は実務で多い
+	assert.match(result.bodyHtml, /<h2>4\. 確認事項<\/h2>/);
+	assert.match(result.bodyHtml, /<td>接続要件の確認<\/td>/, "スライド内の表も読む");
+	assert.match(result.text, /保守経路の確認/, "表の中身も検索対象のテキストに入る");
 });
 
 test("convertOfficeDocument: 中身がHTMLとして解釈されないようエスケープする", () => {

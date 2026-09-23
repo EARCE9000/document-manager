@@ -366,30 +366,59 @@ const convertSlides = (entries) => {
 	const textLines = [];
 	slideNames.forEach((name, index) => {
 		const xml = entries.get(name).toString("utf8");
-		// 図形(sp)ごとに段落をまとめる。タイトルのプレースホルダは見出しとして扱う
+		// 図形(sp)と表(graphicFrame内のa:tbl)を、スライドに現れる順で拾う。
+		// タイトルのプレースホルダは見出しとして扱う
 		let title = null;
 		const blocks = [];
-		for (const shape of matchAll(xml, "p:sp")) {
+		const shapePattern = /<p:sp>[\s\S]*?<\/p:sp>|<p:graphicFrame>[\s\S]*?<\/p:graphicFrame>/g;
+		let shapeMatch;
+		while ((shapeMatch = shapePattern.exec(xml)) != null) {
+			const shape = shapeMatch[0];
+			if (shape.startsWith("<p:graphicFrame")) {
+				// 表。グラフ・SmartArt等のテキストを持たないものは空になるので読み飛ばす
+				for (const table of matchAll(shape, "a:tbl")) {
+					const rows = matchAll(table, "a:tr").slice(0, LIMITS.tableRows).map((row) =>
+						matchAll(row, "a:tc").map((cell) =>
+							matchAll(cell, "a:p").map((paragraph) => textOf(paragraph, "a:t").trim()).filter(Boolean).join(" ")));
+					if (rows.some((row) => row.some(Boolean))) blocks.push({rows});
+				}
+				continue;
+			}
 			const lines = matchAll(shape, "a:p").map((paragraph) => textOf(paragraph, "a:t").trim()).filter(Boolean);
 			if (lines.length === 0) continue;
 			if (title == null && /<p:ph\b[^>]*type="(?:ctrTitle|title)"/.test(shape)) {
 				title = lines.join(" ");
 				continue;
 			}
-			blocks.push(lines);
+			blocks.push({lines});
 		}
-		if (title == null && blocks.length > 0) title = blocks.shift().join(" ");
+		if (title == null) {
+			const firstText = blocks.findIndex((block) => block.lines != null);
+			if (firstText >= 0) title = blocks.splice(firstText, 1)[0].lines.join(" ");
+		}
 
+		// 発表者ノート。ノート用スライドにはスライド番号やサムネイルの枠も含まれるため、
+		// 本文のプレースホルダ(ph type="body")だけを拾う(拾わないとノートが「1」等になる)
 		const notesName = `ppt/notesSlides/notesSlide${slideNumberOf(name)}.xml`;
-		const notes = entries.has(notesName)
-			? matchAll(entries.get(notesName).toString("utf8"), "a:p").map((paragraph) => textOf(paragraph, "a:t").trim()).filter(Boolean).join(" ")
-			: "";
+		const notes = !entries.has(notesName) ? "" : matchAll(entries.get(notesName).toString("utf8"), "p:sp")
+			.filter((shape) => /<p:ph\b[^>]*type="body"/.test(shape))
+			.map((shape) => matchAll(shape, "a:p").map((paragraph) => textOf(paragraph, "a:t").trim()).filter(Boolean).join(" "))
+			.filter(Boolean)
+			.join(" ");
 
-		const listHtml = blocks.map((lines) =>
-			`<ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("");
+		const bodyBlocks = blocks.map((block) => {
+			if (block.rows != null) {
+				return `<div class="tableWrap"><table>${block.rows.map((row) =>
+					`<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</table></div>`;
+			}
+			return `<ul>${block.lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`;
+		}).join("");
 		const notesHtml = notes === "" ? "" : `<p class="note">ノート: ${escapeHtml(notes)}</p>`;
-		sections.push(`<section class="slide"><h2>${index + 1}. ${escapeHtml(title || "(タイトルなし)")}</h2>${listHtml}${notesHtml}</section>`);
-		textLines.push([title || "", ...blocks.flat(), notes].filter(Boolean).join("\n"));
+		sections.push(`<section class="slide"><h2>${index + 1}. ${escapeHtml(title || "(タイトルなし)")}</h2>${bodyBlocks}${notesHtml}</section>`);
+		const blockText = blocks.map((block) => block.rows != null
+			? block.rows.map((row) => row.join("\t")).join("\n")
+			: block.lines.join("\n"));
+		textLines.push([title || "", ...blockText, notes].filter(Boolean).join("\n"));
 	});
 
 	return {bodyHtml: sections.join(""), text: textLines.join("\n\n")};
