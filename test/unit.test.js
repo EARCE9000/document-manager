@@ -225,6 +225,39 @@ test("convertOfficeDocument: ZIP爆弾対策の上限を超えたエントリは
 	assert.ok(convertOfficeDocument(buffer, ".xlsx", {maxTotalBytes: 64 * 1024 * 1024}) != null);
 });
 
+test("convertOfficeDocument: 壊したファイルを食わせても落ちず、いつまでも計算しない", () => {
+	// 利用者は壊れたファイルも壊れかけのファイルもアップロードできる。ZIPの構造やXMLが
+	// 想定と違っても、例外で500にしたり、長時間ブロックしたりしないことを確かめる
+	// (この変換はアプリのプロセス内で同期的に動くため、止まると全体が止まる)
+	const seeds = ["sample.xlsx", "sample.docx", "sample.pptx"];
+	let random = 20260924; // 毎回同じ壊し方になるよう、乱数は固定の種から作る
+	const nextInt = (max) => {
+		random = (random * 1103515245 + 12345) & 0x7fffffff;
+		return random % max;
+	};
+
+	for (const name of seeds) {
+		const original = officeFixture(name);
+		const extension = path.extname(name);
+		for (let round = 0; round < 40; round++) {
+			const broken = Buffer.from(original);
+			if (round % 4 === 0) {
+				// 途中で切れたファイル(アップロード中断など)
+				const cut = broken.subarray(0, 1 + nextInt(broken.length));
+				const started = Date.now();
+				assert.doesNotThrow(() => convertOfficeDocument(cut, extension), `${name}: 切り詰めでも例外を投げない`);
+				assert.ok(Date.now() - started < 5000, `${name}: 切り詰めでも5秒以内に返る`);
+				continue;
+			}
+			// 数バイトを書き換える(ヘッダー・サイズ欄・XMLの一部が壊れる)
+			for (let i = 0; i < 8; i++) broken[nextInt(broken.length)] = nextInt(256);
+			const started = Date.now();
+			assert.doesNotThrow(() => convertOfficeDocument(broken, extension), `${name}: 書き換えでも例外を投げない`);
+			assert.ok(Date.now() - started < 5000, `${name}: 書き換えでも5秒以内に返る`);
+		}
+	}
+});
+
 test("convertOfficeDocument: 対象外・壊れた入力では null を返す(例外を投げない)", () => {
 	assert.equal(convertOfficeDocument(Buffer.from("not a zip"), ".xlsx"), null);
 	assert.equal(convertOfficeDocument(officeFixture("sample.xlsx"), ".pdf"), null, "拡張子が対象外");
