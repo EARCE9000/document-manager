@@ -16,7 +16,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py get <文書ID>                 文書1件の情報(アーカイブ済みも可)
   python dm_client.py versions <文書ID>            版履歴(古い順)
   python dm_client.py upload <ファイル> [--previous-id ID | --replace-same-name]
-                                       [--preview 画像] [--tags タグ1,タグ2]
+                                       [--preview 画像(.drawioの代替表示用。通常は不要)] [--tags タグ1,タグ2]
                                        [--project プロジェクト] [--folder フォルダ]
   python dm_client.py download <文書ID> [-o 保存先]
   python dm_client.py tags <文書ID> [--add A,B | --remove A,B | --set A,B]   タグの確認・変更
@@ -474,7 +474,7 @@ def main():
     group = p.add_mutually_exclusive_group()
     group.add_argument("--previous-id", help="旧版の文書ID(新しい版として登録し、旧版はアーカイブされる)")
     group.add_argument("--replace-same-name", action="store_true", help="同名の既存文書があれば、その新しい版として登録する")
-    p.add_argument("--preview", help=".drawio 用のプレビュー画像(svg/png/jpg)")
+    p.add_argument("--preview", help=".drawio の代替プレビュー画像(svg/png/jpg)。通常は不要(画面が.drawioをそのまま描画する)")
     p.add_argument("--tags", help="追加するタグ(カンマ区切り)")
     p.add_argument("--project", help="登録先のプロジェクト(IDまたは名前)")
     p.add_argument("--folder", help="登録先のフォルダ(IDまたは名前。省略時はプロジェクト直下)")

@@ -61,7 +61,7 @@ const OPERATIONS = [
 				required: ["uploadfile"],
 				properties: {
 					uploadfile: {type: "string", format: "binary", description: "文書ファイル(1ファイル)"},
-					previewfile: {type: "string", format: "binary", description: ".drawio用のプレビュー画像(svg/png/jpg。任意)"},
+					previewfile: {type: "string", format: "binary", description: ".drawio用の代替プレビュー画像(svg/png/jpg。任意。通常は不要で、画面は.drawioをそのまま描画する)"},
 					previousId: {type: "string", description: "旧版の文書ID(この文書の新しい版として登録する。任意)"}
 				}
 			}
@@ -298,7 +298,8 @@ const GUIDE_SECTIONS = [
 		notes: [
 			"`multipart/form-data`、実体のフィールド名は `uploadfile`",
 			"対応拡張子: `.html` `.htm` `.mhtml` `.mht` `.md` `.markdown` `.pdf` `.svg` `.png` `.jpg` `.jpeg` `.csv` `.tsv` `.txt` `.log` `.json` `.drawio` (単一ファイルのみ)",
-			"`.drawio` のときは、プレビュー用の画像(`.svg`/`.png`/`.jpg`/`.jpeg`)を `previewfile` フィールドで同時に送れる(任意)。送らない場合はプレビュー不可になるが、ダウンロードは可能。`.drawio` 以外では `previewfile` は無視される",
+			"`.drawio` は**そのままアップロードすればよい**。画面側が図をそのまま描画するため、プレビュー用の画像を作る必要はない(複数ページもそのまま扱える)",
+			"  - `previewfile` フィールドで画像(`.svg`/`.png`/`.jpg`/`.jpeg`)を添えることもできるが任意で、図を描画できなかったときの代替として使われるだけ。**画像を用意するためだけに図を書き出す必要はない**。`.drawio` 以外では無視される",
 			"既存文書の新しい版として登録する場合は `previousId` フィールドに旧版の文書IDを指定する(任意)。旧版は自動的にアーカイブされ、タグとプロジェクトの登録(フォルダ・並び順)が新しい版へ引き継がれる。応答の `previousId`/`nextId` で版同士のつながりが分かる",
 			"  - 指定した旧版が存在しなければ404、既に新しい版がある(最新版ではない)場合は409(応答の `nextId` が既存の新しい版)"
 		]
@@ -429,8 +430,8 @@ const CURL_EXAMPLES = (baseUrl) => [
 	},
 	{title: "アップロード", command: `curl -X POST "${baseUrl}/api/documents" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "uploadfile=@./report.md"`},
 	{
-		title: "アップロード(.drawio + プレビュー画像を同時に送る)",
-		command: `curl -X POST "${baseUrl}/api/documents" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "uploadfile=@./diagram.drawio" \\\n  -F "previewfile=@./diagram.svg"`
+		title: "アップロード(.drawio。画像を添える必要はない)",
+		command: `curl -X POST "${baseUrl}/api/documents" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "uploadfile=@./diagram.drawio"`
 	},
 	{
 		title: "既存文書の新しい版としてアップロード(旧版はアーカイブされ、タグ・プロジェクトを引き継ぐ)",
@@ -465,6 +466,9 @@ const AI_INSTRUCTIONS = [
 以前このDocument Managerに登録した文書を修正・更新したものであれば、新規登録ではなく
 旧版の文書IDを \`previousId\` に指定して新しい版としてアップロードしてください
 (旧版の文書IDが分からなければ、検索APIでファイル名等から探してください)。
+draw.ioの図(\`.drawio\`)は、そのファイルだけをアップロードしてください。画面側が図をそのまま
+描画するため、**プレビュー用の画像(svg/png)を書き出す必要はありません**(大きな図をSVGとして
+書き出そうとして失敗する、という事故を避けるためにも、画像は作らないでください)。
 アップロードが完了したら、登録されたファイル名と文書IDをユーザーに報告してください
 (readonlyロールのキーの場合はアップロードできないので、その旨をユーザーに伝えてください)。`
 	},

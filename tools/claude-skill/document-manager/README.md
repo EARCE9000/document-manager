@@ -114,7 +114,7 @@ python scripts/dm_client.py search 設計書 --archived                 # アー
 python scripts/dm_client.py upload ./report.md --tags 経理,2026年度   # 新規アップロード
 python scripts/dm_client.py upload ./report.md --previous-id <旧版ID> # 新しい版として登録(旧版はアーカイブ)
 python scripts/dm_client.py upload ./report.md --replace-same-name   # 同名文書があればその新しい版に
-python scripts/dm_client.py upload ./構成図.drawio --preview ./構成図.svg
+python scripts/dm_client.py upload ./構成図.drawio                    # .drawio はそのまま(画像は不要)
 python scripts/dm_client.py upload ./report.md --project 顧客管理 --folder 設計  # 登録と同時にプロジェクトへ配置
 python scripts/dm_client.py versions <文書ID>                        # 版履歴
 python scripts/dm_client.py download <文書ID> -o ./downloads/

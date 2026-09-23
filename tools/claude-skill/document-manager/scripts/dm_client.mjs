@@ -16,7 +16,8 @@
  *   node dm_client.mjs search <検索語> --semantic [--limit N]
  *   node dm_client.mjs get <文書ID>
  *   node dm_client.mjs versions <文書ID>
- *   node dm_client.mjs upload <ファイル> [--previous-id ID | --replace-same-name] [--preview 画像] [--tags タグ1,タグ2]
+ *   node dm_client.mjs upload <ファイル> [--previous-id ID | --replace-same-name] [--tags タグ1,タグ2]
+ *                                        [--preview 画像(.drawioの代替表示用。通常は不要)]
  *                                        [--project プロジェクト] [--folder フォルダ]
  *   node dm_client.mjs download <文書ID> [-o 保存先]
  *   node dm_client.mjs tags <文書ID> [--add A,B | --remove A,B | --set A,B]
