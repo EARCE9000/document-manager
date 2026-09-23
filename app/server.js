@@ -119,6 +119,8 @@ app.use((req, res, next) => {
 			durationMs,
 			ip: req.ip,
 			user: (req.session && req.session.user) ? req.session.user.identifier : null,
+			// どのクライアント(AIエージェント用Skillのバージョン等)からの呼び出しかを追えるようにする
+			userAgent: req.headers["user-agent"] || null,
 			// Cookie到達性の診断用(セッションが引き継がれない不具合の切り分けに使う)
 			hasCookieHeader: req.headers.cookie != null,
 			sessionId: req.sessionID,

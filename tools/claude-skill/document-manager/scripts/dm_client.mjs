@@ -32,6 +32,7 @@
  *       操作の通知(SSE)を待ち受け、1イベント1行のJSONで出力する
  *   node dm_client.mjs spec [--openapi]
  *       APIの仕様(既定はAI向けMarkdown)をそのまま出力する
+ *   node dm_client.mjs --version
  *
  * プロジェクト・フォルダはIDでも名前でも指定できる(同じ名前が複数あるときはIDで指定する)。
  */
@@ -42,6 +43,11 @@ import path from "node:path";
 import {parseArgs} from "node:util";
 
 const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-manager.json");
+
+// このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
+// 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
+const CLIENT_VERSION = "1.0.0";
+const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
 
@@ -72,7 +78,7 @@ const request = async (method, apiPath, {query, json, formData, raw = false} = {
 	const {baseUrl, apiKey} = loadConfig();
 	const url = new URL(apiPath, baseUrl);
 	for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, v);
-	const headers = {Authorization: `Bearer ${apiKey}`};
+	const headers = {Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT};
 	let body;
 	if (json !== undefined) {
 		headers["Content-Type"] = "application/json";
@@ -164,7 +170,7 @@ const placeDocument = async (projectValue, documentId, folderValue) => {
 const commands = {
 	config: async () => {
 		const {baseUrl, apiKey} = loadConfig();
-		return {baseUrl, apiKey: `${apiKey.slice(0, 6)}...`, configPath: CONFIG_PATH};
+		return {clientVersion: CLIENT_VERSION, baseUrl, apiKey: `${apiKey.slice(0, 6)}...`, configPath: CONFIG_PATH};
 	},
 	// --archived はアーカイブ(論理削除)済みの一覧・検索。完全削除ではなく復元できる文書
 	// --semantic は意味検索(キーワードの一致ではなく内容が近いものをスコア順に返す。
@@ -352,7 +358,7 @@ const watch = async (opts) => {
 		try {
 			resetIdle();
 			const res = await fetch(new URL("api/documents/events", baseUrl), {
-				headers: {Authorization: `Bearer ${apiKey}`, Accept: "text/event-stream"},
+				headers: {Authorization: `Bearer ${apiKey}`, Accept: "text/event-stream", "User-Agent": USER_AGENT},
 				signal: controller.signal
 			});
 			if (res.status === 401 || res.status === 403) {
@@ -420,10 +426,15 @@ const main = async () => {
 			folder: {type: "string"},
 			parent: {type: "string"},
 			openapi: {type: "boolean"},
+			version: {type: "boolean", short: "V"},
 			"no-reconnect": {type: "boolean"}
 		}
 	});
 	const [command, ...rest] = positionals;
+	if (values.version && command == null) {
+		console.log(`dm_client.mjs ${CLIENT_VERSION}`);
+		process.exit(0);
+	}
 	if (command === "spec") {
 		// specはMarkdown/JSONをそのまま流すため、最後のJSON一括出力はしない
 		try {

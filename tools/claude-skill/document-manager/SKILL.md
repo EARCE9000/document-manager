@@ -9,6 +9,9 @@ Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキス�
 アップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
 このSkillのディレクトリにある `scripts/` の同梱クライアントを使う。curlを直接組み立てる必要はない。
 
+このSkillのバージョン: 1.0.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
+不具合を報告するときはこの値を添える)
+
 ## クライアントの選び方
 
 どちらも同じコマンド体系・同じJSON出力。環境にある方を使う(両方あればどちらでもよい)。

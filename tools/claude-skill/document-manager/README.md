@@ -148,6 +148,30 @@ python scripts/dm_client.py watch --action upload,revise | while read -r line; d
 done
 ```
 
+## バージョン
+
+現在のバージョンは **1.0.0** です。手元のものを確認するには次のいずれかを実行してください。
+
+```bash
+python scripts/dm_client.py --version     # → dm_client.py 1.0.0
+python scripts/dm_client.py config        # → clientVersion を含む JSON
+```
+
+クライアントは `User-Agent: document-manager-skill/<バージョン> (python|node ...)` を送るため、
+サーバー側のアクセスログからも、どのクライアントのどの版が呼んでいるか分かります。
+不具合を報告するときはこのバージョンを添えてください。
+
+更新するときは、次の3か所を同じ値に揃えます(ずれていると結合テストが落ちます)。
+
+| 場所 | 内容 |
+|---|---|
+| `scripts/dm_client.py` | `CLIENT_VERSION` |
+| `scripts/dm_client.mjs` | `CLIENT_VERSION` |
+| `SKILL.md` | 「このSkillのバージョン: ...」の行 |
+
+揃えたうえでタグ `skill-v<バージョン>`(例: `skill-v1.1.0`)を push すると、
+CI が検証済みの ZIP を添えた GitHub Release を作ります。
+
 ## 4. ZIP の作り方
 
 リポジトリ直下で次を実行すると、`tools/claude-skill/dist/document-manager-skill.zip` ができます。

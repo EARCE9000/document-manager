@@ -37,6 +37,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py watch [--count N] [--timeout 秒] [--action upload,revise,...] [--all]
                                        操作の通知(SSE)を待ち受け、1イベント1行のJSONで出力する
   python dm_client.py spec [--openapi]             APIの仕様(既定はAI向けMarkdown)をそのまま出力する
+  python dm_client.py --version                    このクライアントのバージョン
 
 プロジェクト・フォルダはIDでも名前でも指定できる(同じ名前が複数あるときはIDで指定する)。
 """
@@ -55,6 +56,11 @@ import urllib.request
 import uuid
 
 CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"), ".document-manager.json")
+
+# このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
+# 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
+CLIENT_VERSION = "1.0.0"
+USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
 class DmError(Exception):
@@ -85,7 +91,7 @@ def request(method, path, *, query=None, body=None, content_type=None, raw=False
     url = urllib.parse.urljoin(base_url, path)
     if query:
         url += "?" + urllib.parse.urlencode(query)
-    headers = {"Authorization": f"Bearer {api_key}"}
+    headers = {"Authorization": f"Bearer {api_key}", "User-Agent": USER_AGENT}
     data = None
     if body is not None:
         if isinstance(body, (dict, list)):
@@ -198,7 +204,12 @@ def find_same_name_document(filename):
 
 def cmd_config(_args):
     base_url, api_key = load_config()
-    return {"baseUrl": base_url, "apiKey": api_key[:6] + "..." if api_key else None, "configPath": CONFIG_PATH}
+    return {
+        "clientVersion": CLIENT_VERSION,
+        "baseUrl": base_url,
+        "apiKey": api_key[:6] + "..." if api_key else None,
+        "configPath": CONFIG_PATH
+    }
 
 
 def cmd_search(args):
@@ -405,7 +416,8 @@ def cmd_watch(args):
             print("タイムアウトしました", file=sys.stderr)
             return None
         req = urllib.request.Request(urllib.parse.urljoin(base_url, "api/documents/events"),
-                                     headers={"Authorization": f"Bearer {api_key}", "Accept": "text/event-stream"})
+                                     headers={"Authorization": f"Bearer {api_key}", "Accept": "text/event-stream",
+                                              "User-Agent": USER_AGENT})
         timer = None
         try:
             with urllib.request.urlopen(req, timeout=WATCH_IDLE_TIMEOUT) as res:
@@ -455,6 +467,7 @@ def cmd_watch(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Document Manager API client")
+    parser.add_argument("-V", "--version", action="version", version=f"dm_client.py {CLIENT_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("config", help="接続先の確認").set_defaults(func=cmd_config)
     p = sub.add_parser("search", help="一覧・検索")

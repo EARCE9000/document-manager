@@ -80,6 +80,7 @@ def check_zip(data, label):
 
 
 def smoke_clients(env, workdir):
+    client_versions = set()
     for kind in ("python", "node"):
         print(f"[client: {kind}]")
         name = f"smoke-{kind}.md"
@@ -88,6 +89,11 @@ def smoke_clients(env, workdir):
 
         config = json.loads(run_client(kind, ["config"], env).stdout)
         check(config["baseUrl"] == BASE_URL, "config: 接続先を環境変数から読める")
+
+        # バージョンはPython版・Node.js版で必ず揃える(片方だけ更新される事故を防ぐ)
+        printed = run_client(kind, ["--version"], env).stdout.strip()
+        check(printed.endswith(config["clientVersion"]), f"--version と config のバージョンが一致する ({printed})")
+        client_versions.add(config["clientVersion"])
 
         v1 = json.loads(run_client(kind, ["upload", path, "--tags", "smoke"], env).stdout)
         check(v1["entryFile"] == name and v1["tags"] == ["smoke"], "upload: 新規アップロード+タグ")
@@ -122,6 +128,11 @@ def smoke_clients(env, workdir):
         smoke_project_commands(kind, env, workdir, v2["id"])
         smoke_spec(kind, env)
         smoke_watch(kind, env, workdir)
+
+    check(len(client_versions) == 1, f"Python版とNode.js版のバージョンが一致する ({sorted(client_versions)})")
+    # SKILL.md にも同じバージョンを書いておく(エージェントが「どの版か」を答えられるように)
+    skill_md = open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8").read()
+    check(f"バージョン: {next(iter(client_versions))}" in skill_md, "SKILL.md のバージョン表記がクライアントと一致する")
 
 
 def smoke_edit_commands(kind, env, doc_id, archived_id):
