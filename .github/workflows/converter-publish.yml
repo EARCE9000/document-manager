@@ -120,11 +120,14 @@ jobs:
         run: |
           set -euo pipefail
           repo="earce9000/document-manager-converter"
-          jwt=$(curl -s -H "Content-Type: application/json" \
+          # 応答は秘密情報を含むため、本文は出さずに状態だけを出す
+          login=$(curl -s -o /tmp/login.json -w "%{http_code}" -H "Content-Type: application/json" \
             -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
-            https://hub.docker.com/v2/users/login/ | jq -r .token)
-          if [ -z "$jwt" ] || [ "$jwt" = "null" ]; then
-            echo "Docker Hub へログインできなかったため、タグの整理は行いません"
+            https://hub.docker.com/v2/users/login/)
+          jwt=$(jq -r '.token // empty' /tmp/login.json)
+          echo "ログイン: HTTP ${login} / トークン取得: $([ -n "$jwt" ] && echo あり || echo なし)"
+          if [ -z "$jwt" ]; then
+            echo "ログインできなかったため、タグの整理は行いません(トークンの権限・2要素認証の設定を確認してください)"
             exit 0
           fi
           # 日時タグ(YYYYMMDD_HHMMSS)だけを対象にし、新しい3件を残して削除する。
@@ -136,7 +139,8 @@ jobs:
             | sort -r \
             | tail -n +4 \
             | while read -r tag; do
-                echo "削除: ${tag}"
-                curl -s -X DELETE -H "Authorization: JWT ${jwt}" \
-                  "https://hub.docker.com/v2/repositories/${repo}/tags/${tag}/" || true
+                code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                  -H "Authorization: JWT ${jwt}" \
+                  "https://hub.docker.com/v2/repositories/${repo}/tags/${tag}/" || echo "000")
+                echo "削除: ${tag} -> HTTP ${code}"
               done
