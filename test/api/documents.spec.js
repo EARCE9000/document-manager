@@ -172,6 +172,57 @@ test.describe.serial("文書ライフサイクル", () => {
 		expect(res.status()).toBe(400);
 	});
 
+	// Excel/Word/PowerPoint は、アップロード時に概要プレビュー用のHTMLへ変換し、
+	// 中身のテキストを全文検索の対象にする(元の体裁は再現しない)
+	const officeFixture = (name) => require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "fixtures", "office", name));
+	for (const {name, type, keyword} of [
+		{name: "sample.xlsx", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", keyword: "サンプル商事"},
+		{name: "sample.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", keyword: "疎通確認"},
+		{name: "sample.pptx", type: "application/vnd.openxmlformats-officedocument.presentationml.presentation", keyword: "退職者の資料"}
+	]) {
+		test(`${name} をアップロードすると概要プレビューが作られ、中身で検索できる`, async ({request}) => {
+			const uploaded = await request.post("api/documents", {
+				headers: rw,
+				multipart: {uploadfile: {name, mimeType: type, buffer: officeFixture(name)}}
+			});
+			expect(uploaded.status()).toBe(200);
+			const body = await uploaded.json();
+			expect(body.previewFile).toBe("preview.html");
+
+			// プレビューは変換後のHTML(スクリプトはCSPで無効化される)
+			const preview = await request.get(`api/documents/${body.id}/file`, {headers: rw});
+			expect(preview.status()).toBe(200);
+			expect(preview.headers()["content-type"]).toContain("text/html");
+			expect(preview.headers()["content-security-policy"]).toContain("script-src 'none'");
+			const html = await preview.text();
+			expect(html).toContain(keyword);
+			expect(html).toContain("概要を表示しています");
+
+			// ダウンロードは元のファイル(ZIPで始まるOOXML)
+			const download = await request.get(`api/documents/${body.id}/file?download=1`, {headers: rw});
+			expect(download.status()).toBe(200);
+			expect((await download.body()).subarray(0, 2).toString("latin1")).toBe("PK");
+
+			// 中身が全文検索でヒットする
+			const found = await (await request.get(`api/documents?q=${encodeURIComponent(keyword)}`, {headers: rw})).json();
+			expect(found.some((d) => d.id === body.id)).toBe(true);
+
+			await request.delete(`api/documents/${body.id}`, {headers: rw});
+		});
+	}
+
+	test("Office文書として読めないファイルはプレビュー不可(登録・ダウンロードはできる)", async ({request}) => {
+		const uploaded = await request.post("api/documents", {
+			headers: rw,
+			multipart: {uploadfile: {name: "壊れた.xlsx", mimeType: "application/octet-stream", buffer: Buffer.from("this is not a zip")}}
+		});
+		expect(uploaded.status()).toBe(200);
+		const body = await uploaded.json();
+		expect(body.previewFile).toBeNull();
+		expect((await request.get(`api/documents/${body.id}/file?download=1`, {headers: rw})).status()).toBe(200);
+		await request.delete(`api/documents/${body.id}`, {headers: rw});
+	});
+
 	test("プレビュー画像(previewfile)が svg/png 以外だと400", async ({request}) => {
 		const res = await request.post("api/documents", {
 			headers: rw,

@@ -26,6 +26,11 @@ const VectorSearch = require("../app/lib/vector-search.js");
 const ApiKeys = require("../app/lib/api-keys.js");
 const AllowedUsers = require("../app/lib/allowed-users.js");
 const {extractDrawioText} = require("../app/lib/drawio.js");
+const {convertOfficeDocument, LIMITS} = require("../app/lib/office.js");
+
+// Office(Excel/Word/PowerPoint)のテストは、手書きのXMLではなく実際のアプリが書き出した
+// ファイル(test/fixtures/office/。tools/make-office-fixtures.py で生成)に対して行う
+const officeFixture = (name) => fs.readFileSync(path.join(__dirname, "fixtures", "office", name));
 
 test("computeByteRange", () => {
 	assert.deepEqual(computeByteRange(undefined, 16), {satisfiable: true, start: 0, end: 15, partial: false});
@@ -142,6 +147,56 @@ test("extractDrawioText: 壊れた入力でも例外を投げず空文字を返�
 	assert.equal(extractDrawioText(""), "");
 	assert.equal(extractDrawioText(null), "");
 	assert.equal(typeof extractDrawioText("<mxfile><diagram>@@not-base64@@</diagram></mxfile>"), "string");
+});
+
+test("convertOfficeDocument: Excel(シート名・日付・真偽値・大きい表の打ち切り)", () => {
+	const result = convertOfficeDocument(officeFixture("sample.xlsx"), ".xlsx");
+	assert.ok(result != null, "変換できる");
+	assert.match(result.bodyHtml, /<h2>売上<\/h2>/, "シート名が見出しになる");
+	assert.match(result.text, /サンプル商事/);
+	// 日付は連番(45000台)ではなく日付として表示する。時刻付きのセルは時刻まで出す
+	assert.match(result.text, /2026\/09\/01/);
+	assert.match(result.text, /2026\/09\/20 14:30/);
+	assert.doesNotMatch(result.text, /46266/, "日付がシリアル値のまま出ない");
+	assert.match(result.text, /TRUE/, "真偽値は TRUE/FALSE で出る");
+	assert.match(result.bodyHtml, /先頭300行/, "大きいシートは打ち切って、その旨を出す");
+	const rowCount = (result.bodyHtml.match(/<tr>/g) || []).length;
+	assert.ok(rowCount <= LIMITS.rowsPerSheet * LIMITS.sheets, "打ち切り後の行数が上限に収まる");
+});
+
+test("convertOfficeDocument: Word(見出し・箇条書き・表)", () => {
+	const result = convertOfficeDocument(officeFixture("sample.docx"), ".docx");
+	assert.ok(result != null);
+	assert.match(result.bodyHtml, /<h2>文書管理システム 導入手順書<\/h2>/, "見出し1はh2になる");
+	assert.match(result.bodyHtml, /<h3>前提条件<\/h3>/, "見出し2はh3になる");
+	assert.match(result.bodyHtml, /<li>サーバーにDockerが導入されていること<\/li>/, "箇条書きはリストになる");
+	assert.match(result.bodyHtml, /<td>環境変数の設定<\/td>/, "表はテーブルになる");
+	assert.match(result.text, /疎通確認/, "表の中身も検索対象のテキストに入る");
+});
+
+test("convertOfficeDocument: PowerPoint(スライド順・タイトル・ノート)", () => {
+	const result = convertOfficeDocument(officeFixture("sample.pptx"), ".pptx");
+	assert.ok(result != null);
+	assert.match(result.bodyHtml, /<h2>1\. 文書管理システムのご提案<\/h2>/, "スライド番号とタイトルが出る");
+	assert.match(result.bodyHtml, /<h2>2\. 課題<\/h2>/);
+	assert.match(result.bodyHtml, /<li>最新版がどれか分からない<\/li>/);
+	assert.match(result.bodyHtml, /ノート: ここで実際の調査結果を紹介する/, "発表者ノートも出す");
+	assert.match(result.text, /退職者の資料が引き継がれない/);
+});
+
+test("convertOfficeDocument: 中身がHTMLとして解釈されないようエスケープする", () => {
+	// 文書の中身(セルの値・段落)は利用者が自由に書けるため、プレビューHTMLに素通ししない
+	const result = convertOfficeDocument(officeFixture("sample.xlsx"), ".xlsx");
+	assert.doesNotMatch(result.bodyHtml, /<script/i);
+	assert.ok(!result.bodyHtml.includes("<td><"), "セルの中にタグがそのまま入らない");
+});
+
+test("convertOfficeDocument: 対象外・壊れた入力では null を返す(例外を投げない)", () => {
+	assert.equal(convertOfficeDocument(Buffer.from("not a zip"), ".xlsx"), null);
+	assert.equal(convertOfficeDocument(officeFixture("sample.xlsx"), ".pdf"), null, "拡張子が対象外");
+	assert.equal(convertOfficeDocument(null, ".docx"), null);
+	// ZIPではあるが中身がOffice文書でない場合
+	assert.equal(convertOfficeDocument(zlib.gzipSync(Buffer.from("x")), ".pptx"), null);
 });
 
 test.after(() => {

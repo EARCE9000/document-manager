@@ -23,7 +23,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 ## 主な機能
 
 ### 文書管理
-- **対応形式**: `.html` / `.htm` / `.mhtml` / `.mht` / `.md` / `.markdown` / `.pdf` / `.svg` / `.png` / `.jpg` / `.jpeg` / `.csv` / `.tsv` / `.txt` / `.log` / `.json` / `.drawio`(実体は単一ファイル、1ファイル256MBまで。`.drawio`は画像を用意しなくてもそのままプレビューできる)
+- **対応形式**: `.html` / `.htm` / `.mhtml` / `.mht` / `.md` / `.markdown` / `.pdf` / `.svg` / `.png` / `.jpg` / `.jpeg` / `.csv` / `.tsv` / `.txt` / `.log` / `.json` / `.drawio` / `.xlsx` / `.xlsm` / `.docx` / `.docm` / `.pptx` / `.pptm`(実体は単一ファイル、1ファイル256MBまで。`.drawio`は画像を用意しなくてもそのままプレビューできる)
 - **保存先の切り替え**: 文書ファイルの実体は`STORAGE_BACKEND`環境変数でローカルディスク(既定)/S3(AWS)/GCS(Google Cloud Storage)を切り替えられる。アップロード・プレビュー変換・全文抽出・配信のすべてが共通のストレージ抽象層([lib/storage.js](app/lib/storage.js))経由になっており、S3/GCSモードでもアプリを経由してストリーミング配信(Range対応)するため認証・監査ログの挙動は変わらない。モード切替は「今後の保存先」の変更のみで、既存ファイルの自動移行は行わない
 - **メタDBの切り替え**: 文書メタデータ・タグ・プロジェクト・APIキー・ホワイトリスト・操作履歴・セッションを格納するDBは`DATABASE_BACKEND`環境変数でSQLite(既定・単一コンテナ向け)/PostgreSQL(RDS/Aurora, Cloud SQL/AlloyDB等)を切り替えられる。全DBアクセスが非同期の抽象層([lib/datastore.js](app/lib/datastore.js))経由のため、アプリロジックはバックエンドを意識しない。Postgresを選ぶとセッションもDBで共有され、複数インスタンスでの水平スケール(ECS/Cloud Run)に対応する
 - **プレビュー**
@@ -35,6 +35,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - csv/tsv: 1行目をヘッダーとしてHTMLテーブルに変換して表示(生テキストのままだと列が揃わず読みにくいため)
   - txt/log/json: ブラウザがネイティブに描画できるためそのまま表示(jsonはChrome/Firefox標準の折りたたみ可能なビューアが`sandbox`付きiframe内でも問題なく動作する)
   - drawio: サーバ側では画像化せず、**draw.io公式のビューア(`app/static/vendor/drawio/viewer-static.min.js`。Apache-2.0)を同梱し、ブラウザ上でXMLをそのまま描画する**。画像化を挟まないため図の大きさ・図形数に左右されず(実測: 4,000セル・731KBのXMLで約3.7秒)、複数ページの`.drawio`もツールバーのページ送りで切り替えられる。図のXMLは`GET api/documents/:id/file?source=1`で取得する(ダウンロード扱いにはせず監査ログにも残さない)。描画は[app/static/drawio-viewer.html](app/static/drawio-viewer.html)が行い、別ウィンドウ(`api/documents/:id/viewer`)もこのページへリダイレクトする。draw.ioの図はラベルにHTMLを書けるため、このページだけは`script-src 'self'`のCSPを付けて配信し、図に仕込まれたスクリプトが動かないようにしている(スクリプトは全て外部ファイルに分離)。ビューアの既定動作のうち外部(`viewer.diagrams.net`)に関わるものは全て無効化している: stencil・スタイル・数式(MathJax)等の取得先を自ドメイン配下へ差し替え、**図をクリックすると図の中身ごと第三者ページ(ライトボックス)が開く既定動作も止めている**。ページ自体も`default-src 'none'`のCSPで配信するため、取りこぼしがあってもブラウザ側で止まる(回帰は[test/api/preview-xss.e2e.js](test/api/preview-xss.e2e.js)で検証)。アップロード時にプレビュー画像(svg/png)を添えることもでき(同フォルダに `preview.<ext>` として保存)、ビューアで描画できなかった場合の代替として使う。実体(ダウンロード対象)は常に`.drawio`のまま保持する。XML内のページ名・図形ラベルは全文検索の対象になる
+  - xlsx/docx/pptx(Excel/Word/PowerPoint): **内容の概要**をHTMLへ変換して表示する([app/lib/office.js](app/lib/office.js))。OOXML(ZIP+XML)を直接読むため外部プロセス(LibreOffice等)も追加の依存も不要で、Excelはシートごとの表(日付書式のセルは日付として表示)、Wordは見出し・段落・箇条書き・表、PowerPointはスライドごとのタイトル・本文・発表者ノートを出す。**元の体裁(フォント・色・セル書式・図形・グラフ・画像)は再現しない**方針で、プレビュー冒頭にその旨を明示し、体裁の確認は原本のダウンロードに委ねる。取り出したテキストはそのまま全文検索の対象になる(表の中身・スライドのノートも含む)。大きな文書は表示を打ち切る(シート300行×50列・3000段落・200スライド。[app/lib/office.js](app/lib/office.js)の`LIMITS`)。ZIP爆弾対策として展開後サイズに上限を設けている。マクロ(`.xlsm`等のvbaProject)は読まず、サーバ側でファイルを開くこともしない。読めない/壊れたファイルはプレビュー不可として登録され、ダウンロードはできる
   - 変換結果は元ファイルと同じフォルダに `preview.html` として保存する。ダウンロードは常に元ファイルを返す
   - プレビュー用iframe(html/mhtml/md変換結果)は `sandbox` 属性でスクリプト実行を制限する
   - プレビュー右上のアイコンボタンから、ファイルへの直接リンクのコピー・ダウンロードができる
@@ -134,6 +135,7 @@ document-manager/
 │   │   ├── storage.js         # 文書ファイルの保存先抽象化 (ローカルディスク/S3/GCS。STORAGE_BACKENDで切替)
 │   │   ├── vector-search.js   # セマンティック検索(Weaviate連携、任意機能。WEAVIATE_URLで有効化)
 │   │   ├── drawio.js          # .drawio(XML/圧縮diagram)からのテキスト抽出(全文検索用)
+│   │   ├── office.js          # Excel/Word/PowerPoint(OOXML)→概要プレビューHTML+全文検索用テキスト
 │   │   ├── claude-skill.js    # AIエージェント用SkillのZIP生成(api/claude-skill.zip。Node標準のzlibのみ使用)
 │   │   ├── api-spec.js        # API仕様の単一の情報源(OpenAPI・AI向け利用ガイド・AIへの指示を生成)
 │   │   ├── document-links.js  # 関連文書(種類・方向を持たない文書同士の紐付け)

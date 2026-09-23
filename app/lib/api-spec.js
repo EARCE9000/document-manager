@@ -297,7 +297,8 @@ const GUIDE_SECTIONS = [
 		entries: [{id: "uploadDocument"}],
 		notes: [
 			"`multipart/form-data`、実体のフィールド名は `uploadfile`",
-			"対応拡張子: `.html` `.htm` `.mhtml` `.mht` `.md` `.markdown` `.pdf` `.svg` `.png` `.jpg` `.jpeg` `.csv` `.tsv` `.txt` `.log` `.json` `.drawio` (単一ファイルのみ)",
+			"対応拡張子: `.html` `.htm` `.mhtml` `.mht` `.md` `.markdown` `.pdf` `.svg` `.png` `.jpg` `.jpeg` `.csv` `.tsv` `.txt` `.log` `.json` `.drawio` `.xlsx` `.xlsm` `.docx` `.docm` `.pptx` `.pptm` (単一ファイルのみ)",
+			"Excel(`.xlsx`)/Word(`.docx`)/PowerPoint(`.pptx`)は、そのままアップロードすればよい。中身のテキスト(セル・段落・スライド・発表者ノート)が全文検索の対象になり、画面には内容の概要が表示される(書式・図・グラフは再現されない)",
 			"`.drawio` は**そのままアップロードすればよい**。画面側が図をそのまま描画するため、プレビュー用の画像を作る必要はない(複数ページもそのまま扱える)",
 			"  - `previewfile` フィールドで画像(`.svg`/`.png`/`.jpg`/`.jpeg`)を添えることもできるが任意で、図を描画できなかったときの代替として使われるだけ。**画像を用意するためだけに図を書き出す必要はない**。`.drawio` 以外では無視される",
 			"既存文書の新しい版として登録する場合は `previousId` フィールドに旧版の文書IDを指定する(任意)。旧版は自動的にアーカイブされ、タグとプロジェクトの登録(フォルダ・並び順)が新しい版へ引き継がれる。応答の `previousId`/`nextId` で版同士のつながりが分かる",

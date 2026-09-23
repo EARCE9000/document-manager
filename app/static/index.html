@@ -367,6 +367,9 @@
 	#documentList .docTag.json { background: #495057; }
 	#documentList .docTag.text { background: #868e96; }
 	#documentList .docTag.drawio { background: #e8590c; }
+	#documentList .docTag.excel { background: #217346; }
+	#documentList .docTag.word { background: #2b579a; }
+	#documentList .docTag.powerpoint { background: #c43e1c; }
 	#documentList .docTag.none { background: #999; }
 	#documentList .docMeta { font-size: 0.75em; color: #777; margin-top: 4px; }
 	#documentList .userTags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
@@ -1235,9 +1238,10 @@
 				</div>
 				<div id="uploadDropZone">
 					<div class="uploadHint">ここにファイルをドラッグ&amp;ドロップ<br>またはクリックして選択</div>
-					<div class="uploadExt">.html / .htm / .mhtml / .mht / .md / .markdown / .pdf / .svg / .png / .jpg / .jpeg / .csv / .tsv / .txt / .log / .json / .drawio</div>
+					<div class="uploadExt">.html / .htm / .mhtml / .mht / .md / .markdown / .pdf / .svg / .png / .jpg / .jpeg / .csv / .tsv / .txt / .log / .json / .drawio / .xlsx / .docx / .pptx</div>
+					<div class="uploadExt">Excel / Word / PowerPoint は内容の概要をプレビューし、全文検索の対象になります(書式・図・グラフは再現しません)</div>
 					<div class="uploadExt">.drawio はそのままプレビューできます(画像は不要。一緒に画像を選んだ場合は、表示できないときの代わりに使われます)</div>
-					<input type="file" id="uploadfile" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio" multiple style="display:none;">
+					<input type="file" id="uploadfile" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio,.xlsx,.xlsm,.docx,.docm,.pptx,.pptm" multiple style="display:none;">
 				</div>
 			</div>
 			<ul id="documentList"></ul>
@@ -1261,7 +1265,7 @@
 					<button type="button" id="previewLinkPreviousButton" class="previewActionButton previewWriteAction" title="旧版を紐づける" aria-label="旧版を紐づける" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
 					</button>
-					<input type="file" id="reviseFileInput" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio" multiple style="display:none;">
+					<input type="file" id="reviseFileInput" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio,.xlsx,.xlsm,.docx,.docm,.pptx,.pptm" multiple style="display:none;">
 					<button type="button" id="previewTagEditButton" class="previewActionButton previewWriteAction" title="タグを編集" aria-label="タグを編集" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L4 3a1 1 0 0 0-1 1l.24 5.59a2 2 0 0 0 .59 1.41l9.58 9.59a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83Z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
 					</button>
@@ -1757,6 +1761,9 @@ const tagClassFor = (entryFile) => {
 	if (ext === "json") return "json";
 	if (ext === "txt" || ext === "log") return "text";
 	if (ext === "drawio") return "drawio";
+	if (ext === "xlsx" || ext === "xlsm") return "excel";
+	if (ext === "docx" || ext === "docm") return "word";
+	if (ext === "pptx" || ext === "pptm") return "powerpoint";
 	return "html";
 };
 

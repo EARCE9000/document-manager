@@ -56,7 +56,13 @@ const MIME_BY_EXT = {
 	".md": "text/markdown", ".markdown": "text/markdown", ".pdf": "application/pdf",
 	".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 	".csv": "text/csv", ".tsv": "text/tab-separated-values", ".txt": "text/plain", ".log": "text/plain",
-	".json": "application/json", ".drawio": "application/xml"
+	".json": "application/json", ".drawio": "application/xml",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".docm": "application/vnd.ms-word.document.macroEnabled.12",
+	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.12"
 };
 
 const loadConfig = () => {

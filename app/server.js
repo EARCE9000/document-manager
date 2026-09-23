@@ -625,6 +625,7 @@ const {PDFParse} = require("pdf-parse");
 const ds = require("./lib/datastore.js");
 const VectorSearch = require("./lib/vector-search.js");
 const {extractDrawioText} = require("./lib/drawio.js");
+const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -636,7 +637,10 @@ const NATIVE_PREVIEW_EXTENSIONS = [".html", ".htm", ".pdf"];
 // .drawio のまま保持し、プレビューはアップロード時に一緒に送られた画像(svg/png等)を用いる
 // (サーバ側ではXML→画像変換はしない)。XML内のラベルは全文検索用に抽出する。
 const DRAWIO_EXTENSIONS = [".drawio"];
-const ENTRY_FILE_EXTENSIONS = [...NATIVE_PREVIEW_EXTENSIONS, ...MHTML_EXTENSIONS, ...MARKDOWN_EXTENSIONS, ...IMAGE_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS, ...DRAWIO_EXTENSIONS];
+// Excel/Word/PowerPoint(OOXML)。ブラウザは描画できないため、アップロード時に概要プレビュー用の
+// HTMLへ変換する(lib/office.js)。元の体裁は再現しない。実体は元のまま保持しダウンロードできる
+const OFFICE_FILE_EXTENSIONS = [...OFFICE_EXTENSIONS];
+const ENTRY_FILE_EXTENSIONS = [...NATIVE_PREVIEW_EXTENSIONS, ...MHTML_EXTENSIONS, ...MARKDOWN_EXTENSIONS, ...IMAGE_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS, ...DRAWIO_EXTENSIONS, ...OFFICE_FILE_EXTENSIONS];
 const PREVIEW_FILENAME = "preview.html";
 // .drawio に添付できるプレビュー画像の拡張子(IMAGE_EXTENSIONSと同じ。保存名は preview<ext>)
 const DRAWIO_PREVIEW_EXTENSIONS = IMAGE_EXTENSIONS;
@@ -672,7 +676,13 @@ const CONTENT_TYPE_BY_EXTENSION = {
 	".txt": "text/plain; charset=utf-8",
 	".log": "text/plain; charset=utf-8",
 	".json": "application/json; charset=utf-8",
-	".drawio": "application/xml; charset=utf-8"
+	".drawio": "application/xml; charset=utf-8",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".docm": "application/vnd.ms-word.document.macroEnabled.12",
+	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.12"
 };
 
 // 年月(YYYYMM)
@@ -719,6 +729,28 @@ tbody tr:nth-child(even) { background: #fafbfc; }
 </style>
 </head><body><div class="tableWrap"><table>${tableHtml}</table></div></body></html>`;
 
+// Office(Excel/Word/PowerPoint)の概要プレビュー。元の体裁は再現しないため、
+// 「概要表示であること」を上部に明示し、原本はダウンロードしてもらう
+const OFFICE_PREVIEW_TEMPLATE = (bodyHtml) => `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none';">
+<style>
+body { font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; margin: 1em; line-height: 1.7; color: #24292f; }
+.previewNotice { background: #fff8e6; border: 1px solid #f0d58c; color: #8a6d00; border-radius: 4px; padding: 6px 10px; font-size: 0.85em; margin-bottom: 1em; }
+h2 { font-size: 1.1em; border-bottom: 1px solid #ddd; padding-bottom: 0.2em; margin-top: 1.6em; }
+h3 { font-size: 1em; }
+section.slide { border-left: 3px solid #9cc2ff; padding-left: 0.8em; }
+.tableWrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 0.85em; white-space: nowrap; }
+td, th { border: 1px solid #ddd; padding: 0.3em 0.7em; text-align: left; }
+tr:nth-child(even) td { background: #fafbfc; }
+ul { margin: 0.3em 0; }
+.note { color: #666; font-size: 0.85em; }
+</style>
+</head><body>
+<div class="previewNotice">内容の概要を表示しています(書式・図・グラフは再現しません)。原本はダウンロードしてください。</div>
+${bodyHtml}</body></html>`;
+
 const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 // CSV/TSVをHTMLテーブルに変換する(1行目をヘッダーとして扱う)
@@ -735,8 +767,14 @@ const buildCsvPreviewHtml = (csvText, extension) => {
 };
 
 // mhtml/mht・md/markdown・csv/tsv を単一HTMLに変換する (対象外/失敗時は null を返し、プレビュー不可として扱う)
-const buildPreviewFile = async (documentId, originalName, extension) => {
+const buildPreviewFile = async (documentId, originalName, extension, officeContent) => {
 	try {
+		// Office文書は概要HTMLへ変換する(変換できなければプレビュー不可。ダウンロードは可能)
+		if (OFFICE_FILE_EXTENSIONS.includes(extension)) {
+			if (officeContent == null) return null;
+			await storage.writeFile(documentId, PREVIEW_FILENAME, Buffer.from(OFFICE_PREVIEW_TEMPLATE(officeContent.bodyHtml), "utf-8"));
+			return PREVIEW_FILENAME;
+		}
 		if (MHTML_EXTENSIONS.includes(extension)) {
 			const {convert} = await import("mhtml-to-html");
 			const mhtmlContent = (await storage.readFile(documentId, originalName)).toString("utf-8");
@@ -776,8 +814,12 @@ const storeDrawioPreview = async (documentId, previewUpload) => {
 };
 
 // 全文検索用に本文のプレーンテキストを抽出する (失敗時は null。検索対象から外れるだけで他の処理には影響しない)
-const extractContentText = async (documentId, originalName, extension, previewFile) => {
+const extractContentText = async (documentId, originalName, extension, previewFile, officeContent) => {
 	try {
+		// Office文書はプレビュー用の変換で取り出したテキストをそのまま使う(二重に解析しない)
+		if (OFFICE_FILE_EXTENSIONS.includes(extension)) {
+			return officeContent == null || officeContent.text === "" ? null : officeContent.text;
+		}
 		// .drawio はXMLなので、ページ名・図形ラベルを入口ファイル(=XML)から直接抽出する
 		// (プレビューは画像のためテキストは取れない。画像向け分岐より先に捕捉する)
 		if (DRAWIO_EXTENSIONS.includes(extension)) {
@@ -1385,7 +1427,7 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		const originalName = path.basename(fixUploadedFilenameEncoding(String(uploadfile.name || "")));
 		const extension = path.extname(originalName).toLowerCase();
 		if (originalName === "" || !ENTRY_FILE_EXTENSIONS.includes(extension)) {
-			res.status(400).json({error: "html / mhtml / markdown / pdf / svg / png / jpeg / csv / tsv / txt / log / json / drawio ファイルのみアップロード可能です"});
+			res.status(400).json({error: "html / mhtml / markdown / pdf / svg / png / jpeg / csv / tsv / txt / log / json / drawio / xlsx / docx / pptx ファイルのみアップロード可能です"});
 			return;
 		}
 
@@ -1425,10 +1467,18 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 
 		// .drawio はXML→画像変換をサーバで行わず、添付されたプレビュー画像をそのまま採用する
 		// (無ければ null=プレビュー不可)。それ以外は従来どおり変換/ネイティブ描画を判定する
+		// Office文書(Excel/Word/PowerPoint)は、プレビュー用HTMLと全文検索用テキストを
+		// 1回の変換でまとめて作る(ZIP+XMLの解析を二度行わないため)
+		const officeContent = OFFICE_FILE_EXTENSIONS.includes(extension)
+			? convertOfficeDocument(uploadfile.data, extension)
+			: null;
+		if (officeContent == null && OFFICE_FILE_EXTENSIONS.includes(extension)) {
+			logger.warn({documentId: id, entryFile: originalName}, "::api/documents:upload:officeConvertFailed");
+		}
 		const previewFile = isDrawio
 			? await storeDrawioPreview(id, previewUpload)
-			: await buildPreviewFile(id, originalName, extension);
-		const extractedText = await extractContentText(id, originalName, extension, previewFile);
+			: await buildPreviewFile(id, originalName, extension, officeContent);
+		const extractedText = await extractContentText(id, originalName, extension, previewFile, officeContent);
 		const {contentText, truncated} = truncateContentText(extractedText);
 		if (truncated) {
 			logger.info({documentId: id, entryFile: originalName, chars: extractedText.length, kept: CONTENT_TEXT_MAX_CHARS}, "::api/documents:upload:contentTextTruncated");

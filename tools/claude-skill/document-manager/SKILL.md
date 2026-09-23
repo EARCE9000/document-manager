@@ -1,12 +1,12 @@
 ---
 name: document-manager
-description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索(全文/意味検索)・版履歴の確認・ダウンロード・タグ付け・メモ・アーカイブと復元・関連文書の紐づけ・プロジェクトやフォルダへの配置・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「タグを付けて」「プロジェクトに入れて」「アーカイブして」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io等の成果物をDocument Managerへ保存・更新するときに使う。
+description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索(全文/意味検索)・版履歴の確認・ダウンロード・タグ付け・メモ・アーカイブと復元・関連文書の紐づけ・プロジェクトやフォルダへの配置・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「タグを付けて」「プロジェクトに入れて」「アーカイブして」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io/Excel・Word・PowerPoint等の成果物をDocument Managerへ保存・更新するときに使う。
 ---
 
 # Document Manager
 
-Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキスト / JSON / draw.io を
-アップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
+Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキスト / JSON / draw.io /
+Excel・Word・PowerPoint をアップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
 このSkillのディレクトリにある `scripts/` の同梱クライアントを使う。curlを直接組み立てる必要はない。
 
 このSkillのバージョン: 1.0.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
@@ -73,7 +73,10 @@ APIキーはチャットの応答やコミットに書き出さない。
 - `--tags a,b`: タグを追加する(旧版から引き継いだタグは残る)
 - `--project <プロジェクト> [--folder <フォルダ>]`: 登録と同時にプロジェクトへ配置する(新しい版として登録した場合、配置は旧版から自動で引き継がれるので、置き場所を変えたいときだけ使う)
 
-対応拡張子: `.html .htm .mhtml .mht .md .markdown .pdf .svg .png .jpg .jpeg .csv .tsv .txt .log .json .drawio`(1ファイルずつ)
+対応拡張子: `.html .htm .mhtml .mht .md .markdown .pdf .svg .png .jpg .jpeg .csv .tsv .txt .log .json .drawio .xlsx .xlsm .docx .docm .pptx .pptm`(1ファイルずつ)
+
+Excel / Word / PowerPoint もそのままアップロードしてよい。中身のテキスト(セル・段落・スライド・発表者ノート)が
+全文検索の対象になり、画面では内容の概要が表示される(書式・図・グラフは再現されない)。
 
 ### draw.io の図(`.drawio`)
 
