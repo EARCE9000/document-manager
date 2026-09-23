@@ -54,9 +54,10 @@ services:
         ipv4_address: ${DOCUMENT_MANAGER_IP:?リバースプロキシが向いている固定IPを設定してください}
       # Weaviate・推論サーバーとの通信用(外部には出さない)
       document_manager_internal:
+    # converterは依存に入れない。変換は無くても成立する機能(概要プレビューに退避する)であり、
+    # converterのイメージ取得や起動に失敗したときに、アプリまで起動しなくなるのを避けるため
     depends_on:
       - weaviate
-      - converter
 
   # Office文書(Excel/Word/PowerPoint)をPDFへ変換するサービス(LibreOffice同梱)。
   # 信用できないファイルを開くソフトのため、次の条件で隔離する:
