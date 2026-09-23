@@ -34,7 +34,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - svg/png/jpg/jpeg: ブラウザがネイティブに描画できるためそのまま表示(全文検索の対象にはならない。svgに埋め込まれたスクリプトは`sandbox`属性により実行されない)
   - csv/tsv: 1行目をヘッダーとしてHTMLテーブルに変換して表示(生テキストのままだと列が揃わず読みにくいため)
   - txt/log/json: ブラウザがネイティブに描画できるためそのまま表示(jsonはChrome/Firefox標準の折りたたみ可能なビューアが`sandbox`付きiframe内でも問題なく動作する)
-  - drawio: サーバ側では画像化せず、**draw.io公式のビューア(`app/static/vendor/drawio/viewer-static.min.js`。Apache-2.0)を同梱し、ブラウザ上でXMLをそのまま描画する**。画像化を挟まないため図の大きさ・図形数に左右されず(実測: 4,000セル・731KBのXMLで約3.7秒)、複数ページの`.drawio`もツールバーのページ送りで切り替えられる。図のXMLは`GET api/documents/:id/file?source=1`で取得する(ダウンロード扱いにはせず監査ログにも残さない)。描画は[app/static/drawio-viewer.html](app/static/drawio-viewer.html)が行い、別ウィンドウ(`api/documents/:id/viewer`)もこのページへリダイレクトする。draw.ioの図はラベルにHTMLを書けるため、このページだけは`script-src 'self'`のCSPを付けて配信し、図に仕込まれたスクリプトが動かないようにしている(スクリプトは全て外部ファイルに分離)。ビューアの外部通信(stencil等の`viewer.diagrams.net`からの取得)は無効化しており、図の内容が外部に出ることはない。アップロード時にプレビュー画像(svg/png)を添えることもでき(同フォルダに `preview.<ext>` として保存)、ビューアで描画できなかった場合の代替として使う。実体(ダウンロード対象)は常に`.drawio`のまま保持する。XML内のページ名・図形ラベルは全文検索の対象になる
+  - drawio: サーバ側では画像化せず、**draw.io公式のビューア(`app/static/vendor/drawio/viewer-static.min.js`。Apache-2.0)を同梱し、ブラウザ上でXMLをそのまま描画する**。画像化を挟まないため図の大きさ・図形数に左右されず(実測: 4,000セル・731KBのXMLで約3.7秒)、複数ページの`.drawio`もツールバーのページ送りで切り替えられる。図のXMLは`GET api/documents/:id/file?source=1`で取得する(ダウンロード扱いにはせず監査ログにも残さない)。描画は[app/static/drawio-viewer.html](app/static/drawio-viewer.html)が行い、別ウィンドウ(`api/documents/:id/viewer`)もこのページへリダイレクトする。draw.ioの図はラベルにHTMLを書けるため、このページだけは`script-src 'self'`のCSPを付けて配信し、図に仕込まれたスクリプトが動かないようにしている(スクリプトは全て外部ファイルに分離)。ビューアの既定動作のうち外部(`viewer.diagrams.net`)に関わるものは全て無効化している: stencil・スタイル・数式(MathJax)等の取得先を自ドメイン配下へ差し替え、**図をクリックすると図の中身ごと第三者ページ(ライトボックス)が開く既定動作も止めている**。ページ自体も`default-src 'none'`のCSPで配信するため、取りこぼしがあってもブラウザ側で止まる(回帰は[test/api/preview-xss.e2e.js](test/api/preview-xss.e2e.js)で検証)。アップロード時にプレビュー画像(svg/png)を添えることもでき(同フォルダに `preview.<ext>` として保存)、ビューアで描画できなかった場合の代替として使う。実体(ダウンロード対象)は常に`.drawio`のまま保持する。XML内のページ名・図形ラベルは全文検索の対象になる
   - 変換結果は元ファイルと同じフォルダに `preview.html` として保存する。ダウンロードは常に元ファイルを返す
   - プレビュー用iframe(html/mhtml/md変換結果)は `sandbox` 属性でスクリプト実行を制限する
   - プレビュー右上のアイコンボタンから、ファイルへの直接リンクのコピー・ダウンロードができる
@@ -510,3 +510,9 @@ docker run -d \
 [MIT License](LICENSE)
 
 依存パッケージ(直接依存・間接依存を含む)は MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause / ISC / 0BSD / BlueOak-1.0.0 のみで構成されており、コピーレフト系ライセンス(GPL/AGPL/LGPL等)は含まれない。
+
+同梱している第三者のファイル:
+
+| ファイル | 出典 | ライセンス |
+|---|---|---|
+| [app/static/vendor/drawio/viewer-static.min.js](app/static/vendor/drawio/viewer-static.min.js) | [jgraph/drawio](https://github.com/jgraph/drawio) v31.4.6 | Apache-2.0([全文](app/static/vendor/drawio/LICENSE)) |

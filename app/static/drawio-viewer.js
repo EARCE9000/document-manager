@@ -46,6 +46,9 @@
 			nav: true,
 			center: true,
 			border: 12,
+			// クリックで viewer.diagrams.net の「ライトボックス」を開かせない
+			// (開くと図の中身が社外のページへ渡ってしまう)
+			lightbox: false,
 			// 図の中のリンクは別タブで開く(このiframeの中で遷移させない)
 			"target-blank": true
 		}));
