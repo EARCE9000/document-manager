@@ -7,7 +7,10 @@
  * 外部に公開しない前提のため認証は持たない(composeで内部ネットワークに閉じる)。
  *
  *   GET  /health          稼働確認。{status, apiVersion, libreOffice} を返す
- *   POST /convert         本体に変換対象のバイト列、X-Filename に元のファイル名。application/pdf を返す
+ *   POST /convert         本体に変換対象のバイト列、X-Extension に拡張子。application/pdf を返す
+ *
+ * ファイル名は受け取らない。医療機関の資料などでは**ファイル名自体に患者名・施設名が入り得る**ため、
+ * このサービスには拡張子と、ログ用の文書ID(X-Document-Id)しか渡さない。
  *
  * 設計上の要点:
  *   - LibreOfficeは同じユーザープロファイルを共有すると多重起動で失敗する。リクエストごとに
@@ -27,12 +30,16 @@ const {spawn, execFile} = require("node:child_process");
 const API_VERSION = "1.0.0";
 const PORT = Number(process.env.LISTEN_PORT || 3000);
 const WORK_DIR = process.env.WORK_DIR || path.join(os.tmpdir(), "convert");
-// 1ファイルあたりの上限。既定はアプリ側のアップロード上限より小さめに取る
-const MAX_BYTES = Number(process.env.CONVERT_MAX_BYTES || 128 * 1024 * 1024);
+// 1ファイルあたりの上限。PowerPointは10MB前後になることがあるため、余裕を見て50MBを既定とする
+// (これを超える文書は変換せず、アプリ側の概要プレビューだけで扱う)
+const MAX_BYTES = Number(process.env.CONVERT_MAX_BYTES || 50 * 1024 * 1024);
 // 1件あたりの変換の打ち切り。超えたらsofficeを強制終了する
 const TIMEOUT_MS = Number(process.env.CONVERT_TIMEOUT_SECONDS || 120) * 1000;
 // 受け付ける拡張子(アプリ側で検証済みだが、ここでも絞っておく)
-const ALLOWED_EXTENSIONS = new Set([".xlsx", ".xlsm", ".docx", ".docm", ".pptx", ".pptm", ".odt", ".ods", ".odp"]);
+const ALLOWED_EXTENSIONS = new Set([".xlsx", ".docx", ".pptx", ".odt", ".ods", ".odp"]);
+// マクロ付きは受け付けない。LibreOfficeは既定でマクロを実行しないが、信用できないファイルを開く
+// ソフトに、わざわざマクロ入りを渡す理由がない(アプリ側では概要プレビューのみで扱う)
+const MACRO_EXTENSIONS = new Set([".xlsm", ".docm", ".pptm", ".xlsb"]);
 
 const log = (fields, message) => {
 	console.log(JSON.stringify({time: new Date().toISOString(), ...fields, msg: message}));
@@ -100,8 +107,10 @@ const runSoffice = (inputPath, outputDir, profileDir) => new Promise((resolve, r
 	});
 });
 
-const convert = async (buffer, filename) => {
-	const extension = path.extname(filename).toLowerCase();
+const convert = async (buffer, extension) => {
+	if (MACRO_EXTENSIONS.has(extension)) {
+		throw Object.assign(new Error(`マクロ付きのファイルは変換しません: ${extension}`), {status: 400});
+	}
 	if (!ALLOWED_EXTENSIONS.has(extension)) {
 		throw Object.assign(new Error(`対応していない拡張子です: ${extension || "(なし)"}`), {status: 400});
 	}
@@ -155,17 +164,19 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	const filename = decodeURIComponent(String(req.headers["x-filename"] || ""));
+	// ログにはファイル名ではなく文書ID(Document Manager側のID)を残す
+	const documentId = String(req.headers["x-document-id"] || "").slice(0, 100);
+	const extension = String(req.headers["x-extension"] || "").toLowerCase();
 	const started = Date.now();
 	try {
 		const buffer = await readBody(req);
-		const pdf = await runExclusively(() => convert(buffer, filename));
-		log({filename, bytes: buffer.length, pdfBytes: pdf.length, ms: Date.now() - started}, "converted");
+		const pdf = await runExclusively(() => convert(buffer, extension));
+		log({documentId, extension, bytes: buffer.length, pdfBytes: pdf.length, ms: Date.now() - started}, "converted");
 		res.writeHead(200, {"Content-Type": "application/pdf", "Content-Length": pdf.length});
 		res.end(pdf);
 	} catch (err) {
 		const status = err.status || 500;
-		log({filename, ms: Date.now() - started, status, error: err.message}, "convert failed");
+		log({documentId, extension, ms: Date.now() - started, status, error: err.message}, "convert failed");
 		sendJson(res, status, {error: err.message});
 	}
 });

@@ -23,11 +23,15 @@ const check = (condition, message) => {
 	if (!condition) failures++;
 };
 
-const convert = async (filename, buffer) => {
+const convert = async (extension, buffer, documentId = "202609_test") => {
 	const started = Date.now();
 	const res = await fetch(new URL("/convert", BASE_URL), {
 		method: "POST",
-		headers: {"Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(filename)},
+		headers: {
+			"Content-Type": "application/octet-stream",
+			"X-Extension": extension,
+			"X-Document-Id": documentId
+		},
 		body: buffer
 	});
 	const body = Buffer.from(await res.arrayBuffer());
@@ -43,7 +47,7 @@ const main = async () => {
 	console.log("[変換]");
 	for (const name of ["sample.xlsx", "sample.docx", "sample.pptx"]) {
 		const input = fs.readFileSync(path.join(FIXTURES, name));
-		const result = await convert(name, input);
+		const result = await convert(path.extname(name), input);
 		check(result.status === 200, `${name}: 200が返る`);
 		check(result.contentType === "application/pdf", `${name}: application/pdf で返る`);
 		check(result.body.subarray(0, 4).toString("latin1") === "%PDF", `${name}: PDFとして始まる`);
@@ -51,13 +55,17 @@ const main = async () => {
 	}
 
 	// 2回目以降は起動済みの資源を使い回せるか(初回だけ遅いのか、毎回遅いのかを見る)
-	const again = await convert("sample.pptx", fs.readFileSync(path.join(FIXTURES, "sample.pptx")));
+	const again = await convert(".pptx", fs.readFileSync(path.join(FIXTURES, "sample.pptx")));
 	console.log(`         sample.pptx(2回目): ${(again.ms / 1000).toFixed(1)}秒`);
 
 	console.log("[異常系]");
-	const unsupported = await convert("memo.txt", Buffer.from("text"));
+	const unsupported = await convert(".txt", Buffer.from("text"));
 	check(unsupported.status === 400, "対応していない拡張子は400");
-	const broken = await convert("broken.docx", Buffer.from("this is not a docx"));
+	// マクロ付きは受け付けない(中身が正しいxlsxでも、拡張子で拒否する)
+	const macro = await convert(".xlsm", fs.readFileSync(path.join(FIXTURES, "sample.xlsx")));
+	check(macro.status === 400, "マクロ付きの拡張子は400");
+	check(/マクロ/.test(macro.body.toString("utf-8")), "マクロを理由に拒否したと分かる");
+	const broken = await convert(".docx", Buffer.from("this is not a docx"));
 	check(broken.status >= 400, `壊れたファイルはエラーになる (${broken.status})`);
 	const stillAlive = await (await fetch(new URL("/health", BASE_URL))).json();
 	check(stillAlive.status === "ok", "異常系のあとも稼働し続ける");

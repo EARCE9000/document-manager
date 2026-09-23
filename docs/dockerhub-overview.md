@@ -13,7 +13,8 @@ Self-hosted document manager with versioning, tagging, full-text/semantic search
 # Document Manager
 
 *Self-hosted document management service for single-file documents (HTML / MHTML / Markdown / PDF / images /
-CSV / TSV / text / log / JSON / draw.io). Versioning, tagging, projects, full-text and semantic search, and a
+CSV / TSV / text / log / JSON / draw.io / Excel / Word / PowerPoint). Versioning, tagging, projects,
+full-text and semantic search, and a
 token-authenticated REST API designed for AI agents. Documentation below is in Japanese; see the
 [GitHub repository](https://github.com/EARCE9000/document-manager) for details.*
 
@@ -23,9 +24,12 @@ token-authenticated REST API designed for AI agents. Documentation below is in J
 Node.js (Express) 製で、このイメージを起動するだけで動きます。
 
 扱うのは「1ファイルで完結する文書」です。HTML / MHTML / Markdown / PDF / 画像(SVG・PNG・JPEG) /
-CSV・TSV / テキスト・ログ / JSON / draw.io に対応していて、どれもダウンロードせずにブラウザ上で
-そのまま閲覧できます。Markdown や MHTML はサーバー側で見やすい形に変換し、PDF はブラウザ標準の
-ビューアで開きます。draw.io は、アップロード時に一緒に渡した画像をプレビューに使います。
+CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint に対応していて、どれも
+ダウンロードせずにブラウザ上でそのまま閲覧できます。Markdown や MHTML はサーバー側で見やすい形に
+変換し、PDF はブラウザ標準のビューアで開きます。draw.io は公式ビューアを同梱しており、図をそのまま
+描画します(画像を別途用意する必要はありません)。Excel・Word・PowerPoint は**内容の概要**
+(シートの表・見出しと段落・スライドごとの本文と発表者ノート)を表示し、中身の文字は全文検索の
+対象になります(書式・図・グラフは再現しません。体裁の確認は原本をダウンロードしてください)。
 
 ![文書一覧とプレビュー](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/document-list.png)
 

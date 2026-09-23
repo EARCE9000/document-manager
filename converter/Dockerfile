@@ -10,7 +10,10 @@
 #
 # ベースはアプリと同じNode。変換の実行はLibreOffice、HTTPの受け口は標準モジュールだけで書く
 # (このサービスのために依存パッケージを増やさない)。
-FROM node:22-bookworm-slim
+#
+# trixie(Debian 13)を使う。安定版のまま LibreOffice 25.2 が入るため、
+# bookworm(7.4/2022年)より新しいOOXMLの再現度が期待できる(追加リポジトリは不要)。
+FROM node:22-trixie-slim
 
 # libreoffice-{writer,calc,impress}: 変換に必要な最小構成(libreoffice メタパッケージは
 #   Base・Draw・Javaまで引き込むため使わない)
