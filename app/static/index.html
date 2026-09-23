@@ -1256,6 +1256,9 @@
 					<a id="downloadLink" href="#" class="previewActionButton" title="ダウンロード" aria-label="ダウンロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
 					</a>
+					<button type="button" id="previewRenderButton" class="previewActionButton" title="体裁つきで開く(元のレイアウトをPDFで表示。別ウィンドウ)" aria-label="体裁つきで開く" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+					</button>
 					<button type="button" id="previewReviseButton" class="previewActionButton previewWriteAction" title="新しい版をアップロード(この文書はアーカイブされ、タグ・プロジェクトは新しい版へ引き継がれます)" aria-label="新しい版をアップロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 					</button>
@@ -1586,6 +1589,7 @@ const previewOpenExternalButton = document.getElementById("previewOpenExternalBu
 const similarFilesRow = document.getElementById("similarFilesRow");
 const versionHistoryRow = document.getElementById("versionHistoryRow");
 const previewReviseButton = document.getElementById("previewReviseButton");
+const previewRenderButton = document.getElementById("previewRenderButton");
 const reviseFileInput = document.getElementById("reviseFileInput");
 const memoArea = document.getElementById("memoArea");
 const memoTextarea = document.getElementById("memoTextarea");
@@ -2173,6 +2177,7 @@ const clearPreview = () => {
 	downloadLink.style.display = "none";
 	copyLinkButton.style.display = "none";
 	previewReviseButton.style.display = "none";
+	previewRenderButton.style.display = "none";
 	previewLinkPreviousButton.style.display = "none";
 	previewTagEditButton.style.display = "none";
 	previewArchiveButton.style.display = "none";
@@ -2215,6 +2220,12 @@ const showPreview = (doc) => {
 	const isArchived = typeof doc.archived === "boolean" ? doc.archived : currentView === "archive";
 	// 新しい版のアップロードは最新版(新版がまだ無い通常表示の文書)のみ対象
 	previewReviseButton.style.display = isArchived || doc.nextId != null ? "none" : "inline-flex";
+	// Office文書の体裁つき表示(PDF)。変換できているときだけ出す。
+	// 変換中・失敗・対象外のときはボタンを出さず、概要プレビューだけで使ってもらう
+	previewRenderButton.style.display = doc.renderStatus === "ok" ? "inline-flex" : "none";
+	previewRenderButton.onclick = () => {
+		window.open(`./api/documents/${encodeURIComponent(doc.id)}/file?render=1`, "_blank");
+	};
 	// 旧版の紐づけ(まだ旧版が無い文書)/紐付けの解除(既に旧版がある文書)
 	previewLinkPreviousButton.style.display = isArchived ? "none" : "inline-flex";
 	previewLinkPreviousButton.title = doc.previousId == null ? "旧版を紐づける" : "旧版の紐付けを解除";

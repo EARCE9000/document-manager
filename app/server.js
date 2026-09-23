@@ -626,6 +626,7 @@ const ds = require("./lib/datastore.js");
 const VectorSearch = require("./lib/vector-search.js");
 const {extractDrawioText} = require("./lib/drawio.js");
 const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
+const OfficeRender = require("./lib/office-render.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -863,6 +864,34 @@ const extractContentText = async (documentId, originalName, extension, previewFi
 	}
 };
 
+/* _/_/_/ Office文書の体裁つき表示(PDF変換) _/_/_/ */
+
+const SQL_UPDATE_RENDER_STATUS = `
+	UPDATE documents SET render_status = @status, render_error = @error, render_file = @file, rendered_at = @rendered_at WHERE id = @id
+`;
+
+// アップロード直後に裏で変換する。結果はDBに記録し、画面はSSEの更新通知で拾う。
+// 失敗しても文書の登録・検索・概要プレビューには影響させない(体裁つき表示が出ないだけ)
+const renderOfficeDocument = async (documentId, buffer, extension) => {
+	await ds.run(SQL_UPDATE_RENDER_STATUS, {id: documentId, status: "pending", error: null, file: null, rendered_at: null});
+	try {
+		const pdf = await OfficeRender.renderToPdf(buffer, extension, documentId);
+		await storage.writeFile(documentId, OfficeRender.RENDER_FILENAME, pdf);
+		await ds.run(SQL_UPDATE_RENDER_STATUS, {
+			id: documentId, status: "ok", error: null,
+			file: OfficeRender.RENDER_FILENAME, rendered_at: new Date().toISOString()
+		});
+		logger.info({documentId, bytes: pdf.length}, "::officeRender:ok");
+	} catch (err) {
+		await ds.run(SQL_UPDATE_RENDER_STATUS, {
+			id: documentId, status: "failed", error: String(err.message).slice(0, 500), file: null, rendered_at: null
+		});
+		logger.warn({documentId, error: err.message}, "::officeRender:failed");
+	}
+	// 画面の「体裁つきで開く」ボタンの出し分けを更新させる
+	broadcastDocumentsChanged();
+};
+
 // 検索用に保存する本文の上限(文字数)。巨大なログ・CSV等を1つ登録しただけでDBが膨らむのを防ぐ。
 // 超過分は検索対象から外れるだけで、ファイルの登録・プレビュー・ダウンロードには影響しない
 // (ファイル名・タグ・メモは量に関係なく検索できる)
@@ -896,7 +925,7 @@ const SQL_REINSERT_DOCUMENT_FTS = `
 `;
 
 const SQL_SELECT_ACTIVE_DOCUMENTS = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, content_truncated
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, content_truncated, render_status, render_error, render_file
 	FROM documents
 	WHERE deleted_at IS NULL
 	ORDER BY uploaded_at DESC
@@ -1012,14 +1041,14 @@ const searchDeletedDocuments = async (q) => {
 };
 
 const SQL_SELECT_ACTIVE_DOCUMENT_BY_ID = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, content_truncated
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, content_truncated, render_status, render_error, render_file
 	FROM documents
 	WHERE id = ? AND deleted_at IS NULL
 `;
 
 // アーカイブ済み文書もプレビュー/ダウンロードできるよう、状態を問わずidだけで引く
 const SQL_SELECT_DOCUMENT_BY_ID = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, deleted_by, deleted_at, content_truncated
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, deleted_by, deleted_at, content_truncated, render_status, render_error, render_file
 	FROM documents
 	WHERE id = ?
 `;
@@ -1033,7 +1062,7 @@ const SQL_SOFT_DELETE_DOCUMENT = `
 `;
 
 const SQL_SELECT_DELETED_DOCUMENTS = `
-	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, previous_id, content_truncated
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, previous_id, content_truncated, render_status, render_error, render_file
 	FROM documents
 	WHERE deleted_at IS NOT NULL
 	ORDER BY deleted_at DESC
@@ -1079,6 +1108,9 @@ const toDocumentResponse = async (row) => ({
 	nextId: (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [row.id]))?.id ?? null,
 	contentTruncated: row.content_truncated === 1,
 	contentTextMaxChars: CONTENT_TEXT_MAX_CHARS,
+	// 体裁つき表示(PDF変換)の状態。null=対象外、pending/ok/failed
+	renderStatus: row.render_status ?? null,
+	renderError: row.render_error ?? null,
 	tags: (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [row.id])).map((tagRow) => tagRow.tag)
 });
 
@@ -1526,6 +1558,12 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		// かかるため、awaitせずバックグラウンドで実行しアップロードAPIの応答をブロックしない。
 		// WEAVIATE_URL未設定/接続失敗でもアップロード自体は成功させる。詳細はlib/vector-search.js参照)
 		VectorSearch.indexDocument(id, contentText).catch((err) => logger.error({err, documentId: id}, "::api/documents:upload:indexDocument"));
+
+		// Office文書の体裁つき表示(PDF変換)。待たせないよう裏で進め、終わったらSSEで画面を更新する
+		if (OfficeRender.isRenderable(extension, uploadfile.data.length)) {
+			renderOfficeDocument(id, uploadfile.data, extension)
+				.catch((err) => logger.error({err, documentId: id}, "::api/documents:upload:renderOfficeDocument"));
+		}
 		logger.info({
 			audit: "upload",
 			user: req.authData.user_identifier,
@@ -1599,7 +1637,14 @@ const serveDocumentFile = async (req, res) => {
 		res.status(400).json({error: "source=1 は .drawio でのみ使えます"});
 		return;
 	}
-	const targetFile = isDownload || isDrawioSource ? document.entry_file : document.preview_file;
+	// ?render=1 は Office文書を体裁つき(PDF)で見るためのもの。変換できていなければ404
+	const isRender = "render" in req.query;
+	if (isRender && document.render_file == null) {
+		res.status(404).json({error: "体裁つきの表示は用意されていません", renderStatus: document.render_status ?? null});
+		return;
+	}
+	const targetFile = isRender ? document.render_file
+		: (isDownload || isDrawioSource ? document.entry_file : document.preview_file);
 	if (targetFile == null) {
 		res.status(404).json({error: "preview not available"});
 		return;
@@ -1672,6 +1717,36 @@ app.get(BASE_URL_PATH + 'api/documents/:id/viewer', async (req, res) => {
 		await serveDocumentFile(req, res);
 	} catch (err) {
 		handleServeFileError(err, req, res, "::api/documents/:id/viewer");
+	}
+});
+
+/**
+ * 体裁つき表示(PDF変換)の再実行。変換サービスが落ちていた・タイムアウトした場合に使う
+ */
+app.post(BASE_URL_PATH + 'api/documents/:id/render/retry', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!OfficeRender.isEnabled()) {
+			res.status(503).json({error: "体裁つき表示は設定されていません(OFFICE_RENDER_URL未設定)"});
+			return;
+		}
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
+		if (document == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const extension = path.extname(document.entry_file || "").toLowerCase();
+		if (!OfficeRender.isRenderable(extension, document.size)) {
+			res.status(400).json({error: "この文書は体裁つき表示の対象外です(対応: xlsx / docx / pptx、上限あり)"});
+			return;
+		}
+		const buffer = await storage.readFile(document.id, document.entry_file);
+		await renderOfficeDocument(document.id, buffer, extension);
+		const updated = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [document.id]);
+		res.status(200).json({id: document.id, renderStatus: updated.render_status, renderError: updated.render_error});
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/render/retry");
+		res.status(500).json({error: "Internal Error"});
 	}
 });
 
@@ -2815,6 +2890,13 @@ const main = async () => {
 	// 弾き、全文書のcontent_textを読み出すクエリ自体を実行しない(単体SQLiteモードと同じ動作にする)
 	if (VectorSearch.isEnabled()) {
 		VectorSearch.backfillMissingDocuments(await ds.all(SQL_SELECT_ACTIVE_DOCUMENTS_FOR_INDEXING));
+	}
+	// 体裁つき表示(PDF変換)の接続確認。繋がらなくてもアプリは動く(概要プレビューのみになる)ため、
+	// 起動を止めずにログだけ残す
+	if (OfficeRender.isEnabled()) {
+		OfficeRender.checkHealth().then((health) => {
+			if (health != null) logger.info({libreOffice: health.libreOffice, maxBytes: health.maxBytes}, "体裁つき表示: 変換サービスに接続できました");
+		});
 	}
 };
 

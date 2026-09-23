@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS documents (
 	vector_index_error TEXT,
 	vector_indexed_at TEXT,
 	previous_id TEXT,
-	content_truncated INTEGER NOT NULL DEFAULT 0
+	content_truncated INTEGER NOT NULL DEFAULT 0,
+	render_status TEXT,
+	render_error TEXT,
+	render_file TEXT,
+	rendered_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_documents_previous_id ON documents (previous_id);
 
@@ -187,6 +191,13 @@ const MIGRATIONS = [
 		DROP INDEX IF EXISTS idx_documents_content_text_trgm;
 		CREATE INDEX IF NOT EXISTS idx_documents_entry_file_trgm ON documents USING gin (entry_file gin_trgm_ops) WHERE deleted_at IS NULL;
 		CREATE INDEX IF NOT EXISTS idx_documents_content_text_trgm ON documents USING gin (content_text gin_trgm_ops) WHERE deleted_at IS NULL;
+	`},
+	// Office文書の体裁つき表示(PDF変換)の状態。変換サービス(converter)が無い構成では使われない
+	{version: 5, sql: `
+		ALTER TABLE documents ADD COLUMN IF NOT EXISTS render_status TEXT;
+		ALTER TABLE documents ADD COLUMN IF NOT EXISTS render_error TEXT;
+		ALTER TABLE documents ADD COLUMN IF NOT EXISTS render_file TEXT;
+		ALTER TABLE documents ADD COLUMN IF NOT EXISTS rendered_at TEXT;
 	`}
 ];
 

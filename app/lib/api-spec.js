@@ -71,7 +71,7 @@ const OPERATIONS = [
 	{
 		id: "getDocument", method: "get", path: "/api/documents/:id", role: "readonly", tag: "文書",
 		summary: "文書1件のメタ情報",
-		description: "アーカイブ済みも取得でき、`archived`で判別できる。`previousId`/`nextId`で前後の版が分かる。`contentTruncated`が`true`の文書は、本文が大きいため先頭(`contentTextMaxChars`文字)までしか全文検索の対象になっていない"
+		description: "`renderStatus`はOffice文書の体裁つき表示(PDF)の状態(`ok`なら`?render=1`で取得できる。`pending`は変換中、`failed`は失敗、nullは対象外)。アーカイブ済みも取得でき、`archived`で判別できる。`previousId`/`nextId`で前後の版が分かる。`contentTruncated`が`true`の文書は、本文が大きいため先頭(`contentTextMaxChars`文字)までしか全文検索の対象になっていない"
 	},
 	{
 		id: "listVersions", method: "get", path: "/api/documents/:id/versions", role: "readonly", tag: "文書",
@@ -117,7 +117,8 @@ const OPERATIONS = [
 		description: "`?download=1`で元ファイルを添付ファイルとして返す(付けない場合はプレビュー用ファイル)。Rangeリクエストに対応。`?source=1`は`.drawio`専用で、図のXMLをそのまま返す(画面のビューアが使う。ダウンロード扱いにはならない)",
 		params: [
 			{name: "download", in: "query", description: "1を指定すると元ファイルをダウンロードする"},
-			{name: "source", in: "query", description: "1を指定すると.drawioの図のXMLを返す(.drawio以外では400)"}
+			{name: "source", in: "query", description: "1を指定すると.drawioの図のXMLを返す(.drawio以外では400)"},
+			{name: "render", in: "query", description: "1を指定するとOffice文書を体裁つき(PDF)で返す(未変換・対象外では404)"}
 		],
 		produces: "application/octet-stream"
 	},
@@ -126,6 +127,13 @@ const OPERATIONS = [
 		summary: "文書のプレビュー(人へのリンク共有用)",
 		description: "未ログインで開くとログイン画面へ迂回し、ログイン後に元のURLへ戻る。人にURLを共有する場合はこちら(`/file`はAPIクライアント向けで、未認証時はJSONの401を返すだけ)。`.drawio`は同梱のdraw.ioビューアのページへリダイレクトする",
 		produces: "application/octet-stream", aiGuide: false
+	},
+	{
+		id: "retryRender", method: "post", path: "/api/documents/:id/render/retry", role: "readwrite", tag: "文書",
+		summary: "体裁つき表示(PDF変換)の再実行",
+		description: "変換サービスが停止していた・タイムアウトした場合に使う。対象は xlsx / docx / pptx。変換サービスが設定されていなければ503",
+		responses: {400: "体裁つき表示の対象外(拡張子・サイズ)", 503: "変換サービスが設定されていない"},
+		aiGuide: false
 	},
 	{
 		id: "archiveDocument", method: "delete", path: "/api/documents/:id", role: "readwrite", tag: "文書",
@@ -299,6 +307,7 @@ const GUIDE_SECTIONS = [
 			"`multipart/form-data`、実体のフィールド名は `uploadfile`",
 			"対応拡張子: `.html` `.htm` `.mhtml` `.mht` `.md` `.markdown` `.pdf` `.svg` `.png` `.jpg` `.jpeg` `.csv` `.tsv` `.txt` `.log` `.json` `.drawio` `.xlsx` `.xlsm` `.docx` `.docm` `.pptx` `.pptm` (単一ファイルのみ)",
 			"Excel(`.xlsx`)/Word(`.docx`)/PowerPoint(`.pptx`)は、そのままアップロードすればよい。中身のテキスト(セル・段落・スライド・発表者ノート)が全文検索の対象になり、画面には内容の概要が表示される(書式・図・グラフは再現されない)",
+			"  - 変換サービスが構成されている場合は、元の体裁のままのPDFも自動で用意される(`GET api/documents/:id/file?render=1`。状態は文書情報の`renderStatus`で分かる)",
 			"`.drawio` は**そのままアップロードすればよい**。画面側が図をそのまま描画するため、プレビュー用の画像を作る必要はない(複数ページもそのまま扱える)",
 			"  - `previewfile` フィールドで画像(`.svg`/`.png`/`.jpg`/`.jpeg`)を添えることもできるが任意で、図を描画できなかったときの代替として使われるだけ。**画像を用意するためだけに図を書き出す必要はない**。`.drawio` 以外では無視される",
 			"既存文書の新しい版として登録する場合は `previousId` フィールドに旧版の文書IDを指定する(任意)。旧版は自動的にアーカイブされ、タグとプロジェクトの登録(フォルダ・並び順)が新しい版へ引き継がれる。応答の `previousId`/`nextId` で版同士のつながりが分かる",

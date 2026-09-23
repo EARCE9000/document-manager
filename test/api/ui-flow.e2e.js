@@ -199,6 +199,51 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		});
 	});
 
+	// Office文書は概要プレビューが既定。変換サービスが使える構成では、
+	// 変換が終わった文書にだけ「体裁つきで開く」ボタンが出る
+	test("Officeの概要プレビューと、体裁つきで開くボタン", async ({page}) => {
+		const name = `e2e-office-${Date.now()}.xlsx`;
+		const fixture = require("node:fs").readFileSync(
+			require("node:path").join(__dirname, "..", "fixtures", "office", "sample.xlsx")
+		);
+
+		await page.goto("./");
+		await page.setInputFiles("#uploadfile", {
+			name,
+			mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			buffer: fixture
+		});
+		const item = page.locator("#documentList li", {hasText: name});
+		await expect(item).toBeVisible();
+		await expect(item.locator(".docTag")).toHaveText("EXCEL");
+
+		await test.step("概要プレビューが表示される", async () => {
+			await item.click();
+			await expect(page.locator("#previewTitle")).toHaveText(name);
+			const preview = page.frameLocator("#previewFrame");
+			await expect(preview.locator("body")).toContainText("概要を表示しています");
+			await expect(preview.locator("body")).toContainText("サンプル商事");
+			await expect(preview.locator("h2").first()).toHaveText("売上");
+		});
+
+		await test.step("変換が終わると「体裁つきで開く」が出る", async () => {
+			// 変換は裏で走るため、一覧の更新(SSE)で出てくるのを待つ
+			await expect(page.locator("#previewRenderButton")).toBeVisible({timeout: 15000});
+			// PDFはブラウザによって新しいタブ表示にも保存にもなるため、
+			// 「体裁つきのPDFを取りに行ったこと」をリクエストで確かめる
+			const requestPromise = page.context().waitForEvent("request", (req) => req.url().includes("render=1"));
+			await page.locator("#previewRenderButton").click();
+			const request = await requestPromise;
+			expect(request.url()).toMatch(/api\/documents\/.+\/file\?render=1$/);
+		});
+
+		await test.step("後始末", async () => {
+			await page.locator("#previewArchiveButton").click();
+			await page.locator("#confirmYesButton").click();
+			await expect(page.locator("#documentList li", {hasText: name})).toHaveCount(0);
+		});
+	});
+
 	// ヘルプ(AI連携ガイド)はサーバーのAPI仕様(api/usage.md)から取得され、APIキー発行後の
 	// 「AIチャット貼り付け用にコピー」も同じガイドにキーを埋め込んだものになる
 	test("AI連携ヘルプはサーバーのAPI仕様から取得される", async ({page, context}) => {

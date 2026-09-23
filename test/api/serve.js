@@ -27,6 +27,12 @@ try {
 } catch {}
 fs.mkdirSync(DATA_DIR, {recursive: true});
 
+// 体裁つき表示(PDF変換)のテスト用スタブ。server.jsのrequireより前に起動し、
+// 接続先を環境変数で渡す(office-render.jsはrequire時に設定を読むため)
+const converterStub = require("./converter-stub.js");
+const stubPort = Number(process.env.CONVERTER_STUB_PORT || 18096);
+process.env.OFFICE_RENDER_URL = process.env.OFFICE_RENDER_URL || `http://127.0.0.1:${stubPort}`;
+
 // require時にdb.jsがDATA_DIR上にSQLiteを作成する
 const ds = require("../../app/lib/datastore.js");
 const AllowedUsers = require("../../app/lib/allowed-users.js");
@@ -89,6 +95,9 @@ const {server} = require("../../app/server.js");
 		sessionCookieName: "connect.sid",
 		sessionCookie
 	}, null, 2));
+
+	await converterStub.start(stubPort);
+	console.log(`converter stub listening on ${stubPort}`);
 
 	server.listen(port, () => {
 		console.log(`api test server listening on ${port}`);
