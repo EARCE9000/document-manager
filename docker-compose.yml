@@ -83,5 +83,23 @@ services:
     environment:
       - ENABLE_CUDA=0
 
+  # Office文書を体裁つき(PDF)で見るための変換サービス。イメージが1GB超あるため、
+  # 普段の開発では起動しない。使うときだけ profile を指定する:
+  #   docker compose --profile convert up
+  converter:
+    profiles: ["convert"]
+    build:
+      context: .
+      dockerfile: converter/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=1g
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      # 単体で試すとき用(converter/test/smoke.js の既定の接続先)
+      - "3010:3000"
+
 volumes:
   weaviate_data:

@@ -116,8 +116,10 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 document-manager/
 ├── Dockerfile              # 2ステージ (依存のインストールはビルドホスト上で行い、node_modulesだけをターゲット環境のイメージへコピー)
 ├── docker-compose.yml      # app + Weaviate + Embedding推論サーバー(セマンティック検索を使う場合)
+│                           # converterは profile 指定時のみ(docker compose --profile convert up)
 ├── .github/workflows/
 │   ├── docker-publish.yml    # mainへのpushでDockerイメージ(amd64/arm64)をビルドしDocker Hubへ公開
+│   ├── converter-publish.yml # converter/の変更と週次で、変換サービスのイメージ(amd64)を公開
 │   └── skill-package.yml     # Skillの結合テスト・ZIP作成(アーティファクト保存)、タグskill-v*でGitHub Release公開
 ├── app/                     # アプリケーション本体 (Dockerイメージにコピーされる)
 │   ├── server.js             # エントリポイント
@@ -148,6 +150,10 @@ document-manager/
 │   ├── compose.yml           # 公開イメージ + Weaviate + 推論サーバー(Weaviate側はポート非公開)
 │   ├── compose.sh            # 起動用ラッパー(up/down/logs/ps。必須設定が無ければ止める)
 │   └── compose.env.example   # サイト固有の値のひな形(実ファイルはGit管理外)
+├── converter/               # Office→PDF 変換サービス(別イメージ。LibreOffice同梱)
+│   ├── Dockerfile            # Debian 13 + LibreOffice 25.2 + 日本語フォント(amd64のみ)
+│   ├── server.js             # HTTPの受け口(依存なし。直列実行・タイムアウト・マクロ拒否)
+│   └── test/smoke.js         # 実ファイルでの結合テスト(所要時間も出す)
 ├── tools/claude-skill/      # AIエージェント用Skill(Dockerイメージにも /app/claude-skill/ としてコピーされる)
 │   ├── document-manager/     # Skill本体(SKILL.md / README.md / scripts/dm_client.py・dm_client.mjs)
 │   ├── build_skill_zip.py    # ZIP作成(dist/に出力。dist/はgit管理外)

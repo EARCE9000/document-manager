@@ -45,6 +45,9 @@ services:
       WEAVIATE_URL: http://weaviate:8080
       WEAVIATE_GRPC_PORT: "50051"
       WEAVIATE_VECTORIZER: ${WEAVIATE_VECTORIZER:-text2vec-transformers}
+      # Office文書(Excel/Word/PowerPoint)を体裁つきで見るための変換サービス。
+      # 未設定なら変換は行わず、アプリ内蔵の概要プレビューだけになる
+      OFFICE_RENDER_URL: http://converter:3000
     networks:
       # Apacheのリバースプロキシが向いている既存ネットワーク(固定IPを維持する)
       application_network:
@@ -53,6 +56,35 @@ services:
       document_manager_internal:
     depends_on:
       - weaviate
+      - converter
+
+  # Office文書(Excel/Word/PowerPoint)をPDFへ変換するサービス(LibreOffice同梱)。
+  # 信用できないファイルを開くソフトのため、次の条件で隔離する:
+  #   - 内部ネットワークのみ(Apache・外部からは到達できない)
+  #   - ボリュームなし・ファイルシステムは読み取り専用・作業場所はtmpfs(メモリ上の一時領域)
+  #   - 非rootで動作し、メモリ上限とタイムアウトを持つ
+  # 停止・削除してもアプリは動き続ける(概要プレビューだけになる)
+  converter:
+    image: ${DOCUMENT_MANAGER_CONVERTER_IMAGE:-docker.io/earce9000/document-manager-converter}:${DOCUMENT_MANAGER_CONVERTER_TAG:-latest}
+    container_name: ${DOCUMENT_MANAGER_CONTAINER:-document_manager}_converter
+    restart: always
+    logging:
+      driver: journald
+    environment:
+      TZ: ${TZ:-Asia/Tokyo}
+      # 変換対象の上限(超えた文書は変換せず、概要プレビューだけで扱う)
+      CONVERT_MAX_BYTES: ${CONVERT_MAX_BYTES:-52428800}
+      CONVERT_TIMEOUT_SECONDS: ${CONVERT_TIMEOUT_SECONDS:-120}
+    read_only: true
+    tmpfs:
+      # 変換の作業場所。サイズを区切って、巨大な中間ファイルでホストを圧迫させない
+      - /tmp:rw,size=${CONVERT_TMPFS_SIZE:-1g}
+    security_opt:
+      - no-new-privileges:true
+    # podman-composeのバージョンによっては未対応。その場合は podman update で後から設定する
+    mem_limit: ${CONVERT_MEM_LIMIT:-1g}
+    networks:
+      - document_manager_internal
 
   # ベクトルDB本体。ホストにポートを公開せず、内部ネットワークからのみ使う
   # (公開すると匿名アクセス有効のまま外部から触れてしまうため)

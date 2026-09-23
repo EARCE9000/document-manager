@@ -1,0 +1,126 @@
+name: Converter Publish
+
+# Office→PDF変換サービス(converter/)のイメージをビルドして Docker Hub へ公開する。
+# アプリ本体(docker-publish.yml)とは別のイメージ・別のタイミングで出す:
+#   - converter/ を変更した push
+#   - 毎週の定期ビルド(コードが変わらなくても、Debian側のセキュリティ修正を取り込むため)
+#   - 手動実行
+#
+# amd64のみをビルドする。arm64はQEMUエミュレーション下での apt-get(LibreOffice一式)が
+# 現実的な時間で終わらないため(運用サーバはx86_64)。
+#
+# 公開前に、実際のOfficeファイル(test/fixtures/office/)を変換する結合テストを必ず通す。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "converter/**"
+      - "test/fixtures/office/**"
+      - ".github/workflows/converter-publish.yml"
+  pull_request:
+    paths:
+      - "converter/**"
+      - "test/fixtures/office/**"
+      - ".github/workflows/converter-publish.yml"
+  schedule:
+    # 毎週月曜 03:00 JST (日曜 18:00 UTC)
+    - cron: "0 18 * * 0"
+  workflow_dispatch:
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 先にローカルへ読み込んで、変換が実際に通ることを確かめてから公開する
+      - name: Build (load for test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: converter/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: document-manager-converter:test
+          cache-from: type=gha,scope=converter
+          cache-to: type=gha,mode=max,scope=converter
+
+      - name: Start converter
+        run: |
+          docker run -d --name converter -p 3010:3000 \
+            --tmpfs /tmp:rw,size=512m --read-only --memory 1g \
+            document-manager-converter:test
+          for i in $(seq 1 90); do
+            curl -sf -m 2 http://127.0.0.1:3010/health > /dev/null && break
+            sleep 1
+          done
+          curl -s http://127.0.0.1:3010/health
+
+      # 実際のExcel/Word/PowerPointを変換して、PDFが返ることを確かめる(所要時間も出る)
+      - name: Smoke test
+        run: node converter/test/smoke.js
+
+      - name: Converter logs
+        if: always()
+        run: docker logs converter || true
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute build version
+        id: version
+        run: echo "value=$(TZ=Asia/Tokyo date +%Y%m%d_%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: converter/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            earce9000/document-manager-converter:latest
+            earce9000/document-manager-converter:${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=converter
+
+      # 1イメージ1GB超のため、日時タグは直近3世代だけ残す(latestは常に残る)。
+      # 失敗してもワークフロー自体は成功扱いにする(公開そのものは終わっているため)
+      - name: Prune old tags
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="earce9000/document-manager-converter"
+          jwt=$(curl -s -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login/ | jq -r .token)
+          if [ -z "$jwt" ] || [ "$jwt" = "null" ]; then
+            echo "Docker Hub へログインできなかったため、タグの整理は行いません"
+            exit 0
+          fi
+          # 日時タグ(YYYYMMDD_HHMMSS)だけを対象にし、新しい3件を残して削除する
+          curl -s -H "Authorization: JWT ${jwt}" \
+            "https://hub.docker.com/v2/repositories/${repo}/tags/?page_size=100&ordering=last_updated" \
+            | jq -r '.results[].name' \
+            | grep -E '^[0-9]{8}_[0-9]{6}$' \
+            | tail -n +4 \
+            | while read -r tag; do
+                echo "削除: ${tag}"
+                curl -s -X DELETE -H "Authorization: JWT ${jwt}" \
+                  "https://hub.docker.com/v2/repositories/${repo}/tags/${tag}/" || true
+              done
