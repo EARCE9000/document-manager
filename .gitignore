@@ -7,3 +7,6 @@
 /test-results
 /playwright-report
 deploy/compose.env
+
+# バージョン情報はDockerイメージのビルド時に生成する(Dockerfile参照)
+app/VERSION.json

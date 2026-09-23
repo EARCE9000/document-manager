@@ -38,6 +38,12 @@ COPY app/ ./
 # Claude Code 用 Skill(APIキー管理画面からZIPでダウンロードさせる。lib/claude-skill.js参照)
 COPY tools/claude-skill/document-manager/ ./claude-skill/document-manager/
 
+# バージョン情報(画面右下の Ver. 表示・OpenAPIのversion)。CIから渡される値で必ず生成する。
+# COPYの後に置いているのは、ローカルに残っている古い VERSION.json を必ず上書きするため
+ARG APP_VERSION=0
+ARG APP_REVISION=unknown
+RUN printf '{"VERSION":"%s","REVISION":"%s","BUILT_AT":"%s"}' "$APP_VERSION" "$APP_REVISION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > VERSION.json
+
 # data (documents / sqlite db) is mounted at runtime, not baked into the image
 VOLUME ["/data"]
 

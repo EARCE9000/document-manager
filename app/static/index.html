@@ -4262,9 +4262,18 @@ const showActivityToast = (activity) => {
 	visible.slice(0, Math.max(0, visible.length - ACTIVITY_TOAST_MAX)).forEach(dismissActivityToast);
 };
 
-// ヘッダーに小さく表示するバージョン(認証不要のエンドポイントなので、ログイン状態を待たずに取得する)
-fetch("./api/version").then((res) => res.json()).then(({version}) => {
-	if (version) document.getElementById("footerVersion").textContent = `Ver.${version}`;
+// 画面右下に小さく表示するバージョン(認証不要のエンドポイントなので、ログイン状態を待たずに取得する)。
+// 表示はビルド日付だけにし、同じ日に複数回ビルドしたときに区別できるよう、
+// ビルド時刻とコミットはツールチップに出す
+fetch("./api/version").then((res) => res.json()).then(({version, build, revision, builtAt}) => {
+	if (!version) return;
+	const footer = document.getElementById("footerVersion");
+	footer.textContent = `Ver.${version}`;
+	footer.title = [
+		`ビルド: ${build || version}`,
+		builtAt ? `ビルド日時: ${formatDateTime(builtAt)}` : "",
+		revision ? `コミット: ${revision.slice(0, 12)}` : ""
+	].filter(Boolean).join("\n");
 }).catch(() => {});
 
 document.getElementById("footerYear").textContent = new Date().getFullYear();

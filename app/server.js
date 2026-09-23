@@ -307,12 +307,19 @@ app.all(BASE_URL_PATH + '_ping', async (req, res) => {
 	});
 });
 
-// バージョン情報(ヘッダーに小さく表示する用)。VERSION.jsonは10.buildDocker.shがビルド時に
-// 生成するもので、ローカル開発環境には無いためversionInfoがnullのままのことがある
+// バージョン情報(画面右下に小さく表示する用)。VERSION.jsonはDockerイメージのビルド時に
+// 生成される(Dockerfile参照)ため、ローカル開発環境には無くversionInfoがnullのままになる。
+// versionはビルド日付(8桁)、buildは同日に複数回ビルドしたときの区別用に時刻まで含む
 app.get(BASE_URL_PATH + 'api/version', async (req, res) => {
 	setHTTPHeaders(res);
-	const match = versionInfo != null ? String(versionInfo.VERSION || "").match(/(\d{8})/) : null;
-	res.json({version: match ? match[1] : null});
+	const build = versionInfo != null ? String(versionInfo.VERSION || "") : "";
+	const match = build.match(/(\d{8})/);
+	res.json({
+		version: match ? match[1] : null,
+		build: build || null,
+		revision: versionInfo != null && versionInfo.REVISION ? String(versionInfo.REVISION) : null,
+		builtAt: versionInfo != null && versionInfo.BUILT_AT ? String(versionInfo.BUILT_AT) : null
+	});
 });
 
 
