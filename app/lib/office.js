@@ -56,9 +56,14 @@ const findEndOfCentralDirectory = (buffer) => {
 
 /**
  * ZIPの中央ディレクトリを読み、wantsが真を返す名前のエントリだけを展開する。
+ * @param {Buffer} buffer ZIP全体
+ * @param {(name: string) => boolean} wants 読みたいエントリか
+ * @param {{maxEntryBytes?: number, maxTotalBytes?: number}} limits 展開後サイズの上限(テストから差し替える)
  * @returns {Map<string, Buffer>|null} 名前→中身。ZIPとして読めなければ null
  */
-const readZipEntries = (buffer, wants) => {
+const readZipEntries = (buffer, wants, limits = {}) => {
+	const maxEntryBytes = limits.maxEntryBytes ?? MAX_ENTRY_BYTES;
+	const maxTotalBytes = limits.maxTotalBytes ?? MAX_TOTAL_BYTES;
 	const eocd = findEndOfCentralDirectory(buffer);
 	if (eocd < 0) return null;
 	let entryCount = buffer.readUInt16LE(eocd + 10);
@@ -82,7 +87,7 @@ const readZipEntries = (buffer, wants) => {
 		offset += 46 + nameLength + extraLength + commentLength;
 
 		if (!wants(name)) continue;
-		if (uncompressedSize > MAX_ENTRY_BYTES || total + uncompressedSize > MAX_TOTAL_BYTES) continue;
+		if (uncompressedSize > maxEntryBytes || total + uncompressedSize > maxTotalBytes) continue;
 		// ローカルヘッダーは可変長(名前・拡張領域)なので、そこを読み飛ばして中身の先頭を求める
 		if (localOffset + 30 > buffer.length) return null;
 		const localNameLength = buffer.readUInt16LE(localOffset + 26);
@@ -438,13 +443,14 @@ const WANTED_ENTRIES = {
  * Office文書から、概要プレビュー用のHTML本体と全文検索用テキストを作る。
  * @param {Buffer} buffer ファイルの中身
  * @param {string} extension 小文字の拡張子(".xlsx"等)
+ * @param {{maxEntryBytes?: number, maxTotalBytes?: number}} limits 展開後サイズの上限(テスト用。通常は省略する)
  * @returns {{bodyHtml: string, text: string}|null} 読めなければ null
  */
-module.exports.convertOfficeDocument = (buffer, extension) => {
+module.exports.convertOfficeDocument = (buffer, extension, limits = {}) => {
 	const kind = OFFICE_KINDS[String(extension || "").toLowerCase()];
 	if (kind == null || !Buffer.isBuffer(buffer)) return null;
 	try {
-		const entries = readZipEntries(buffer, WANTED_ENTRIES[kind]);
+		const entries = readZipEntries(buffer, WANTED_ENTRIES[kind], limits);
 		if (entries == null || entries.size === 0) return null;
 		if (kind === "sheet") return convertWorkbook(entries);
 		if (kind === "document") return convertDocument(entries);

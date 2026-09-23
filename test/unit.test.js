@@ -196,6 +196,35 @@ test("convertOfficeDocument: 中身がHTMLとして解釈されないようエ�
 	assert.ok(!result.bodyHtml.includes("<td><"), "セルの中にタグがそのまま入らない");
 });
 
+test("convertOfficeDocument: 文書の中身に仕込まれたHTML/スクリプトを無害化する", () => {
+	// セルの値・シート名は利用者が自由に書ける。プレビューHTMLへ素通しすると保存型XSSになる
+	const result = convertOfficeDocument(officeFixture("malicious.xlsx"), ".xlsx");
+	assert.ok(result != null);
+	assert.doesNotMatch(result.bodyHtml, /<script/i, "scriptタグが生で出ない");
+	assert.doesNotMatch(result.bodyHtml, /<img/i, "imgタグが生で出ない");
+	assert.doesNotMatch(result.bodyHtml, /<a /i, "aタグが生で出ない");
+	// 中身は消さずにエスケープして見せる(利用者は何が書かれていたか確認できる)
+	assert.match(result.bodyHtml, /&lt;script&gt;/, "エスケープされた形で残る");
+	assert.match(result.bodyHtml, /&lt;b&gt;シート名/, "シート名もエスケープされる");
+	// 属性から抜け出せないこと(引用符もエスケープする)
+	assert.doesNotMatch(result.bodyHtml, /<td>[^<]*"/, "セルの中に生の引用符が出ない");
+	assert.match(result.text, /XSS-EXECUTED/, "全文検索用のテキストには元の文字列が入る");
+});
+
+test("convertOfficeDocument: ZIP爆弾対策の上限を超えたエントリは展開しない", () => {
+	const buffer = officeFixture("sample.xlsx");
+	// 展開後の合計が上限を超える場合、必要なXMLを読めないため変換自体が成立しない
+	assert.equal(convertOfficeDocument(buffer, ".xlsx", {maxTotalBytes: 1024}), null, "合計の上限で止まる");
+	// 1エントリあたりの上限は、超えたエントリだけを読み飛ばす(残りから取れる分は返す)。
+	// このファイルでは「大きい表」のシートだけが4KBを超える
+	const perEntry = convertOfficeDocument(buffer, ".xlsx", {maxEntryBytes: 4096});
+	assert.ok(perEntry != null, "上限内のエントリからは読める");
+	assert.match(perEntry.text, /サンプル商事/, "小さいシートは従来どおり読める");
+	assert.doesNotMatch(perEntry.text, /備考100/, "上限を超えたシートは展開されない");
+	// 上限内なら従来どおり読める
+	assert.ok(convertOfficeDocument(buffer, ".xlsx", {maxTotalBytes: 64 * 1024 * 1024}) != null);
+});
+
 test("convertOfficeDocument: 対象外・壊れた入力では null を返す(例外を投げない)", () => {
 	assert.equal(convertOfficeDocument(Buffer.from("not a zip"), ".xlsx"), null);
 	assert.equal(convertOfficeDocument(officeFixture("sample.xlsx"), ".pdf"), null, "拡張子が対象外");

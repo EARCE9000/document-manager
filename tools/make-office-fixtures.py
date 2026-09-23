@@ -90,5 +90,26 @@ table.cell(2, 1).text = "保守経路の確認"
 
 prs.save(os.path.join(OUT, "sample.pptx"))
 
-for name in ("sample.xlsx", "sample.docx", "sample.pptx"):
+# --- 悪意のある内容を含むExcel(プレビューでスクリプトが動かないことの検証用) ---
+wb = Workbook()
+ws = wb.active
+# シート名にも危険な文字を入れる(Excelの制約で / \ ? * [ ] は使えないため、閉じタグは書けない)
+ws.title = "<b>シート名"
+ws.append(["項目", "値"])
+ws.append(["スクリプト", "<script>window.__xss=1;document.title='XSS-EXECUTED'</script>"])
+ws.append(["イベント属性", """<img src=x onerror="window.__xss=1;document.title='XSS-EXECUTED'">仕込み"""])
+ws.append(["リンク", '<a href="javascript:window.__xss=1">押さないで</a>'])
+ws.append(["引用符", '" onmouseover="window.__xss=1'])
+wb.save(os.path.join(OUT, "malicious.xlsx"))
+
+# --- 大きめのExcel(変換のタイムアウト・所要時間の検証用) ---
+wb = Workbook()
+ws = wb.active
+ws.title = "大量データ"
+ws.append(["ID", "顧客名", "金額", "担当", "備考"])
+for i in range(1, 10001):
+    ws.append([i, f"顧客{i}", i * 137, f"担当{i % 20}", "定期契約の更新対象" if i % 3 else "新規"])
+wb.save(os.path.join(OUT, "large.xlsx"))
+
+for name in ("sample.xlsx", "sample.docx", "sample.pptx", "malicious.xlsx", "large.xlsx"):
     print(name, os.path.getsize(os.path.join(OUT, name)), "bytes")

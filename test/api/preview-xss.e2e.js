@@ -98,6 +98,47 @@ test.describe("プレビュー配信の保存型XSS対策(実ブラウザ)", () 
 		await request.delete(`api/documents/${id}`, {headers: rw});
 	});
 
+	// Excel/Word/PowerPointの中身(セルの値・段落・シート名)は利用者が自由に書ける。
+	// 概要プレビューのHTMLへ素通しすると保存型XSSになるため、エスケープとCSPの両方で防ぐ
+	test("Officeの中身に仕込まれたスクリプトは実行されない", async ({request, page}) => {
+		const fixture = require("node:fs").readFileSync(
+			require("node:path").join(__dirname, "..", "fixtures", "office", "malicious.xlsx")
+		);
+		const uploaded = await request.post("api/documents", {
+			headers: rw,
+			multipart: {
+				uploadfile: {
+					name: "xss-office.xlsx",
+					mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+					buffer: fixture
+				}
+			}
+		});
+		expect(uploaded.status()).toBe(200);
+		const id = (await uploaded.json()).id;
+
+		const cspErrors = [];
+		page.on("console", (msg) => {
+			if (msg.type() === "error" && /Content Security Policy|Refused to/i.test(msg.text())) cspErrors.push(msg.text());
+		});
+
+		await page.setExtraHTTPHeaders(rw);
+		const response = await page.goto(`api/documents/${id}/file`);
+		expect(response.status()).toBe(200);
+		expect(response.headers()["content-security-policy"]).toContain("script-src 'none'");
+
+		// 中身は「文字として」見えるが、スクリプトとしては動かない
+		await expect(page.locator("body")).toContainText("<script>");
+		await expect(page.locator("body")).toContainText("<b>シート名");
+		expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+		await expect(page).not.toHaveTitle(/XSS-EXECUTED/);
+		// 生のタグとして解釈されていないこと(エスケープが効いている)
+		expect(await page.locator("script").count()).toBe(0);
+		expect(await page.locator("img").count()).toBe(0);
+
+		await request.delete(`api/documents/${id}`, {headers: rw});
+	});
+
 	// ビューアの既定では図をクリックすると viewer.diagrams.net の「ライトボックス」が開き、
 	// 図の中身が社外のページへ渡ってしまう。これを無効にしてあることを守る
 	test("draw.ioの図をクリックしても社外(diagrams.net)へは出ない", async ({request, page, context}) => {

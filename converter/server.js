@@ -6,7 +6,7 @@
  * document-manager から内部ネットワーク経由でのみ呼ばれる小さなHTTPサービス。
  * 外部に公開しない前提のため認証は持たない(composeで内部ネットワークに閉じる)。
  *
- *   GET  /health          稼働確認。{status, apiVersion, libreOffice} を返す
+ *   GET  /health          稼働確認。{status, apiVersion, libreOffice, maxBytes, timeoutSeconds} を返す
  *   POST /convert         本体に変換対象のバイト列、X-Extension に拡張子。application/pdf を返す
  *
  * ファイル名は受け取らない。医療機関の資料などでは**ファイル名自体に患者名・施設名が入り得る**ため、
@@ -57,16 +57,26 @@ const runExclusively = (task) => {
 const readBody = (req) => new Promise((resolve, reject) => {
 	const chunks = [];
 	let size = 0;
+	let exceeded = false;
 	req.on("data", (chunk) => {
 		size += chunk.length;
 		if (size > MAX_BYTES) {
-			reject(Object.assign(new Error(`ファイルが大きすぎます(上限 ${Math.floor(MAX_BYTES / 1024 / 1024)}MB)`), {status: 413}));
-			req.destroy();
+			if (!exceeded) {
+				exceeded = true;
+				chunks.length = 0;
+				reject(Object.assign(new Error(`ファイルが大きすぎます(上限 ${Math.floor(MAX_BYTES / 1024 / 1024)}MB)`), {status: 413}));
+			}
+			// ここで接続を切るとクライアントが413を読み取れず、通信エラーとしか分からなくなる。
+			// 応答を届けるため、以降のデータは読み捨てて受け切る。
+			// ただし極端に送り続けてくる相手には付き合わない
+			if (size > MAX_BYTES * 2) req.destroy();
 			return;
 		}
 		chunks.push(chunk);
 	});
-	req.on("end", () => resolve(Buffer.concat(chunks)));
+	req.on("end", () => {
+		if (!exceeded) resolve(Buffer.concat(chunks));
+	});
 	req.on("error", reject);
 });
 
@@ -156,7 +166,14 @@ const sendJson = (res, status, body) => {
 const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url, "http://localhost");
 	if (req.method === "GET" && url.pathname === "/health") {
-		sendJson(res, 200, {status: "ok", apiVersion: API_VERSION, libreOffice: await libreOfficeVersion()});
+		sendJson(res, 200, {
+			status: "ok",
+			apiVersion: API_VERSION,
+			libreOffice: await libreOfficeVersion(),
+			// 実際に効いている上限。設定が反映されているかを外から確認できるようにする
+			maxBytes: MAX_BYTES,
+			timeoutSeconds: TIMEOUT_MS / 1000
+		});
 		return;
 	}
 	if (req.method !== "POST" || url.pathname !== "/convert") {

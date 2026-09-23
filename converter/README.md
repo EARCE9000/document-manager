@@ -38,17 +38,25 @@ LibreOffice は **25.2.3** (Debian 13 trixie のパッケージ。追加リポ�
 
 | | 内容 |
 |---|---|
-| `GET /health` | 稼働確認。`{status, apiVersion, libreOffice}` を返す |
-| `POST /convert` | 本体に変換対象のバイト列、`X-Filename` に元のファイル名(URLエンコード)。`application/pdf` を返す |
+| `GET /health` | 稼働確認。`{status, apiVersion, libreOffice, maxBytes, timeoutSeconds}` を返す(設定が効いているか外から確認できる) |
+| `POST /convert` | 本体に変換対象のバイト列、`X-Extension` に拡張子、`X-Document-Id` にログ用の文書ID。`application/pdf` を返す |
 
-対応拡張子: `.xlsx .xlsm .docx .docm .pptx .pptm .odt .ods .odp`
+対応拡張子: `.xlsx .docx .pptx .odt .ods .odp`
 
-エラーは `{"error": "..."}` (JSON)。400=拡張子が対象外/Office文書として読めない、504=タイムアウト、500=変換失敗。
+**マクロ付き(`.xlsm` `.docm` `.pptm` `.xlsb`)は受け付けません**(400)。LibreOfficeは既定でマクロを
+実行しませんが、信用できないファイルを開くソフトにわざわざマクロ入りを渡す理由がないためです。
+これらはアプリ側の概要プレビューだけで扱います。
+
+**ファイル名は受け取りません。** 医療機関の資料などでは**ファイル名自体に患者名・施設名が入り得る**ため、
+渡すのは拡張子と、ログ用の文書IDだけにしています。
+
+エラーは `{"error": "..."}` (JSON)。400=拡張子が対象外/マクロ付き/Office文書として読めない、
+413=サイズ超過、504=タイムアウト、500=変換失敗。
 
 ```bash
 curl -X POST http://127.0.0.1:3010/convert \
   -H "Content-Type: application/octet-stream" \
-  -H "X-Filename: $(python -c 'import urllib.parse;print(urllib.parse.quote("報告書.pptx"))')" \
+  -H "X-Extension: .pptx" -H "X-Document-Id: 202609_xxxxxxxx" \
   --data-binary @報告書.pptx -o out.pdf
 ```
 
@@ -57,8 +65,24 @@ curl -X POST http://127.0.0.1:3010/convert \
 - **変換は直列(同時実行1)**。非力なサーバでも他の処理を圧迫しないことを優先する
 - **リクエストごとに専用のプロファイルとサブディレクトリ**を使う(LibreOfficeは同じプロファイルを共有すると多重起動で失敗する)
 - **タイムアウトでプロセスを確実に殺す**(既定120秒。`CONVERT_TIMEOUT_SECONDS`)
-- **認証は持たない**。内部ネットワークに閉じることを前提とする(composeを参照)
+- **認証は持たない**。内部ネットワークに閉じることを前提とする(下記)
 - **依存パッケージを持たない**(Node標準モジュールのみ)
+
+## 隔離(compose側で担保していること)
+
+LibreOfficeは、文書に埋め込まれた外部参照(画像URL・リンク・外部セル参照)を取りに行くことがあります。
+細工された文書に任意のURLを叩かせない(SSRF)ため、**ネットワーク構成で封じ込めています**。
+
+- **変換専用ネットワーク(`document_manager_convert`)にだけ参加する** → Weaviate等の他サービスへ到達できない
+- そのネットワークは **`internal: true`** → インターネットへ出られない
+- ボリュームなし・**読み取り専用**・作業場所はtmpfs・非root・`no-new-privileges`・メモリ上限
+
+この構成は [test/deploy.test.js](../test/deploy.test.js) で検証しており、崩すとテストが落ちます。
+podmanでは、実際に効いているかを次で確認できます。
+
+```bash
+podman network inspect <プレフィックス>_document_manager_convert | grep -i internal
+```
 
 ## 環境変数
 
@@ -66,8 +90,8 @@ curl -X POST http://127.0.0.1:3010/convert \
 |---|---|---|
 | `LISTEN_PORT` | 3000 | 待ち受けポート |
 | `WORK_DIR` | /tmp/convert | 作業場所(tmpfsを割り当てる) |
-| `CONVERT_MAX_BYTES` | 134217728 (128MB) | 受け付ける最大サイズ |
-| `CONVERT_TIMEOUT_SECONDS` | 120 | 1件あたりの打ち切り |
+| `CONVERT_MAX_BYTES` | 52428800 (50MB) | 受け付ける最大サイズ(超過は413) |
+| `CONVERT_TIMEOUT_SECONDS` | 120 | 1件あたりの打ち切り(超過は504。sofficeは強制終了する) |
 
 ## 開発
 
@@ -79,8 +103,13 @@ docker build -f converter/Dockerfile -t dm-converter:local .
 docker run -d --name dm-converter -p 3010:3000 \
   --tmpfs /tmp:rw,size=512m --read-only --memory 1g dm-converter:local
 
+# 上限・タイムアウトの検証用に、小さい値で動くインスタンスも立てる
+docker run -d --name dm-converter-limits -p 3011:3000 \
+  --tmpfs /tmp:rw,size=512m --read-only --memory 1g \
+  -e CONVERT_MAX_BYTES=1048576 -e CONVERT_TIMEOUT_SECONDS=2 dm-converter:local
+
 # 実ファイル(test/fixtures/office/)での結合テスト。所要時間も出る
-node converter/test/smoke.js
+CONVERTER_LIMITS_URL=http://127.0.0.1:3011 node converter/test/smoke.js
 ```
 
 amd64 のみをビルドします。arm64 は QEMU エミュレーション下での `apt-get`(LibreOffice一式)が

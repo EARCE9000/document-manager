@@ -54,6 +54,8 @@ services:
         ipv4_address: ${DOCUMENT_MANAGER_IP:?リバースプロキシが向いている固定IPを設定してください}
       # Weaviate・推論サーバーとの通信用(外部には出さない)
       document_manager_internal:
+      # converterとの通信用(converterはこのネットワークにしか居ない)
+      document_manager_convert:
     # converterは依存に入れない。変換は無くても成立する機能(概要プレビューに退避する)であり、
     # converterのイメージ取得や起動に失敗したときに、アプリまで起動しなくなるのを避けるため
     depends_on:
@@ -85,7 +87,11 @@ services:
     # podman-composeのバージョンによっては未対応。その場合は podman update で後から設定する
     mem_limit: ${CONVERT_MEM_LIMIT:-1g}
     networks:
-      - document_manager_internal
+      # 変換用の専用ネットワークにだけ参加する。LibreOfficeは文書に埋め込まれた外部参照
+      # (画像URL・リンク・外部セル参照)を取りに行くことがあるため、細工された文書で
+      # 任意のURLを叩かせない(SSRF)ことと、Weaviate等の他サービスに触れさせないことを、
+      # ネットワークの構成で担保する
+      - document_manager_convert
 
   # ベクトルDB本体。ホストにポートを公開せず、内部ネットワークからのみ使う
   # (公開すると匿名アクセス有効のまま外部から触れてしまうため)
@@ -136,3 +142,9 @@ networks:
     name: ${DOCUMENT_MANAGER_NETWORK:-application_network}
   # このスタック専用の内部ネットワーク(compose が作成する)
   document_manager_internal:
+  # 変換サービス専用。internal: true によりインターネットへ出られない。
+  # ここに居るのは app と converter だけで、Weaviate・推論サーバーには到達できない。
+  # (podman-composeが internal に未対応の版では効かないため、下記コマンドで確認すること:
+  #   podman network inspect <プレフィックス>_document_manager_convert | grep -i internal )
+  document_manager_convert:
+    internal: true

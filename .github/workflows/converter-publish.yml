@@ -61,24 +61,36 @@ jobs:
           cache-from: type=gha,scope=converter
           cache-to: type=gha,mode=max,scope=converter
 
+      # 既定値のインスタンスと、上限・タイムアウトを小さくしたインスタンスの2つを立てる
+      # (既定は50MB・120秒で、そのまま上限を試すには時間もデータ量も大きすぎるため)
       - name: Start converter
         run: |
           docker run -d --name converter -p 3010:3000 \
             --tmpfs /tmp:rw,size=512m --read-only --memory 1g \
             document-manager-converter:test
+          docker run -d --name converter-limits -p 3011:3000 \
+            --tmpfs /tmp:rw,size=512m --read-only --memory 1g \
+            -e CONVERT_MAX_BYTES=1048576 -e CONVERT_TIMEOUT_SECONDS=2 \
+            document-manager-converter:test
           for i in $(seq 1 90); do
-            curl -sf -m 2 http://127.0.0.1:3010/health > /dev/null && break
+            curl -sf -m 2 http://127.0.0.1:3010/health > /dev/null \
+              && curl -sf -m 2 http://127.0.0.1:3011/health > /dev/null && break
             sleep 1
           done
           curl -s http://127.0.0.1:3010/health
 
-      # 実際のExcel/Word/PowerPointを変換して、PDFが返ることを確かめる(所要時間も出る)
+      # 実際のExcel/Word/PowerPointを変換して、PDFが返ることを確かめる(所要時間も出る)。
+      # あわせて、拡張子・マクロ・壊れたファイル・サイズ上限・タイムアウトの扱いも確かめる
       - name: Smoke test
+        env:
+          CONVERTER_LIMITS_URL: http://127.0.0.1:3011
         run: node converter/test/smoke.js
 
       - name: Converter logs
         if: always()
-        run: docker logs converter || true
+        run: |
+          docker logs converter || true
+          docker logs converter-limits || true
 
       - name: Compute build version
         id: version
