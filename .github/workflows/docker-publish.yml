@@ -52,3 +52,34 @@ jobs:
             APP_REVISION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # 日時タグは切り戻し用だが、際限なく溜まるため直近10世代だけ残す(latestは常に残る)。
+      # 失敗してもワークフロー自体は成功扱いにする(公開そのものは終わっているため)
+      - name: Prune old tags
+        continue-on-error: true
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="earce9000/document-manager"
+          jwt=$(curl -s -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login/ | jq -r .token)
+          if [ -z "$jwt" ] || [ "$jwt" = "null" ]; then
+            echo "Docker Hub へログインできなかったため、タグの整理は行いません"
+            exit 0
+          fi
+          # 日時タグ(YYYYMMDD_HHMMSS)だけを対象にし、新しい10件を残して削除する。
+          # APIの並び順には依存せず、タグ名(日時)で降順に並べてから判断する
+          curl -s -H "Authorization: JWT ${jwt}" \
+            "https://hub.docker.com/v2/repositories/${repo}/tags/?page_size=100&ordering=last_updated" \
+            | jq -r '.results[].name' \
+            | grep -E '^[0-9]{8}_[0-9]{6}$' \
+            | sort -r \
+            | tail -n +11 \
+            | while read -r tag; do
+                echo "削除: ${tag}"
+                curl -s -X DELETE -H "Authorization: JWT ${jwt}" \
+                  "https://hub.docker.com/v2/repositories/${repo}/tags/${tag}/" || true
+              done

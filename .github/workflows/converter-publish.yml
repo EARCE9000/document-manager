@@ -115,11 +115,13 @@ jobs:
             echo "Docker Hub へログインできなかったため、タグの整理は行いません"
             exit 0
           fi
-          # 日時タグ(YYYYMMDD_HHMMSS)だけを対象にし、新しい3件を残して削除する
+          # 日時タグ(YYYYMMDD_HHMMSS)だけを対象にし、新しい3件を残して削除する。
+          # APIの並び順には依存せず、タグ名(日時)で降順に並べてから判断する
           curl -s -H "Authorization: JWT ${jwt}" \
             "https://hub.docker.com/v2/repositories/${repo}/tags/?page_size=100&ordering=last_updated" \
             | jq -r '.results[].name' \
             | grep -E '^[0-9]{8}_[0-9]{6}$' \
+            | sort -r \
             | tail -n +4 \
             | while read -r tag; do
                 echo "削除: ${tag}"
