@@ -2282,7 +2282,8 @@ app.get(BASE_URL_PATH + 'api/usage.md', requireAuth, (req, res) => {
 		res.setHeader("Content-Type", "text/markdown; charset=utf-8");
 		res.status(200).send(ApiSpec.buildUsageMarkdown({
 			baseUrl: resolveSpecBaseUrl(req),
-			vectorSearchEnabled: VectorSearch.isEnabled()
+			vectorSearchEnabled: VectorSearch.isEnabled(),
+			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0"
 		}));
 	} catch (err) {
 		logger.error(err, "::api/usage.md");

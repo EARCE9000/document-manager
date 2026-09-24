@@ -523,7 +523,7 @@ draw.ioの図(\`.drawio\`)は、そのファイルだけをアップロードし
 const AI_CLOSING = `この指示を読んだら、Document Managerとの連携準備が整ったことと、「アップして」「探して」のように
 話しかければ操作できることをユーザーに一言伝えてください。`;
 
-const INTRO = `このサービスは HTML / MHTML / Markdown / PDF (単一ファイル)を管理するドキュメント管理APIです。
+const INTRO = `このサービスは Office文書(Excel/Word/PowerPoint) / PDF / HTML / MHTML / Markdown / draw.ioの図 / 画像 / CSV・テキスト(いずれも単一ファイル)を管理するドキュメント管理APIです。
 以下の情報をもとに、Bearerトークン認証でAPIを直接呼び出してください。`;
 
 // そのまま出力する行(入れ子の箇条書きを含むため、整形済みで持つ)
@@ -545,7 +545,7 @@ const endpointLine = (entry, baseUrl) => {
 /**
  * AI向け利用ガイド(Markdown)を組み立てる。画面右上のヘルプ・APIキー発行時のコピー用テキストで使う
  */
-module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled}) => {
+module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, version}) => {
 	const base = String(baseUrl).replace(/\/$/, "");
 	const include = (item) => !item.vectorOnly || vectorSearchEnabled;
 
@@ -572,7 +572,17 @@ module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled}) => {
 
 	const instructions = AI_INSTRUCTIONS.filter(include).map(({when, do: what}) => `### ${when}\n${what}`).join("\n\n");
 
+	// このガイドはチャットへの貼り付け・カスタム指示への保存を想定しているため、コピーした時点で
+	// 内容が固定される。一方サーバー側は対応形式やAPIが増えていくため、貼り付けたものは静かに
+	// 古くなる(AIは知らないAPIを使わないだけで、エラーにならないので誰も気づけない)。
+	// そこで「いつ・どの版の内容か」と「取り直せること」を先頭に書き、AIが自力で最新化できるようにする
+	const staleNote = `> このガイドは取得時点の内容です(サーバー版 ${version || "不明"} / ${new Date().toISOString().slice(0, 10)})。`
+		+ `貼り付けて保存したものは古くなります。記載のAPIで目的を果たせないときや、以前受け取った内容を使っているときは`
+		+ ` \`GET ${base}/api/usage.md\` で取り直してください(対応ファイル形式やAPIが増えていることがあります)。`;
+
 	return `# Document Manager API 利用ガイド (AI向け)
+
+${staleNote}
 
 ${INTRO}
 

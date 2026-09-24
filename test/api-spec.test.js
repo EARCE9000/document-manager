@@ -98,6 +98,17 @@ test("利用ガイド(Markdown)にベースURLとAIへの指示が反映され�
 	assert.ok(markdown.includes("## AIへの指示"));
 	assert.ok(!markdown.includes("セマンティック検索"), "無効な機能は載せない");
 
+	// 貼り付けて保存されたガイドは古くなる。AIが自力で取り直せるよう、版と取り直し先を先頭に書く
+	const dated = ApiSpec.buildUsageMarkdown({baseUrl: "https://example.com/docs/", vectorSearchEnabled: false, version: "20260924_101530"});
+	assert.ok(dated.includes("サーバー版 20260924_101530"), "どの版の内容かが分かる");
+	assert.ok(dated.includes("`GET https://example.com/docs/api/usage.md` で取り直してください"), "取り直し先を示す");
+	assert.ok(markdown.includes("サーバー版 不明"), "版が渡らなくても案内は出す");
+
+	// 冒頭の紹介文は対応形式の入口になるため、扱える形式が増えたらここも更新する
+	for (const format of ["Office文書", "PDF", "Markdown", "draw.io"]) {
+		assert.ok(markdown.includes(format), `冒頭の紹介文に ${format} が無い`);
+	}
+
 	const withVector = ApiSpec.buildUsageMarkdown({baseUrl: "https://example.com/docs", vectorSearchEnabled: true});
 	assert.ok(withVector.includes("### セマンティック検索(意味検索)"));
 	// adminロール限定・画面用のAPIはAI向けガイドには載せない
