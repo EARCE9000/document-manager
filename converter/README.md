@@ -23,6 +23,13 @@ converter を動かさない構成では、アプリ側は従来どおり[概要
 
 LibreOffice は **25.2.3** (Debian 13 trixie のパッケージ。追加リポジトリ不要)。
 
+### Excelの見え方について
+
+PDFは「Excelで印刷したときの見え方」になります。**列幅が足りない列は `###` になり、文字は途中で
+切れます**(元の文書がそういう体裁である、ということです)。全文を確認したい場合は、
+アプリ内蔵の[概要プレビュー](../app/lib/office.js)を使ってください。こちらは列幅に関係なく
+セルの値をそのまま表示します。2つの表示は補い合う関係にあります。
+
 ### PDFのサイズに注意
 
 日本語フォントを埋め込むため、**変換後のPDFは元より大きくなります**。文書1件あたり
@@ -110,6 +117,9 @@ docker run -d --name dm-converter-limits -p 3011:3000 \
 
 # 実ファイル(test/fixtures/office/)での結合テスト。所要時間も出る
 CONVERTER_LIMITS_URL=http://127.0.0.1:3011 node converter/test/smoke.js
+
+# Document Manager本体と繋いだ結合テスト(アップロード→変換→PDFの中身まで)
+npm run test:converter
 ```
 
 amd64 のみをビルドします。arm64 は QEMU エミュレーション下での `apt-get`(LibreOffice一式)が

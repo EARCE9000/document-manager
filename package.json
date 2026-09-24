@@ -6,6 +6,7 @@
 	"scripts": {
 		"test": "node --test test/unit.test.js test/deploy.test.js test/integration-sqlite.test.js test/api-spec.test.js",
 		"test:pg": "node --test test/integration-postgres.test.js",
+		"test:converter": "node test/integration-converter.js",
 		"test:api": "playwright test --project=api",
 		"test:e2e": "playwright test --project=e2e",
 		"screenshots": "node docs/screenshots/capture.js"

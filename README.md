@@ -120,6 +120,7 @@ document-manager/
 ├── .github/workflows/
 │   ├── docker-publish.yml    # mainへのpushでDockerイメージ(amd64/arm64)をビルドしDocker Hubへ公開
 │   ├── converter-publish.yml # converter/の変更と週次で、変換サービスのイメージ(amd64)を公開
+│   │                           # 公開前に実ファイルでの変換と、本体と繋いだ結合テストを通す
 │   └── skill-package.yml     # Skillの結合テスト・ZIP作成(アーティファクト保存)、タグskill-v*でGitHub Release公開
 ├── app/                     # アプリケーション本体 (Dockerイメージにコピーされる)
 │   ├── server.js             # エントリポイント
