@@ -47,6 +47,21 @@ const server = require('http').createServer(app);
 // 誤認し、OIDCコールバックURLの組み立てやSecure Cookieの挙動に影響する。
 app.set('trust proxy', 1);
 
+// すべての応答に付ける防御ヘッダー。setHTTPHeaders は各ルートが個別に呼ぶもので、
+// 静的配信(express.static)には届かない = 画面本体(index.html)が無防備になるため、
+// ここでミドルウェアとして入れる。
+//   - X-Frame-Options: 画面を外部サイトのiframeに埋め込ませない(ログイン済みの利用者に
+//     気づかせないまま操作させる攻撃を防ぐ)。アプリ自身のiframe(プレビュー・draw.ioビューア)は
+//     同一オリジンなので影響しない
+//   - Referrer-Policy: 外部サイトへ遷移するとき、文書IDを含むURLを渡さない
+// CSPはここでは出さない。形式ごとに必要な内容が違い(html/svgはscript-src 'none'、
+// draw.ioビューアは専用のもの、txtやpdfには付けない)、一律に出すと上書き合戦になる
+app.use((req, res, next) => {
+	res.setHeader("X-Frame-Options", "SAMEORIGIN");
+	res.setHeader("Referrer-Policy", "same-origin");
+	next();
+});
+
 // Apache等のProxyPass設定でX-Forwarded-Protoが転送されていない環境では、上記のtrust proxy
 // があっても req.protocol/req.secure が常に「非HTTPS」と誤判定される(本番環境で実際に発生:
 // redirect_uri_mismatchの原因になったほか、express-sessionはcookie.secure:trueの場合
@@ -140,6 +155,9 @@ app.use(express.urlencoded({extended: false}));
 //  ビューア本体のスクリプトを読み込めないため、同一オリジンのままCSPで閉じる)
 const DRAWIO_VIEWER_CSP = [
 	"default-src 'none'",
+	// default-src では frame-ancestors は制限されないため個別に指定する
+	// (このページを外部サイトのiframeに埋め込ませない)
+	"frame-ancestors 'self'",
 	"script-src 'self'",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: blob:",
@@ -318,13 +336,29 @@ logger.info({PUBLIC_ORIGIN}, "public origin for URLs in responses");
 const APP_ROOT_URI = `${PUBLIC_BASE_PATH}/`;
 const LOGIN_URI = `${PUBLIC_BASE_PATH}/login`;
 
-// ログイン後の戻り先(next)として受け入れてよいURLか判定する。
-// このアプリ自身のパス配下の相対パスに限定し、外部ドメインへのオープンリダイレクトを防ぐ
-const isSafeNextPath = (value) =>
-	typeof value === "string" &&
-	value.startsWith(`${PUBLIC_BASE_PATH}/`) &&
-	!value.startsWith("//") &&
-	!value.includes("://");
+// ログイン後の戻り先(next)として受け入れてよいURLか判定し、安全なら正規化した相対パスを返す
+// (受け入れられなければnull)。このアプリ自身のパス配下に限定し、外部へのオープンリダイレクトを防ぐ。
+//
+// 文字列の前方一致で判定してはいけない。ブラウザ(WHATWG URL)は http/https のような特別スキームで
+// バックスラッシュをスラッシュと同等に扱うため、`/\evil.example` はプロトコル相対URLとして
+// 解釈され外部サイトへ飛ぶ。`//` だけを弾く実装では素通りする(Expressが通すencodeurlも
+// バックスラッシュを符号化しない)。そこでブラウザと同じ規則で実際に解決し、
+// オリジンが変わらないことを確かめる。
+//
+// 返すのは解決後の値であって、受け取った文字列そのものではない。検査した対象と
+// リダイレクト先を必ず同じものにするため(表記の違いで判定をすり抜ける余地を残さない)
+const SAFE_NEXT_BASE = "https://document-manager.invalid";
+const safeNextPath = (value) => {
+	if (typeof value !== "string" || value === "") return null;
+	try {
+		const url = new URL(value, SAFE_NEXT_BASE);
+		if (url.origin !== SAFE_NEXT_BASE) return null;
+		if (!url.pathname.startsWith(`${PUBLIC_BASE_PATH}/`)) return null;
+		return `${url.pathname}${url.search}${url.hash}`;
+	} catch {
+		return null;
+	}
+};
 
 
 const setHTTPHeaders = (res) => {
@@ -496,7 +530,9 @@ app.all(BASE_URL_PATH + 'login', async (req, res) => {
 				}
 
 				req.session.user = {identifier: user_identifier};
-				res.redirect(transaction?.next || APP_ROOT_URI);
+				// セッションに入っているのは正規化済みの値だが、ここでも再検査する
+				// (検査を1箇所の記憶だけに頼らない)
+				res.redirect(safeNextPath(transaction?.next) || APP_ROOT_URI);
 			} catch (err) {
 				logger.error(err, "::login:callback");
 				renderMessagePage(res, {
@@ -518,7 +554,7 @@ app.all(BASE_URL_PATH + 'login', async (req, res) => {
 		const nonce = oidc.randomNonce();
 		// 文書の共有リンク(別ウィンドウプレビュー)等、未ログイン状態で直接開かれた
 		// URLへログイン後に戻れるようにする。安全な自ドメイン相対パスの場合のみ受け付ける
-		const next = isSafeNextPath(req.query.next) ? req.query.next : null;
+		const next = safeNextPath(req.query.next);
 		req.session.oidcTransaction = {code_verifier, state, nonce, next};
 
 		const url = oidc.buildAuthorizationUrl(oidcConfig, {
@@ -721,6 +757,44 @@ const DRAWIO_EXTENSIONS = [".drawio"];
 // HTMLへ変換する(lib/office.js)。元の体裁は再現しない。実体は元のまま保持しダウンロードできる
 const OFFICE_FILE_EXTENSIONS = [...OFFICE_EXTENSIONS];
 const ENTRY_FILE_EXTENSIONS = [...NATIVE_PREVIEW_EXTENSIONS, ...MHTML_EXTENSIONS, ...MARKDOWN_EXTENSIONS, ...IMAGE_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS, ...DRAWIO_EXTENSIONS, ...OFFICE_FILE_EXTENSIONS];
+/**
+ * アップロードされたファイル名として受け入れてよいか。
+ *
+ * 保存先の組み立てに使うのはサーバだけではない。この名前は応答(entryFile)として利用者と
+ * AIエージェントへ渡り、クライアント(同梱のdm_client等)がローカルの保存先として使う。
+ * サーバはLinuxで動く一方、クライアントはWindowsで動くことがあるため、
+ * 「サーバのpath.basenameが落とさない区切り文字」が受け取り側では区切り文字になる。
+ * 結果として、取得したファイルを作業場所の外へ書かせることができてしまう
+ * (エージェント自身の設定ファイルを上書きする等)。
+ * そこでプラットフォームに依存せず、両方の区切り文字と制御文字を拒否する。
+ */
+const isSafeEntryFileName = (name) =>
+	typeof name === "string" &&
+	name !== "" &&
+	name !== "." &&
+	name !== ".." &&
+	!name.includes("/") &&
+	!name.includes("\\") &&
+	// 制御文字(NUL・改行等)。NULはfsが例外を投げて500になっていたため、ここで400にする
+	!/[\u0000-\u001f\u007f]/.test(name);
+
+/**
+ * Content-Disposition の値を組み立てる。
+ *
+ * ファイル名は利用者が決めた値なので、ヘッダーを壊されないことが第一。従来は
+ * `filename="${encodeURIComponent(name)}"` としていて安全ではあったが、日本語名が
+ * `%E6%97%A5...` のまま保存されてしまう。RFC 6266 のとおり、ASCIIに落とした
+ * `filename` と、UTF-8を明示した `filename*` の両方を出す(対応する環境では後者が使われる)。
+ * どちらの値も符号化済み・引用符を含まないため、ヘッダーの分割はできない。
+ */
+const contentDisposition = (type, name) => {
+	const safe = String(name || "download");
+	// ASCII以外・引用符・制御文字を落とした控えめな名前(古い環境向けのフォールバック)
+	// eslint-disable-next-line no-control-regex
+	const ascii = safe.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_") || "download";
+	return `${type}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`;
+};
+
 const PREVIEW_FILENAME = "preview.html";
 // .drawio に添付できるプレビュー画像の拡張子(IMAGE_EXTENSIONSと同じ。保存名は preview<ext>)
 const DRAWIO_PREVIEW_EXTENSIONS = IMAGE_EXTENSIONS;
@@ -975,6 +1049,11 @@ const renderOfficeDocument = async (documentId, buffer, extension) => {
 // 超過分は検索対象から外れるだけで、ファイルの登録・プレビュー・ダウンロードには影響しない
 // (ファイル名・タグ・メモは量に関係なく検索できる)
 const CONTENT_TEXT_MAX_CHARS = Number(process.env.CONTENT_TEXT_MAX_CHARS || 300000);
+// メモ・タグの上限。これらは文書一覧・検索の応答すべてに載り、AIエージェントが必ず読む。
+// 人が書くメモとして十分な長さを残しつつ、応答を埋め尽くせないようにする
+const MEMO_MAX_CHARS = Number(process.env.MEMO_MAX_CHARS || 4000);
+const TAG_MAX_CHARS = 50;
+const DOCUMENT_MAX_TAGS = 50;
 
 const truncateContentText = (contentText) => {
 	if (contentText == null || contentText.length <= CONTENT_TEXT_MAX_CHARS) {
@@ -1537,6 +1616,13 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		const uploadfile = req.files.uploadfile;
 		const originalName = path.basename(fixUploadedFilenameEncoding(String(uploadfile.name || "")));
 		const extension = path.extname(originalName).toLowerCase();
+		// path.basename が落とすのは動作中のプラットフォームの区切り文字だけ。サーバはLinuxで
+		// 動くため、Windowsのパス(..\..\x.json)はそのまま1つのファイル名として通ってしまう。
+		// 入口で拒否して、どのクライアントから使っても安全な名前しか記録しない(下記の判定関数を参照)
+		if (!isSafeEntryFileName(originalName)) {
+			res.status(400).json({error: "ファイル名にパス区切り文字(/ \\)・制御文字は使用できません"});
+			return;
+		}
 		if (originalName === "" || !ENTRY_FILE_EXTENSIONS.includes(extension)) {
 			res.status(400).json({error: "html / mhtml / markdown / pdf / svg / png / jpeg / csv / tsv / txt / log / json / drawio / xlsx / docx / pptx ファイルのみアップロード可能です"});
 			return;
@@ -1749,9 +1835,9 @@ const serveDocumentFile = async (req, res) => {
 			documentId: document.id,
 			entryFile: document.entry_file
 		}, "audit");
-		res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(document.entry_file)}"`);
+		res.setHeader("Content-Disposition", contentDisposition("attachment", document.entry_file));
 	} else {
-		res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(targetFile)}"`);
+		res.setHeader("Content-Disposition", contentDisposition("inline", targetFile));
 	}
 	await storage.streamToResponse(document.id, targetFile, res);
 };
@@ -2208,7 +2294,10 @@ app.put(BASE_URL_PATH + 'api/documents/:id/tags', requireAuth, requireWrite, asy
 			return;
 		}
 		const rawTags = Array.isArray(req.body.tags) ? req.body.tags : [];
-		const tags = [...new Set(rawTags.map((tag) => String(tag).trim()).filter((tag) => tag !== ""))];
+		// タグも応答すべてに載るため、長さと件数に上限を設ける(メモと同じ理由)
+		const tags = [...new Set(
+			rawTags.map((tag) => String(tag).trim().slice(0, TAG_MAX_CHARS)).filter((tag) => tag !== "")
+		)].slice(0, DOCUMENT_MAX_TAGS);
 
 		const previousTags = (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [document.id])).map((row) => row.tag);
 		await replaceDocumentTags(document.id, tags);
@@ -2236,7 +2325,10 @@ app.put(BASE_URL_PATH + 'api/documents/:id/memo', requireAuth, requireWrite, asy
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		const memo = String(req.body.memo || "");
+		// メモは文書一覧・検索の応答すべてに載る。上限が無いと、1件のメモに大量の文章を
+		// 仕込むだけでAIエージェントの文脈をほぼ占有でき、そこに書いた指示を「サービスからの
+		// 指示」として読ませる余地ができる(ファイル名やSSEには既に上限がある)
+		const memo = String(req.body.memo || "").slice(0, MEMO_MAX_CHARS);
 		await ds.run(SQL_UPDATE_DOCUMENT_MEMO, [memo === "" ? null : memo, document.id]);
 		res.status(200).json({memo});
 	} catch (err) {
@@ -2283,10 +2375,13 @@ app.get(BASE_URL_PATH + 'api/history', requireAuth, async (req, res) => {
  * 値は本文のテキストにしか使わないが、念のため http/https のURLだけを受け付ける
  */
 const resolveSpecBaseUrl = (req) => {
-	// 受け入れてよいオリジン。設定された公開オリジンと、リクエスト自身のオリジン。
-	// 攻撃者が仕込めるのは `?baseUrl=` の値だけで、この2つは仕込めない
-	const allowedOrigins = new Set([`${req.protocol}://${req.get("host") || ""}`]);
-	if (PUBLIC_ORIGIN != null) allowedOrigins.add(PUBLIC_ORIGIN);
+	// 受け入れてよいオリジン。公開オリジンが設定されていればそれだけを信じる。
+	// リクエスト由来のオリジン(Hostヘッダー)は呼び出し側が名乗れる値なので、
+	// 設定がある場合にわざわざ許可リストへ入れる理由がない。
+	// 設定が無い開発環境では、リクエスト自身のオリジンに限る
+	const allowedOrigins = new Set(
+		PUBLIC_ORIGIN != null ? [PUBLIC_ORIGIN] : [`${req.protocol}://${req.get("host") || ""}`]
+	);
 
 	const requested = String(req.query.baseUrl || "").trim();
 	if (requested !== "" && requested.length <= 500) {
@@ -2975,6 +3070,33 @@ app.use(BASE_URL_PATH + 'api/', (req, res) => {
 });
 
 
+// 最後の受け皿。ここへ来るのは、ルート内でcatchできなかった例外と、ボディの解析に失敗した
+// リクエスト(壊れたJSON、壊れたmultipart)。
+//
+// Expressの既定のエラーハンドラはHTMLを返し、NODE_ENVがproductionでない場合は
+// スタックトレースと絶対パスまで本文に載せる。Dockerfileでは NODE_ENV=production を
+// 設定しているが、守りを環境変数ひとつに依存させたくない(別の起動方法をした瞬間に漏れる)。
+// 明示的に差し替えて、どの環境でも中身を出さず、APIとして一貫したJSONを返す
+app.use((err, req, res, next) => {
+	logger.error(err, "::unhandledError");
+	if (res.headersSent) {
+		next(err);
+		return;
+	}
+	setHTTPHeaders(res);
+	const status = err != null ? (err.status || err.statusCode) : null;
+	const isClientError = typeof status === "number" && status >= 400 && status < 500;
+	// ボディが壊れているのは送ってきた側の問題なので400にする(500にすると障害と区別できない)
+	const malformedBody = err instanceof SyntaxError
+		|| /Malformed part header|Unexpected end of form|Boundary not found|Unsupported content type/i.test(String(err != null ? err.message : ""));
+	if (isClientError || malformedBody) {
+		res.status(isClientError ? status : 400).json({error: "リクエストを解釈できませんでした"});
+		return;
+	}
+	res.status(500).json({error: "Internal Error"});
+});
+
+
 const main = async () => {
 	// DBスキーマの用意。SQLiteはdb.jsのrequire時に作成済みでno-op、Postgresは
 	// 接続後にここでスキーマDDLを冪等実行する(datastore.init参照)
@@ -3015,4 +3137,6 @@ if (require.main === module) {
 	});
 }
 
-module.exports = {app, server, main};
+// safeNextPath はテストから直接検証する(オープンリダイレクトは表記の揺れで破られるため、
+// 実際のブラウザの解釈と同じ規則で弾けているかを網羅的に確かめたい)
+module.exports = {app, server, main, safeNextPath, isSafeEntryFileName, contentDisposition};

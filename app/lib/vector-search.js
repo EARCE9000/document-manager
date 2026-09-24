@@ -110,8 +110,11 @@ const isVectorizerConfigured = (key) => {
 	return vectorizer.requiredEnv.every((envVar) => (process.env[envVar] || "") !== "");
 };
 
-const resolveVectorizer = () => {
-	const key = getVectorizerSetting().vectorizer;
+const resolveVectorizer = async () => {
+	// getVectorizerSetting は async。await を忘れるとキーが常に undefined になり、
+	// 設定(環境変数・画面での選択)を無視して text2vec-transformers にフォールバックし続ける。
+	// 外部API方式を選んだ構成では認証ヘッダーが組み立てられず、索引付けが黙って失敗する
+	const key = (await getVectorizerSetting()).vectorizer;
 	const vectorizer = VECTORIZERS[key];
 	if (vectorizer == null) {
 		logger.warn({vectorizer: key}, "::resolveVectorizer: 未知のベクトライザーが指定されたため、text2vec-transformersにフォールバックします");
@@ -122,8 +125,8 @@ const resolveVectorizer = () => {
 
 // 外部API/クラウド方式のベクトライザー用に、認証情報をリクエストヘッダーとして組み立てる
 // (text2vec-transformersのように認証情報が不要な方式ではcredentialsが空のため何もしない)
-const buildConnectionHeaders = () => {
-	const vectorizer = resolveVectorizer();
+const buildConnectionHeaders = async () => {
+	const vectorizer = await resolveVectorizer();
 	const headers = {};
 	for (const {envVar, header} of vectorizer.credentials) {
 		const value = process.env[envVar] || "";
@@ -274,7 +277,7 @@ const ensureCollection = async (weaviate, client) => {
 	}
 	await client.collections.create({
 		name: COLLECTION_NAME,
-		vectorizers: resolveVectorizer().configure(weaviate),
+		vectorizers: (await resolveVectorizer()).configure(weaviate),
 		properties: [
 			{name: "documentId", dataType: weaviate.dataType.TEXT, skipVectorization: true, indexFilterable: true},
 			{name: "chunkIndex", dataType: weaviate.dataType.INT, skipVectorization: true},
@@ -299,7 +302,7 @@ const getClient = () => {
 				grpcHost: url.hostname,
 				grpcPort: WEAVIATE_GRPC_PORT,
 				grpcSecure: httpSecure,
-				headers: buildConnectionHeaders(),
+				headers: await buildConnectionHeaders(),
 				skipInitChecks: true,
 				// insert(埋め込み計算を伴う)は時間がかかるため、既定より長い上限にする
 				timeout: {init: 30, query: 60, insert: VECTOR_INSERT_TIMEOUT_SECONDS}

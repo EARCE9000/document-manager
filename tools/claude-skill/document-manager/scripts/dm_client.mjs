@@ -47,7 +47,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.1.0";
+const CLIENT_VERSION = "1.2.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -57,7 +57,11 @@ class DmError extends Error {}
 let updateNotified = false;
 const notifyIfOutdated = (res, baseUrl) => {
 	const latest = res.headers.get("x-skill-latest-version");
-	if (!latest || updateNotified || latest === CLIENT_VERSION) return;
+	// この値はサーバが名乗ったもので、そのまま自分の文面(AIが「ツールの言葉」として読む文)に
+	// 埋め込む。接続先が正規でない場合(設定ミス・DNSの乗っ取り・平文通信)に任意の文章を
+	// 混ぜ込まれないよう、数字3組だけを受け付ける。サーバ側でも同じ検査をしている
+	if (!latest || !/^\d+\.\d+\.\d+$/.test(latest)) return;
+	if (updateNotified || latest === CLIENT_VERSION) return;
 	updateNotified = true;
 	console.error(
 		`[更新のお知らせ] このDocument Manager用クライアントは ${CLIENT_VERSION} ですが、サーバーには ${latest} があります。\n`
@@ -65,6 +69,18 @@ const notifyIfOutdated = (res, baseUrl) => {
 		+ `(画面右上の「APIキー管理」→「AIエージェント用 Skill」からも取得できます)。\n`
 		+ `  この作業は利用者の環境で行う必要があります。ユーザーに伝えてください。`
 	);
+};
+
+// サーバから受け取ったファイル名を、そのままローカルの保存先に使わないための正規化。
+// 名前を決めるのはアップロードした人であって、こちらではない。パス区切り(/ \)が
+// 混じっていると、書き込み先を作業場所の外へ持ち出せてしまう(Windowsでは \ も区切り)。
+// サーバ側でも入口で拒否しているが、古いサーバや正規でない接続先が相手でも
+// 破られないよう、書き込む直前にもう一度絞る
+const safeLocalFilename = (name) => {
+	const last = String(name ?? "").replace(/\\/g, "/").split("/").pop();
+	// eslint-disable-next-line no-control-regex
+	const cleaned = last.replace(/[\u0000-\u001f\u007f]/g, "").trim().replace(/^\.+|\.+$/g, "");
+	return cleaned || "download";
 };
 
 const MIME_BY_EXT = {
@@ -246,7 +262,8 @@ const commands = {
 			query: opts.render ? {render: "1"} : {download: "1"},
 			raw: true
 		});
-		const name = opts.render ? `${path.basename(doc.entryFile, path.extname(doc.entryFile))}.pdf` : doc.entryFile;
+		const entryFile = safeLocalFilename(doc.entryFile);
+		const name = opts.render ? `${path.basename(entryFile, path.extname(entryFile))}.pdf` : entryFile;
 		let out = opts.output || name;
 		if (fs.existsSync(out) && fs.statSync(out).isDirectory()) out = path.join(out, name);
 		fs.writeFileSync(out, payload);

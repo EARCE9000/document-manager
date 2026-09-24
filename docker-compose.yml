@@ -99,7 +99,9 @@ services:
       - no-new-privileges:true
     ports:
       # 単体で試すとき用(converter/test/smoke.js の既定の接続先)
-      - "3010:3000"
+      # converterは認証を持たない(内部ネットワーク前提)。開発中でもホスト外から
+      # 到達できないよう、ループバックにだけ割り当てる
+      - "127.0.0.1:3010:3000"
 
 volumes:
   weaviate_data:

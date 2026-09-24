@@ -47,6 +47,7 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import socket
 import sys
 import threading
@@ -60,7 +61,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.1.0"
+CLIENT_VERSION = "1.2.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -76,6 +77,11 @@ _update_notified = False
 def notify_if_outdated(headers, base_url):
     global _update_notified
     latest = headers.get("X-Skill-Latest-Version") if headers else None
+    # この値はサーバが名乗ったもので、そのまま自分の文面(AIが「ツールの言葉」として読む文)に
+    # 埋め込む。接続先が正規でない場合(設定ミス・DNSの乗っ取り・平文通信)に任意の文章を
+    # 混ぜ込まれないよう、数字3組だけを受け付ける。サーバ側でも同じ検査をしている
+    if latest is not None and not re.fullmatch(r"\d+\.\d+\.\d+", str(latest)):
+        latest = None
     if not latest or _update_notified or latest == CLIENT_VERSION:
         return
     _update_notified = True
@@ -88,6 +94,20 @@ def notify_if_outdated(headers, base_url):
         f"  この作業は利用者の環境で行う必要があります。ユーザーに伝えてください。",
         file=sys.stderr
     )
+
+
+# サーバから受け取ったファイル名を、そのままローカルの保存先に使わないための正規化。
+# 名前を決めるのはアップロードした人であって、こちらではない。パス区切り(/ \\)が
+# 混じっていると、書き込み先を作業場所の外へ持ち出せてしまう(Windowsでは \\ も区切り)。
+# サーバ側でも入口で拒否しているが、古いサーバや正規でない接続先が相手でも
+# 破られないよう、書き込む直前にもう一度絞る
+def safe_local_filename(name):
+    name = str(name or "")
+    # 両方の区切り文字で切って最後の要素だけを採る(どちらのOSでも同じ結果にする)
+    name = name.replace("\\", "/").split("/")[-1]
+    name = "".join(ch for ch in name if ch >= " " and ch != "\x7f")
+    name = name.strip().strip(".")
+    return name or "download"
 
 
 def load_config():
@@ -294,10 +314,10 @@ def cmd_download(args):
                 "hint": "対象はExcel/Word/PowerPoint。変換中(pending)なら少し待つ。failedなら管理者に再実行を依頼する"
             }, ensure_ascii=False))
         payload, _headers = request("GET", f"api/documents/{quote_id(args.id)}/file", query={"render": "1"}, raw=True)
-        name = os.path.splitext(doc["entryFile"])[0] + ".pdf"
+        name = os.path.splitext(safe_local_filename(doc["entryFile"]))[0] + ".pdf"
     else:
         payload, _headers = request("GET", f"api/documents/{quote_id(args.id)}/file", query={"download": "1"}, raw=True)
-        name = doc["entryFile"]
+        name = safe_local_filename(doc["entryFile"])
     out = args.output or name
     if os.path.isdir(out):
         out = os.path.join(out, name)
