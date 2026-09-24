@@ -93,8 +93,10 @@ jobs:
         with:
           node-version: 22
 
+      # ロックファイルはコミットしていない(マルチアーキテクチャのビルドで依存を選び直すため。
+      # app/.gitignore 参照)。したがって npm ci は使えず、npm install を使う
       - name: Install app dependencies
-        run: npm ci --omit=dev
+        run: npm install --omit=dev --no-audit --no-fund
         working-directory: app
 
       - name: Integration test (app + converter)
