@@ -300,6 +300,21 @@ app.use(BASE_URL_PATH + 'login', loginRateLimiter);
 // ホームの遷移先)は外部から見えるこのプレフィックス基準で組み立てる。
 // 環境変数名は他の社内サービス(docker_management等)とそろえてある。
 const PUBLIC_BASE_PATH = (process.env.BASE_PATH || "/document_management").replace(/\/+$/, "");
+
+// 外部から見たこのサービスのオリジン(例 https://docs.example.com)。
+// リバースプロキシ配下では、リクエストのHostヘッダーは公開URLとして信用できない:
+//   - ProxyPreserveHostがOffだと転送先の宛先(コンテナ名:ポート)になり、外から到達できない値になる
+//   - 呼び出し側が任意の値を入れられるため、応答に載せると「偽のURLを名乗らせる」余地ができる
+// OIDC_REDIRECT_URIは公開URLそのもので、deploy/compose.shが起動時に存在を検査している。
+// 設定が無い開発環境(AUTH_DISABLED等)ではnullのままにし、リクエストからの組み立てに戻す
+const PUBLIC_ORIGIN = (() => {
+	try {
+		return new URL(String(process.env.OIDC_REDIRECT_URI)).origin;
+	} catch {
+		return null;
+	}
+})();
+logger.info({PUBLIC_ORIGIN}, "public origin for URLs in responses");
 const APP_ROOT_URI = `${PUBLIC_BASE_PATH}/`;
 const LOGIN_URI = `${PUBLIC_BASE_PATH}/login`;
 
@@ -608,7 +623,9 @@ app.all(BASE_URL_PATH + 'logout', async (req, res) => {
  * ことができてしまう。必ずリクエスト自身から組み立てる
  */
 const apiGuideHint = (req) => {
-	const base = `${req.protocol}://${req.get("host") || ""}${BASE_URL_PATH}`.replace(/\/+$/, "");
+	const base = PUBLIC_ORIGIN != null
+		? `${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH}`
+		: `${req.protocol}://${req.get("host") || ""}${BASE_URL_PATH}`.replace(/\/+$/, "");
 	return `APIの使い方(AI向け利用ガイド)は GET ${base}/api/usage.md で取得できます(APIキーが必要)`;
 };
 
@@ -2266,17 +2283,29 @@ app.get(BASE_URL_PATH + 'api/history', requireAuth, async (req, res) => {
  * 値は本文のテキストにしか使わないが、念のため http/https のURLだけを受け付ける
  */
 const resolveSpecBaseUrl = (req) => {
+	// 受け入れてよいオリジン。設定された公開オリジンと、リクエスト自身のオリジン。
+	// 攻撃者が仕込めるのは `?baseUrl=` の値だけで、この2つは仕込めない
+	const allowedOrigins = new Set([`${req.protocol}://${req.get("host") || ""}`]);
+	if (PUBLIC_ORIGIN != null) allowedOrigins.add(PUBLIC_ORIGIN);
+
 	const requested = String(req.query.baseUrl || "").trim();
 	if (requested !== "" && requested.length <= 500) {
 		try {
 			const url = new URL(requested);
-			if (url.protocol === "http:" || url.protocol === "https:") {
+			// 自分以外のオリジンは受け付けない。ここを通すと「正規のドメインのURLを渡すだけで、
+			// ベースURLだけ別サイトに差し替えた利用ガイド」を作れてしまう。AIはそれを信じて
+			// 以降の呼び出しを——APIキーを添えて——その別サイトへ送ることになる
+			if ((url.protocol === "http:" || url.protocol === "https:") && allowedOrigins.has(url.origin)) {
 				return url.href.replace(/\/$/, "");
 			}
+			logger.warn({requestedOrigin: url.origin}, "::resolveSpecBaseUrl: 自分以外のオリジンを指定されたため無視しました");
 		} catch {
 			// 不正な値は無視して、リクエストから組み立てた既定値を使う
 		}
 	}
+	// 指定が無い(または受け付けられない)場合。プロキシ配下ではリクエストのHostが内部の宛先に
+	// なりうるため、設定された公開オリジンを優先する
+	if (PUBLIC_ORIGIN != null) return `${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH}`;
 	const base = `${req.protocol}://${req.get("host") || ""}${BASE_URL_PATH}`;
 	return base.replace(/\/$/, "");
 };

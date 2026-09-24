@@ -8,7 +8,7 @@
  */
 
 const {test, expect} = require("@playwright/test");
-const {loadKeys} = require("./config.js");
+const {loadKeys, PORT} = require("./config.js");
 
 const keys = loadKeys();
 const bearer = (key) => (key ? {Authorization: `Bearer ${key}`} : {});
@@ -258,12 +258,24 @@ test.describe("API仕様の取得", () => {
 		expect(markdown).toContain("## AIへの指示");
 	});
 
-	test("baseUrlを指定するとその値が使われ、不正な値は無視される", async ({request}) => {
-		const specified = await (await request.get("api/usage.md?baseUrl=https%3A%2F%2Fdocs.example.com%2Fsub%2F", {headers: rw})).text();
-		expect(specified).toContain("- ベースURL: `https://docs.example.com/sub`");
-		expect(specified).toContain("`GET https://docs.example.com/sub/api/documents?q=<検索語>`");
+	test("baseUrlで自分のオリジン配下のパスを指定できる(リバースプロキシのサブパス用)", async ({request}) => {
+		const own = `http://127.0.0.1:${PORT}/sub/`;
+		const specified = await (await request.get(`api/usage.md?baseUrl=${encodeURIComponent(own)}`, {headers: rw})).text();
+		expect(specified).toContain(`- ベースURL: \`http://127.0.0.1:${PORT}/sub\``);
+		expect(specified).toContain(`\`GET http://127.0.0.1:${PORT}/sub/api/documents?q=<検索語>\``);
+	});
 
-		// http/https以外・壊れた値はリクエストから組み立てた既定値にフォールバックする
+	// 正規のドメインのURLを渡すだけで、ベースURLだけ別サイトに差し替えたガイドを作れてしまうと、
+	// AIはそれを信じて以降の呼び出しをAPIキーごと別サイトへ送ってしまう
+	test("自分以外のオリジンをbaseUrlに指定しても使われない", async ({request}) => {
+		for (const hostile of ["https://evil.example/", "http://127.0.0.1:1/", "https://127.0.0.1.evil.example/"]) {
+			const md = await (await request.get(`api/usage.md?baseUrl=${encodeURIComponent(hostile)}`, {headers: rw})).text();
+			expect(md, hostile).not.toContain("evil.example");
+			expect(md, hostile).toContain(`- ベースURL: \`http://127.0.0.1:${PORT}\``);
+		}
+	});
+
+	test("http/https以外・壊れた値は既定値にフォールバックする", async ({request}) => {
 		for (const bad of ["javascript:alert(1)", "not-a-url"]) {
 			const fallback = await (await request.get(`api/usage.md?baseUrl=${encodeURIComponent(bad)}`, {headers: rw})).text();
 			expect(fallback).not.toContain(bad);
