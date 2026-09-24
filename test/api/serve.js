@@ -35,6 +35,9 @@ process.env.OFFICE_RENDER_URL = process.env.OFFICE_RENDER_URL || `http://127.0.0
 // 「サーバーに新しいクライアントがある」状態を作り、更新のお知らせを検証できるようにする
 // (同梱のクライアントと同じ版のままでは、お知らせが出る経路を通れないため)
 process.env.SKILL_CLIENT_VERSION = process.env.SKILL_CLIENT_VERSION || "9.9.9";
+// 「サーバーが更新された」通知を検証できるようにする(ローカルにはVERSION.jsonが無く、
+// ビルドが決まらないとこの経路を通れないため)
+process.env.SERVER_BUILD = process.env.SERVER_BUILD || "20260925_000000";
 
 // require時にdb.jsがDATA_DIR上にSQLiteを作成する
 const ds = require("../../app/lib/datastore.js");

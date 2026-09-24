@@ -55,6 +55,21 @@ class DmError extends Error {}
 // サーバーが「より新しいクライアントがある」と知らせてきたら、1度だけ標準エラーへ出す。
 // AIエージェントはこの文面を読み、利用者へ更新を促せる
 let updateNotified = false;
+// サーバーが更新されたことを知らせてきたら、1度だけ標準エラーへ出す
+let serverUpdateNotified = false;
+const notifyIfServerUpdated = (res) => {
+	const build = res.headers.get("x-server-updated");
+	// サーバーが名乗った値をそのまま文面に入れるため、形を検査する(日時のタグを想定)
+	if (!build || !/^[0-9A-Za-z._-]{1,40}$/.test(build) || serverUpdateNotified) return;
+	serverUpdateNotified = true;
+	console.error(
+		`[サーバー更新のお知らせ] Document Managerが更新されました(build ${build})。\n`
+		+ `  手元の手順書(SKILL.md)や以前取得したAPI仕様は古い可能性があります。`
+		+ `対応ファイル形式やAPIが増えていることがあるため、`
+		+ `\`spec\` コマンドで最新の利用ガイドを取り直してから作業してください。`
+	);
+};
+
 const notifyIfOutdated = (res, baseUrl) => {
 	const latest = res.headers.get("x-skill-latest-version");
 	// この値はサーバが名乗ったもので、そのまま自分の文面(AIが「ツールの言葉」として読む文)に
@@ -131,6 +146,7 @@ const request = async (method, apiPath, {query, json, formData, raw = false} = {
 		throw new DmError(`接続できません: ${url} (${err.cause?.message || err.message})`);
 	}
 	notifyIfOutdated(res, baseUrl);
+	notifyIfServerUpdated(res);
 	if (!res.ok) {
 		const text = await res.text();
 		let detail;

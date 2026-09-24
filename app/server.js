@@ -212,7 +212,15 @@ const resolveAuth = async (req, res, next) => {
 			}
 			if (verifyResult.status === "ok" && await AllowedUsers.isAllowed(verifyResult.row.created_by)) {
 				const apiKeyRow = verifyResult.row;
-				req.authData = {user_identifier: apiKeyRow.created_by, viaApiKey: apiKeyRow.label, role: apiKeyRow.role};
+				req.authData = {
+					user_identifier: apiKeyRow.created_by,
+					viaApiKey: apiKeyRow.label,
+					role: apiKeyRow.role,
+					// 「サーバーが更新された」を1回だけ知らせるための情報(下記のミドルウェアで使う)。
+					// 認証時の照会に相乗りしているため、この取得でクエリは増えていない
+					apiKeyId: apiKeyRow.id,
+					notifiedBuild: apiKeyRow.notified_build ?? null
+				};
 			}
 			next();
 			return;
@@ -309,7 +317,40 @@ app.use(BASE_URL_PATH + 'api/', (req, res, next) => {
 	next();
 });
 
-app.use(BASE_URL_PATH + 'api/', resolveAuth, apiRateLimiterAnonymous, apiRateLimiterAuthenticated);
+// サーバーが更新されたことを、APIキーごとに1回だけ知らせる。
+//
+// 手元のクライアントや貼り付けた利用ガイドは、サーバーが新しくなっても古いままになる
+// (対応形式やAPIが増えても、AIは知らないものを使わないだけでエラーにならず、誰も気づけない)。
+// そこでサーバー側が「変わったこと」を覚えていて教える。
+//
+// 合図にするのはビルド(VERSION.jsonのVERSION)であって、起動ではない。コンテナはクラッシュ復帰・
+// ホスト再起動・ただのrestartでも起動するため、起動を合図にすると何も変わっていないのに
+// 知らせてしまい、「出たら本当に変わった」という信号の価値を失う。
+// ビルドを記録しておけば、再起動では誰にも知らせず、実際に入れ替わったときだけ1回知らせられる。
+//
+// 手元のクライアントが古いことを知らせる X-Skill-Latest-Version とは別物。あちらは版の比較だけで
+// 決まるので状態を持たない(本当に古いクライアントは毎回言われるべき)。
+// 通常はVERSION.json(イメージのビルド時に生成される)から読む。SERVER_BUILD で上書きできる
+// のは検証・テスト用(ローカル開発にはVERSION.jsonが無く、この経路を通れないため)
+const SERVER_BUILD = process.env.SERVER_BUILD
+	|| (versionInfo != null && versionInfo.VERSION ? String(versionInfo.VERSION) : null);
+app.use(BASE_URL_PATH + 'api/', resolveAuth, apiRateLimiterAnonymous, apiRateLimiterAuthenticated, async (req, res, next) => {
+	try {
+		const auth = req.authData;
+		if (SERVER_BUILD == null || auth == null || auth.apiKeyId == null || auth.notifiedBuild === SERVER_BUILD) {
+			next();
+			return;
+		}
+		// 記録できたリクエストだけが知らせる(同時に来ても二重に出ない)
+		if (await ApiKeys.markNotifiedBuild(auth.apiKeyId, SERVER_BUILD)) {
+			res.setHeader("X-Server-Updated", SERVER_BUILD);
+		}
+	} catch (err) {
+		// 知らせられなくても業務に影響は無い
+		logger.error(err, "::serverUpdatedNotice");
+	}
+	next();
+});
 app.use(BASE_URL_PATH + 'login', loginRateLimiter);
 
 // 外部公開時のパスプレフィックス。ApacheのReverseProxyはこのプレフィックスを

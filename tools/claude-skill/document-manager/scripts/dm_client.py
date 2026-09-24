@@ -74,6 +74,30 @@ class DmError(Exception):
 _update_notified = False
 
 
+# サーバーが更新されたことを知らせてきたら、1度だけ標準エラーへ出す。
+# サーバー側はAPIキーごとに1回しか送らないため、こちらで回数を絞る必要はないが、
+# 1プロセス内で何度も出すと邪魔なので1回にする
+_server_update_notified = False
+
+
+def notify_if_server_updated(headers):
+    global _server_update_notified
+    build = headers.get("X-Server-Updated") if headers else None
+    # サーバーが名乗った値をそのまま文面に入れるため、形を検査する(日時のタグを想定)
+    if build is not None and not re.fullmatch(r"[0-9A-Za-z._-]{1,40}", str(build)):
+        build = None
+    if not build or _server_update_notified:
+        return
+    _server_update_notified = True
+    print(
+        f"[サーバー更新のお知らせ] Document Managerが更新されました(build {build})。\n"
+        f"  手元の手順書(SKILL.md)や以前取得したAPI仕様は古い可能性があります。"
+        f"対応ファイル形式やAPIが増えていることがあるため、"
+        f"`spec` コマンドで最新の利用ガイドを取り直してから作業してください。",
+        file=sys.stderr
+    )
+
+
 def notify_if_outdated(headers, base_url):
     global _update_notified
     latest = headers.get("X-Skill-Latest-Version") if headers else None
@@ -148,11 +172,13 @@ def request(method, path, *, query=None, body=None, content_type=None, raw=False
         with urllib.request.urlopen(req) as res:
             payload = res.read()
             notify_if_outdated(res.headers, base_url)
+            notify_if_server_updated(res.headers)
             if raw:
                 return payload, res.headers
             return json.loads(payload) if payload else None
     except urllib.error.HTTPError as err:
         notify_if_outdated(err.headers, base_url)
+        notify_if_server_updated(err.headers)
         text = err.read().decode("utf-8", "replace")
         try:
             detail = json.loads(text)

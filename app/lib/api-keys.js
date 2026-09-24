@@ -91,10 +91,19 @@ const SQL_SELECT_ACTIVE_API_KEYS_BY_OWNER = `
 `;
 
 const SQL_SELECT_ACTIVE_API_KEY_BY_HASH = `
-	SELECT id, label, role, created_by, expires_at FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL
+	SELECT id, label, role, created_by, expires_at, notified_build FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL
 `;
 
 const SQL_TOUCH_LAST_USED = `UPDATE api_keys SET last_used_at = ? WHERE id = ?`;
+
+// 「サーバーが更新された」と知らせたことを記録する。現在のビルドと違うときだけ知らせるため、
+// これを書いた後は同じビルドの間は二度と知らせない。
+// 条件に notified_build を含めるのは、同時に来た複数のリクエストで二重に知らせないため
+// (両方が同じ古い値を読んだ場合、UPDATEが通るのは片方だけになる)
+const SQL_MARK_NOTIFIED_BUILD = `
+	UPDATE api_keys SET notified_build = ?
+	WHERE id = ? AND (notified_build IS NULL OR notified_build <> ?)
+`;
 
 // 発行者本人以外は失効できないよう created_by も条件に含める
 const SQL_REVOKE_API_KEY = `
@@ -164,6 +173,23 @@ module.exports.listApiKeys = async (ownerUserIdentifier) => ds.all(SQL_SELECT_AC
 module.exports.revokeApiKeyById = async (id, ownerUserIdentifier) => {
 	const result = await ds.run(SQL_REVOKE_API_KEY, {id, created_by: ownerUserIdentifier, revoked_at: new Date().toISOString()});
 	return result.changes > 0;
+};
+
+/**
+ * このキーへ「サーバーが更新された」と知らせたことを記録する。
+ * 実際に知らせるときだけ呼ぶため、通常のリクエストでクエリは増えない。
+ * 戻り値は「このリクエストが記録できたか」= 知らせてよいかの判定に使う
+ * (同時に来たリクエストのうち1本だけがtrueになる)。
+ */
+module.exports.markNotifiedBuild = async (id, build) => {
+	try {
+		const result = await ds.run(SQL_MARK_NOTIFIED_BUILD, [build, id, build]);
+		return (result != null ? result.changes : 0) > 0;
+	} catch (err) {
+		// 知らせられなくても業務に影響は無いので、失敗しても通常処理は続ける
+		logger.error(err, "::markNotifiedBuild");
+		return false;
+	}
 };
 
 /**

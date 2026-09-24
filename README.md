@@ -163,7 +163,7 @@ document-manager/
 ├── docs/screenshots/        # READMEのスクリーンショットと撮影スクリプト(capture.js)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
     ├── documents/<年月>_<UUID>/  # 文書本体 (元ファイル + 変換後preview.html。STORAGE_BACKEND=local時のみ)
-    └── db/document_manager_v<N>.sqlite  # DATABASE_BACKEND=sqlite時のみ。<N>はスキーマバージョン(現在v12)で、移行時は旧バージョンのファイルを残したまま新しいファイルを作る(postgres時はマネージドDB側に保存され、このボリュームは不要)
+    └── db/document_manager_v<N>.sqlite  # DATABASE_BACKEND=sqlite時のみ。<N>はスキーマバージョン(現在v14)で、移行時は旧バージョンのファイルを残したまま新しいファイルを作る(移行が正しく行われるかは`node tools/verify-schema-migration.js <移行元のコミット>`で実際に動かして確認できる)(postgres時はマネージドDB側に保存され、このボリュームは不要)
 ```
 
 ## 環境変数

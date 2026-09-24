@@ -209,6 +209,82 @@ test.describe("利用ガイドの場所の案内", () => {
 	});
 });
 
+// 手元のクライアントや貼り付けた利用ガイドは、サーバーが新しくなっても古いままになる。
+// そこでサーバー側が「変わったこと」をAPIキーごとに覚えていて、1回だけ知らせる。
+// 合図はビルドであって起動ではない(再起動では知らせない)
+test.describe("サーバー更新のお知らせ", () => {
+	const session = {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(keys.sessionCookie)}`};
+	const BUILD = "20260925_000000"; // test/api/serve.js が設定している値
+
+	// 既存のキーは他のテストで使われており、通知が既に消費されている可能性がある。
+	// 毎回新しいキーを発行して、未通知の状態から確かめる
+	const freshKey = async (request, label) => {
+		const res = await request.post("api/apikeys", {headers: session, data: {label, role: "readonly", expiryOption: "30d"}});
+		expect(res.status()).toBe(200);
+		return await res.json();
+	};
+
+	test("新しいキーの初回アクセスで知らせ、2回目以降は知らせない", async ({request}) => {
+		const key = await freshKey(request, "notice-once");
+		const auth = bearer(key.apiKey);
+
+		const first = await request.get("api/documents", {headers: auth});
+		expect(first.status()).toBe(200);
+		expect(first.headers()["x-server-updated"]).toBe(BUILD);
+
+		for (const attempt of [2, 3]) {
+			const again = await request.get("api/documents", {headers: auth});
+			expect(again.headers()["x-server-updated"], `${attempt}回目`).toBeUndefined();
+		}
+
+		await request.delete(`api/apikeys/${key.id}`, {headers: session});
+	});
+
+	test("キーごとに1回ずつ知らせる(他のキーの通知に影響しない)", async ({request}) => {
+		const a = await freshKey(request, "notice-a");
+		const b = await freshKey(request, "notice-b");
+
+		expect((await request.get("api/documents", {headers: bearer(a.apiKey)})).headers()["x-server-updated"]).toBe(BUILD);
+		// aが受け取った後でも、bは自分の分を受け取れる
+		expect((await request.get("api/documents", {headers: bearer(b.apiKey)})).headers()["x-server-updated"]).toBe(BUILD);
+		expect((await request.get("api/documents", {headers: bearer(a.apiKey)})).headers()["x-server-updated"]).toBeUndefined();
+
+		for (const key of [a, b]) await request.delete(`api/apikeys/${key.id}`, {headers: session});
+	});
+
+	test("認証エラーの応答では知らせない(消費もしない)", async ({request}) => {
+		// 期限切れ・不正なキーには出さない。APIキーが特定できないため記録もできない
+		for (const key of [keys.expired, keys.invalid]) {
+			const res = await request.get("api/documents", {headers: bearer(key)});
+			expect(res.headers()["x-server-updated"]).toBeUndefined();
+		}
+		expect((await request.get("api/documents")).headers()["x-server-updated"]).toBeUndefined();
+	});
+
+	test("画面のログインセッションには知らせない(APIキー利用者向けの仕組み)", async ({request}) => {
+		const res = await request.get("api/documents", {headers: session});
+		expect(res.status()).toBe(200);
+		expect(res.headers()["x-server-updated"]).toBeUndefined();
+	});
+
+	test("手元のクライアントが古いことの通知とは独立している", async ({request}) => {
+		// 版の比較(X-Skill-Latest-Version)は状態を持たないため、何度でも出る。
+		// 一方サーバー更新の通知は1回で止まる
+		const key = await freshKey(request, "notice-independent");
+		const auth = {...bearer(key.apiKey), "User-Agent": "document-manager-skill/1.0.0 (python 3.13)"};
+
+		const first = await request.get("api/documents", {headers: auth});
+		expect(first.headers()["x-skill-latest-version"]).toBe("9.9.9");
+		expect(first.headers()["x-server-updated"]).toBe(BUILD);
+
+		const second = await request.get("api/documents", {headers: auth});
+		expect(second.headers()["x-skill-latest-version"]).toBe("9.9.9"); // 古いままなので毎回出る
+		expect(second.headers()["x-server-updated"]).toBeUndefined();     // こちらは1回で止まる
+
+		await request.delete(`api/apikeys/${key.id}`, {headers: session});
+	});
+});
+
 test.describe("Claude Code用SkillのZIPダウンロード", () => {
 	test("未認証は401", async ({request}) => {
 		expect((await request.get("api/claude-skill.zip")).status()).toBe(401);

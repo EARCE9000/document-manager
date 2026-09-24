@@ -593,7 +593,9 @@ module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, version}) =>
 	// そこで「いつ・どの版の内容か」と「取り直せること」を先頭に書き、AIが自力で最新化できるようにする
 	const staleNote = `> このガイドは取得時点の内容です(サーバー版 ${version || "不明"} / ${new Date().toISOString().slice(0, 10)})。`
 		+ `貼り付けて保存したものは古くなります。記載のAPIで目的を果たせないときや、以前受け取った内容を使っているときは`
-		+ ` \`GET ${base}/api/usage.md\` で取り直してください(対応ファイル形式やAPIが増えていることがあります)。`;
+		+ ` \`GET ${base}/api/usage.md\` で取り直してください(対応ファイル形式やAPIが増えていることがあります)。`
+		+ `\n>\n> 確認は \`GET ${base}/api/version\` が手軽です(認証不要・応答は数十バイト)。`
+		+ `その \`build\` が上のサーバー版と違っていれば、このガイドは古いので取り直してください。`;
 
 	return `# Document Manager API 利用ガイド (AI向け)
 

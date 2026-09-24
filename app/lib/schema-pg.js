@@ -74,7 +74,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	created_at TEXT NOT NULL,
 	expires_at TEXT NOT NULL,
 	last_used_at TEXT,
-	revoked_at TEXT
+	revoked_at TEXT,
+	-- 「サーバーが更新された」と最後に知らせたときのビルド(app/lib/db.js の同名列のコメント参照)
+	notified_build TEXT
 );
 
 CREATE TABLE IF NOT EXISTS allowed_users (
@@ -198,6 +200,9 @@ const MIGRATIONS = [
 		ALTER TABLE documents ADD COLUMN IF NOT EXISTS render_error TEXT;
 		ALTER TABLE documents ADD COLUMN IF NOT EXISTS render_file TEXT;
 		ALTER TABLE documents ADD COLUMN IF NOT EXISTS rendered_at TEXT;
+	`},
+	{version: 6, sql: `
+		ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS notified_build TEXT;
 	`}
 ];
 

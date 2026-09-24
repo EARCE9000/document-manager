@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -99,7 +99,12 @@ const createSchema = (targetDb) => {
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			expires_at TEXT NOT NULL,
 			last_used_at TEXT,
-			revoked_at TEXT
+			revoked_at TEXT,
+			-- このキーに対して「サーバーが更新された」と最後に知らせたときのビルド(VERSION.jsonのVERSION)。
+			-- 現在のビルドと違うときだけ知らせ、知らせたら書き込む。これにより1回の更新につき
+			-- キーごとに1回だけになる。起動時のリセットは行わない(クラッシュ復帰やホスト再起動でも
+			-- 起動するため、起動を合図にすると何も変わっていないのに知らせてしまう)
+			notified_build TEXT
 		)
 	`);
 
@@ -554,6 +559,49 @@ const MIGRATIONS = {
 				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
 			`);
 			// document_linksはv10に存在しないため対象外(createSchema()で空のまま作られたものをそのまま使う)
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
+	},
+	14: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at, locked)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at, locked FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at FROM old.project_documents;
+
+				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
+				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
+
+				INSERT INTO document_links (document_id_a, document_id_b, created_by, created_at)
+				SELECT document_id_a, document_id_b, created_by, created_at FROM old.document_links;
+
+				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
+				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
+			`);
+			// api_keys.notified_build はv13に存在しないため対象外。NULLのまま移行されるので、
+			// 移行後の最初のアクセスで「サーバーが更新された」と1回知らせることになる(意図どおり)
 		} finally {
 			newDb.exec("DETACH DATABASE old");
 		}
