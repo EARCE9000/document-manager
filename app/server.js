@@ -760,13 +760,17 @@ const ENTRY_FILE_EXTENSIONS = [...NATIVE_PREVIEW_EXTENSIONS, ...MHTML_EXTENSIONS
 /**
  * アップロードされたファイル名として受け入れてよいか。
  *
- * 保存先の組み立てに使うのはサーバだけではない。この名前は応答(entryFile)として利用者と
- * AIエージェントへ渡り、クライアント(同梱のdm_client等)がローカルの保存先として使う。
- * サーバはLinuxで動く一方、クライアントはWindowsで動くことがあるため、
- * 「サーバのpath.basenameが落とさない区切り文字」が受け取り側では区切り文字になる。
- * 結果として、取得したファイルを作業場所の外へ書かせることができてしまう
- * (エージェント自身の設定ファイルを上書きする等)。
- * そこでプラットフォームに依存せず、両方の区切り文字と制御文字を拒否する。
+ * この名前は保存先の組み立てに使われる。しかも使うのはサーバだけではなく、応答(entryFile)
+ * として利用者とAIエージェントへ渡り、クライアント(同梱のdm_client等)がローカルの保存先
+ * としても使う。区切り文字が混じった名前が記録されると、受け取った側で作業場所の外へ
+ * 書かせることができてしまう。
+ *
+ * 現時点では、ここへ届く前に busboy(multipartの解析)が独自のbasenameで `/` と `\` の
+ * 両方を落とし、".."と"."は空文字にしている(app/node_modules/busboy/lib/utils.js)。
+ * つまりこの判定は今のところ通過するだけで、脆弱性を塞いでいるわけではない。
+ * それでも置いておくのは、安全性が「上流ライブラリの実装詳細」だけに依存している状態を
+ * 避けるため(バージョン更新や別ライブラリへの差し替えで静かに崩れる)。
+ * 判定はプラットフォームに依存しない形にしてある。
  */
 const isSafeEntryFileName = (name) =>
 	typeof name === "string" &&
@@ -1616,9 +1620,7 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		const uploadfile = req.files.uploadfile;
 		const originalName = path.basename(fixUploadedFilenameEncoding(String(uploadfile.name || "")));
 		const extension = path.extname(originalName).toLowerCase();
-		// path.basename が落とすのは動作中のプラットフォームの区切り文字だけ。サーバはLinuxで
-		// 動くため、Windowsのパス(..\..\x.json)はそのまま1つのファイル名として通ってしまう。
-		// 入口で拒否して、どのクライアントから使っても安全な名前しか記録しない(下記の判定関数を参照)
+		// 名前の妥当性を入口で確かめる(下記の判定関数を参照)
 		if (!isSafeEntryFileName(originalName)) {
 			res.status(400).json({error: "ファイル名にパス区切り文字(/ \\)・制御文字は使用できません"});
 			return;
