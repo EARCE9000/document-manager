@@ -173,6 +173,42 @@ test.describe("クライアントの更新のお知らせ", () => {
 	});
 });
 
+// 手探りでAPIを叩いている相手(自作クライアント、キーだけ渡されたAI)に、次に読むものを示す。
+// 公開サーバ前提のため、案内を返すのは「キーを提示した相手」に限る
+test.describe("利用ガイドの場所の案内", () => {
+	test("存在しないAPIパスはJSONの404を返す(HTMLのエラーページではない)", async ({request}) => {
+		const res = await request.get("api/nonexistent", {headers: bearer(keys.readonly)});
+		expect(res.status()).toBe(404);
+		expect(res.headers()["content-type"]).toContain("application/json");
+		const body = await res.json();
+		expect(body.error).toBe("not found");
+		expect(body.guide).toContain("/api/usage.md");
+	});
+
+	test("期限切れのキーには案内を添える(キーを出した相手なので)", async ({request}) => {
+		const body = await (await request.get("api/documents", {headers: bearer(keys.expired)})).json();
+		expect(body.guide).toContain("/api/usage.md");
+	});
+
+	test("キーを出していない相手には案内しない(鍵を持たない者への道案内をしない)", async ({request}) => {
+		for (const url of ["api/documents", "api/nonexistent"]) {
+			const body = await (await request.get(url)).json();
+			expect(body.guide, url).toBeUndefined();
+		}
+	});
+
+	test("案内するURLに ?baseUrl= の値を使わない(任意のURLをAIに読ませられないこと)", async ({request}) => {
+		const res = await request.get("api/nonexistent?baseUrl=https%3A%2F%2Fevil.example%2F", {headers: bearer(keys.readonly)});
+		const body = await res.json();
+		expect(body.guide).not.toContain("evil.example");
+		expect(body.guide).toContain("127.0.0.1");
+	});
+
+	test("案内先のガイド自体は認証が必要なまま(場所を知られても中身は読めない)", async ({request}) => {
+		expect((await request.get("api/usage.md")).status()).toBe(401);
+	});
+});
+
 test.describe("Claude Code用SkillのZIPダウンロード", () => {
 	test("未認証は401", async ({request}) => {
 		expect((await request.get("api/claude-skill.zip")).status()).toBe(401);

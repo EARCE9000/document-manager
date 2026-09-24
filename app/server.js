@@ -594,13 +594,32 @@ app.all(BASE_URL_PATH + 'logout', async (req, res) => {
 // 失効チェック、有効期限切れの個別メッセージ等)はresolveAuth(上部、レート制限の直前に
 // api/*全体へグローバル適用済み)が既に行っている。requireAuthはその結果(req.authData/
 // req.authError)を見て、未認証なら401を返すだけの薄いゲートになっている
+/**
+ * エラー応答に添える「AI向け利用ガイドの場所」。手探りでAPIを叩いている相手
+ * (自作クライアント、APIキーだけ渡されたAI)が、次に何を読めばよいか分かるようにする。
+ *
+ * インターネットに公開する前提のため、案内を出すのは「APIキーを提示した相手」に限る。
+ * 鍵を一切出していない相手(無認証のスキャン)にまで返すと、鍵を持たない者への道案内に
+ * なるだけで、こちらには何の利点もない。ガイド本体は requireAuth の内側にあるため、
+ * 場所を知られても中身は読めないが、余計なことを喋らないに越したことはない。
+ *
+ * `?baseUrl=` は意図的に参照しない。仕様取得APIでは呼び出し側が自分のURLを渡せるようにして
+ * いるが、ここで同じことをすると「攻撃者が渡した任意のURLを、ガイドの場所としてAIに読ませる」
+ * ことができてしまう。必ずリクエスト自身から組み立てる
+ */
+const apiGuideHint = (req) => {
+	const base = `${req.protocol}://${req.get("host") || ""}${BASE_URL_PATH}`.replace(/\/+$/, "");
+	return `APIの使い方(AI向け利用ガイド)は GET ${base}/api/usage.md で取得できます(APIキーが必要)`;
+};
+
 const requireAuth = (req, res, next) => {
 	if (req.authData != null) {
 		next();
 		return;
 	}
 	if (req.authError != null) {
-		res.status(req.authError.status).json(req.authError.body);
+		// キーを出したが通らなかった相手(期限切れ・失効・無効)。次に何を読めばよいか示す
+		res.status(req.authError.status).json({...req.authError.body, guide: apiGuideHint(req)});
 		return;
 	}
 	res.status(401).json({error: "unauthorized"});
@@ -2911,6 +2930,19 @@ app.put(BASE_URL_PATH + 'api/projects/:id/reorder', requireAuth, requireWrite, a
 		logger.error(err, "::api/projects/:id/reorder");
 		res.status(500).json({error: "Internal Error"});
 	}
+});
+
+
+// 存在しないAPIパスへの応答。Expressの既定ではHTMLのエラーページが返り、APIとしての
+// 約束(常にJSONの {error} を返す)から外れていた。エンドポイント名を推測して叩いたAIが
+// 必ず通る場所なので、JSONに揃えたうえで利用ガイドの場所を案内する。
+// 叩かれたパスは応答に含めない(AIが読む本文へ任意の文字列を混ぜ込ませないため)
+app.use(BASE_URL_PATH + 'api/', (req, res) => {
+	setHTTPHeaders(res);
+	// 案内は認証を通った相手(正しいキーを持っている=このAPIを使う権利がある)にだけ返す
+	const body = {error: "not found"};
+	if (req.authData != null) body.guide = apiGuideHint(req);
+	res.status(404).json(body);
 });
 
 
