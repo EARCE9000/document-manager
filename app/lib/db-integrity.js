@@ -23,6 +23,11 @@ const path = require("path");
 const logger = require("./logger.js")(path.basename(__filename));
 const ds = require("./datastore.js");
 
+// 最後に確認した結果。管理画面を開いたときに「前回どうだったか」を出すために保持する。
+// 画面を開いただけで検査を走らせない(同期APIのためサーバーが止まる)ための仕組み
+let lastResult = null;
+module.exports.getLastResult = () => lastResult;
+
 const MODES = {
 	quick: {pragma: "quick_check", label: "簡易(索引の整合検査を省く)"},
 	full: {pragma: "integrity_check", label: "厳密(索引と表の整合まで検査)"}
@@ -41,7 +46,9 @@ const MODES = {
 module.exports.check = async (mode = "quick", handle = null) => {
 	const checkedAt = new Date().toISOString();
 	if (handle == null && ds.backend !== "sqlite") {
-		return {backend: ds.backend, supported: false, checkedAt};
+		const unsupported = {backend: ds.backend, supported: false, checkedAt};
+		lastResult = unsupported;
+		return unsupported;
 	}
 	const {pragma, label} = MODES[mode] || MODES.quick;
 	const db = handle != null ? handle : require("./db.js");
@@ -57,7 +64,7 @@ module.exports.check = async (mode = "quick", handle = null) => {
 		const durationMs = Date.now() - startedAt;
 		const message = err instanceof Error ? err.message : String(err);
 		logger.error({err, mode, durationMs}, "DBの整合性確認が例外で終了しました(破損の可能性が高い)");
-		return {
+		const failed = {
 			backend: ds.backend,
 			supported: true,
 			mode: mode in MODES ? mode : "quick",
@@ -70,13 +77,16 @@ module.exports.check = async (mode = "quick", handle = null) => {
 			durationMs,
 			checkedAt
 		};
+		// 検査対象を差し替えた場合(試験用)は、アプリのDBの状態ではないので記録しない
+		if (handle == null) lastResult = failed;
+		return failed;
 	}
 	const durationMs = Date.now() - startedAt;
 	// pragmaの戻りは実装により文字列の配列/オブジェクトの配列のどちらにもなるため両方を受ける
 	const problems = rows
 		.map((row) => String(typeof row === "object" && row !== null ? Object.values(row)[0] ?? "" : row))
 		.filter((value) => value !== "" && value !== "ok");
-	return {
+	const result = {
 		backend: ds.backend,
 		supported: true,
 		mode: mode in MODES ? mode : "quick",
@@ -88,6 +98,8 @@ module.exports.check = async (mode = "quick", handle = null) => {
 		durationMs,
 		checkedAt
 	};
+	if (handle == null) lastResult = result;
+	return result;
 };
 
 /**

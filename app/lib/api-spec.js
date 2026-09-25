@@ -216,6 +216,12 @@ const OPERATIONS = [
 	// ---- その他(ガイドには載せない)
 	{id: "getVersion", method: "get", path: "/api/version", role: "public", tag: "その他", summary: "アプリのバージョン(ビルド日付)", aiGuide: false},
 	{
+		id: "getServerStatus", method: "get", path: "/api/server-status", role: "admin", tag: "その他",
+		summary: "サーバーの状態(版・起動時刻・DB)",
+		description: "版・リビジョン・ビルド時刻・起動時刻・稼働秒・同梱クライアントの版・DBファイルの一覧とサイズ・最後に確認したDBの整合性を返す。公開の`/api/version`には起動時刻を含めない",
+		aiGuide: false
+	},
+	{
 		id: "getDbIntegrity", method: "get", path: "/api/db-integrity", role: "admin", tag: "その他",
 		summary: "DBの整合性確認(破損の検知)",
 		description: "SQLiteのみ。`?mode=full`で索引と表の整合まで検査する(遅い。検査中はサーバーの他の処理が止まる)。既定は簡易確認。Postgresでは`supported:false`を返す",

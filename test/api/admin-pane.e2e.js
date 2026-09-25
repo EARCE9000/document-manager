@@ -49,12 +49,57 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 		await page.click("#allowedUsersManageLink");
 
 		const tabs = page.locator(".adminTab");
-		await expect(tabs).toHaveCount(1); // 第一弾はアクセス許可ユーザーのみ
-		await expect(tabs.first()).toHaveText("アクセス許可ユーザー");
+		await expect(tabs).toHaveText(["アクセス許可ユーザー", "サーバー", "データベース"]);
 		await expect(tabs.first()).toHaveClass(/active/);
 
-		const panels = page.locator(".adminTabPanel");
-		await expect(panels.filter({has: page.locator("#allowedUserTable")})).toBeVisible();
+		// 選択中のパネルだけが見える
+		await expect(page.locator("#allowedUserTable")).toBeVisible();
+		await expect(page.locator("#serverStatusList")).toBeHidden();
+
+		await page.click('.adminTab[data-tab="server"]');
+		await expect(page.locator("#serverStatusList")).toBeVisible();
+		await expect(page.locator("#allowedUserTable")).toBeHidden();
+	});
+
+	test("サーバータブに版と起動時刻が出る", async ({page}) => {
+		await page.click("#allowedUsersManageLink");
+		await page.click('.adminTab[data-tab="server"]');
+
+		const list = page.locator("#serverStatusList");
+		await expect(list).toContainText("起動時刻");
+		await expect(list).toContainText("稼働時間");
+		await expect(list).toContainText("DBバックエンド");
+		await expect(list).toContainText("sqlite");
+		// 使用中のDBファイルが分かる(スキーマ移行後は旧ファイルも並ぶ)
+		await expect(page.locator("#serverDbFilesWrap")).toContainText(".sqlite");
+		await expect(page.locator("#serverDbFilesWrap")).toContainText("使用中");
+	});
+
+	test("データベースタブ: 開いただけでは検査せず、ボタンで確認できる", async ({page}) => {
+		await page.click("#allowedUsersManageLink");
+		await page.click('.adminTab[data-tab="database"]');
+
+		// 起動時の結果がまだ無い環境では「未確認」。検査は開いただけでは走らない
+		const result = page.locator("#dbIntegrityResult");
+		await expect(result).toBeVisible();
+
+		await page.click("#dbIntegrityQuickButton");
+		await expect(result.locator(".adminStatus")).toHaveText("問題なし");
+		await expect(result).toContainText("簡易(索引の整合検査を省く)");
+		await expect(result).toContainText("問題の件数");
+	});
+
+	test("厳密確認は確認ダイアログを経てから実行される", async ({page}) => {
+		await page.click("#allowedUsersManageLink");
+		await page.click('.adminTab[data-tab="database"]');
+
+		await page.click("#dbIntegrityFullButton");
+		// サーバーが止まることを必ず知らせてから実行する
+		await expect(page.locator("#confirmOverlay")).toBeVisible();
+		await expect(page.locator("#confirmOverlay")).toContainText("サーバーの他の処理が止まります");
+		await page.click("#confirmYesButton");
+
+		await expect(page.locator("#dbIntegrityResult")).toContainText("厳密(索引と表の整合まで検査)");
 	});
 
 	test("移設したアクセス許可ユーザーの追加・ロール変更・削除がそのまま動く", async ({page}) => {

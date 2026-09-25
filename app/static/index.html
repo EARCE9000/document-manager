@@ -278,6 +278,17 @@
 	.adminSectionNote ul { margin: 6px 0 0; padding-left: 1.2em; }
 	/* ペインは全幅なので、入力欄が横いっぱいに伸びないよう抑える(モーダル時の見た目に合わせる) */
 	#adminPane .toolbarRow input[type="text"] { max-width: 320px; }
+	.adminDefList { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; margin: 0 0 18px; max-width: 900px; }
+	.adminDefList dt { color: #666; font-size: 0.9em; }
+	.adminDefList dd { margin: 0; font-size: 0.9em; word-break: break-all; }
+	.adminDefList dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+	#adminPane h3 { font-size: 0.95em; margin: 18px 0 8px; }
+	.adminStatus { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 0.85em; font-weight: 600; }
+	.adminStatus.ok { background: #e6f4ea; color: #1e7e34; }
+	.adminStatus.bad { background: #fdecea; color: #c0392b; }
+	.adminStatus.unknown { background: #eee; color: #666; }
+	.adminProblemList { margin: 10px 0 0; padding-left: 1.2em; color: #c0392b; font-size: 0.85em; }
+	.adminCurrentFile { font-weight: 600; }
 	#adminPane table { max-width: 1100px; }
 	#projectTreeToolbar { padding: 10px 12px; border-bottom: 1px solid #eee; }
 	#projectTreeHeaderRow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
@@ -1445,6 +1456,31 @@
 						</table>
 					</div>
 					<div id="allowedUserEmptyMessage" class="emptyMessage" style="display:none;">未登録です(登録されるまで誰もログインできません)。</div>
+				</section>
+				<section class="adminTabPanel" data-tab="server">
+					<div class="adminSectionNote">
+						いま動いているサーバーの状態です。<strong>ビルド時刻</strong>はイメージが作られた時刻、<strong>起動時刻</strong>はこのコンテナが起動した時刻です。
+						更新したはずなのにビルド時刻が変わっていなければ、新しいイメージに入れ替わっていません。
+					</div>
+					<div class="toolbarRow" style="margin-bottom: 12px;">
+						<button type="button" id="serverStatusRefreshButton" class="modalButton">再読み込み</button>
+					</div>
+					<dl class="adminDefList" id="serverStatusList"></dl>
+					<h3>データベースのファイル</h3>
+					<div class="adminSectionNote">スキーマを更新すると新しいファイルを作り、古いファイルは消さずに残します(1つ前へ戻せるようにするため)。</div>
+					<div id="serverDbFilesWrap"></div>
+				</section>
+				<section class="adminTabPanel" data-tab="database">
+					<div class="adminSectionNote">
+						データベースが壊れていないかを確認します。破損は「書き込みは通るのに一部だけ読めない」形で進むことがあり、画面上は正常に見えます。<br>
+						<strong>簡易</strong>は索引の整合検査を省きます。<strong>厳密</strong>は索引と表の整合まで検査しますが、
+						<strong>検査中はサーバーの他の処理が止まります</strong>(データ量が多いほど長くかかります)。
+					</div>
+					<div class="toolbarRow" style="margin-bottom: 12px;">
+						<button type="button" id="dbIntegrityQuickButton" class="modalButton save">簡易確認</button>
+						<button type="button" id="dbIntegrityFullButton" class="modalButton">厳密確認</button>
+					</div>
+					<div id="dbIntegrityResult"></div>
 				</section>
 			</div>
 		</main>
@@ -3696,7 +3732,9 @@ apiKeyCreateButton.addEventListener("click", async () => {
 const adminTabs = document.getElementById("adminTabs");
 const adminPaneBody = document.getElementById("adminPaneBody");
 const ADMIN_TABS = [
-	{key: "allowedUsers", label: "アクセス許可ユーザー", load: () => loadAllowedUsers()}
+	{key: "allowedUsers", label: "アクセス許可ユーザー", load: () => loadAllowedUsers()},
+	{key: "server", label: "サーバー", load: () => loadServerStatus()},
+	{key: "database", label: "データベース", load: () => loadDatabaseTab()}
 ];
 let currentAdminTab = ADMIN_TABS[0].key;
 
@@ -3718,6 +3756,131 @@ const showAdminTab = (key) => {
 	});
 	tab.load();
 };
+
+const formatBytes = (bytes) => {
+	if (typeof bytes !== "number" || !isFinite(bytes)) return "-";
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+	return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+};
+
+// 稼働時間は「何日と何時間」で読めれば十分(秒まで出しても判断に使わない)
+const formatUptime = (seconds) => {
+	if (typeof seconds !== "number" || !isFinite(seconds)) return "-";
+	const days = Math.floor(seconds / 86400);
+	const hours = Math.floor((seconds % 86400) / 3600);
+	const minutes = Math.floor((seconds % 3600) / 60);
+	if (days > 0) return `${days}日 ${hours}時間`;
+	if (hours > 0) return `${hours}時間 ${minutes}分`;
+	return `${minutes}分`;
+};
+
+// サーバーの状態は「サーバー」タブと「データベース」タブの両方が使うため、取得を1箇所にまとめる
+const fetchServerStatus = async () => {
+	const res = await fetch("./api/server-status");
+	if (res.status !== 200) throw new Error(`server-status: ${res.status}`);
+	return res.json();
+};
+
+const serverStatusList = document.getElementById("serverStatusList");
+const serverDbFilesWrap = document.getElementById("serverDbFilesWrap");
+
+const loadServerStatus = async () => {
+	serverStatusList.innerHTML = `<dt>状態</dt><dd>読み込み中...</dd>`;
+	serverDbFilesWrap.innerHTML = "";
+	let status;
+	try {
+		status = await fetchServerStatus();
+	} catch {
+		serverStatusList.innerHTML = `<dt>状態</dt><dd>取得できませんでした</dd>`;
+		return;
+	}
+	const rows = [
+		["版", status.version || "(開発環境のため未設定)"],
+		["ビルド", status.build || "-", true],
+		["リビジョン", status.revision || "-", true],
+		["ビルド時刻", status.builtAt ? formatDateTime(status.builtAt) : "-"],
+		["起動時刻", formatDateTime(status.startedAt)],
+		["稼働時間", formatUptime(status.uptimeSeconds)],
+		["同梱クライアント", status.skillClientVersion || "-"],
+		["DBバックエンド", status.database?.backend || "-"]
+	];
+	serverStatusList.innerHTML = rows
+		.map(([label, value, mono]) => `<dt>${escapeHtml(label)}</dt><dd${mono ? ' class="mono"' : ""}>${escapeHtml(String(value))}</dd>`)
+		.join("");
+
+	const files = status.database?.files;
+	serverDbFilesWrap.innerHTML = !Array.isArray(files) || files.length === 0
+		? `<div class="emptyMessage">このバックエンドではファイルを持ちません。</div>`
+		: `<table><thead><tr><th>ファイル</th><th>サイズ</th><th></th></tr></thead><tbody>${
+			files.map((file) => `<tr>
+				<td class="${file.current ? "adminCurrentFile" : ""}">${escapeHtml(file.name)}</td>
+				<td>${escapeHtml(formatBytes(file.sizeBytes))}</td>
+				<td>${file.current ? "使用中" : "旧バージョン"}</td>
+			</tr>`).join("")
+		}</tbody></table>`;
+};
+
+// データベースタブ。開いた時点では検査を走らせず、前回の結果(起動時のもの)を出す。
+// 厳密な検査はサーバーの他の処理を止めるため、明示的に選ばせる
+const dbIntegrityResult = document.getElementById("dbIntegrityResult");
+
+const renderIntegrityResult = (result, note) => {
+	if (result == null) {
+		dbIntegrityResult.innerHTML = `<span class="adminStatus unknown">未確認</span>
+			<div class="adminSectionNote" style="margin-top:8px;">まだ確認していません。上のボタンで実行してください。</div>`;
+		return;
+	}
+	if (result.supported === false) {
+		dbIntegrityResult.innerHTML = `<span class="adminStatus unknown">対象外</span>
+			<div class="adminSectionNote" style="margin-top:8px;">${escapeHtml(result.backend || "")} では、整合性の担保はデータベース側の責務です。</div>`;
+		return;
+	}
+	const label = result.healthy ? "問題なし" : (result.checkFailed ? "検査できませんでした(破損の可能性)" : "問題あり");
+	dbIntegrityResult.innerHTML = `
+		<span class="adminStatus ${result.healthy ? "ok" : "bad"}">${escapeHtml(label)}</span>
+		<dl class="adminDefList" style="margin-top:12px;">
+			<dt>確認方法</dt><dd>${escapeHtml(result.modeLabel || result.mode || "-")}</dd>
+			<dt>確認日時</dt><dd>${escapeHtml(formatDateTime(result.checkedAt))}${note ? `(${escapeHtml(note)})` : ""}</dd>
+			<dt>所要時間</dt><dd>${escapeHtml(String(result.durationMs ?? "-"))} ミリ秒</dd>
+			<dt>問題の件数</dt><dd>${escapeHtml(String(result.problemCount ?? 0))}</dd>
+		</dl>
+		${Array.isArray(result.problems) && result.problems.length > 0
+			? `<ul class="adminProblemList">${result.problems.map((problem) => `<li>${escapeHtml(problem)}</li>`).join("")}</ul>
+			   <div class="adminSectionNote" style="margin-top:8px;">バックアップからの復旧を検討してください。詳細はサーバーのログに出ています。</div>`
+			: ""}`;
+};
+
+const loadDatabaseTab = async () => {
+	dbIntegrityResult.innerHTML = `<div class="adminSectionNote">読み込み中...</div>`;
+	try {
+		const status = await fetchServerStatus();
+		renderIntegrityResult(status.integrity, status.integrity ? "前回の確認結果" : null);
+	} catch {
+		dbIntegrityResult.innerHTML = `<div class="adminSectionNote">取得できませんでした。</div>`;
+	}
+};
+
+const runIntegrityCheck = async (mode) => {
+	dbIntegrityResult.innerHTML = `<div class="adminSectionNote">確認中です。完了するまで他の操作は応答しません...</div>`;
+	try {
+		const res = await fetch(`./api/db-integrity?mode=${encodeURIComponent(mode)}`);
+		if (res.status !== 200) throw new Error(String(res.status));
+		renderIntegrityResult(await res.json());
+	} catch {
+		dbIntegrityResult.innerHTML = `<div class="adminSectionNote">確認に失敗しました。</div>`;
+	}
+};
+
+document.getElementById("serverStatusRefreshButton").addEventListener("click", () => loadServerStatus());
+document.getElementById("dbIntegrityQuickButton").addEventListener("click", () => runIntegrityCheck("quick"));
+document.getElementById("dbIntegrityFullButton").addEventListener("click", async () => {
+	// 厳密な検査は同期的に走り、その間サーバー全体が止まる。実行前に必ず知らせる
+	const ok = await showConfirmDialog("厳密な確認を実行しますか?\n検査中はサーバーの他の処理が止まります(データ量が多いほど長くかかります)。業務時間外の実行を勧めます。");
+	if (!ok) return;
+	runIntegrityCheck("full");
+});
 
 // アクセス許可ユーザー(ホワイトリスト)の管理
 const allowedUserTableWrap = document.getElementById("allowedUserTableWrap");

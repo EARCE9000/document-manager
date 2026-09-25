@@ -332,6 +332,11 @@ app.use(BASE_URL_PATH + 'api/', (req, res, next) => {
 // 決まるので状態を持たない(本当に古いクライアントは毎回言われるべき)。
 // 通常はVERSION.json(イメージのビルド時に生成される)から読む。SERVER_BUILD で上書きできる
 // のは検証・テスト用(ローカル開発にはVERSION.jsonが無く、この経路を通れないため)
+// このプロセスが起動した時刻。コンテナのENTRYPOINTはexec形式でnodeがPID 1のため、
+// プロセスの寿命はコンテナの寿命と一致する。「展開して入れ替わったのか、ただ再起動しただけか」を
+// 区別するために使う(ビルド時刻と並べて見せる)
+const STARTED_AT = new Date().toISOString();
+
 const SERVER_BUILD = process.env.SERVER_BUILD
 	|| (versionInfo != null && versionInfo.VERSION ? String(versionInfo.VERSION) : null);
 app.use(BASE_URL_PATH + 'api/', resolveAuth, apiRateLimiterAnonymous, apiRateLimiterAuthenticated, async (req, res, next) => {
@@ -1543,6 +1548,56 @@ app.get(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireWrite, 
  * ベクトル検索のチャンク分割設定をGUIから変更する(要 admin ロール。システム全体に影響するため)。
  * 変更は新規に索引付けする文書からのみ反映され、既存の索引付け済み文書には遡って適用されない
  */
+/**
+ * サーバーの状態(要 admin ロール)。
+ *
+ * 版・起動時刻・DBの状態を1箇所で返す。SSHできない状況でも「展開できたのか」
+ * 「ただ再起動しただけか」「DBは壊れていないか」を判断できるようにするのが目的。
+ *
+ * 公開の api/version には起動時刻を載せない(スキャンに余計な材料を与えない)。
+ * DBのファイルはパスではなく名前だけを返す(ディレクトリ構成を晒さない)。
+ */
+app.get(BASE_URL_PATH + 'api/server-status', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const build = versionInfo != null ? String(versionInfo.VERSION || "") : "";
+		// sqliteのときだけ、DBファイルの一覧とサイズを返す。旧バージョンのファイルは移行時に
+		// 残す設計のため、ここに並ぶことで「切り戻せる状態か」も分かる
+		let database = {backend: ds.backend};
+		if (ds.backend === "sqlite") {
+			const db = require("./lib/db.js");
+			const dir = path.dirname(db.name);
+			const current = path.basename(db.name);
+			const files = fs.readdirSync(dir)
+				.filter((name) => name.endsWith(".sqlite"))
+				.sort()
+				.map((name) => ({
+					name,
+					current: name === current,
+					sizeBytes: (() => {
+						try { return fs.statSync(path.join(dir, name)).size; } catch { return null; }
+					})()
+				}));
+			database = {backend: ds.backend, files};
+		}
+		res.status(200).json({
+			version: versionInfo != null ? (build.match(/(\d{8})/)?.[1] ?? null) : null,
+			build: build || null,
+			revision: versionInfo != null && versionInfo.REVISION ? String(versionInfo.REVISION) : null,
+			builtAt: versionInfo != null && versionInfo.BUILT_AT ? String(versionInfo.BUILT_AT) : null,
+			startedAt: STARTED_AT,
+			uptimeSeconds: Math.floor(process.uptime()),
+			skillClientVersion: bundledSkillClientVersion(),
+			database,
+			// 起動時に確認した結果。画面を開いただけで検査を走らせないため、前回の結果を見せる
+			integrity: DbIntegrity.getLastResult()
+		});
+	} catch (err) {
+		logger.error(err, "::api/server-status");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 /**
  * DBの整合性を確認する(要 admin ロール)。
  *
