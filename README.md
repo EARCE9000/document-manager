@@ -1,8 +1,16 @@
 # WebService_DocumentManager
 
-HTML / MHTML / Markdown / PDF / 画像(SVG/PNG/JPEG) / CSV・TSV / テキスト・ログ / JSON / draw.io をアップロードして一覧・プレビューできる社内向けドキュメント管理Webサービス。
+HTML / MHTML / Markdown / PDF / 画像(SVG/PNG/JPEG) / CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint をアップロードして一覧・プレビューできる社内向けドキュメント管理Webサービス。
 版管理(新しい版のアップロードと版履歴)、タグ・プロジェクトによる整理、全文検索/セマンティック検索、Claude Code・Codex・Antigravity 等のAIエージェントからAPIで登録・検索するための Skill を備える。
 Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite、文書ファイルはローカルディスク)で動くが、メタデータDBを PostgreSQL、文書ファイルを S3 / GCS に切り替えることで、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)のマネージド環境・複数インスタンス構成でも動作する(切り替えは環境変数のみ。詳細は「[マルチクラウド構成の要点](#マルチクラウド構成の要点)」)。
+
+## システム構成
+
+![システム構成](docs/architecture.png)
+
+図は[deploy/compose.yml](deploy/compose.yml)の構成(運用サーバ向け)。**変換サービス(converter)とWeaviate/推論サーバーはどちらも任意**で、
+無くてもアプリは動く(体裁つき表示・意味検索だけが使えなくなる)。単一コンテナだけで動かすこともできる。
+図の元データは[docs/architecture.svg](docs/architecture.svg)(構成が変わったらこちらを直してPNGを作り直す)。
 
 ## スクリーンショット
 
@@ -35,8 +43,16 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - csv/tsv: 1行目をヘッダーとしてHTMLテーブルに変換して表示(生テキストのままだと列が揃わず読みにくいため)
   - txt/log/json: ブラウザがネイティブに描画できるためそのまま表示(jsonはChrome/Firefox標準の折りたたみ可能なビューアが`sandbox`付きiframe内でも問題なく動作する)
   - drawio: サーバ側では画像化せず、**draw.io公式のビューア(`app/static/vendor/drawio/viewer-static.min.js`。Apache-2.0)を同梱し、ブラウザ上でXMLをそのまま描画する**。画像化を挟まないため図の大きさ・図形数に左右されず(実測: 4,000セル・731KBのXMLで約3.7秒)、複数ページの`.drawio`もツールバーのページ送りで切り替えられる。図のXMLは`GET api/documents/:id/file?source=1`で取得する(ダウンロード扱いにはせず監査ログにも残さない)。描画は[app/static/drawio-viewer.html](app/static/drawio-viewer.html)が行い、別ウィンドウ(`api/documents/:id/viewer`)もこのページへリダイレクトする。draw.ioの図はラベルにHTMLを書けるため、このページだけは`script-src 'self'`のCSPを付けて配信し、図に仕込まれたスクリプトが動かないようにしている(スクリプトは全て外部ファイルに分離)。ビューアの既定動作のうち外部(`viewer.diagrams.net`)に関わるものは全て無効化している: stencil・スタイル・数式(MathJax)等の取得先を自ドメイン配下へ差し替え、**図をクリックすると図の中身ごと第三者ページ(ライトボックス)が開く既定動作も止めている**。ページ自体も`default-src 'none'`のCSPで配信するため、取りこぼしがあってもブラウザ側で止まる(回帰は[test/api/preview-xss.e2e.js](test/api/preview-xss.e2e.js)で検証)。アップロード時にプレビュー画像(svg/png)を添えることもでき(同フォルダに `preview.<ext>` として保存)、ビューアで描画できなかった場合の代替として使う。実体(ダウンロード対象)は常に`.drawio`のまま保持する。XML内のページ名・図形ラベルは全文検索の対象になる
-  - xlsx/docx/pptx(Excel/Word/PowerPoint): **内容の概要**をHTMLへ変換して表示する([app/lib/office.js](app/lib/office.js))。OOXML(ZIP+XML)を直接読むため外部プロセス(LibreOffice等)も追加の依存も不要で、Excelはシートごとの表(日付書式のセルは日付として表示)、Wordは見出し・段落・箇条書き・表、PowerPointはスライドごとのタイトル・本文・発表者ノートを出す。**元の体裁(フォント・色・セル書式・図形・グラフ・画像)は再現しない**方針で、プレビュー冒頭にその旨を明示し、体裁の確認は原本のダウンロードに委ねる。取り出したテキストはそのまま全文検索の対象になる(表の中身・スライドのノートも含む)。大きな文書は表示を打ち切る(シート300行×50列・3000段落・200スライド。[app/lib/office.js](app/lib/office.js)の`LIMITS`)。ZIP爆弾対策として展開後サイズに上限を設けている。マクロ(`.xlsm`等のvbaProject)は読まず、サーバ側でファイルを開くこともしない。読めない/壊れたファイルはプレビュー不可として登録され、ダウンロードはできる
+  - xlsx/docx/pptx(Excel/Word/PowerPoint): **内容の概要**をHTMLへ変換して表示する([app/lib/office.js](app/lib/office.js))。OOXML(ZIP+XML)を直接読むため外部プロセス(LibreOffice等)も追加の依存も不要で、Excelはシートごとの表(日付書式のセルは日付として表示)、Wordは見出し・段落・箇条書き・表、PowerPointはスライドごとのタイトル・本文・発表者ノートを出す。**この概要プレビューでは元の体裁(フォント・色・セル書式・図形・グラフ・画像)を再現しない**(プレビュー冒頭にその旨を明示する)。体裁ごと確認したい場合は、別イメージの変換サービスを併用するとPDFで開ける(下記「体裁つき表示」)。取り出したテキストはそのまま全文検索の対象になる(表の中身・スライドのノートも含む)。大きな文書は表示を打ち切る(シート300行×50列・3000段落・200スライド。[app/lib/office.js](app/lib/office.js)の`LIMITS`)。ZIP爆弾対策として展開後サイズに上限を設けている。マクロ(`.xlsm`等のvbaProject)は読まず、サーバ側でファイルを開くこともしない。読めない/壊れたファイルはプレビュー不可として登録され、ダウンロードはできる
   - 変換結果は元ファイルと同じフォルダに `preview.html` として保存する。ダウンロードは常に元ファイルを返す
+- **体裁つき表示(Office→PDF。任意機能)**: `OFFICE_RENDER_URL`を設定すると、xlsx/docx/pptxを**レイアウトのついたPDF**でも開けるようになる。変換はLibreOfficeを同梱した別イメージ([converter/](converter/)、`earce9000/document-manager-converter`)が行い、アップロード時に非同期で実行する。状態は文書情報の`renderStatus`(`ok`/`pending`/`failed`/`null`=対象外)で分かり、`ok`なら画面の「体裁つきで開く」ボタンと`GET api/documents/:id/file?render=1`から取得できる([app/lib/office-render.js](app/lib/office-render.js))
+  - **未設定でも動く**。その場合は従来どおり概要プレビューだけになり、文書の登録・検索・ダウンロードには影響しない。変換サービスが落ちていても同じ(アプリ側は`depends_on`にも入れていない)
+  - LibreOfficeを同梱するとイメージが1GBを超えるため、**変換を使わない利用者に負担を強いない**よう別イメージに分けている
+  - **忠実な再現ではない**。変換はLibreOfficeが行うため、Microsoft Officeで開いたときと同じ見え方になるとは限らない。特に日本語のMSフォント(MS Pゴシック・メイリオ・游ゴシック等)は同梱のNotoで代替するため字幅が変わり、行の折り返し・はみ出し・ページ数がずれることがある(英字はLiberationがArial/Times等と字幅互換なので崩れにくい)。SmartArt・グラフ・特殊な図形も差が出やすい
+  - **用途は「だいたいの体裁と、どこに何があるか」を掴むこと**。細かいところを確認したい場合は原本をダウンロードしてもらう。画面にもその旨を出している
+  - Excelは**印刷したときの見え方**になるため、列幅が足りない列は`###`になり文字も途中で切れる(元の文書がそういう体裁であるということ)。全文を確認したい場合は概要プレビューを使う。2つの表示は補い合う関係にある
+  - converterは信用できない文書をLibreOfficeで開くため、**専用の内部ネットワークに閉じ込める**(インターネットにも他サービスにも到達できない。読み取り専用・作業場所はtmpfs・非root・メモリ上限)。設定を書いただけでは効いている保証にならないので、実機で確かめる手順を[deploy/check-converter-isolation.sh](deploy/check-converter-isolation.sh)に用意している。詳細は[converter/README.md](converter/README.md)
+  - 変換に失敗した文書は`GET api/documents?renderStatus=failed`で一覧でき、`POST api/documents/:id/render/retry`で再実行できる(管理画面からも操作できる)
   - プレビュー用iframe(html/mhtml/md変換結果)は `sandbox` 属性でスクリプト実行を制限する
   - プレビュー右上のアイコンボタンから、ファイルへの直接リンクのコピー・ダウンロードができる
   - リンクのコピー・「別ウィンドウで開く」・一覧の別ウィンドウアイコンは、いずれも `api/documents/:id/viewer` を指す。`api/documents/:id/file`(APIキー連携クライアント向け。未認証時はJSONの401のみを返す)とは別系統で、未ログイン状態でこのURLを開くとログイン画面へ自動的に迂回し、ログイン完了後に元のURLへ戻ってから文書を表示する。他の人にリンクを共有する場合はこちらが使われる
@@ -87,9 +103,29 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - 発行直後の画面から、キー本体のコピーとは別に「AIチャット貼り付け用」のテキスト(接続情報・エンドポイント一覧・実際のキーを埋め込んだ利用ガイド)もコピーできる
 - **開発用バイパス**: `AUTH_DISABLED=true` で認証を丸ごと無効化できる(本番では未設定のこと)
 
+### 管理画面(adminロールのみ)
+画面右上の歯車アイコンから開く。モーダルではなくページとして開き、タブで切り替える([docs/admin-screen.md](docs/admin-screen.md)に定義と決めた理由を残してある)。
+運用者が**SSHせずに「異常の有無」と「次に何をすべきか」を判断できる**ことを目的にしている。
+
+- **アクセス許可ユーザー**: ホワイトリストの追加・ロール変更・削除(従来モーダルだったもの)
+- **サーバー**: 版・リビジョン・**ビルド時刻**(イメージが作られた時刻)・**起動時刻**(コンテナが起動した時刻)・稼働時間・同梱クライアントの版・DBファイルの一覧とサイズ。更新したはずなのにビルド時刻が変わっていなければ入れ替わっていない、と画面上で判断できる。DBファイルの一覧には旧バージョンも並ぶため、切り戻せる状態かも分かる(`GET api/server-status`)
+- **データベース**: 破損の検知(`PRAGMA quick_check`/`integrity_check`)と、**DBと実ファイルの照合**
+  - SQLiteの破損は「書き込みは通るのに一部だけ読めない」形で進むことがあり、画面上は正常に見える。**起動のたびに自動で簡易確認**し、結果をログと画面に残す(`GET api/db-integrity`)
+  - 照合は、実ファイルだけある文書(孤立ファイル)と、DBだけある文書(実ファイルが無い)を報告する。前者は**アーカイブ済みとして登録し直せる**(元がアーカイブ済みだったか知る手段が無いため。必要なら既存の「復元」で戻す)。後者は**報告のみで削除しない**——ボリュームが未マウントのときは全件が欠損に見えるため、消すと「復旧可能な障害」を「恒久的なデータ消失」に変えてしまう(`GET api/storage-reconcile`)
+  - **ストレージに到達できていない疑いがあるときは、何も報告せず照合を中止する**
+- **変換サービス**: 到達性・LibreOfficeの版・上限・タイムアウトと、**変換に失敗した文書の一覧・再実行**。「未設定」(異常ではない)と「落ちている」を区別して表示する(`GET api/office-render/health`)
+- 動作の原則: **画面を開いただけでは重い処理を走らせない**(整合性確認と照合はボタン。開いた時点では起動時の結果を出す)、**重い操作は正体を明かす**(厳密な整合性確認は同期的に走りサーバーの他の処理が止まるため、確認ダイアログで明示する)、**破壊的な操作は置かない**(復旧・再構築・DBの直接編集は画面に入れない)
+- APIはすべて`requireAdmin`。画面でボタンを隠すのは見た目の話で、**本当の境界はサーバー側**
+
 ### セキュリティ
 - **表示時のエスケープ**: ファイル名・タグ・アップロード者名・許可ユーザーのメールアドレス・APIキーのラベル等、書き込み権限を持つ利用者が自由入力できる値は、フロントエンドで`escapeHtml()`を通してから画面に描画する(HTMLタグとしての解釈も属性値からの脱出も防ぐ)。書き込み権限のある利用者(またはAPIキー)が悪意あるファイル名・タグを登録しても、それを閲覧した他の利用者のブラウザ側でスクリプトは実行されない
 - **レート制限**(`express-rate-limit`、超過時は429): `api/*`は認証状態で上限を分けている。未認証(総当たり・スクレイピング等が主目的)はIPごとに5分間300リクエスト、認証済み(ログインセッション・APIキー)は利用者ごとに5分間1000リクエストと大幅に緩め、複数文書の一括操作等を行うAI連携の実利用でも制限に達しにくくしている(認証済み側はIPではなく利用者識別子でカウントするため、社内共有ネットワーク等で複数人が同一IPに見える環境でも互いに影響しない)。無効なAPIキーでの試行は未認証側の枠でカウントされる。`/login`(OIDCログイン開始・コールバック)には15分間20リクエスト/IPの上限を別途設けている(実際のパスワード入力はOIDCプロバイダ側で行われるため、これは認可コード交換の仕組み自体への連打対策という位置づけ)
+- **防御ヘッダー**: 全応答に`X-Frame-Options: SAMEORIGIN`(画面を外部サイトのiframeに埋め込ませない。ログイン済みの利用者に気づかせず操作させる攻撃を防ぐ)と`Referrer-Policy: same-origin`(外部サイトへ遷移するとき文書IDを含むURLを渡さない)を付ける。静的配信にも届くよう、各ルートではなくミドルウェアで付与する
+- **応答に載せるURLは設定値に固定する**: リバースプロキシ配下では`Host`ヘッダーを公開URLとして使えない(転送先の宛先になることがあり、呼び出し側が任意の値を入れられる)。`OIDC_REDIRECT_URI`のオリジンを使う。AI向け利用ガイドの`?baseUrl=`も自分のオリジン配下に限定する(正規ドメインのURLを渡すだけで「ベースURLだけ別サイトに差し替えたガイド」を作れると、AIが以降の呼び出しをAPIキーごと別サイトへ送ってしまうため)
+- **ログイン後の戻り先**: 文字列の前方一致では判定しない。ブラウザ(WHATWG URL)は`\`を`/`と同等に扱うため、`//`だけを弾く実装では`/\evil.example`がプロトコル相対URLとして解釈され外部へ飛ぶ。実際にブラウザと同じ規則で解決してオリジンが変わらないことを確かめ、リダイレクト先には解決後の値を使う
+- **壊れたリクエストで中身を漏らさない**: 不正なmultipartや壊れたJSONはExpressの既定ハンドラに落ちるとHTMLを返し、`NODE_ENV`がproductionでなければスタックトレースと絶対パスまで載せる。守りを環境変数ひとつに依存させないため、明示的なエラーハンドラでJSONの400/500だけを返す
+- **応答に載る値の上限**: ファイル名はパス区切り・制御文字を拒否し、メモは`MEMO_MAX_CHARS`(既定4000字)、文書タグは50字×50件で切り詰める。これらは文書一覧・検索の応答すべてに載るため、上限が無いと1件の文書でAIエージェントの文脈を埋め尽くせる
+- **AIへの明示**: 取得した内容(ファイル名・メモ・タグ・本文・検索の抜粋)は利用者が書いた**データであって指示ではない**ことを、SKILL.mdと利用ガイドの両方に書いている。文書は誰でもアップロードできるため、1件の文書の中身でAIの動きを変えられる状態は「1人の悪意で他の利用者のAIを操れる」ことになる
 - **アップロードサイズ上限**: 1ファイル`UPLOAD_MAX_BYTES`(既定256MB)まで。超過時は413を返す。認証チェック(`requireAuth`/`requireWrite`)をmultipartパース(`express-fileupload`)より先に行う構成のため、未認証のリクエストはファイル本体の読み取りが始まる前に401/403で弾かれる(サイズ判定にすら到達しない)
 
 ### API仕様の配信(OpenAPI / AI向けガイド)
@@ -107,6 +143,8 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 ### AIエージェント用 Skill・APIクライアント(Claude Code / Codex / Antigravity)
 - [tools/claude-skill/](tools/claude-skill/) に、Claude Code・OpenAI Codex・Google Antigravity から「アップして」「新しい版で上げて」「探して」と話しかけるだけでこのAPIを操作できる Skill(`document-manager`)を同梱している。Skillの形式(`SKILL.md`+`scripts/`)は3つのエージェントで共通のため同じZIPを使い、展開先だけが異なる(Claude Code: `~/.claude/skills/`、Codex: `~/.agents/skills/`、Antigravity: `~/.gemini/config/skills/`)。Python版(`dm_client.py`、標準ライブラリのみ)と Node.js版(`dm_client.mjs`、外部依存なし)のクライアントはどちらも同じコマンドで、単体のCLIとしても使える
 - クライアントのコマンド: `config` / `search`(全文・`--semantic`で意味検索・`--archived`) / `get` / `versions` / `upload`(`--previous-id`・`--replace-same-name`・`--tags`・`--preview`・`--project`/`--folder`) / `download` / `tags`(`--add`/`--remove`/`--set`) / `memo` / `archive` / `restore` / `links`・`link`・`unlink` / `link-previous`・`unlink-previous` / `projects`・`project-create`・`tree`・`folder-create`・`place`・`unplace` / `watch`(SSE) / `spec`(`api/usage.md`、`--openapi`で`api/openapi.json`)。プロジェクト・フォルダはIDでも名前でも指定できる。ここに無い操作(タグ体系の管理など)は`spec`でAPI仕様を読んで直接呼ぶ
+- **更新のお知らせ**: 手元のクライアントがサーバー同梱のものより古い場合、サーバーが応答ヘッダー`X-Skill-Latest-Version`で知らせ、クライアントが利用者とAIへ「ZIPを取り直してフォルダを置き換える」よう促す(認証に失敗した応答にも付くため、APIキーが期限切れでも気づける)。またサーバーが更新されたときは`X-Server-Updated`で**APIキーごとに1回だけ**知らせ、AIに`spec`での取り直しを促す。合図はビルドであって起動ではないため、クラッシュ復帰や再起動では通知されない
+  - 貼り付けた利用ガイドで動くAI(コピペ経路)にはヘッダーが届かないため、ガイド自身の冒頭に「いつ・どの版の内容か」と入手先(ガイド・OpenAPI・同梱クライアントのZIP・`GET api/version`)を表で載せ、AIが自分で取り直せるようにしている
 - クライアントのバージョン: `--version`(または`config`の`clientVersion`)で確認でき、`User-Agent: document-manager-skill/<バージョン>`として送られるためサーバーのアクセスログからも追える。Python版・Node.js版・SKILL.mdの記載が揃っていることは結合テストで検証する。タグ`skill-v<バージョン>`のpushでGitHub Releaseを作る
 - 画面右上「APIキー管理」→「AIエージェント用 Skill」から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、エージェント別(タブで切り替え)の登録手順・接続先URL入りの登録依頼文のコピーができる。リポジトリからは `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを各エージェントのチャットに渡して「Skillとして登録して」と頼むか、上記の展開先に展開すれば登録できる。GitHub Actions(`skill-package.yml`)が、Skill関連の変更のたびにクライアントの結合テストとZIP作成を行ってアーティファクトに保存し、タグ`skill-v*`のpushでGitHub ReleaseにZIPを公開する。詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
 
@@ -139,6 +177,9 @@ document-manager/
 │   │   ├── vector-search.js   # セマンティック検索(Weaviate連携、任意機能。WEAVIATE_URLで有効化)
 │   │   ├── drawio.js          # .drawio(XML/圧縮diagram)からのテキスト抽出(全文検索用)
 │   │   ├── office.js          # Excel/Word/PowerPoint(OOXML)→概要プレビューHTML+全文検索用テキスト
+│   │   ├── office-render.js   # 体裁つき表示(Office→PDF)。変換サービスへの依頼(OFFICE_RENDER_URLで有効化)
+│   │   ├── db-integrity.js    # SQLiteの破損検知(起動時の自動確認・管理画面からの再確認)
+│   │   ├── storage-reconcile.js # DBと実ファイルの照合(読み取りのみ。孤立ファイル/欠損の報告)
 │   │   ├── claude-skill.js    # AIエージェント用SkillのZIP生成(api/claude-skill.zip。Node標準のzlibのみ使用)
 │   │   ├── api-spec.js        # API仕様の単一の情報源(OpenAPI・AI向け利用ガイド・AIへの指示を生成)
 │   │   ├── document-links.js  # 関連文書(種類・方向を持たない文書同士の紐付け)
@@ -150,17 +191,25 @@ document-manager/
 ├── deploy/                  # 運用サーバ(podman + リバースプロキシ)向けのcompose構成
 │   ├── compose.yml           # 公開イメージ + Weaviate + 推論サーバー(Weaviate側はポート非公開)
 │   ├── compose.sh            # 起動用ラッパー(up/down/logs/ps。必須設定が無ければ止める)
-│   └── compose.env.example   # サイト固有の値のひな形(実ファイルはGit管理外)
+│   ├── compose.env.example   # サイト固有の値のひな形(実ファイルはGit管理外)
+│   └── check-converter-isolation.sh # 変換サービスの隔離が実際に効いているかを実機で確認する
 ├── converter/               # Office→PDF 変換サービス(別イメージ。LibreOffice同梱)
 │   ├── Dockerfile            # Debian 13 + LibreOffice 25.2 + 日本語フォント(amd64のみ)
 │   ├── server.js             # HTTPの受け口(依存なし。直列実行・タイムアウト・マクロ拒否)
+│   ├── README.md             # 実測値・API・隔離の考え方
 │   └── test/smoke.js         # 実ファイルでの結合テスト(所要時間も出す)
-├── tools/claude-skill/      # AIエージェント用Skill(Dockerイメージにも /app/claude-skill/ としてコピーされる)
-│   ├── document-manager/     # Skill本体(SKILL.md / README.md / scripts/dm_client.py・dm_client.mjs)
-│   ├── build_skill_zip.py    # ZIP作成(dist/に出力。dist/はgit管理外)
-│   └── ci_smoke_test.py      # クライアントとZIPの結合テスト(CIとローカル共通)
+├── tools/
+│   ├── claude-skill/         # AIエージェント用Skill(Dockerイメージにも /app/claude-skill/ としてコピーされる)
+│   │   ├── document-manager/  # Skill本体(SKILL.md / README.md / scripts/dm_client.py・dm_client.mjs)
+│   │   ├── build_skill_zip.py # ZIP作成(dist/に出力。dist/はgit管理外)
+│   │   └── ci_smoke_test.py   # クライアントとZIPの結合テスト(CIとローカル共通)
+│   ├── verify-schema-migration.js # スキーマ移行でデータが失われないかを実際に動かして確認(手動実行)
+│   └── make-office-fixtures.py    # テスト用のExcel/Word/PowerPointを生成する
 ├── test/                    # テスト(Dockerイメージには含めない。「テスト」参照)
-├── docs/screenshots/        # READMEのスクリーンショットと撮影スクリプト(capture.js)
+├── docs/
+│   ├── admin-screen.md       # 管理者画面の定義(決めた理由と積み残しを含む)
+│   ├── dockerhub-overview.md # Docker Hubの説明文(機能を足したらここも更新する)
+│   └── screenshots/          # READMEのスクリーンショットと撮影スクリプト(capture.js)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
     ├── documents/<年月>_<UUID>/  # 文書本体 (元ファイル + 変換後preview.html。STORAGE_BACKEND=local時のみ)
     └── db/document_manager_v<N>.sqlite  # DATABASE_BACKEND=sqlite時のみ。<N>はスキーマバージョン(現在v14)で、移行時は旧バージョンのファイルを残したまま新しいファイルを作る(移行が正しく行われるかは`node tools/verify-schema-migration.js <移行元のコミット>`で実際に動かして確認できる)(postgres時はマネージドDB側に保存され、このボリュームは不要)
@@ -198,6 +247,9 @@ document-manager/
 | `UPLOAD_MAX_BYTES` | `268435456` | 1ファイルあたりのアップロード上限(バイト。既定256MB)。超過時は413を返す |
 | `VECTOR_INSERT_BATCH_SIZE` | `50` | ベクトル索引付けで、1リクエストにまとめて送るチャンク数。Weaviateはリクエスト単位でタイムアウトするため、大きな文書でも1回あたりの埋め込み計算量が上限内に収まるよう小分けにする |
 | `VECTOR_INSERT_TIMEOUT_SECONDS` | `180` | Weaviateへの登録リクエストのタイムアウト(秒)。CPUでの埋め込み計算は遅いため既定より長めに取る |
+| `OFFICE_RENDER_URL` | (未設定) | 体裁つき表示(Office→PDF)の変換サービスのURL(例: `http://converter:3000`)。未設定の間はこの機能が無効になり、Office文書は概要プレビューだけで扱う(登録・検索・ダウンロードには影響しない) |
+| `MEMO_MAX_CHARS` | `4000` | 文書メモの上限(文字数)。メモは文書一覧・検索の応答すべてに載るため、1件で応答を埋め尽くせないようにする安全弁 |
+| `RECONCILE_MAX_ENTRIES` | `5000` | 「DBと実ファイルの照合」で一度に調べる件数の上限。文書数が多い環境で管理画面の操作が返らなくなるのを避ける |
 | `LOG_LEVEL` | `info` | ログレベル (pino) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を丸ごとバイパスする開発用フラグ。本番では未設定のこと |
 | `OIDC_ISSUER` | (必須) | OIDCプロバイダのissuer URL。例: `https://login.microsoftonline.com/<TENANT_ID>/v2.0`(EntraID)、`https://cognito-idp.<REGION>.amazonaws.com/<USER_POOL_ID>`(Cognito) |
@@ -260,16 +312,25 @@ npm test           # 層1(純関数)+層2(SQLite結合)。node:test、外部サ�
 npm run test:api   # 層3(API)。Playwrightが認証有効のテストサーバを起動しHTTPで検証
 npm run test:e2e   # 層4(ブラウザE2E)。実Chromiumで主要UIフローを操作。要 `npx playwright install chromium`
 npm run test:pg    # Postgres固有(LISTEN/NOTIFY等)。要 DATABASE_BACKEND=postgres + DATABASE_URL(未設定ならスキップ)
+npm run test:converter  # 本体と変換サービスを実物同士で繋ぐ。要 converterの起動(未起動ならスキップ)
+npm run test:reconcile  # DBと実ファイルの照合。実サーバを起動し、食い違いを実際に作って確認する
+npm run test:discard    # アップロード失敗時の後始末。実サーバを起動し、登録を失敗させて確認する
 python tools/claude-skill/ci_smoke_test.py  # AIエージェント用Skillのクライアント(Python/Node.js)とZIPの結合テスト
 ```
 
 - **`test/api-spec.test.js`**: API仕様([app/lib/api-spec.js](app/lib/api-spec.js))とExpressに登録済みルートの突き合わせ(過不足の検出)、OpenAPI・利用ガイドの生成結果の検証
 - **`test/unit.test.js`**: 純関数ユニット(Range計算・SQLプレースホルダ変換・チャンク分割・有効期限計算(最長1年)・ロール判定・draw.ioのテキスト抽出)
+- **`test/security.test.js`**: 外部から与えた値を「安全」と判定してしまう箇所の検証(ログイン後の戻り先・アップロードのファイル名・ダウンロード名のヘッダー・AI向けガイドの入手先と注意書き)。**破れた実例をそのままテストとして残す**方針で、表記を変えて破られる再発を防ぐ
+- **`test/storage-discard.test.js`**: 実ファイルを捨てる唯一の経路の検証。渡した名前だけが消えること・置き場所の外に触れないこと・**汎用の削除APIが生えていないこと**・ソースに再帰削除が無いことまで固定する
+- **`test/db-integrity.test.js`**: 意図的に壊したDBを渡して、破損を本当に検知できるか(正常系だけでは意味がないため)
+- **`test/office-render.test.js`**: 変換サービスへ到達できないときに例外を投げないこと(落ちていてもアプリは動き続ける、という設計の根幹)
 - **`test/integration-sqlite.test.js`**: 一時SQLiteに対する各モジュールのライフサイクル(projects/allowed-users/api-keys/tag-order/audit-log)
 - **`test/integration-postgres.test.js`**: Postgres固有の検証(`schema_migrations`の適用、横断SSEのバックプレーンである`LISTEN/NOTIFY`が実際に通知を届けること)。`DATABASE_BACKEND=postgres`＋`DATABASE_URL`未設定時は全てスキップ(`npm run test:pg`で実行)
 - **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUD、新しい版のアップロード(旧版のアーカイブ・タグとプロジェクト配置の引き継ぎ・版履歴・404/409)(`versions.spec.js`)、APIキーの有効期限(最長1年)、SkillのZIPダウンロード、および意味検索(ベクトル検索)を検証する。`*.spec.js` はブラウザを使わないため `npx playwright install` は不要
   - `test/api/` の webServer 環境変数はパススルー式(既定は sqlite + local)。`DATABASE_BACKEND=postgres`/`DATABASE_URL`/`STORAGE_BACKEND=s3`/`S3_*`/`AWS_*` を与えれば、同じAPIテストを **Postgres + S3(MinIO等)** 構成でも実行できる(実際にこの構成で全件パスを確認済み)
   - ブラウザE2E(`*.e2e.js`、`npm run test:e2e`)は、serve.jsが払い出した管理者のログイン済みセッションcookieをChromiumへ注入して操作する。保存型XSSがCSPで実際にブロックされること(`preview-xss.e2e.js`)と、アップロード→検索→タグ付け→プレビュー→APIキー発行・利用、.drawio(ビューアでの描画・ページ送り)、新しい版のアップロードと版履歴、APIキー管理画面からのSkill ZIPダウンロード(`ui-flow.e2e.js`)を検証する
+  - `hardening.spec.js`は、防御ヘッダー・壊れたリクエストの応答・管理APIの権限(APIキーでは403)・応答に載る値の上限を、実サーバの応答として確認する(ミドルウェアの並び順やルートごとのヘッダー上書きで壊れるため)
+  - `admin-pane.e2e.js`は管理画面(ページ切替・タブ・各タブの操作・adminでなければ開かないこと)を実ブラウザで確認する
   - 意味検索のE2E(`vector-search.spec.js`)は `WEAVIATE_URL` を与えたときだけ実行される(未設定時は自動スキップし、代わりに503応答=機能無効を検証)。`WEAVIATE_URL`/`WEAVIATE_GRPC_PORT`/`WEAVIATE_VECTORIZER` を渡すと、アップロード→埋め込み→索引→意味検索ヒットまでを通しで検証する
 
 ## Dockerビルド・起動
@@ -413,6 +474,10 @@ dnf install -y podman-compose   # または pip install podman-compose
 # 4. 起動(既存の podman run 版コンテナは停止・削除しておく)
 podman rm -f document_manager
 ./deploy/compose.sh up
+
+# 5. 変換サービスを使う場合は、隔離が実際に効いているか確かめる
+#    (podman-composeの版によっては internal: true が反映されないため、設定だけでは保証にならない)
+./deploy/check-converter-isolation.sh
 ```
 
 - **サイト固有の値(ドメイン・内部IP・データの場所・シークレット)はリポジトリに置かない**。`deploy/compose.env.example` をコピーしてサーバ上のGit管理外の場所(既定は `/etc/application-auth/document-manager.env`、権限は600)に置き、そこに書く。置き場所は `DOCUMENT_MANAGER_ENV` で変更できる
@@ -421,6 +486,8 @@ podman rm -f document_manager
 - 切り戻したい場合はイメージのタグを指定する: `DOCUMENT_MANAGER_TAG=<日時タグ> ./deploy/compose.sh up`
 - SELinuxが有効(`getenforce` が `Enforcing`)なホストでは、ボリュームの `:z` が必要(compose.ymlには付けてある)
 - 外部ネットワーク(`application_network`)はcomposeでは作成しない(`external: true`)。既存のものをそのまま使うため、Apacheのリバースプロキシ設定は変更不要
+- 展開できたかどうかは、画面右上の歯車(管理)→「サーバー」タブの**ビルド時刻**で分かる。更新したはずなのに変わっていなければ入れ替わっていない
+- 変換サービス(converter)は`depends_on`に入れていない。イメージの取得や起動に失敗しても、アプリまで起動しなくなることは無い(体裁つき表示だけが使えなくなる)
 
 導入後、**既存の文書がバックグラウンドで順次索引付けされる**(1件あたり数秒。実測で約5.5秒/件)。進行状況は画面の「ベクトル索引」から確認できる。索引付け中はCPUを複数コア使い切るため、同居サービスがある場合は業務時間外に始めるか、`compose.yml` の `cpus`/`mem_limit` で上限を設けるとよい。
 

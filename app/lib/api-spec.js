@@ -343,7 +343,7 @@ const GUIDE_SECTIONS = [
 			"`multipart/form-data`、実体のフィールド名は `uploadfile`",
 			"対応拡張子: `.html` `.htm` `.mhtml` `.mht` `.md` `.markdown` `.pdf` `.svg` `.png` `.jpg` `.jpeg` `.csv` `.tsv` `.txt` `.log` `.json` `.drawio` `.xlsx` `.xlsm` `.docx` `.docm` `.pptx` `.pptm` (単一ファイルのみ)",
 			"Excel(`.xlsx`)/Word(`.docx`)/PowerPoint(`.pptx`)は、そのままアップロードすればよい。中身のテキスト(セル・段落・スライド・発表者ノート)が全文検索の対象になり、画面には内容の概要が表示される(書式・図・グラフは再現されない)",
-			"  - 変換サービスが構成されている場合は、元の体裁のままのPDFも自動で用意される。文書情報の`renderStatus`が`ok`なら`GET api/documents/:id/file?render=1`で取得できる(`pending`は変換中で数秒待つ、`failed`は変換に失敗、`null`は対象外)",
+			"  - 変換サービスが構成されている場合は、レイアウトのついたPDFも自動で用意される(LibreOffice変換のため忠実な再現ではない。細かい体裁は原本のダウンロードで確認してもらう)。文書情報の`renderStatus`が`ok`なら`GET api/documents/:id/file?render=1`で取得できる(`pending`は変換中で数秒待つ、`failed`は変換に失敗、`null`は対象外)",
 			"  - 変換に失敗した文書は `GET api/documents?renderStatus=failed` で一覧できる(`ok`/`pending`も指定できる)。失敗していた場合は `POST api/documents/:id/render/retry` で再実行できる",
 			"`.drawio` は**そのままアップロードすればよい**。画面側が図をそのまま描画するため、プレビュー用の画像を作る必要はない(複数ページもそのまま扱える)",
 			"  - `previewfile` フィールドで画像(`.svg`/`.png`/`.jpg`/`.jpeg`)を添えることもできるが任意で、図を描画できなかったときの代替として使われるだけ。**画像を用意するためだけに図を書き出す必要はない**。`.drawio` 以外では無視される",
@@ -534,9 +534,11 @@ draw.ioの図(\`.drawio\`)は、そのファイルだけをアップロードし
 		do: `このDocument Managerは、Office文書の**中身のテキスト**を検索・取得できるようにしています。
 「どんな内容か」を答えるだけなら、検索APIや文書取得APIで得られるテキストで足ります。
 
-元の体裁(フォント・図形・グラフ・レイアウト)を人が目で確認したい場合に限り、
+レイアウト(図表の位置・ページの構成)を人が目で確認したい場合に限り、
 文書情報の \`renderStatus\` を見てください。\`ok\` なら \`GET api/documents/:id/file?render=1\` で
-元の体裁のままのPDFを取得できます。\`pending\` は変換中なので数秒待ってから取得し直し、
+PDFを取得できます。**忠実な再現ではありません**(LibreOfficeで変換するため、フォントの字幅の違いで
+行の折り返しやページ数がずれることがあります)。細かい体裁まで確認したい場合は、
+\`download\` で原本を取得してもらうよう伝えてください。\`pending\` は変換中なので数秒待ってから取得し直し、
 \`failed\` は変換に失敗しているので、その旨(\`renderError\`)をユーザーに伝えてください。
 \`null\` は対象外です(Office以外・マクロ付き・サイズ超過・変換サービスが無い構成)。`
 	},
