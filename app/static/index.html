@@ -96,7 +96,9 @@
 	#breadcrumbBar .menuLink.active { color: #ee7800; box-shadow: inset 0 -3px 0 #ee7800; }
 	/* アーカイブは他の表示切り替えメニューと性質が異なる(誤操作を避けたい)ため、
 	   右端に離して配置する */
-	#breadcrumbBar #menuArchiveLink { margin-left: auto; }
+	/* 日常的に使うもの(左)と、時々しか使わないもの(右)で分ける。
+	   右寄せは先頭の要素に付ける。readOnlyModeではこの2つをまとめて隠している */
+	#breadcrumbBar #menuVectorIndexLink { margin-left: auto; }
 
 	#mainArea { flex: 1; display: flex; min-height: 0; }
 
