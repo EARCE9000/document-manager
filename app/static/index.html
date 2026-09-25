@@ -251,6 +251,34 @@
 	#appShell.vectorIndexMode #vectorIndexPane { display: flex; }
 	#appShell.vectorIndexMode #sideBar,
 	#appShell.vectorIndexMode #previewArea { display: none !important; }
+
+	/* 管理ペイン(adminロール限定)。タブが増える前提のため、モーダルではなくページとして開く。
+	   方式は上の #vectorIndexPane と同じ(appShellのクラスでペインを入れ替える)。
+	   クラス名を adminPaneMode にしているのは、既にある adminMode が「利用者がadminである」
+	   という別の意味で使われているため */
+	#adminPane { display: none; flex: 1; flex-direction: column; min-width: 0; background: #fff; }
+	#appShell.adminPaneMode #adminPane { display: flex; }
+	#appShell.adminPaneMode #sideBar,
+	#appShell.adminPaneMode #previewArea { display: none !important; }
+	#adminPaneHeader { padding: 14px 20px 0; border-bottom: 1px solid #ddd; flex-shrink: 0; }
+	#adminPaneHeaderRow { display: flex; align-items: center; gap: 10px; }
+	#adminPaneHeaderRow h2 { margin: 0; font-size: 1.05em; }
+	#adminTabs { display: flex; gap: 4px; margin-top: 12px; }
+	.adminTab {
+		appearance: none; border: 1px solid #ddd; border-bottom: none; background: #f4f5f7;
+		padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.9em; color: #555;
+		position: relative; top: 1px;
+	}
+	.adminTab:hover { color: #ee7800; }
+	.adminTab.active { background: #fff; color: #333; font-weight: 600; border-bottom: 1px solid #fff; }
+	#adminPaneBody { flex: 1; overflow-y: auto; padding: 16px 20px; min-height: 0; }
+	.adminTabPanel { display: none; }
+	.adminTabPanel.active { display: block; }
+	.adminSectionNote { color: #666; font-size: 0.85em; line-height: 1.6; margin-bottom: 12px; }
+	.adminSectionNote ul { margin: 6px 0 0; padding-left: 1.2em; }
+	/* ペインは全幅なので、入力欄が横いっぱいに伸びないよう抑える(モーダル時の見た目に合わせる) */
+	#adminPane .toolbarRow input[type="text"] { max-width: 320px; }
+	#adminPane table { max-width: 1100px; }
 	#projectTreeToolbar { padding: 10px 12px; border-bottom: 1px solid #eee; }
 	#projectTreeHeaderRow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
 	/* 誤クリック防止のため、アーカイブ/元に戻すボタンは他の操作ボタンから間隔と区切り線を空けて配置する
@@ -1368,6 +1396,58 @@
 			</div>
 			<div id="vectorIndexEmptyMessage" class="emptyMessage" style="display:none;">索引付けに失敗している文書はありません。</div>
 		</main>
+		<main id="adminPane">
+			<div id="adminPaneHeader">
+				<div id="adminPaneHeaderRow">
+					<button type="button" id="adminBackButton" class="modalButton">← 文書一覧へ戻る</button>
+					<h2>管理</h2>
+				</div>
+				<div id="adminTabs"></div>
+			</div>
+			<div id="adminPaneBody">
+				<section class="adminTabPanel" data-tab="allowedUsers">
+					<div class="adminSectionNote">
+						登録したメールアドレスのユーザーのみログインできます(未登録のメールアドレスは常にログイン不可)。
+						<ul>
+							<li><strong>管理者</strong>: ホワイトリストの管理(追加・削除・ロール変更)が可能</li>
+							<li><strong>編集可</strong>: 文書の追加・削除・タグ編集が可能</li>
+							<li><strong>閲覧のみ</strong>: 文書の閲覧のみ可能</li>
+						</ul>
+					</div>
+					<div class="toolbarRow allowedUserAddRow" style="margin: 10px 0;">
+						<input type="text" id="allowedUserEmailInput" placeholder="メールアドレス">
+						<select id="allowedUserRoleInput">
+							<option value="readwrite">編集可</option>
+							<option value="readonly">閲覧のみ</option>
+							<option value="admin">管理者</option>
+						</select>
+						<button id="allowedUserAddButton" type="button" class="modalButton save">追加</button>
+					</div>
+					<div id="allowedUserTableWrap">
+						<table id="allowedUserTable">
+							<colgroup>
+								<col class="colEmail">
+								<col class="colDate">
+								<col class="colEmail">
+								<col class="colRole">
+								<col class="colAction">
+							</colgroup>
+							<thead>
+								<tr>
+									<th>メールアドレス</th>
+									<th>追加日時</th>
+									<th>追加者</th>
+									<th>ロール</th>
+									<th></th>
+								</tr>
+							</thead>
+							<tbody id="allowedUserList"></tbody>
+						</table>
+					</div>
+					<div id="allowedUserEmptyMessage" class="emptyMessage" style="display:none;">未登録です(登録されるまで誰もログインできません)。</div>
+				</section>
+			</div>
+		</main>
 	</div>
 	<footer id="appFooter">
 		<span>© <span id="footerYear"></span> EARCE.NET</span>
@@ -1485,54 +1565,6 @@
 		<div id="historyEmptyMessage" class="emptyMessage" style="display:none;">直近30日の操作履歴はありません。</div>
 		<div class="modalButtons">
 			<button id="historyCloseButton" type="button" class="modalButton">閉じる</button>
-		</div>
-	</div>
-</div>
-
-<div id="allowedUsersOverlay" class="modalOverlay" style="display:none;">
-	<div class="modalBox" id="allowedUsersModalBox">
-		<p>アクセス許可ユーザー</p>
-		<div class="docMeta">
-			登録したメールアドレスのユーザーのみログインできます<br>(未登録のメールアドレスは常にログイン不可)。
-			<ul>
-				<li><strong>管理者</strong>: ホワイトリストの管理(追加・削除・ロール変更)が可能</li>
-				<li><strong>編集可</strong>: 文書の追加・削除・タグ編集が可能</li>
-				<li><strong>閲覧のみ</strong>: 文書の閲覧のみ可能</li>
-			</ul>
-		</div>
-		<div class="toolbarRow allowedUserAddRow" style="margin: 10px 0;">
-			<input type="text" id="allowedUserEmailInput" placeholder="メールアドレス">
-			<select id="allowedUserRoleInput">
-				<option value="readwrite">編集可</option>
-				<option value="readonly">閲覧のみ</option>
-				<option value="admin">管理者</option>
-			</select>
-			<button id="allowedUserAddButton" type="button" class="modalButton save">追加</button>
-		</div>
-		<div id="allowedUserTableWrap">
-			<table id="allowedUserTable">
-				<colgroup>
-					<col class="colEmail">
-					<col class="colDate">
-					<col class="colEmail">
-					<col class="colRole">
-					<col class="colAction">
-				</colgroup>
-				<thead>
-					<tr>
-						<th>メールアドレス</th>
-						<th>追加日時</th>
-						<th>追加者</th>
-						<th>ロール</th>
-						<th></th>
-					</tr>
-				</thead>
-				<tbody id="allowedUserList"></tbody>
-			</table>
-		</div>
-		<div id="allowedUserEmptyMessage" class="emptyMessage" style="display:none;">未登録です(登録されるまで誰もログインできません)。</div>
-		<div class="modalButtons">
-			<button id="allowedUserCloseButton" type="button" class="modalButton">閉じる</button>
 		</div>
 	</div>
 </div>
@@ -2638,6 +2670,7 @@ const setView = (view) => {
 	appShell.classList.toggle("tagTreeMode", view === "tagTree");
 	appShell.classList.toggle("projectsMode", view === "projects");
 	appShell.classList.toggle("vectorIndexMode", view === "vectorIndex");
+	appShell.classList.toggle("adminPaneMode", view === "admin");
 	if (view !== "projects") {
 		projectsEditMode = false;
 		appShell.classList.remove("projectsEditMode");
@@ -2652,7 +2685,8 @@ const setView = (view) => {
 	menuVectorIndexLink.classList.toggle("active", view === "vectorIndex");
 	menuArchiveLink.classList.toggle("active", view === "archive");
 	clearPreview();
-	loadDocuments();
+	// 管理ペインは文書を扱わないため、文書一覧の取得は行わない
+	if (view !== "admin") loadDocuments();
 	if (view === "projects") loadProjects();
 };
 
@@ -3656,15 +3690,42 @@ apiKeyCreateButton.addEventListener("click", async () => {
 	loadApiKeys();
 });
 
-// アクセス許可ユーザー(ホワイトリスト)管理モーダル
-const allowedUsersOverlay = document.getElementById("allowedUsersOverlay");
+// 管理ペイン(adminロール限定)。タブごとの定義はここだけを見れば分かるようにしておき、
+// タブを増やすときは配列に1行足すだけで済むようにする。
+// loadは「そのタブを開いたとき」に呼ばれる。開いていないタブのために重い処理を走らせない
+const adminTabs = document.getElementById("adminTabs");
+const adminPaneBody = document.getElementById("adminPaneBody");
+const ADMIN_TABS = [
+	{key: "allowedUsers", label: "アクセス許可ユーザー", load: () => loadAllowedUsers()}
+];
+let currentAdminTab = ADMIN_TABS[0].key;
+
+const renderAdminTabs = () => {
+	adminTabs.innerHTML = ADMIN_TABS
+		.map((tab) => `<button type="button" class="adminTab${tab.key === currentAdminTab ? " active" : ""}" data-tab="${tab.key}">${escapeHtml(tab.label)}</button>`)
+		.join("");
+	adminTabs.querySelectorAll(".adminTab").forEach((button) => {
+		button.addEventListener("click", () => showAdminTab(button.dataset.tab));
+	});
+};
+
+const showAdminTab = (key) => {
+	const tab = ADMIN_TABS.find((item) => item.key === key) || ADMIN_TABS[0];
+	currentAdminTab = tab.key;
+	renderAdminTabs();
+	adminPaneBody.querySelectorAll(".adminTabPanel").forEach((panel) => {
+		panel.classList.toggle("active", panel.dataset.tab === tab.key);
+	});
+	tab.load();
+};
+
+// アクセス許可ユーザー(ホワイトリスト)の管理
 const allowedUserTableWrap = document.getElementById("allowedUserTableWrap");
 const allowedUserList = document.getElementById("allowedUserList");
 const emptyAllowedUserMessage = document.getElementById("allowedUserEmptyMessage");
 const allowedUserEmailInput = document.getElementById("allowedUserEmailInput");
 const allowedUserRoleInput = document.getElementById("allowedUserRoleInput");
 const allowedUserAddButton = document.getElementById("allowedUserAddButton");
-const allowedUserCloseButton = document.getElementById("allowedUserCloseButton");
 
 const ROLE_LABELS = {admin: "管理者", readwrite: "編集可", readonly: "閲覧のみ"};
 const roleOptionsHtml = (selected) => Object.entries(ROLE_LABELS)
@@ -3713,13 +3774,10 @@ const loadAllowedUsers = async () => {
 document.getElementById("allowedUsersManageLink").addEventListener("click", (ev) => {
 	ev.preventDefault();
 	allowedUserEmailInput.value = "";
-	allowedUsersOverlay.style.display = "flex";
-	loadAllowedUsers();
+	setView("admin");
+	showAdminTab("allowedUsers");
 });
-allowedUserCloseButton.addEventListener("click", () => { allowedUsersOverlay.style.display = "none"; });
-allowedUsersOverlay.addEventListener("click", (ev) => {
-	if (ev.target === allowedUsersOverlay) allowedUsersOverlay.style.display = "none";
-});
+document.getElementById("adminBackButton").addEventListener("click", () => setView("active"));
 allowedUserAddButton.addEventListener("click", async () => {
 	const email = allowedUserEmailInput.value.trim();
 	if (email === "") return;
