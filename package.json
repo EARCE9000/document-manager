@@ -4,7 +4,7 @@
 	"description": "Document Manager のテスト(node:test + Playwright API)。アプリ本体(app/)とは別管理で、コンテナイメージには含めない",
 	"private": true,
 	"scripts": {
-		"test": "node --test test/unit.test.js test/security.test.js test/db-integrity.test.js test/office-render.test.js test/storage-discard.test.js test/deploy.test.js test/integration-sqlite.test.js test/api-spec.test.js",
+		"test": "node --test test/unit.test.js test/security.test.js test/mockup-zip.test.js test/db-integrity.test.js test/office-render.test.js test/storage-discard.test.js test/deploy.test.js test/integration-sqlite.test.js test/api-spec.test.js",
 		"test:pg": "node --test test/integration-postgres.test.js",
 		"test:converter": "node test/integration-converter.js",
 		"test:reconcile": "node test/integration-reconcile.js",
