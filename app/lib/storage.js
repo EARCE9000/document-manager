@@ -10,6 +10,11 @@
  *
  * 共通インターフェース:
  *   writeFile(documentId, filename, buffer): Promise<void>
+ *   discardUpload(documentId, filenames): Promise<void>
+ *     **アップロードが途中で失敗したときに、そのリクエストが書いたファイルだけを捨てる。**
+ *     文書を消すための機能ではない(アーカイブは論理削除で、実ファイルは残す仕様)。
+ *     そのため「この文書を消す」という形にはせず、捨てる対象を名前で明示させる。
+ *     ディレクトリごとの再帰削除は行わない。存在しないものは黙って無視する。
  *   readFile(documentId, filename): Promise<Buffer>
  *   exists(documentId, filename): Promise<boolean>
  *   streamToResponse(documentId, filename, res): Promise<void>
@@ -25,6 +30,34 @@ const fs = require("fs");
 const logger = require("./logger.js")(path.basename(__filename));
 
 const STORAGE_BACKEND = (process.env.STORAGE_BACKEND || "local").toLowerCase();
+
+// ---- 実ファイルを消す経路はここだけ。歯止めを1箇所に集める ----
+//
+// 文書の削除(アーカイブ)は論理削除で、実ファイルは残す。つまり通常の運用で実ファイルが
+// 消えることはない。唯一の例外が「アップロードが途中で失敗したときの後始末」であり、
+// それ以外の用途を作らないために、汎用の削除APIは用意していない。
+//
+// 捨てられるのは「サーバーが採番したIDの文書の、名前を明示したファイル」だけにする。
+// 再帰削除をどこにも置かないことで、対象を取り違えたときの被害を1ファイルに留める。
+const DOCUMENT_ID = /^[0-9]{6}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const assertDiscardable = (documentId, filenames) => {
+	if (typeof documentId !== "string" || !DOCUMENT_ID.test(documentId)) {
+		throw new Error(`捨てられない文書IDです: ${JSON.stringify(documentId)}`);
+	}
+	if (!Array.isArray(filenames)) {
+		throw new Error("捨てるファイル名を配列で指定してください");
+	}
+	for (const name of filenames) {
+		// 区切り文字・上位への参照・制御文字を含む名前は、組み立てた先が想定の外になりうる
+		if (typeof name !== "string" || name === "" || name === "." || name === ".."
+			|| name.includes("/") || name.includes("\\")
+			|| /[\u0000-\u001f\u007f]/.test(name)) {
+			throw new Error(`捨てられないファイル名です: ${JSON.stringify(name)}`);
+		}
+	}
+};
+module.exports.assertDiscardable = assertDiscardable;
 
 /**
  * ローカルディスク実装。DATA_DIR/documents/<documentId>/<filename> に保存する
@@ -47,6 +80,24 @@ class LocalDiskStorage {
 
 	async readFile(documentId, filename) {
 		return fs.promises.readFile(this._resolvePath(documentId, filename));
+	}
+
+	async discardUpload(documentId, filenames) {
+		assertDiscardable(documentId, filenames);
+		const root = path.resolve(this.documentsDir);
+		for (const filename of filenames) {
+			const target = path.resolve(this.documentsDir, documentId, filename);
+			// 名前は検査済みだが、組み立てた結果が置き場所の内側に収まることも確かめる
+			if (!target.startsWith(root + path.sep)) {
+				throw new Error("文書の置き場所の外は捨てられません");
+			}
+			await fs.promises.rm(target, {force: true});
+		}
+		// 空になった入れ物だけを片付ける。再帰削除ではないため、想定外のものが残っていれば
+		// ENOTEMPTY で失敗する(=消さない)。それが正しい
+		try {
+			await fs.promises.rmdir(path.resolve(this.documentsDir, documentId));
+		} catch {}
 	}
 
 	async exists(documentId, filename) {
@@ -105,6 +156,17 @@ class S3Storage {
 			Bucket: this.bucket,
 			Key: this._key(documentId, filename),
 			Body: buffer
+		}));
+	}
+
+	async discardUpload(documentId, filenames) {
+		assertDiscardable(documentId, filenames);
+		if (filenames.length === 0) return;
+		const {DeleteObjectsCommand} = require("@aws-sdk/client-s3");
+		// 一覧して消すのではなく、渡された名前だけを消す(想定外のものを巻き込まない)
+		await this.client.send(new DeleteObjectsCommand({
+			Bucket: this.bucket,
+			Delete: {Objects: filenames.map((filename) => ({Key: this._key(documentId, filename)}))}
 		}));
 	}
 
@@ -229,6 +291,14 @@ class GcsStorage {
 	async readFile(documentId, filename) {
 		const [buffer] = await this.bucket.file(this._key(documentId, filename)).download();
 		return buffer;
+	}
+
+	async discardUpload(documentId, filenames) {
+		assertDiscardable(documentId, filenames);
+		// prefix指定の一括削除(deleteFiles)は使わない。渡された名前だけを消す
+		await Promise.all(filenames.map((filename) =>
+			this.bucket.file(this._key(documentId, filename)).delete({ignoreNotFound: true})
+		));
 	}
 
 	async exists(documentId, filename) {

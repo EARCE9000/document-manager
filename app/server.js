@@ -1880,6 +1880,11 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		res.status(413).json({error: `ファイルサイズが大きすぎます(上限: ${UPLOAD_MAX_BYTES / 1024 / 1024}MB)`});
 	}
 }), async (req, res) => {
+	// 失敗したときの後始末に使う。try の中で宣言すると catch から見えないため、ここで持つ
+	// (見えないままだと後始末が ReferenceError になり、応答を返す前に落ちる)
+	let documentId = null;
+	const writtenFiles = [];
+	let registered = false;
 	try {
 		setHTTPHeaders(res);
 		if (req.files == null || req.files.uploadfile == null) {
@@ -1929,9 +1934,14 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		}
 
 		const id = `${currentYearMonth()}_${uuidv4()}`;
+		// ここから下でファイルを書く。DBへの登録まで到達できなかった場合、書いたものを捨てる。
+		// 捨てるのは「このリクエストで書いた名前」だけで、登録に成功したものは決して捨てない
+		// (アーカイブは論理削除であり、実ファイルは残す仕様のため)
+		documentId = id;
 		// uploadfile.mv()はローカルディスク専用のAPIのため使わず、メモリ上のBuffer(uploadfile.data)を
 		// storage経由で書き込む(express-fileuploadはuseTempFiles未設定=false相当で常にdataを保持する)
 		await storage.writeFile(id, originalName, uploadfile.data);
+		writtenFiles.push(originalName);
 
 		// .drawio はXML→画像変換をサーバで行わず、添付されたプレビュー画像をそのまま採用する
 		// (無ければ null=プレビュー不可)。それ以外は従来どおり変換/ネイティブ描画を判定する
@@ -1946,6 +1956,9 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		const previewFile = isDrawio
 			? await storeDrawioPreview(id, previewUpload)
 			: await buildPreviewFile(id, originalName, extension, officeContent);
+		// プレビューが実体のファイルとして作られた場合だけ覚える
+		// (ネイティブ表示できる形式では previewFile が原本の名前そのものになる)
+		if (previewFile != null && previewFile !== originalName) writtenFiles.push(previewFile);
 		const extractedText = await extractContentText(id, originalName, extension, previewFile, officeContent);
 		const {contentText, truncated} = truncateContentText(extractedText);
 		if (truncated) {
@@ -1990,6 +2003,9 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 				}
 			}
 		});
+		// ここまで来たらDBへの登録は終わっている。以降で何が起きてもファイルは捨てない
+		registered = true;
+
 		// ベクトル検索(Weaviate)への索引登録はベストエフォート・非同期(埋め込み計算に数秒
 		// かかるため、awaitせずバックグラウンドで実行しアップロードAPIの応答をブロックしない。
 		// WEAVIATE_URL未設定/接続失敗でもアップロード自体は成功させる。詳細はlib/vector-search.js参照)
@@ -2027,6 +2043,25 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		res.status(200).json(await toDocumentResponse(row));
 	} catch (err) {
 		logger.error(err, "::api/documents:upload");
+		// 書いたファイルを残さない。残すとDBに無いファイルが失敗のたびに増え続ける
+		// (管理画面の「DBと実ファイルの照合」で拾えるが、そもそも作らないほうがよい)。
+		// 後始末で失敗しても応答は変えない(利用者にできることが無いため、ログに残して終える)
+		if (!registered && documentId != null && writtenFiles.length > 0) {
+			try {
+				// 捨てる直前に、その文書がDBに無いことをDBへ問い合わせて確かめる。
+				// registeredフラグだけに頼らない(フラグの置き場所を将来動かしたときに、
+				// 登録済みの文書のファイルを消してしまう事故を、これで防ぐ)。
+				// 失敗したリクエストでしか通らない経路なので、問い合わせが1回増えても影響しない
+				if (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [documentId]) != null) {
+					logger.error({documentId}, "::api/documents:upload:discard: DBに登録済みのため捨てません");
+				} else {
+					await storage.discardUpload(documentId, writtenFiles);
+					logger.info({documentId, files: writtenFiles}, "::api/documents:upload:discard: 登録できなかったファイルを捨てました");
+				}
+			} catch (discardErr) {
+				logger.error({err: discardErr, documentId, files: writtenFiles}, "::api/documents:upload:discard");
+			}
+		}
 		res.status(500).json({error: "Internal Error"});
 	}
 });
