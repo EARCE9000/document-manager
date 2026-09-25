@@ -22,6 +22,35 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 		await expect(page.locator("#uploadDropZone")).toBeVisible();
 	});
 
+	// 入口は歯車1つ。ボタンを隠すのは見た目の話で、本当の境界はサーバー側のrequireAdmin
+	// (それはAPIテストで確認している)。ここでは画面の出し分けを見る
+	test("管理ボタンは管理を示すラベルを持つ", async ({page}) => {
+		const button = page.locator("#allowedUsersManageLink");
+		await expect(button).toBeVisible();
+		await expect(button).toHaveAttribute("aria-label", "管理");
+		await expect(button).toHaveAttribute("title", /管理/);
+	});
+
+	test("adminでなければ入口が出ず、管理ペインも開かない", async ({page}) => {
+		// 管理者以外のログイン状態を作る(テストサーバーが払い出すセッションは管理者のみのため、
+		// 認証情報の応答だけ差し替える)
+		await page.route("**/api/check_access_token", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({user_identifier: "member@example.com", isAdmin: false, role: "readwrite", vectorSearchEnabled: false})
+			});
+		});
+		await page.reload();
+		await expect(page.locator("#uploadDropZone")).toBeVisible();
+
+		await expect(page.locator("#allowedUsersManageLink")).toBeHidden();
+		// 入口を通らずに開こうとしても、中身が何も取れない空のペインは見せない
+		await page.evaluate(() => window.setView && window.setView("admin"));
+		await expect(page.locator("#adminPane")).toBeHidden();
+		await expect(page.locator("#sideBar")).toBeVisible();
+	});
+
 	test("管理ボタンでページが切り替わり、文書一覧は隠れる", async ({page}) => {
 		await expect(page.locator("#adminPane")).toBeHidden();
 		await expect(page.locator("#sideBar")).toBeVisible();
