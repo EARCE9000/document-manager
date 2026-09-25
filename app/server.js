@@ -635,7 +635,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 		setHTTPHeaders(res);
 
 		if (AUTH_DISABLED) {
-			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled()});
+			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: MockupStorage.isEnabled()});
 			return;
 		}
 
@@ -646,7 +646,9 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 					user_identifier: req.session.user.identifier,
 					isAdmin: role === AllowedUsers.ROLES.ADMIN,
 					role,
-					vectorSearchEnabled: VectorSearch.isEnabled()
+					vectorSearchEnabled: VectorSearch.isEnabled(),
+					// 画面側はこれを見てモックアップの入口を出すか決める(ローカル保存のみ対応)
+					mockupsEnabled: MockupStorage.isEnabled()
 				});
 				return;
 			}

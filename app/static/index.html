@@ -99,6 +99,15 @@
 	/* 日常的に使うもの(左)と、時々しか使わないもの(右)で分ける。
 	   右寄せは先頭の要素に付ける。readOnlyModeではこの2つをまとめて隠している */
 	#breadcrumbBar #menuVectorIndexLink { margin-left: auto; }
+	/* モックアップは文書とは別のコレクション。同じ段に置くが、仕切りを入れて区別する。
+	   "|" の文字では他のリンクと同じ大きさで主張してしまうため、細い縦線にしている */
+	#breadcrumbBar #menuMockupsLink { margin-left: 13px; position: relative; }
+	#breadcrumbBar #menuMockupsLink::before {
+		content: ""; position: absolute; left: -13px; top: 50%; transform: translateY(-50%);
+		width: 1px; height: 17px; background: #5c5c5c;
+	}
+	/* ローカル保存以外の構成ではAPI自体が503を返すため、入口を出さない */
+	#appShell:not(.mockupsEnabled) #menuMockupsLink { display: none !important; }
 
 	#mainArea { flex: 1; display: flex; min-height: 0; }
 
@@ -292,6 +301,56 @@
 	.adminProblemList { margin: 10px 0 0; padding-left: 1.2em; color: #c0392b; font-size: 0.85em; }
 	.adminCurrentFile { font-weight: 600; }
 	#adminPane table { max-width: 1100px; }
+
+	/* モックアップ。プレビュー画像を見せたいので表ではなくカード並べにする。
+	   ペインの出し方は上の #vectorIndexPane / #adminPane と同じ */
+	#mockupPane { display: none; flex: 1; flex-direction: column; min-width: 0; background: #fff; }
+	#appShell.mockupsMode #mockupPane { display: flex; }
+	#appShell.mockupsMode #sideBar,
+	#appShell.mockupsMode #previewArea { display: none !important; }
+	#mockupPaneHeader { padding: 14px 20px; border-bottom: 1px solid #ddd; flex-shrink: 0; }
+	#mockupPaneHeaderRow { display: flex; align-items: center; gap: 10px; }
+	#mockupPaneHeaderRow h2 { margin: 0; font-size: 1.05em; }
+	#mockupPaneActions { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-shrink: 0; }
+	#mockupPaneActions .modalButton { white-space: nowrap; font-size: 0.85em; padding: 6px 14px; }
+	#mockupFilterInput { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em; width: 260px; }
+	#mockupPaneMeta { color: #666; font-size: 0.85em; line-height: 1.6; margin-top: 10px; }
+	#mockupPaneBody { flex: 1; overflow-y: auto; padding: 16px 20px; min-height: 0; }
+	#mockupGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
+	.mockupCard { border: 1px solid #ddd; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; }
+	.mockupCard:hover { border-color: #ee7800; }
+	.mockupCard.archived { background: #fafafa; }
+	.mockupCardThumb {
+		height: 155px; background: #f4f5f7; border-bottom: 1px solid #eee; cursor: pointer;
+		display: flex; align-items: center; justify-content: center; overflow: hidden;
+	}
+	.mockupCardThumb img { width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+	.mockupCardThumb .noThumb { color: #aaa; font-size: 0.8em; text-align: center; line-height: 1.6; }
+	.mockupCardBody { padding: 10px 12px; flex: 1; min-width: 0; }
+	.mockupCardName { font-weight: 600; font-size: 0.95em; word-break: break-all; }
+	.mockupCardMeta { color: #888; font-size: 0.78em; margin-top: 5px; line-height: 1.6; }
+	.mockupCardMemo { color: #555; font-size: 0.8em; margin-top: 7px; white-space: pre-wrap; word-break: break-all; }
+	.mockupVersionsToggle { margin-top: 7px; font-size: 0.78em; color: #1a56db; cursor: pointer; display: inline-block; }
+	.mockupVersionsToggle:hover { text-decoration: underline; }
+	.mockupVersionList { margin: 6px 0 0; padding-left: 1.2em; font-size: 0.78em; color: #555; }
+	.mockupVersionList .current { font-weight: 600; color: #333; }
+	.mockupCardActions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 8px 12px 10px; border-top: 1px solid #f0f0f0; }
+	.mockupCardActions .modalButton { font-size: 0.78em; padding: 4px 10px; }
+	/* 誤クリック防止のため、アーカイブ/元に戻すは他の操作から離す(文書一覧と同じ考え方) */
+	.mockupCardActions .mockupArchiveAction { margin-left: auto; }
+	#appShell.readOnlyMode .mockupWriteAction { display: none !important; }
+	#mockupUploadModalBox label { display: block; font-size: 0.85em; margin-top: 14px; color: #444; }
+	#mockupUploadModalBox input[type="text"],
+	#mockupUploadModalBox input[type="file"],
+	#mockupMemoModalBox textarea {
+		width: 100%; box-sizing: border-box; margin-top: 5px; padding: 6px 10px;
+		border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; font-family: inherit;
+	}
+	#mockupMemoModalBox textarea { height: 180px; resize: vertical; }
+	#mockupUploadNote { color: #666; font-size: 0.8em; line-height: 1.7; margin-top: 14px; }
+	#mockupUploadStatus { font-size: 0.85em; margin-top: 12px; min-height: 1.2em; }
+	#mockupUploadStatus.error { color: #c0392b; }
+	#mockupUploadTarget { font-size: 0.85em; color: #1a56db; margin-top: 4px; }
 	#projectTreeToolbar { padding: 10px 12px; border-bottom: 1px solid #eee; }
 	#projectTreeHeaderRow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
 	/* 誤クリック防止のため、アーカイブ/元に戻すボタンは他の操作ボタンから間隔と区切り線を空けて配置する
@@ -1222,7 +1281,7 @@
 	</header>
 	<div id="activityToastStack" aria-live="polite"></div>
 	<nav id="breadcrumbBar">
-		<a href="#" id="menuDocumentsLink" class="menuLink active">文書一覧</a><a href="#" id="menuTagTreeLink" class="menuLink">タグ体系</a><a href="#" id="menuProjectsLink" class="menuLink">プロジェクト</a><a href="#" id="menuVectorIndexLink" class="menuLink">ベクトル索引</a><a href="#" id="menuArchiveLink" class="menuLink">アーカイブ</a>
+		<a href="#" id="menuDocumentsLink" class="menuLink active">文書一覧</a><a href="#" id="menuTagTreeLink" class="menuLink">タグ体系</a><a href="#" id="menuProjectsLink" class="menuLink">プロジェクト</a><a href="#" id="menuMockupsLink" class="menuLink">モックアップ</a><a href="#" id="menuVectorIndexLink" class="menuLink">ベクトル索引</a><a href="#" id="menuArchiveLink" class="menuLink">アーカイブ</a>
 	</nav>
 	<div id="projectSwitcherBar">
 		<div id="projectTabs"></div>
@@ -1409,6 +1468,27 @@
 				</table>
 			</div>
 			<div id="vectorIndexEmptyMessage" class="emptyMessage" style="display:none;">索引付けに失敗している文書はありません。</div>
+		</main>
+		<main id="mockupPane">
+			<div id="mockupPaneHeader">
+				<div id="mockupPaneHeaderRow">
+					<h2>モックアップ</h2>
+					<div id="mockupPaneActions">
+						<input type="text" id="mockupFilterInput" placeholder="名前・メモ・本文で検索...">
+						<button type="button" id="mockupArchiveToggleButton" class="modalButton">過去の版</button>
+						<button type="button" id="mockupUploadOpenButton" class="modalButton save mockupWriteAction">＋ アップロード</button>
+					</div>
+				</div>
+				<div id="mockupPaneMeta">
+					ビルド済みのWebページ一式(ZIP)を登録して、別ウィンドウで開いて確認できます。
+					モックアップはこのアプリから切り離した状態で表示されるため、中のJSはこのアプリの文書やAPIには触れません。<br>
+					新しい版を登録すると旧版は自動でアーカイブされ、「過去の版」から辿れます。
+				</div>
+			</div>
+			<div id="mockupPaneBody">
+				<div id="mockupGrid"></div>
+				<div id="mockupEmptyMessage" class="emptyMessage" style="display:none;"></div>
+			</div>
 		</main>
 		<main id="adminPane">
 			<div id="adminPaneHeader">
@@ -1654,6 +1734,42 @@
 	</div>
 </div>
 
+<div id="mockupUploadOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="mockupUploadModalBox">
+		<p id="mockupUploadTitle">モックアップをアップロード</p>
+		<div id="mockupUploadTarget" style="display:none;"></div>
+		<label>一式のZIP(必須)
+			<input type="file" id="mockupZipInput" accept=".zip,application/zip">
+		</label>
+		<label>表示名(省略するとZIPのファイル名)
+			<input type="text" id="mockupNameInput" placeholder="例) 受注管理画面 v3">
+		</label>
+		<label>一覧に出すプレビュー画像(任意・svg/png/jpg)
+			<input type="file" id="mockupPreviewInput" accept=".svg,.png,.jpg,.jpeg,image/svg+xml,image/png,image/jpeg">
+		</label>
+		<div id="mockupUploadNote">
+			ZIPの中に <code>index.html</code> を入れてください(入口として使います)。<br>
+			プレビュー画像は自動生成しないため、必要なら画面のスクリーンショットを添えてください。
+		</div>
+		<div id="mockupUploadStatus"></div>
+		<div class="modalButtons">
+			<button type="button" id="mockupUploadCancelButton" class="modalButton">キャンセル</button>
+			<button type="button" id="mockupUploadSubmitButton" class="modalButton save">アップロード</button>
+		</div>
+	</div>
+</div>
+
+<div id="mockupMemoOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="mockupMemoModalBox">
+		<p>メモを編集</p>
+		<textarea id="mockupMemoInput" placeholder="何を試した版か、どこを見てほしいか など"></textarea>
+		<div class="modalButtons">
+			<button type="button" id="mockupMemoCancelButton" class="modalButton">キャンセル</button>
+			<button type="button" id="mockupMemoSaveButton" class="modalButton save">保存</button>
+		</div>
+	</div>
+</div>
+
 <div id="helpOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="helpModalBox">
 		<p>ヘルプ</p>
@@ -1703,6 +1819,7 @@ const uploadDropZone = document.getElementById("uploadDropZone");
 const menuDocumentsLink = document.getElementById("menuDocumentsLink");
 const menuTagTreeLink = document.getElementById("menuTagTreeLink");
 const menuProjectsLink = document.getElementById("menuProjectsLink");
+const menuMockupsLink = document.getElementById("menuMockupsLink");
 const menuVectorIndexLink = document.getElementById("menuVectorIndexLink");
 const menuArchiveLink = document.getElementById("menuArchiveLink");
 const projectSwitcherBar = document.getElementById("projectSwitcherBar");
@@ -2733,6 +2850,7 @@ const setView = (view) => {
 	appShell.classList.toggle("tagTreeMode", view === "tagTree");
 	appShell.classList.toggle("projectsMode", view === "projects");
 	appShell.classList.toggle("vectorIndexMode", view === "vectorIndex");
+	appShell.classList.toggle("mockupsMode", view === "mockups");
 	// 管理ペインはadminのときだけ開く。APIはすべてrequireAdminで守られているため、
 	// これは安全のためではなく「中身が何も取れない空のペインを開かせない」ため
 	appShell.classList.toggle("adminPaneMode", view === "admin" && appShell.classList.contains("adminMode"));
@@ -2747,12 +2865,14 @@ const setView = (view) => {
 	menuDocumentsLink.classList.toggle("active", view === "active");
 	menuTagTreeLink.classList.toggle("active", view === "tagTree");
 	menuProjectsLink.classList.toggle("active", view === "projects");
+	menuMockupsLink.classList.toggle("active", view === "mockups");
 	menuVectorIndexLink.classList.toggle("active", view === "vectorIndex");
 	menuArchiveLink.classList.toggle("active", view === "archive");
 	clearPreview();
-	// 管理ペインは文書を扱わないため、文書一覧の取得は行わない
-	if (view !== "admin") loadDocuments();
+	// 管理ペインとモックアップは文書を扱わないため、文書一覧の取得は行わない
+	if (view !== "admin" && view !== "mockups") loadDocuments();
 	if (view === "projects") loadProjects();
+	if (view === "mockups") loadMockups();
 };
 
 menuDocumentsLink.addEventListener("click", (ev) => {
@@ -2767,6 +2887,10 @@ menuProjectsLink.addEventListener("click", (ev) => {
 	ev.preventDefault();
 	setView("projects");
 });
+menuMockupsLink.addEventListener("click", (ev) => {
+	ev.preventDefault();
+	setView("mockups");
+});
 menuVectorIndexLink.addEventListener("click", (ev) => {
 	ev.preventDefault();
 	setView("vectorIndex");
@@ -2774,6 +2898,285 @@ menuVectorIndexLink.addEventListener("click", (ev) => {
 menuArchiveLink.addEventListener("click", (ev) => {
 	ev.preventDefault();
 	setView("archive");
+});
+
+// ==== モックアップ ====
+// 文書とは別のコレクション(docs/mockup.md)。一覧・アップロード・別ウィンドウで開く、まで。
+// 実体の表示は引換券つきのURLで行うため、開く先は常に入口(`/view`)にする。
+// 直接ファイルのURLを組み立ててはいけない(券が無く401になる)
+const mockupGrid = document.getElementById("mockupGrid");
+const mockupEmptyMessage = document.getElementById("mockupEmptyMessage");
+const mockupFilterInput = document.getElementById("mockupFilterInput");
+const mockupArchiveToggleButton = document.getElementById("mockupArchiveToggleButton");
+const mockupUploadOpenButton = document.getElementById("mockupUploadOpenButton");
+const mockupUploadOverlay = document.getElementById("mockupUploadOverlay");
+const mockupUploadTitle = document.getElementById("mockupUploadTitle");
+const mockupUploadTarget = document.getElementById("mockupUploadTarget");
+const mockupZipInput = document.getElementById("mockupZipInput");
+const mockupNameInput = document.getElementById("mockupNameInput");
+const mockupPreviewInput = document.getElementById("mockupPreviewInput");
+const mockupUploadStatus = document.getElementById("mockupUploadStatus");
+const mockupUploadSubmitButton = document.getElementById("mockupUploadSubmitButton");
+const mockupUploadCancelButton = document.getElementById("mockupUploadCancelButton");
+const mockupMemoOverlay = document.getElementById("mockupMemoOverlay");
+const mockupMemoInput = document.getElementById("mockupMemoInput");
+const mockupMemoSaveButton = document.getElementById("mockupMemoSaveButton");
+const mockupMemoCancelButton = document.getElementById("mockupMemoCancelButton");
+
+let mockupsArchiveMode = false;
+let currentMockups = [];
+// 「新しい版」から開いた場合の置き換え対象。通常のアップロードでは null
+let mockupUploadPreviousId = null;
+let mockupMemoTargetId = null;
+let mockupFilterTimer = null;
+
+const loadMockups = async () => {
+	const params = new URLSearchParams();
+	if (mockupsArchiveMode) params.set("archived", "1");
+	const q = mockupFilterInput.value.trim();
+	if (q !== "") params.set("q", q);
+	const query = params.toString();
+	const res = await fetch(`./api/mockups${query === "" ? "" : `?${query}`}`);
+	if (res.status !== 200) {
+		currentMockups = [];
+		mockupGrid.innerHTML = "";
+		mockupEmptyMessage.textContent = res.status === 503
+			? "モックアップ機能はローカル保存の構成でのみ使えます。"
+			: "一覧を取得できませんでした。";
+		mockupEmptyMessage.style.display = "block";
+		return;
+	}
+	currentMockups = await res.json();
+	renderMockupList();
+};
+
+const renderMockupList = () => {
+	mockupArchiveToggleButton.classList.toggle("save", mockupsArchiveMode);
+	if (currentMockups.length === 0) {
+		mockupGrid.innerHTML = "";
+		mockupEmptyMessage.textContent = mockupFilterInput.value.trim() !== ""
+			? "該当するモックアップがありません。"
+			: (mockupsArchiveMode ? "過去の版はありません。" : "モックアップはまだありません。ZIPをアップロードしてください。");
+		mockupEmptyMessage.style.display = "block";
+		return;
+	}
+	mockupEmptyMessage.style.display = "none";
+	mockupGrid.innerHTML = currentMockups.map((item) => {
+		const id = escapeHtml(item.id);
+		const thumb = item.previewFile
+			? `<img src="./api/mockups/${id}/preview" alt="">`
+			: `<span class="noThumb">プレビュー画像なし<br>クリックで開く</span>`;
+		const meta = [
+			`${item.fileCount}ファイル`,
+			formatBytes(item.totalBytes),
+			item.entryFile || "入口なし"
+		].join(" / ");
+		const dates = item.archived
+			? `アーカイブ: ${formatDateTime(item.deletedAt)}`
+			: `登録: ${formatDateTime(item.uploadedAt)}${item.uploadedBy ? ` / ${escapeHtml(item.uploadedBy)}` : ""}`;
+		const openable = item.entryFile != null;
+		return `<div class="mockupCard ${item.archived ? "archived" : ""}" data-id="${id}">
+			<div class="mockupCardThumb" data-action="open" title="${openable ? "別ウィンドウで開く" : "入口(index.html)が無いため開けません"}">${thumb}</div>
+			<div class="mockupCardBody">
+				<div class="mockupCardName">${escapeHtml(item.name)}</div>
+				<div class="mockupCardMeta">${escapeHtml(meta)}<br>${dates}</div>
+				${item.memo ? `<div class="mockupCardMemo">${escapeHtml(item.memo)}</div>` : ""}
+				<span class="mockupVersionsToggle" data-action="versions">版履歴を見る</span>
+				<div class="mockupVersionsBox"></div>
+			</div>
+			<div class="mockupCardActions">
+				<button type="button" class="modalButton" data-action="open" ${openable ? "" : "disabled"}>開く</button>
+				<button type="button" class="modalButton" data-action="download">ZIP</button>
+				<button type="button" class="modalButton mockupWriteAction" data-action="rename">名前</button>
+				<button type="button" class="modalButton mockupWriteAction" data-action="memo">メモ</button>
+				${item.archived
+					? `<button type="button" class="modalButton save mockupWriteAction mockupArchiveAction" data-action="restore">元に戻す</button>`
+					: `<button type="button" class="modalButton mockupWriteAction" data-action="revise">新しい版</button>
+					   <button type="button" class="modalButton mockupWriteAction mockupArchiveAction" data-action="archive">アーカイブ</button>`}
+			</div>
+		</div>`;
+	}).join("");
+};
+
+// モックアップは必ず入口から開く。券つきのURLへ転送されるため、ここで組み立てるのは `/view` まで
+const openMockup = (id) => {
+	window.open(`./api/mockups/${encodeURIComponent(id)}/view`, `mockup_${id}`);
+};
+
+const toggleMockupVersions = async (card, id) => {
+	const box = card.querySelector(".mockupVersionsBox");
+	const toggle = card.querySelector(".mockupVersionsToggle");
+	if (box.innerHTML !== "") {
+		box.innerHTML = "";
+		toggle.textContent = "版履歴を見る";
+		return;
+	}
+	const res = await fetch(`./api/mockups/${encodeURIComponent(id)}/versions`);
+	if (res.status !== 200) return;
+	const versions = await res.json();
+	toggle.textContent = "版履歴を隠す";
+	box.innerHTML = `<ul class="mockupVersionList">${versions.map((v, i) =>
+		`<li class="${v.id === id ? "current" : ""}">v${i + 1} ${escapeHtml(v.name)}(${formatDateTime(v.uploadedAt)}${v.archived ? "・アーカイブ済み" : ""})</li>`
+	).join("")}</ul>`;
+};
+
+mockupGrid.addEventListener("click", async (ev) => {
+	const trigger = ev.target.closest("[data-action]");
+	if (trigger == null) return;
+	const card = trigger.closest(".mockupCard");
+	if (card == null) return;
+	const id = card.dataset.id;
+	const item = currentMockups.find((m) => m.id === id);
+	if (item == null) return;
+
+	switch (trigger.dataset.action) {
+		case "open":
+			if (item.entryFile != null) openMockup(id);
+			return;
+		case "download":
+			window.location.href = `./api/mockups/${encodeURIComponent(id)}/download`;
+			return;
+		case "versions":
+			await toggleMockupVersions(card, id);
+			return;
+		case "rename": {
+			const name = await showPromptDialog("モックアップの名前", item.name);
+			if (name == null || name.trim() === "" || name === item.name) return;
+			const res = await fetch(`./api/mockups/${encodeURIComponent(id)}/name`, {
+				method: "PUT",
+				headers: {"Content-Type": "application/json"},
+				body: JSON.stringify({name: name.trim()})
+			});
+			if (res.status !== 200) {
+				alert((await res.json().catch(() => ({}))).error || "名前を変更できませんでした");
+				return;
+			}
+			await loadMockups();
+			return;
+		}
+		case "memo":
+			mockupMemoTargetId = id;
+			mockupMemoInput.value = item.memo || "";
+			mockupMemoOverlay.style.display = "flex";
+			mockupMemoInput.focus();
+			return;
+		case "revise":
+			openMockupUploadDialog(item);
+			return;
+		case "archive": {
+			if (!await showConfirmDialog(`「${item.name}」をアーカイブしますか?(ファイルは残り、元に戻せます)`)) return;
+			const res = await fetch(`./api/mockups/${encodeURIComponent(id)}`, {method: "DELETE"});
+			if (res.status !== 204) {
+				alert("アーカイブできませんでした");
+				return;
+			}
+			await loadMockups();
+			return;
+		}
+		case "restore": {
+			const res = await fetch(`./api/mockups/${encodeURIComponent(id)}/restore`, {method: "POST"});
+			if (res.status !== 200) {
+				alert("元に戻せませんでした");
+				return;
+			}
+			await loadMockups();
+			return;
+		}
+	}
+});
+
+mockupMemoCancelButton.addEventListener("click", () => {
+	mockupMemoOverlay.style.display = "none";
+	mockupMemoTargetId = null;
+});
+mockupMemoSaveButton.addEventListener("click", async () => {
+	if (mockupMemoTargetId == null) return;
+	const res = await fetch(`./api/mockups/${encodeURIComponent(mockupMemoTargetId)}/memo`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({memo: mockupMemoInput.value})
+	});
+	if (res.status !== 200) {
+		alert((await res.json().catch(() => ({}))).error || "メモを保存できませんでした");
+		return;
+	}
+	mockupMemoOverlay.style.display = "none";
+	mockupMemoTargetId = null;
+	await loadMockups();
+});
+
+// previous を渡すと「新しい版」として登録する(旧版は自動でアーカイブされる)
+const openMockupUploadDialog = (previous = null) => {
+	mockupUploadPreviousId = previous == null ? null : previous.id;
+	mockupUploadTitle.textContent = previous == null ? "モックアップをアップロード" : "新しい版をアップロード";
+	if (previous == null) {
+		mockupUploadTarget.style.display = "none";
+		mockupUploadTarget.textContent = "";
+		mockupNameInput.value = "";
+	} else {
+		mockupUploadTarget.style.display = "block";
+		mockupUploadTarget.textContent = `置き換える版: ${previous.name}(登録後にアーカイブされます)`;
+		mockupNameInput.value = previous.name;
+	}
+	mockupZipInput.value = "";
+	mockupPreviewInput.value = "";
+	mockupUploadStatus.textContent = "";
+	mockupUploadStatus.classList.remove("error");
+	mockupUploadSubmitButton.disabled = false;
+	mockupUploadOverlay.style.display = "flex";
+};
+
+const closeMockupUploadDialog = () => {
+	mockupUploadOverlay.style.display = "none";
+	mockupUploadPreviousId = null;
+};
+
+mockupUploadOpenButton.addEventListener("click", () => openMockupUploadDialog());
+mockupUploadCancelButton.addEventListener("click", closeMockupUploadDialog);
+
+mockupUploadSubmitButton.addEventListener("click", async () => {
+	const zip = mockupZipInput.files[0];
+	if (zip == null) {
+		mockupUploadStatus.textContent = "一式のZIPを選んでください。";
+		mockupUploadStatus.classList.add("error");
+		return;
+	}
+	const form = new FormData();
+	form.append("mockupfile", zip);
+	if (mockupNameInput.value.trim() !== "") form.append("name", mockupNameInput.value.trim());
+	if (mockupPreviewInput.files[0] != null) form.append("previewfile", mockupPreviewInput.files[0]);
+	if (mockupUploadPreviousId != null) form.append("previousId", mockupUploadPreviousId);
+
+	mockupUploadSubmitButton.disabled = true;
+	mockupUploadStatus.classList.remove("error");
+	mockupUploadStatus.textContent = "アップロードして展開しています...";
+	const res = await fetch("./api/mockups", {method: "POST", body: form}).catch(() => null);
+	if (res == null || res.status !== 200) {
+		const body = res == null ? {} : await res.json().catch(() => ({}));
+		mockupUploadStatus.textContent = body.error
+			|| (res != null && res.status === 413 ? "ZIPが大きすぎます。" : "アップロードできませんでした。");
+		mockupUploadStatus.classList.add("error");
+		mockupUploadSubmitButton.disabled = false;
+		return;
+	}
+	const created = await res.json();
+	closeMockupUploadDialog();
+	// 新しい版を入れた直後は、置き換わった結果を見たいので現役の一覧に戻す
+	mockupsArchiveMode = false;
+	mockupArchiveToggleButton.textContent = "過去の版";
+	await loadMockups();
+	if (created.entryFile != null) openMockup(created.id);
+});
+
+mockupArchiveToggleButton.addEventListener("click", async () => {
+	mockupsArchiveMode = !mockupsArchiveMode;
+	mockupArchiveToggleButton.textContent = mockupsArchiveMode ? "現役の版" : "過去の版";
+	await loadMockups();
+});
+
+mockupFilterInput.addEventListener("input", () => {
+	clearTimeout(mockupFilterTimer);
+	mockupFilterTimer = setTimeout(loadMockups, 250);
 });
 
 // ==== プロジェクト機能 ====
@@ -4785,6 +5188,8 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 			appShell.classList.add("readOnlyMode");
 		}
 		appShell.classList.toggle("adminMode", !!authData.isAdmin);
+		// モックアップはローカル保存の構成でのみ使える。使えない構成では入口を出さない
+		appShell.classList.toggle("mockupsEnabled", !!authData.mockupsEnabled);
 		appShell.classList.add("visible");
 		loadDocuments();
 		subscribeDocumentEvents();
