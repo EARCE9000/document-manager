@@ -49,7 +49,7 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 		await page.click("#allowedUsersManageLink");
 
 		const tabs = page.locator(".adminTab");
-		await expect(tabs).toHaveText(["アクセス許可ユーザー", "サーバー", "データベース"]);
+		await expect(tabs).toHaveText(["アクセス許可ユーザー", "サーバー", "データベース", "変換サービス"]);
 		await expect(tabs.first()).toHaveClass(/active/);
 
 		// 選択中のパネルだけが見える
@@ -87,6 +87,20 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 		await expect(result.locator(".adminStatus")).toHaveText("問題なし");
 		await expect(result).toContainText("簡易(索引の整合検査を省く)");
 		await expect(result).toContainText("問題の件数");
+	});
+
+	// 変換サービスは別コンテナで、落ちていてもアプリは動き続ける。
+	// 「未設定」と「落ちている」は別物なので、画面でも区別できる必要がある
+	test("変換サービスタブに状態と失敗一覧が出る", async ({page}) => {
+		await page.click("#allowedUsersManageLink");
+		await page.click('.adminTab[data-tab="convert"]');
+
+		const status = page.locator("#convertHealthResult .adminStatus");
+		await expect(status).toBeVisible();
+		// テスト環境はスタブへ接続しているため正常。いずれにせよ3状態のどれかが出る
+		await expect(status).toHaveText(/正常|到達できません|未設定/);
+
+		await expect(page.locator("#convertFailedWrap")).toBeVisible();
 	});
 
 	test("厳密確認は確認ダイアログを経てから実行される", async ({page}) => {

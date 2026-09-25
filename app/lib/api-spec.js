@@ -29,8 +29,11 @@ const OPERATIONS = [
 	{
 		id: "listDocuments", method: "get", path: "/api/documents", role: "readonly", tag: "文書",
 		summary: "文書の一覧・全文検索",
-		description: "`q`省略時は全件(アーカイブ済みを除く)を返す。ファイル名・タグ・メモ・本文(抽出済みプレーンテキスト)を対象に部分一致検索する。本文が大きい文書は先頭のみが検索対象(応答の`contentTruncated`が`true`。上限は`contentTextMaxChars`)",
-		params: [{name: "q", in: "query", description: "検索語(省略時は全件)"}]
+		description: "`q`省略時は全件(アーカイブ済みを除く)を返す。ファイル名・タグ・メモ・本文(抽出済みプレーンテキスト)を対象に部分一致検索する。本文が大きい文書は先頭のみが検索対象(応答の`contentTruncated`が`true`。上限は`contentTextMaxChars`)。`renderStatus`を指定すると体裁つき表示(PDF)の状態で絞り込む(`q`とは併用しない)",
+		params: [
+			{name: "q", in: "query", description: "検索語(省略時は全件)"},
+			{name: "renderStatus", in: "query", description: "体裁つき表示の状態で絞り込む: ok / pending / failed"}
+		]
 	},
 	{
 		id: "searchVector", method: "get", path: "/api/documents/search/vector", role: "readonly", tag: "文書", vectorOnly: true,
@@ -216,6 +219,12 @@ const OPERATIONS = [
 	// ---- その他(ガイドには載せない)
 	{id: "getVersion", method: "get", path: "/api/version", role: "public", tag: "その他", summary: "アプリのバージョン(ビルド日付)", aiGuide: false},
 	{
+		id: "getOfficeRenderHealth", method: "get", path: "/api/office-render/health", role: "admin", tag: "その他",
+		summary: "変換サービスの状態",
+		description: "体裁つき表示(PDF)の変換サービスへ到達できるかを確かめる。`enabled:false`は未設定(異常ではない)。到達できた場合はLibreOfficeの版・受け付ける上限・タイムアウトも返す",
+		aiGuide: false
+	},
+	{
 		id: "getServerStatus", method: "get", path: "/api/server-status", role: "admin", tag: "その他",
 		summary: "サーバーの状態(版・起動時刻・DB)",
 		description: "版・リビジョン・ビルド時刻・起動時刻・稼働秒・同梱クライアントの版・DBファイルの一覧とサイズ・最後に確認したDBの整合性を返す。公開の`/api/version`には起動時刻を含めない",
@@ -321,6 +330,7 @@ const GUIDE_SECTIONS = [
 			"対応拡張子: `.html` `.htm` `.mhtml` `.mht` `.md` `.markdown` `.pdf` `.svg` `.png` `.jpg` `.jpeg` `.csv` `.tsv` `.txt` `.log` `.json` `.drawio` `.xlsx` `.xlsm` `.docx` `.docm` `.pptx` `.pptm` (単一ファイルのみ)",
 			"Excel(`.xlsx`)/Word(`.docx`)/PowerPoint(`.pptx`)は、そのままアップロードすればよい。中身のテキスト(セル・段落・スライド・発表者ノート)が全文検索の対象になり、画面には内容の概要が表示される(書式・図・グラフは再現されない)",
 			"  - 変換サービスが構成されている場合は、元の体裁のままのPDFも自動で用意される。文書情報の`renderStatus`が`ok`なら`GET api/documents/:id/file?render=1`で取得できる(`pending`は変換中で数秒待つ、`failed`は変換に失敗、`null`は対象外)",
+			"  - 変換に失敗した文書は `GET api/documents?renderStatus=failed` で一覧できる(`ok`/`pending`も指定できる)。失敗していた場合は `POST api/documents/:id/render/retry` で再実行できる",
 			"`.drawio` は**そのままアップロードすればよい**。画面側が図をそのまま描画するため、プレビュー用の画像を作る必要はない(複数ページもそのまま扱える)",
 			"  - `previewfile` フィールドで画像(`.svg`/`.png`/`.jpg`/`.jpeg`)を添えることもできるが任意で、図を描画できなかったときの代替として使われるだけ。**画像を用意するためだけに図を書き出す必要はない**。`.drawio` 以外では無視される",
 			"既存文書の新しい版として登録する場合は `previousId` フィールドに旧版の文書IDを指定する(任意)。旧版は自動的にアーカイブされ、タグとプロジェクトの登録(フォルダ・並び順)が新しい版へ引き継がれる。応答の `previousId`/`nextId` で版同士のつながりが分かる",

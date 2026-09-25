@@ -1140,6 +1140,17 @@ const SQL_SELECT_ACTIVE_DOCUMENTS = `
 	ORDER BY uploaded_at DESC
 `;
 
+// 体裁つき表示(PDF)の状態で絞り込む。変換に失敗した文書を探す手段がこれまで無く、
+// 管理画面からも「再実行すべき文書」を見つけられなかった
+const SQL_SELECT_ACTIVE_DOCUMENTS_BY_RENDER_STATUS = `
+	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, content_truncated, render_status, render_error, render_file
+	FROM documents
+	WHERE deleted_at IS NULL AND render_status = ?
+	ORDER BY uploaded_at DESC
+`;
+// 値は限られているため、受け取った文字列をそのままSQLへ渡さず許可リストで確かめる
+const RENDER_STATUS_VALUES = ["ok", "pending", "failed"];
+
 // 起動時のベクトル検索バックフィル(過去にアップロードされた文書)用。VectorSearch側で
 // 既にWeaviateに登録済みの文書は除外されるため、ここではアクティブな文書を全件渡すだけでよい
 const SQL_SELECT_ACTIVE_DOCUMENTS_FOR_INDEXING = `SELECT id, content_text FROM documents WHERE deleted_at IS NULL`;
@@ -1446,7 +1457,18 @@ app.get(BASE_URL_PATH + 'api/documents', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		const q = String(req.query.q || "").trim();
-		const rows = q === "" ? await ds.all(SQL_SELECT_ACTIVE_DOCUMENTS) : await searchActiveDocuments(q);
+		const renderStatus = String(req.query.renderStatus || "").trim();
+		if (renderStatus !== "" && !RENDER_STATUS_VALUES.includes(renderStatus)) {
+			res.status(400).json({error: `renderStatus は ${RENDER_STATUS_VALUES.join(" / ")} のいずれかを指定してください`});
+			return;
+		}
+		let rows;
+		if (renderStatus !== "") {
+			// 絞り込みは検索語と併用しない(用途が「失敗した文書を探す」に限られるため)
+			rows = await ds.all(SQL_SELECT_ACTIVE_DOCUMENTS_BY_RENDER_STATUS, [renderStatus]);
+		} else {
+			rows = q === "" ? await ds.all(SQL_SELECT_ACTIVE_DOCUMENTS) : await searchActiveDocuments(q);
+		}
 		const documents = await Promise.all(rows.map(toDocumentResponse));
 		res.status(200).json(documents);
 	} catch (err) {
@@ -1548,6 +1570,38 @@ app.get(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireWrite, 
  * ベクトル検索のチャンク分割設定をGUIから変更する(要 admin ロール。システム全体に影響するため)。
  * 変更は新規に索引付けする文書からのみ反映され、既存の索引付け済み文書には遡って適用されない
  */
+/**
+ * 変換サービス(converter)の状態(要 admin ロール)。
+ *
+ * これまで到達性は起動時のログにしか出ておらず、画面から確かめる手段が無かった。
+ * 変換が動かないときに「設定していないのか、落ちているのか」を切り分けられるようにする。
+ */
+app.get(BASE_URL_PATH + 'api/office-render/health', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!OfficeRender.isEnabled()) {
+			// 未設定は異常ではない。converterを動かさない構成では概要プレビューだけで成立する
+			res.status(200).json({enabled: false, reachable: false, checkedAt: new Date().toISOString()});
+			return;
+		}
+		const health = await OfficeRender.checkHealth();
+		res.status(200).json({
+			enabled: true,
+			reachable: health != null,
+			checkedAt: new Date().toISOString(),
+			...(health != null ? {
+				libreOffice: health.libreOffice ?? null,
+				apiVersion: health.apiVersion ?? null,
+				maxBytes: health.maxBytes ?? null,
+				timeoutSeconds: health.timeoutSeconds ?? null
+			} : {})
+		});
+	} catch (err) {
+		logger.error(err, "::api/office-render/health");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 /**
  * サーバーの状態(要 admin ロール)。
  *
@@ -3251,9 +3305,11 @@ const main = async () => {
 	// 体裁つき表示(PDF変換)の接続確認。繋がらなくてもアプリは動く(概要プレビューのみになる)ため、
 	// 起動を止めずにログだけ残す
 	if (OfficeRender.isEnabled()) {
+		// 接続確認で何が起きてもサーバーの起動は止めない。checkHealth内で例外が出ると
+		// 未処理のPromise拒否になりプロセスが終了するため、ここで必ず受け止める
 		OfficeRender.checkHealth().then((health) => {
 			if (health != null) logger.info({libreOffice: health.libreOffice, maxBytes: health.maxBytes}, "体裁つき表示: 変換サービスに接続できました");
-		});
+		}).catch((err) => logger.error(err, "::checkHealth"));
 	}
 };
 

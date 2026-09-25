@@ -1482,6 +1482,19 @@
 					</div>
 					<div id="dbIntegrityResult"></div>
 				</section>
+				<section class="adminTabPanel" data-tab="convert">
+					<div class="adminSectionNote">
+						Excel / Word / PowerPoint を<strong>元の体裁のままPDFで表示する</strong>ための変換サービスの状態です。
+						動いていなくても文書の登録・検索・概要プレビューには影響しません(体裁つき表示だけが使えなくなります)。
+					</div>
+					<div class="toolbarRow" style="margin-bottom: 12px;">
+						<button type="button" id="convertHealthRefreshButton" class="modalButton">再確認</button>
+					</div>
+					<div id="convertHealthResult"></div>
+					<h3>変換に失敗した文書</h3>
+					<div class="adminSectionNote">変換サービスが停止していた間に登録された文書は、ここに残ります。再実行すると、その場で変換し直します。</div>
+					<div id="convertFailedWrap"></div>
+				</section>
 			</div>
 		</main>
 	</div>
@@ -3734,7 +3747,8 @@ const adminPaneBody = document.getElementById("adminPaneBody");
 const ADMIN_TABS = [
 	{key: "allowedUsers", label: "アクセス許可ユーザー", load: () => loadAllowedUsers()},
 	{key: "server", label: "サーバー", load: () => loadServerStatus()},
-	{key: "database", label: "データベース", load: () => loadDatabaseTab()}
+	{key: "database", label: "データベース", load: () => loadDatabaseTab()},
+	{key: "convert", label: "変換サービス", load: () => loadConvertTab()}
 ];
 let currentAdminTab = ADMIN_TABS[0].key;
 
@@ -3881,6 +3895,80 @@ document.getElementById("dbIntegrityFullButton").addEventListener("click", async
 	if (!ok) return;
 	runIntegrityCheck("full");
 });
+
+// 変換サービス(converter)タブ。到達性と、変換に失敗した文書の再実行。
+// 「未設定」と「落ちている」は別物なので、表示でも区別する
+const convertHealthResult = document.getElementById("convertHealthResult");
+const convertFailedWrap = document.getElementById("convertFailedWrap");
+
+const renderConvertHealth = (health) => {
+	if (health == null) {
+		convertHealthResult.innerHTML = `<div class="adminSectionNote">取得できませんでした。</div>`;
+		return;
+	}
+	if (!health.enabled) {
+		convertHealthResult.innerHTML = `<span class="adminStatus unknown">未設定</span>
+			<div class="adminSectionNote" style="margin-top:8px;">変換サービスを使わない構成です(OFFICE_RENDER_URL が未設定)。Office文書は概要プレビューだけで扱います。</div>`;
+		return;
+	}
+	if (!health.reachable) {
+		convertHealthResult.innerHTML = `<span class="adminStatus bad">到達できません</span>
+			<div class="adminSectionNote" style="margin-top:8px;">設定はされていますが応答がありません。変換サービスのコンテナが動いているか確認してください。この間にアップロードされたOffice文書は、下の一覧に失敗として残ります。</div>`;
+		return;
+	}
+	convertHealthResult.innerHTML = `
+		<span class="adminStatus ok">正常</span>
+		<dl class="adminDefList" style="margin-top:12px;">
+			<dt>LibreOffice</dt><dd>${escapeHtml(health.libreOffice || "-")}</dd>
+			<dt>受け付ける上限</dt><dd>${escapeHtml(formatBytes(health.maxBytes))}</dd>
+			<dt>変換の打ち切り</dt><dd>${escapeHtml(String(health.timeoutSeconds ?? "-"))} 秒</dd>
+			<dt>確認日時</dt><dd>${escapeHtml(formatDateTime(health.checkedAt))}</dd>
+		</dl>`;
+};
+
+const loadConvertFailed = async () => {
+	convertFailedWrap.innerHTML = `<div class="adminSectionNote">読み込み中...</div>`;
+	const res = await fetch("./api/documents?renderStatus=failed");
+	if (res.status !== 200) {
+		convertFailedWrap.innerHTML = `<div class="adminSectionNote">取得できませんでした。</div>`;
+		return;
+	}
+	const documents = await res.json();
+	if (documents.length === 0) {
+		convertFailedWrap.innerHTML = `<div class="emptyMessage">変換に失敗している文書はありません。</div>`;
+		return;
+	}
+	convertFailedWrap.innerHTML = `<table><thead><tr><th>ファイル名</th><th>登録日時</th><th>エラー内容</th><th></th></tr></thead><tbody>${
+		documents.map((doc) => `<tr>
+			<td title="${escapeHtml(doc.entryFile)}">${escapeHtml(doc.entryFile)}</td>
+			<td>${escapeHtml(formatDateTime(doc.modified))}</td>
+			<td>${escapeHtml(doc.renderError || "-")}</td>
+			<td><button type="button" class="modalButton convertRetryButton" data-id="${escapeHtml(doc.id)}">再実行</button></td>
+		</tr>`).join("")
+	}</tbody></table>`;
+	convertFailedWrap.querySelectorAll(".convertRetryButton").forEach((button) => {
+		button.addEventListener("click", async () => {
+			button.disabled = true;
+			button.textContent = "実行中...";
+			await fetch(`./api/documents/${encodeURIComponent(button.dataset.id)}/render/retry`, {method: "POST"});
+			// 成否にかかわらず一覧を取り直す(成功していれば行が消える)
+			loadConvertFailed();
+		});
+	});
+};
+
+const loadConvertTab = async () => {
+	convertHealthResult.innerHTML = `<div class="adminSectionNote">確認中...</div>`;
+	try {
+		const res = await fetch("./api/office-render/health");
+		renderConvertHealth(res.status === 200 ? await res.json() : null);
+	} catch {
+		renderConvertHealth(null);
+	}
+	loadConvertFailed();
+};
+
+document.getElementById("convertHealthRefreshButton").addEventListener("click", () => loadConvertTab());
 
 // アクセス許可ユーザー(ホワイトリスト)の管理
 const allowedUserTableWrap = document.getElementById("allowedUserTableWrap");

@@ -14,7 +14,11 @@
  * 渡すのは拡張子と、ログ用の文書IDだけにしている(converter/README.md参照)。
  */
 
-const logger = require("./logger.js");
+const path = require("path");
+// 他のモジュールと同じく、ファクトリを名前付きで呼ぶこと。呼び忘れるとファクトリ関数そのものが
+// 入り、logger.warn 等が存在しないまま実行時に落ちる(変換サービスに到達できないときだけ
+// 通る経路だったため、長く気づけなかった)
+const logger = require("./logger.js")(path.basename(__filename));
 
 const RENDER_URL = (process.env.OFFICE_RENDER_URL || "").replace(/\/+$/, "");
 // 変換対象の上限。converter側の上限(既定50MB)より大きくしても意味がないため揃える
