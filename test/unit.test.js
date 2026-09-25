@@ -225,6 +225,57 @@ test("convertOfficeDocument: ZIP爆弾対策の上限を超えたエントリは
 	assert.ok(convertOfficeDocument(buffer, ".xlsx", {maxTotalBytes: 64 * 1024 * 1024}) != null);
 });
 
+// ZIPヘッダーの「展開後サイズ」は書庫を作る側が自由に書ける申告値で、そこを信じて上限を
+// 判定すると、小さいと申告して実際は大きく膨らむ書庫を止められない。
+// (実測: 0.3MBのファイルが展開時に536MBを確保していた。上限は64MBと指定してあったのに効かなかった)
+// 実際に出てきた量で打ち切っていることを、嘘をついた書庫を作って確かめる。
+test("convertOfficeDocument: 展開後サイズを小さく偽った書庫でも膨らませない", () => {
+	const EXPANDED = 64 * 1024 * 1024; // 実際に膨らむ量
+	const DECLARED = 1000;             // ヘッダーに書く嘘の展開後サイズ
+
+	// ゼロ埋めは非常によく縮むため、小さな圧縮データで大きく膨らむ
+	const payload = zlib.deflateRawSync(Buffer.alloc(EXPANDED), {level: 9});
+
+	// エントリ1つだけの最小限のZIPを組み立てる(名前は xlsx の読み取り対象にする)
+	const name = Buffer.from("xl/workbook.xml", "utf-8");
+	const local = Buffer.alloc(30);
+	local.writeUInt32LE(0x04034b50, 0);
+	local.writeUInt16LE(20, 4);
+	local.writeUInt16LE(8, 8); // deflate
+	local.writeUInt32LE(payload.length, 18);
+	local.writeUInt32LE(DECLARED, 22);
+	local.writeUInt16LE(name.length, 26);
+
+	const central = Buffer.alloc(46);
+	central.writeUInt32LE(0x02014b50, 0);
+	central.writeUInt16LE(20, 4);
+	central.writeUInt16LE(20, 6);
+	central.writeUInt16LE(8, 10); // deflate
+	central.writeUInt32LE(payload.length, 20);
+	central.writeUInt32LE(DECLARED, 24);
+	central.writeUInt16LE(name.length, 28);
+	central.writeUInt32LE(0, 42);
+
+	const centralStart = local.length + name.length + payload.length;
+	const end = Buffer.alloc(22);
+	end.writeUInt32LE(0x06054b50, 0);
+	end.writeUInt16LE(1, 8);
+	end.writeUInt16LE(1, 10);
+	end.writeUInt32LE(central.length + name.length, 12);
+	end.writeUInt32LE(centralStart, 16);
+
+	const bomb = Buffer.concat([local, name, payload, central, name, end]);
+	assert.ok(bomb.length < 1024 * 1024, `仕掛けは小さい (${bomb.length}バイト)`);
+
+	const before = process.memoryUsage().external;
+	const result = convertOfficeDocument(bomb, ".xlsx", {maxEntryBytes: 1024 * 1024, maxTotalBytes: 1024 * 1024});
+	const grew = process.memoryUsage().external - before;
+
+	assert.equal(result, null, "中身が揃わないので変換は成立しない");
+	// 申告値を信じる実装に戻すと、ここで上限を大きく超えて確保される
+	assert.ok(grew < 8 * 1024 * 1024, `上限を超えて確保していない (増加 ${(grew / 1024 / 1024).toFixed(1)}MB)`);
+});
+
 test("convertOfficeDocument: 壊したファイルを食わせても落ちず、いつまでも計算しない", () => {
 	// 利用者は壊れたファイルも壊れかけのファイルもアップロードできる。ZIPの構造やXMLが
 	// 想定と違っても、例外で500にしたり、長時間ブロックしたりしないことを確かめる

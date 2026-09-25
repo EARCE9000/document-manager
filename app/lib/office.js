@@ -87,6 +87,9 @@ const readZipEntries = (buffer, wants, limits = {}) => {
 		offset += 46 + nameLength + extraLength + commentLength;
 
 		if (!wants(name)) continue;
+		// ヘッダーの展開後サイズは「申告値」で、書庫を作る側が自由に書ける。
+		// ここで弾けるのは正直に申告された大きいエントリだけで、嘘をつかれたら通ってしまう。
+		// 実際の歯止めは下の maxOutputLength(実際に出てきた量で打ち切る)のほう
 		if (uncompressedSize > maxEntryBytes || total + uncompressedSize > maxTotalBytes) continue;
 		// ローカルヘッダーは可変長(名前・拡張領域)なので、そこを読み飛ばして中身の先頭を求める
 		if (localOffset + 30 > buffer.length) return null;
@@ -95,11 +98,21 @@ const readZipEntries = (buffer, wants, limits = {}) => {
 		const dataStart = localOffset + 30 + localNameLength + localExtraLength;
 		const data = buffer.subarray(dataStart, dataStart + compressedSize);
 		try {
-			const content = method === 0 ? Buffer.from(data) : zlib.inflateRawSync(data);
+			// 展開の上限を zlib 自身に渡す。申告値ではなく実際に出てきた量で打ち切るため、
+			// 「小さいと申告して大きく膨らむ」書庫(ZIP爆弾)を止められる。
+			// 上限に達すると ERR_BUFFER_TOO_LARGE で失敗し、そのエントリは読み飛ばされる。
+			// 残り容量ぶんだけを許すことで、エントリ数で稼ぐ手口も合計側で頭打ちになる
+			const remaining = Math.max(0, maxTotalBytes - total);
+			const allowed = Math.min(maxEntryBytes, remaining);
+			if (allowed === 0) continue;
+			const content = method === 0
+				// 無圧縮のエントリは膨らまないが、宣言サイズと実データの食い違いを避けるため同じ上限で切る
+				? Buffer.from(data.subarray(0, allowed))
+				: zlib.inflateRawSync(data, {maxOutputLength: allowed});
 			total += content.length;
 			entries.set(name, content);
 		} catch {
-			// 壊れたエントリは読み飛ばす(残りから取れるだけ取る)
+			// 壊れたエントリ・上限を超えたエントリは読み飛ばす(残りから取れるだけ取る)
 		}
 	}
 	return entries;
