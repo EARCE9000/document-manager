@@ -219,6 +219,20 @@ const OPERATIONS = [
 	// ---- その他(ガイドには載せない)
 	{id: "getVersion", method: "get", path: "/api/version", role: "public", tag: "その他", summary: "アプリのバージョン(ビルド日付)", aiGuide: false},
 	{
+		id: "getStorageReconcile", method: "get", path: "/api/storage-reconcile", role: "admin", tag: "その他",
+		summary: "DBと実ファイルの照合",
+		description: "読み取りのみ。実ファイルだけある文書(孤立ファイル)と、DBだけある文書(実ファイルが無い)を返す。ストレージへ到達できていない疑いがあるときは`unavailable:true`を返し、何も報告しない(未マウント時に全件を欠損として報告しないため)。ローカル保存のみ対応",
+		aiGuide: false
+	},
+	{
+		id: "restoreOrphanDocument", method: "post", path: "/api/storage-reconcile/restore", role: "admin", tag: "その他",
+		summary: "孤立ファイルをDBへ登録し直す",
+		description: "実ファイルだけある文書を**アーカイブ済みとして**登録する(元がアーカイブ済みだったか分からないため)。プレビューと全文検索テキストは作り直すが、タグ・メモ・版の鎖・アップロード者は復元できない",
+		body: {schema: {type: "object", required: ["id"], properties: {id: {type: "string", description: "孤立ファイルの文書ID"}}}},
+		responses: {400: "IDの形式が不正/元のファイルを特定できない/対象外の拡張子", 409: "既にDBへ登録されている", 503: "ローカル保存以外のストレージ構成"},
+		aiGuide: false
+	},
+	{
 		id: "getOfficeRenderHealth", method: "get", path: "/api/office-render/health", role: "admin", tag: "その他",
 		summary: "変換サービスの状態",
 		description: "体裁つき表示(PDF)の変換サービスへ到達できるかを確かめる。`enabled:false`は未設定(異常ではない)。到達できた場合はLibreOfficeの版・受け付ける上限・タイムアウトも返す",

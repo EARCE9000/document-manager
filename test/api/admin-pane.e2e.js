@@ -89,6 +89,21 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 		await expect(result).toContainText("問題の件数");
 	});
 
+	// 照合は「消さない」ことが設計の要。画面の言葉と操作もそれに合わせている
+	test("DBと実ファイルの照合が実行でき、削除の操作は置かれていない", async ({page}) => {
+		await page.click("#allowedUsersManageLink");
+		await page.click('.adminTab[data-tab="database"]');
+
+		await page.click("#reconcileScanButton");
+		const result = page.locator("#reconcileResult");
+		await expect(result.locator(".adminStatus")).toBeVisible();
+		await expect(result).toContainText("実ファイルだけある");
+		await expect(result).toContainText("DBにあるのにファイルが無い");
+		// 欠損側は報告だけで、消す手段を出さない
+		await expect(result).toContainText("記録は残したままにします");
+		await expect(result.locator("button", {hasText: "削除"})).toHaveCount(0);
+	});
+
 	// 変換サービスは別コンテナで、落ちていてもアプリは動き続ける。
 	// 「未設定」と「落ちている」は別物なので、画面でも区別できる必要がある
 	test("変換サービスタブに状態と失敗一覧が出る", async ({page}) => {

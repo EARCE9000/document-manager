@@ -789,6 +789,7 @@ const {extractDrawioText} = require("./lib/drawio.js");
 const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 const OfficeRender = require("./lib/office-render.js");
 const DbIntegrity = require("./lib/db-integrity.js");
+const StorageReconcile = require("./lib/storage-reconcile.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -1570,6 +1571,98 @@ app.get(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireWrite, 
  * ベクトル検索のチャンク分割設定をGUIから変更する(要 admin ロール。システム全体に影響するため)。
  * 変更は新規に索引付けする文書からのみ反映され、既存の索引付け済み文書には遡って適用されない
  */
+/**
+ * DBと実ファイルの照合(要 admin ロール)。読み取りのみで、何も変更しない。
+ */
+app.get(BASE_URL_PATH + 'api/storage-reconcile', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(await StorageReconcile.scan(DOCUMENTS_DIR));
+	} catch (err) {
+		logger.error(err, "::api/storage-reconcile");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 孤立ファイル(実ファイルはあるがDBに無い文書)をDBへ登録し直す(要 admin ロール)。
+ *
+ * **アーカイブ済みとして登録する**。元がアーカイブ済みだったかを知る手段が無いため、
+ * 現役として復活させると一覧が汚れ、版の鎖も壊れて見える。アーカイブなら一覧は汚れず、
+ * 必要なら既存の「復元」操作で戻せる(そのとき全文検索とベクトル索引にも入る)。
+ *
+ * タグ・メモ・版の鎖・アップロード者は、ファイルからは再生できないため空のままになる。
+ */
+app.post(BASE_URL_PATH + 'api/storage-reconcile/restore', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!StorageReconcile.isSupported()) {
+			res.status(503).json({error: "このストレージ構成では対応していません(ローカル保存のみ)"});
+			return;
+		}
+		const id = String(req.body?.id ?? "").trim();
+		if (!StorageReconcile.isValidDocumentId(id)) {
+			res.status(400).json({error: "文書IDの形式が正しくありません"});
+			return;
+		}
+		if (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [id]) != null) {
+			res.status(409).json({error: "この文書は既にDBへ登録されています"});
+			return;
+		}
+		const found = StorageReconcile.inspectOrphan(DOCUMENTS_DIR, id);
+		if (!found.ok) {
+			res.status(400).json({error: found.reason});
+			return;
+		}
+		const extension = path.extname(found.entryFile).toLowerCase();
+		if (!ENTRY_FILE_EXTENSIONS.includes(extension)) {
+			res.status(400).json({error: "対応していない拡張子のため復元できません"});
+			return;
+		}
+
+		// アップロードと同じ手順でプレビューと全文検索テキストを作り直す
+		const buffer = await storage.readFile(id, found.entryFile);
+		const officeContent = OFFICE_FILE_EXTENSIONS.includes(extension) ? convertOfficeDocument(buffer, extension) : null;
+		const previewFile = extension === ".drawio"
+			? null // .drawio は画面側が図をそのまま描画する(代替画像は無ければnullでよい)
+			: await buildPreviewFile(id, found.entryFile, extension, officeContent);
+		const extracted = await extractContentText(id, found.entryFile, extension, previewFile, officeContent);
+		const {contentText, truncated} = truncateContentText(extracted);
+
+		const now = new Date().toISOString();
+		await ds.transaction(async (tx) => {
+			await tx.run(SQL_INSERT_DOCUMENT, {
+				id,
+				entry_file: found.entryFile,
+				preview_file: previewFile,
+				content_text: contentText,
+				size: found.sizeBytes,
+				// 誰が入れたものか分からないため、復元であることが分かる値を入れる
+				uploaded_by: `restored:${req.authData.user_identifier}`,
+				// ファイルの更新時刻を採る(IDの年月とずれることがあるが、他に手がかりが無い)
+				uploaded_at: found.modifiedAt || now,
+				previous_id: null,
+				content_truncated: truncated ? 1 : 0
+			});
+			// アーカイブ済みとして登録する。全文検索の索引には入れない
+			// (アーカイブ済みは索引から外す方針のため。「復元」操作で入る)
+			await tx.run(SQL_SOFT_DELETE_DOCUMENT, {id, deleted_at: now, deleted_by: `restored:${req.authData.user_identifier}`});
+		});
+
+		logger.info({audit: "reconcile_restore", user: req.authData.user_identifier, documentId: id, entryFile: found.entryFile}, "audit");
+		broadcastDocumentsChanged();
+		res.status(200).json({
+			id,
+			entryFile: found.entryFile,
+			archived: true,
+			note: "アーカイブ済みとして登録しました。内容を確認のうえ、必要なら「復元」してください。タグ・メモ・版の紐付けは復元できません"
+		});
+	} catch (err) {
+		logger.error(err, "::api/storage-reconcile/restore");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 /**
  * 変換サービス(converter)の状態(要 admin ロール)。
  *

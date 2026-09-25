@@ -1481,6 +1481,17 @@
 						<button type="button" id="dbIntegrityFullButton" class="modalButton">厳密確認</button>
 					</div>
 					<div id="dbIntegrityResult"></div>
+					<h3>DBと実ファイルの照合</h3>
+					<div class="adminSectionNote">
+						データベースの記録と、実際に保存されているファイルの食い違いを調べます(調べるだけで、何も変更しません)。<br>
+						アップロードが途中で失敗すると、ファイルだけが残ることがあります。それらは<strong>アーカイブ済みとして登録し直せます</strong>。<br>
+						逆に<strong>ファイルが見つからない文書は、記録を消しません</strong>。ストレージが一時的に見えていないだけの可能性があり、
+						消すとタグ・メモ・版の紐付けという二度と戻せない情報まで失うためです。
+					</div>
+					<div class="toolbarRow" style="margin-bottom: 12px;">
+						<button type="button" id="reconcileScanButton" class="modalButton">照合する</button>
+					</div>
+					<div id="reconcileResult"></div>
 				</section>
 				<section class="adminTabPanel" data-tab="convert">
 					<div class="adminSectionNote">
@@ -3895,6 +3906,98 @@ document.getElementById("dbIntegrityFullButton").addEventListener("click", async
 	if (!ok) return;
 	runIntegrityCheck("full");
 });
+
+// DBと実ファイルの照合。結果の表示と、孤立ファイルの登録し直し。
+// 削除の操作は置かない(画面の言葉と操作を、消さないという方針に合わせる)
+const reconcileResult = document.getElementById("reconcileResult");
+
+const renderReconcile = (result) => {
+	if (result == null) {
+		reconcileResult.innerHTML = `<div class="adminSectionNote">取得できませんでした。</div>`;
+		return;
+	}
+	if (result.supported === false) {
+		reconcileResult.innerHTML = `<span class="adminStatus unknown">対象外</span>
+			<div class="adminSectionNote" style="margin-top:8px;">この保存先(${escapeHtml(result.backend || "")})では対応していません。ローカル保存のみです。</div>`;
+		return;
+	}
+	// ストレージに到達できていない疑いがあるときは、食い違いとして扱わない
+	if (result.unavailable) {
+		reconcileResult.innerHTML = `<span class="adminStatus bad">照合を中止しました</span>
+			<div class="adminSectionNote" style="margin-top:8px;">${escapeHtml(result.reason || "")}</div>`;
+		return;
+	}
+	const orphans = result.orphanFiles || [];
+	const missing = result.missingFiles || [];
+	const summary = orphans.length === 0 && missing.length === 0
+		? `<span class="adminStatus ok">食い違いなし</span>`
+		: `<span class="adminStatus bad">食い違い ${orphans.length + missing.length} 件</span>`;
+
+	reconcileResult.innerHTML = `
+		${summary}
+		<dl class="adminDefList" style="margin-top:12px;">
+			<dt>DBの文書</dt><dd>${escapeHtml(String(result.documentCount ?? "-"))} 件</dd>
+			<dt>実ファイルの数</dt><dd>${escapeHtml(String(result.directoryCount ?? "-"))} 件</dd>
+			<dt>照合日時</dt><dd>${escapeHtml(formatDateTime(result.scannedAt))}</dd>
+		</dl>
+		${result.truncated ? `<div class="adminSectionNote">件数が多いため、先頭 ${escapeHtml(String(result.maxEntries))} 件までを調べました。</div>` : ""}
+
+		<h3>実ファイルだけある (${orphans.length} 件)</h3>
+		${orphans.length === 0
+			? `<div class="emptyMessage">ありません。</div>`
+			: `<table><thead><tr><th>ファイル名</th><th>更新日時</th><th>サイズ</th><th></th></tr></thead><tbody>${
+				orphans.map((item) => `<tr>
+					<td title="${escapeHtml(item.id)}">${escapeHtml(item.entryFile || `(特定できません: ${item.files.join(", ")})`)}</td>
+					<td>${escapeHtml(item.modifiedAt ? formatDateTime(item.modifiedAt) : "-")}</td>
+					<td>${escapeHtml(formatBytes(item.sizeBytes))}</td>
+					<td>${item.restorable
+						? `<button type="button" class="modalButton reconcileRestoreButton" data-id="${escapeHtml(item.id)}">登録し直す</button>`
+						: ""}</td>
+				</tr>`).join("")
+			}</tbody></table>`}
+
+		<h3>DBにあるのにファイルが無い (${missing.length} 件)</h3>
+		<div class="adminSectionNote">記録は残したままにします。ストレージの状態を確認してください。</div>
+		${missing.length === 0
+			? `<div class="emptyMessage">ありません。</div>`
+			: `<table><thead><tr><th>ファイル名</th><th>状態</th></tr></thead><tbody>${
+				missing.map((item) => `<tr>
+					<td title="${escapeHtml(item.id)}">${escapeHtml(item.entryFile)}</td>
+					<td>${item.archived ? "アーカイブ済み" : "現役"}</td>
+				</tr>`).join("")
+			}</tbody></table>`}`;
+
+	reconcileResult.querySelectorAll(".reconcileRestoreButton").forEach((button) => {
+		button.addEventListener("click", async () => {
+			const ok = await showConfirmDialog("この文書をアーカイブ済みとして登録し直しますか?\nタグ・メモ・版の紐付けは復元できません(ファイルから再現できないため)。");
+			if (!ok) return;
+			button.disabled = true;
+			button.textContent = "実行中...";
+			const res = await fetch("./api/storage-reconcile/restore", {
+				method: "POST",
+				headers: {"Content-Type": "application/json"},
+				body: JSON.stringify({id: button.dataset.id})
+			});
+			if (res.status !== 200) {
+				const body = await res.json().catch(() => ({}));
+				alert(body.error || "登録し直せませんでした");
+			}
+			runReconcileScan();
+		});
+	});
+};
+
+const runReconcileScan = async () => {
+	reconcileResult.innerHTML = `<div class="adminSectionNote">照合中...</div>`;
+	try {
+		const res = await fetch("./api/storage-reconcile");
+		renderReconcile(res.status === 200 ? await res.json() : null);
+	} catch {
+		renderReconcile(null);
+	}
+};
+
+document.getElementById("reconcileScanButton").addEventListener("click", () => runReconcileScan());
 
 // 変換サービス(converter)タブ。到達性と、変換に失敗した文書の再実行。
 // 「未設定」と「落ちている」は別物なので、表示でも区別する
