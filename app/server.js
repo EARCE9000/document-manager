@@ -2454,7 +2454,8 @@ app.get(BASE_URL_PATH + 'api/openapi.json', requireAuth, (req, res) => {
 		res.status(200).json(ApiSpec.buildOpenApi({
 			baseUrl: resolveSpecBaseUrl(req),
 			vectorSearchEnabled: VectorSearch.isEnabled(),
-			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0"
+			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0",
+			clientVersion: bundledSkillClientVersion()
 		}));
 	} catch (err) {
 		logger.error(err, "::api/openapi.json");
@@ -2469,7 +2470,8 @@ app.get(BASE_URL_PATH + 'api/usage.md', requireAuth, (req, res) => {
 		res.status(200).send(ApiSpec.buildUsageMarkdown({
 			baseUrl: resolveSpecBaseUrl(req),
 			vectorSearchEnabled: VectorSearch.isEnabled(),
-			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0"
+			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0",
+			clientVersion: bundledSkillClientVersion()
 		}));
 	} catch (err) {
 		logger.error(err, "::api/usage.md");

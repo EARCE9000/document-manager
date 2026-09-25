@@ -572,7 +572,23 @@ const endpointLine = (entry, baseUrl) => {
 /**
  * AI向け利用ガイド(Markdown)を組み立てる。画面右上のヘルプ・APIキー発行時のコピー用テキストで使う
  */
-module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, version}) => {
+/**
+ * 「いつ時点の何が、どこにあるか」の一覧。
+ *
+ * このガイドは貼り付けて保存される前提のため、散文で「取り直せる」と書くだけでは足りない。
+ * 版と取得先を並べておけば、AIは自分が持っているものと突き合わせて判断でき、
+ * 利用者に「これを取り直してください」と具体的に頼める。
+ */
+const buildSourcesTable = ({base, version, clientVersion, today}) => [
+	"| 何 | 版 | 取得 |",
+	"|---|---|---|",
+	`| このガイド(Markdown) | サーバー版 ${version || "不明"} (${today} 取得) | \`GET ${base}/api/usage.md\` |`,
+	`| 機械可読な仕様(OpenAPI 3.1) | 同上 | \`GET ${base}/api/openapi.json\` |`,
+	`| 同梱クライアント(Skill) | ${clientVersion || "不明"} | \`GET ${base}/api/claude-skill.zip\` |`,
+	`| サーバーの版の確認 | - | \`GET ${base}/api/version\` (認証不要・数十バイト) |`
+].join("\n");
+
+module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, version, clientVersion}) => {
 	const base = String(baseUrl).replace(/\/$/, "");
 	const include = (item) => !item.vectorOnly || vectorSearchEnabled;
 
@@ -612,6 +628,10 @@ module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, version}) =>
 	return `# Document Manager API 利用ガイド (AI向け)
 
 ${staleNote}
+
+## 入手先
+
+${buildSourcesTable({base, version, clientVersion, today: new Date().toISOString().slice(0, 10)})}
 
 ${INTRO}
 
@@ -657,7 +677,7 @@ const COMMON_RESPONSES = {
 /**
  * OpenAPI 3.1 ドキュメントを組み立てる(GET api/openapi.json)
  */
-module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, version}) => {
+module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, version, clientVersion}) => {
 	const base = String(baseUrl).replace(/\/$/, "");
 	const paths = {};
 	for (const op of OPERATIONS) {
@@ -726,7 +746,11 @@ ${instructions.map(({when, do: what}) => `### ${when}\n${what}`).join("\n\n")}
 
 ${AI_CLOSING}
 
-人間・AIが読みやすい同じ内容のガイドは \`GET ${base}/api/usage.md\` でも取得できます。`
+## 入手先
+
+${buildSourcesTable({base, version, clientVersion, today: new Date().toISOString().slice(0, 10)})}
+
+この仕様は取得時点の内容です。記載のAPIで目的を果たせないときや、以前受け取った内容を使っているときは取り直してください。`
 		},
 		servers: [{url: base}],
 		"x-ai-instructions": instructions,

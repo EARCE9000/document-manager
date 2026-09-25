@@ -133,6 +133,31 @@ test("クライアントはサーバが名乗った版を検証してから文�
 	assert.match(mjs, /\/\^\\d\+\\\.\\d\+\\\.\\d\+\$\//, "dm_client.mjs に版の形の検査が無い");
 });
 
+// 貼り付けたガイドは保存されて古くなる。散文で「取り直せる」と書くだけでなく、
+// 「いつ時点の何が、どこにあるか」を並べておけば、AIは自分が持っているものと
+// 突き合わせて判断でき、利用者に具体的に依頼できる
+test("ガイドとOpenAPIに入手先(版と取得URL)が載る", () => {
+	const args = {baseUrl: "https://example.com", vectorSearchEnabled: true, version: "20260925_123000", clientVersion: "1.2.0"};
+	const today = new Date().toISOString().slice(0, 10);
+
+	for (const [name, text] of [
+		["利用ガイド", ApiSpec.buildUsageMarkdown(args)],
+		["OpenAPI", ApiSpec.buildOpenApi(args).info.description]
+	]) {
+		assert.ok(text.includes("## 入手先"), `${name}: 入手先の節が無い`);
+		assert.ok(text.includes(`サーバー版 20260925_123000 (${today} 取得)`), `${name}: 版と取得日が無い`);
+		assert.ok(text.includes("| 同梱クライアント(Skill) | 1.2.0 |"), `${name}: クライアントの版が無い`);
+		for (const url of ["/api/usage.md", "/api/openapi.json", "/api/claude-skill.zip", "/api/version"]) {
+			assert.ok(text.includes(`\`GET https://example.com${url}\``), `${name}: ${url} の取得先が無い`);
+		}
+	}
+
+	// 版が渡らない場合でも表は壊さない
+	const unknown = ApiSpec.buildUsageMarkdown({baseUrl: "https://example.com"});
+	assert.ok(unknown.includes("サーバー版 不明"));
+	assert.ok(unknown.includes("| 同梱クライアント(Skill) | 不明 |"));
+});
+
 // ガイドを貼り付けて使うAIは、同梱クライアント(Skill)の存在を知る手段が無かった
 // (取得APIはガイドから除外されていた)。延々とcurlを手で組み立て続けることになる
 test("AI向けの利用ガイドから同梱クライアント(Skill)に気づける", () => {
