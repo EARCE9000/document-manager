@@ -223,11 +223,19 @@ const OPERATIONS = [
 	// AIに操作させる想定が今のところ無いため)。仕様(OpenAPI)には載るので、必要なら辿れる
 	{
 		id: "listMockups", method: "get", path: "/api/mockups", role: "readonly", tag: "モックアップ",
-		summary: "モックアップの一覧・検索",
-		description: "`q`で名前・メモ・本文(HTMLから抽出)を部分一致検索する。`archived=1`で過去の版を見る。ローカル保存の構成でのみ使える(それ以外は503)",
+		summary: "現役のモックアップの一覧・検索",
+		description: "`q`で名前・メモ・本文(HTMLから抽出)を部分一致検索する。過去の版は`/api/mockups/archived`。ローカル保存の構成でのみ使える(それ以外は503)",
 		params: [
-			{name: "q", in: "query", description: "検索語(省略時は全件)"},
-			{name: "archived", in: "query", description: "1でアーカイブ済み(過去の版)を返す"}
+			{name: "q", in: "query", description: "検索語(省略時は全件)"}
+		],
+		aiGuide: false
+	},
+	{
+		id: "listArchivedMockups", method: "get", path: "/api/mockups/archived", role: "readwrite", tag: "モックアップ",
+		summary: "アーカイブ済みモックアップの一覧・検索",
+		description: "置き換えられた旧版と、手でアーカイブしたもの。文書のアーカイブ(`/api/documents/archived`)と同じくreadwrite以上に限っている(readonlyは今あるものだけを見るロール)",
+		params: [
+			{name: "q", in: "query", description: "検索語(省略時は全件)"}
 		],
 		aiGuide: false
 	},

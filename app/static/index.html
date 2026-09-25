@@ -236,7 +236,20 @@
 	   表示モードではツリー+プレビューの2ペイン、編集モードではツリー+文書一覧(既存の#sideBarを再利用)+プレビューの3ペインにする */
 	#projectSwitcherBar { display: none; align-items: center; gap: 8px; padding: 8px 16px; background: #f4f5f7; border-bottom: 1px solid #ddd; overflow-x: auto; }
 	#appShell.projectsMode #projectSwitcherBar { display: flex; }
-	.projectTab {
+
+	/* アーカイブは文書とモックアップをタブで分ける。中の見た目が「左の一覧＋プレビュー」と
+	   「全幅のカード並べ」でまったく違うため、タブでペインごと入れ替える。
+	   バーの位置と形はプロジェクトの切り替えバーに合わせている */
+	#archiveTabsBar { display: none; align-items: center; gap: 6px; padding: 8px 16px; background: #f4f5f7; border-bottom: 1px solid #ddd; }
+	#appShell.archiveMode #archiveTabsBar { display: flex; }
+	/* モックアップが使えない構成ではタブごと出さない(文書だけになる) */
+	#appShell:not(.mockupsEnabled) #archiveMockupsTab { display: none; }
+	#appShell.archiveMockupsMode #mockupPane { display: flex; }
+	#appShell.archiveMockupsMode #sideBar,
+	#appShell.archiveMockupsMode #previewArea { display: none !important; }
+	/* アーカイブの中では新規の登録はできない(現役の一覧に戻ってから行う) */
+	#appShell.archiveMockupsMode #mockupUploadOpenButton { display: none !important; }
+	.projectTab, .archiveTab {
 		display: inline-block;
 		border: 1px solid #ccc;
 		background: #fff;
@@ -246,8 +259,8 @@
 		cursor: pointer;
 		white-space: nowrap;
 	}
-	.projectTab:hover { border-color: #1a56db; color: #1a56db; }
-	.projectTab.active { background: #1a56db; border-color: #1a56db; color: #fff; }
+	.projectTab:hover, .archiveTab:hover { border-color: #1a56db; color: #1a56db; }
+	.projectTab.active, .archiveTab.active { background: #1a56db; border-color: #1a56db; color: #fff; }
 	#projectTabs { display: flex; gap: 6px; flex-wrap: wrap; }
 	#projectSwitcherActions { display: flex; gap: 6px; margin-left: auto; flex-shrink: 0; }
 	#projectSwitcherActions .modalButton { white-space: nowrap; font-size: 0.85em; padding: 6px 14px; }
@@ -1290,6 +1303,10 @@
 			<button type="button" id="projectAddButton" class="modalButton save">＋ 新規プロジェクト</button>
 		</div>
 	</div>
+	<div id="archiveTabsBar">
+		<span class="archiveTab active" id="archiveDocumentsTab">文書</span>
+		<span class="archiveTab" id="archiveMockupsTab">モックアップ</span>
+	</div>
 	<div id="mainArea">
 		<aside id="projectTreePane">
 			<div id="projectTreeToolbar">
@@ -1472,10 +1489,9 @@
 		<main id="mockupPane">
 			<div id="mockupPaneHeader">
 				<div id="mockupPaneHeaderRow">
-					<h2>モックアップ</h2>
+					<h2 id="mockupPaneTitle">モックアップ</h2>
 					<div id="mockupPaneActions">
 						<input type="text" id="mockupFilterInput" placeholder="名前・メモ・本文で検索...">
-						<button type="button" id="mockupArchiveToggleButton" class="modalButton">過去の版</button>
 						<button type="button" id="mockupUploadOpenButton" class="modalButton save mockupWriteAction">＋ アップロード</button>
 					</div>
 				</div>
@@ -1820,6 +1836,10 @@ const menuDocumentsLink = document.getElementById("menuDocumentsLink");
 const menuTagTreeLink = document.getElementById("menuTagTreeLink");
 const menuProjectsLink = document.getElementById("menuProjectsLink");
 const menuMockupsLink = document.getElementById("menuMockupsLink");
+const archiveDocumentsTab = document.getElementById("archiveDocumentsTab");
+const archiveMockupsTab = document.getElementById("archiveMockupsTab");
+// アーカイブで今どちらのタブを見ているか("documents" / "mockups")
+let archiveTab = "documents";
 const menuVectorIndexLink = document.getElementById("menuVectorIndexLink");
 const menuArchiveLink = document.getElementById("menuArchiveLink");
 const projectSwitcherBar = document.getElementById("projectSwitcherBar");
@@ -2851,6 +2871,7 @@ const setView = (view) => {
 	appShell.classList.toggle("projectsMode", view === "projects");
 	appShell.classList.toggle("vectorIndexMode", view === "vectorIndex");
 	appShell.classList.toggle("mockupsMode", view === "mockups");
+	appShell.classList.toggle("archiveMockupsMode", view === "archive" && archiveTab === "mockups");
 	// 管理ペインはadminのときだけ開く。APIはすべてrequireAdminで守られているため、
 	// これは安全のためではなく「中身が何も取れない空のペインを開かせない」ため
 	appShell.classList.toggle("adminPaneMode", view === "admin" && appShell.classList.contains("adminMode"));
@@ -2869,10 +2890,15 @@ const setView = (view) => {
 	menuVectorIndexLink.classList.toggle("active", view === "vectorIndex");
 	menuArchiveLink.classList.toggle("active", view === "archive");
 	clearPreview();
+	// モックアップは「モックアップ」メニューと、アーカイブのモックアップタブの2か所から開く
+	const showsMockups = view === "mockups" || (view === "archive" && archiveTab === "mockups");
 	// 管理ペインとモックアップは文書を扱わないため、文書一覧の取得は行わない
-	if (view !== "admin" && view !== "mockups") loadDocuments();
+	if (view !== "admin" && !showsMockups) loadDocuments();
 	if (view === "projects") loadProjects();
-	if (view === "mockups") loadMockups();
+	if (showsMockups) {
+		mockupsArchiveMode = view === "archive";
+		loadMockups();
+	}
 };
 
 menuDocumentsLink.addEventListener("click", (ev) => {
@@ -2900,6 +2926,16 @@ menuArchiveLink.addEventListener("click", (ev) => {
 	setView("archive");
 });
 
+// アーカイブの中のタブ(文書 / モックアップ)。どちらも「引退したもの」なので同じ入口にまとめる
+const setArchiveTab = (tab) => {
+	archiveTab = tab;
+	archiveDocumentsTab.classList.toggle("active", tab === "documents");
+	archiveMockupsTab.classList.toggle("active", tab === "mockups");
+	setView("archive");
+};
+archiveDocumentsTab.addEventListener("click", () => setArchiveTab("documents"));
+archiveMockupsTab.addEventListener("click", () => setArchiveTab("mockups"));
+
 // ==== モックアップ ====
 // 文書とは別のコレクション(docs/mockup.md)。一覧・アップロード・別ウィンドウで開く、まで。
 // 実体の表示は引換券つきのURLで行うため、開く先は常に入口(`/view`)にする。
@@ -2907,7 +2943,8 @@ menuArchiveLink.addEventListener("click", (ev) => {
 const mockupGrid = document.getElementById("mockupGrid");
 const mockupEmptyMessage = document.getElementById("mockupEmptyMessage");
 const mockupFilterInput = document.getElementById("mockupFilterInput");
-const mockupArchiveToggleButton = document.getElementById("mockupArchiveToggleButton");
+const mockupPaneTitle = document.getElementById("mockupPaneTitle");
+const mockupPaneMeta = document.getElementById("mockupPaneMeta");
 const mockupUploadOpenButton = document.getElementById("mockupUploadOpenButton");
 const mockupUploadOverlay = document.getElementById("mockupUploadOverlay");
 const mockupUploadTitle = document.getElementById("mockupUploadTitle");
@@ -2930,19 +2967,27 @@ let mockupUploadPreviousId = null;
 let mockupMemoTargetId = null;
 let mockupFilterTimer = null;
 
+const MOCKUP_PANE_META = {
+	active: "ビルド済みのWebページ一式(ZIP)を登録して、別ウィンドウで開いて確認できます。"
+		+ "モックアップはこのアプリから切り離した状態で表示されるため、中のJSはこのアプリの文書やAPIには触れません。<br>"
+		+ "新しい版を登録すると旧版は自動でアーカイブされ、アーカイブの「モックアップ」から辿れます。",
+	archived: "新しい版に置き換えられた版と、手でアーカイブした版です。ここからも開けますし、「元に戻す」で現役に戻せます。<br>"
+		+ "実体のファイルは残っているため、開けば当時のまま動きます。"
+};
+
 const loadMockups = async () => {
-	const params = new URLSearchParams();
-	if (mockupsArchiveMode) params.set("archived", "1");
+	mockupPaneTitle.textContent = mockupsArchiveMode ? "モックアップ(アーカイブ)" : "モックアップ";
+	mockupPaneMeta.innerHTML = mockupsArchiveMode ? MOCKUP_PANE_META.archived : MOCKUP_PANE_META.active;
 	const q = mockupFilterInput.value.trim();
-	if (q !== "") params.set("q", q);
-	const query = params.toString();
-	const res = await fetch(`./api/mockups${query === "" ? "" : `?${query}`}`);
+	// アーカイブ済みは readwrite 以上に限っているため、経路自体を分けている(文書側と同じ)
+	const base = mockupsArchiveMode ? "./api/mockups/archived" : "./api/mockups";
+	const res = await fetch(`${base}${q === "" ? "" : `?q=${encodeURIComponent(q)}`}`);
 	if (res.status !== 200) {
 		currentMockups = [];
 		mockupGrid.innerHTML = "";
 		mockupEmptyMessage.textContent = res.status === 503
 			? "モックアップ機能はローカル保存の構成でのみ使えます。"
-			: "一覧を取得できませんでした。";
+			: (res.status === 403 ? "アーカイブを見るには readwrite 以上の権限が必要です。" : "一覧を取得できませんでした。");
 		mockupEmptyMessage.style.display = "block";
 		return;
 	}
@@ -2951,12 +2996,11 @@ const loadMockups = async () => {
 };
 
 const renderMockupList = () => {
-	mockupArchiveToggleButton.classList.toggle("save", mockupsArchiveMode);
 	if (currentMockups.length === 0) {
 		mockupGrid.innerHTML = "";
 		mockupEmptyMessage.textContent = mockupFilterInput.value.trim() !== ""
 			? "該当するモックアップがありません。"
-			: (mockupsArchiveMode ? "過去の版はありません。" : "モックアップはまだありません。ZIPをアップロードしてください。");
+			: (mockupsArchiveMode ? "アーカイブされたモックアップはありません。" : "モックアップはまだありません。ZIPをアップロードしてください。");
 		mockupEmptyMessage.style.display = "block";
 		return;
 	}
@@ -3079,6 +3123,7 @@ mockupGrid.addEventListener("click", async (ev) => {
 				alert("元に戻せませんでした");
 				return;
 			}
+			// 現役へ戻ったのでこの一覧からは消える
 			await loadMockups();
 			return;
 		}
@@ -3163,15 +3208,8 @@ mockupUploadSubmitButton.addEventListener("click", async () => {
 	closeMockupUploadDialog();
 	// 新しい版を入れた直後は、置き換わった結果を見たいので現役の一覧に戻す
 	mockupsArchiveMode = false;
-	mockupArchiveToggleButton.textContent = "過去の版";
 	await loadMockups();
 	if (created.entryFile != null) openMockup(created.id);
-});
-
-mockupArchiveToggleButton.addEventListener("click", async () => {
-	mockupsArchiveMode = !mockupsArchiveMode;
-	mockupArchiveToggleButton.textContent = mockupsArchiveMode ? "現役の版" : "過去の版";
-	await loadMockups();
 });
 
 mockupFilterInput.addEventListener("input", () => {

@@ -253,11 +253,30 @@ test.describe.serial("モックアップ", () => {
 
 	test("アーカイブして復元できる", async ({request}) => {
 		expect((await request.delete(`api/mockups/${mockupId}`, {headers: rw})).status()).toBe(204);
-		const archived = await (await request.get("api/mockups?archived=1", {headers: ro})).json();
+		const archived = await (await request.get("api/mockups/archived", {headers: rw})).json();
 		expect(archived.some((item) => item.id === mockupId)).toBe(true);
+		// 現役の一覧からは消える
+		const stillActive = await (await request.get("api/mockups", {headers: ro})).json();
+		expect(stillActive.some((item) => item.id === mockupId)).toBe(false);
 
 		expect((await request.post(`api/mockups/${mockupId}/restore`, {headers: rw})).status()).toBe(200);
 		const active = await (await request.get("api/mockups", {headers: ro})).json();
 		expect(active.some((item) => item.id === mockupId)).toBe(true);
+	});
+
+	// readonlyは「今そこにあるもの」だけを見るロール。引退したものは見せない(文書側と同じ)
+	test("readonlyキーではアーカイブ済みを一覧できない", async ({request}) => {
+		expect((await request.get("api/mockups/archived", {headers: ro})).status()).toBe(403);
+		// 現役の一覧は読める
+		expect((await request.get("api/mockups", {headers: ro})).status()).toBe(200);
+		// 未認証は401
+		expect((await request.get("api/mockups/archived")).status()).toBe(401);
+	});
+
+	// `archived` は :id として拾われてはいけない(ルートの登録順に依存する)
+	test("api/mockups/archived が :id のルートに食われていない", async ({request}) => {
+		const res = await request.get("api/mockups/archived", {headers: rw});
+		expect(res.status()).toBe(200);
+		expect(Array.isArray(await res.json()), "1件の情報ではなく一覧が返る").toBe(true);
 	});
 });

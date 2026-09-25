@@ -4,7 +4,10 @@
  * MIT Licensed
  *
  * 画面から ZIPをアップロード → 一覧に出る → 別ウィンドウで開く → 検索 → メモ・改名 →
- * 新しい版で置き換え → 過去の版で辿る → アーカイブ・復元 まで通す。
+ * 新しい版で置き換え → アーカイブのタブで旧版を辿る → アーカイブ・復元 まで通す。
+ *
+ * 過去の版は「モックアップ」メニューではなく、右端のアーカイブの中のタブに置いている
+ * (引退したものは文書もモックアップも同じ入口にまとめる。docs/mockup.md)。
  *
  * 「別ウィンドウで開く」は必ず入口(`/view`)から開く必要がある(引換券つきのURLへ転送される)。
  * 画面が直接ファイルのURLを組み立ててしまうと券が無く401になるため、開いた先のウィンドウで
@@ -154,7 +157,7 @@ test.describe.serial("モックアップ管理の画面(実ブラウザ)", () =>
 		});
 	});
 
-	test("新しい版で置き換えると、旧版は過去の版へ移る", async ({page}) => {
+	test("新しい版で置き換えると、旧版はアーカイブへ移る", async ({page}) => {
 		await page.goto("./");
 		await page.click("#menuMockupsLink");
 		await expect(card(page, RENAMED)).toBeVisible();
@@ -183,15 +186,28 @@ test.describe.serial("モックアップ管理の画面(実ブラウザ)", () =>
 		await expect(versions.nth(0)).toContainText(RENAMED);
 		await expect(versions.nth(1)).toContainText(NAME_V2);
 
-		// 旧版は「過去の版」で見られて、そこからも開ける
-		await page.click("#mockupArchiveToggleButton");
+		// 旧版はアーカイブの「モックアップ」タブで見られて、そこからも開ける
+		await page.click("#menuArchiveLink");
+		await expect(page.locator("#archiveTabsBar")).toBeVisible();
+		await page.click("#archiveMockupsTab");
+		await expect(page.locator("#mockupPaneTitle")).toHaveText("モックアップ(アーカイブ)");
+		// アーカイブの中では新規の登録はできない
+		await expect(page.locator("#mockupUploadOpenButton")).toBeHidden();
 		await expect(card(page, RENAMED)).toBeVisible();
+		// 現役の版はこちらには出ない
+		await expect(card(page, NAME_V2)).toHaveCount(0);
+
 		const [oldWindow] = await Promise.all([
 			page.context().waitForEvent("page"),
 			card(page, RENAMED).locator('[data-action="open"]').first().click()
 		]);
 		await expect(oldWindow.locator("#app")).toHaveText("v1が描画された");
 		await oldWindow.close();
+
+		// 文書のタブへ戻ると、いつもの一覧＋プレビューに戻る
+		await page.click("#archiveDocumentsTab");
+		await expect(page.locator("#mockupPane")).toBeHidden();
+		await expect(page.locator("#sideBar")).toBeVisible();
 	});
 
 	test("アーカイブして元に戻せる", async ({page}) => {
@@ -201,12 +217,18 @@ test.describe.serial("モックアップ管理の画面(実ブラウザ)", () =>
 		await page.click("#confirmYesButton");
 		await expect(card(page, NAME_V2)).toHaveCount(0);
 
-		await page.click("#mockupArchiveToggleButton");
+		// アーカイブのタブへ移ると出てくる
+		await page.click("#menuArchiveLink");
+		await page.click("#archiveMockupsTab");
 		await expect(card(page, NAME_V2)).toBeVisible();
+
+		// 戻すとこの一覧からは消える
 		await card(page, NAME_V2).locator('[data-action="restore"]').click();
 		await expect(card(page, NAME_V2)).toHaveCount(0);
 
-		await page.click("#mockupArchiveToggleButton");
+		// 現役の一覧に戻っている
+		await page.click("#menuMockupsLink");
+		await expect(page.locator("#mockupPaneTitle")).toHaveText("モックアップ");
 		await expect(card(page, NAME_V2)).toBeVisible();
 	});
 

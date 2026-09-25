@@ -3405,16 +3405,33 @@ const requireMockups = (req, res, next) => {
 };
 
 /**
- * モックアップの一覧。`q`で名前・メモ・本文を部分一致検索し、`archived=1`で過去の版を見る。
+ * 現役のモックアップの一覧。`q`で名前・メモ・本文を部分一致検索する。
  */
 app.get(BASE_URL_PATH + 'api/mockups', requireAuth, requireMockups, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const archived = String(req.query.archived || "") === "1";
-		const items = await Mockups.listMockups({archived, q: String(req.query.q || "")});
+		const items = await Mockups.listMockups({archived: false, q: String(req.query.q || "")});
 		res.status(200).json(items);
 	} catch (err) {
 		logger.error(err, "::api/mockups:list");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * アーカイブ済み(＝置き換えられた旧版・手でアーカイブしたもの)のモックアップの一覧。
+ *
+ * 文書のアーカイブ(api/documents/archived)と同じく readwrite 以上に限っている。
+ * readonly は「今そこにあるもの」だけを見るロールで、引退したものは見せない。
+ * 画面側もこれに合わせ、アーカイブの入口は readwrite 以上にしか出さない。
+ */
+app.get(BASE_URL_PATH + 'api/mockups/archived', requireAuth, requireWrite, requireMockups, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const items = await Mockups.listMockups({archived: true, q: String(req.query.q || "")});
+		res.status(200).json(items);
+	} catch (err) {
+		logger.error(err, "::api/mockups/archived:list");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
