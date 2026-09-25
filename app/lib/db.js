@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -63,6 +63,36 @@ const createSchema = (targetDb) => {
 	// 旧版→新版の逆引き(nextの解決)に使うためインデックスを張る
 	targetDb.exec(`
 		CREATE INDEX IF NOT EXISTS idx_documents_previous_id ON documents (previous_id)
+	`);
+
+	// ---- モックアップ(ビルド済みの静的サイト一式。docs/mockup.md 参照) ----
+	// 文書とは別のコレクションとして扱う。文書側は「実体は1ファイル」が前提で、
+	// 多ファイルのZIPを同じ表に入れると入口の決め方もプレビューも歪むため混ぜない。
+	// タグ・プロジェクトは持たない(割り切り)。版の鎖は文書と同じ考え方で持つ。
+	// 全文検索は content_text への LIKE で行う(FTSの索引は作らない)。
+	// モックアップは件数が少なく、抜けるのもHTMLのテキストだけで、
+	// 索引を別に持つ手間に見合わないため
+	targetDb.exec(`
+		CREATE TABLE IF NOT EXISTS mockups (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			zip_file TEXT NOT NULL,
+			entry_file TEXT,
+			preview_file TEXT,
+			file_count INTEGER NOT NULL DEFAULT 0,
+			total_bytes INTEGER NOT NULL DEFAULT 0,
+			zip_bytes INTEGER NOT NULL DEFAULT 0,
+			content_text TEXT,
+			memo TEXT,
+			uploaded_by TEXT,
+			uploaded_at TEXT NOT NULL,
+			deleted_by TEXT,
+			deleted_at TEXT,
+			previous_id TEXT
+		)
+	`);
+	targetDb.exec(`
+		CREATE INDEX IF NOT EXISTS idx_mockups_previous_id ON mockups (previous_id)
 	`);
 
 	targetDb.exec(`
@@ -559,6 +589,48 @@ const MIGRATIONS = {
 				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
 			`);
 			// document_linksはv10に存在しないため対象外(createSchema()で空のまま作られたものをそのまま使う)
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
+	},
+	15: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at, notified_build)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at, notified_build FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at, locked)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at, locked FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at FROM old.project_documents;
+
+				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
+				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
+
+				INSERT INTO document_links (document_id_a, document_id_b, created_by, created_at)
+				SELECT document_id_a, document_id_b, created_by, created_at FROM old.document_links;
+
+				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
+				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
+			`);
+			// mockups はv15で新しく作る表のため、引き継ぐものが無い
 		} finally {
 			newDb.exec("DETACH DATABASE old");
 		}

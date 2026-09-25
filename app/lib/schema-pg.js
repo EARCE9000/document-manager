@@ -79,6 +79,27 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	notified_build TEXT
 );
 
+-- モックアップ(ビルド済みの静的サイト一式。docs/mockup.md 参照)。
+-- 文書とは別のコレクションとして扱う。全文検索は content_text への ILIKE で行う
+CREATE TABLE IF NOT EXISTS mockups (
+	id TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	zip_file TEXT NOT NULL,
+	entry_file TEXT,
+	preview_file TEXT,
+	file_count INTEGER NOT NULL DEFAULT 0,
+	total_bytes BIGINT NOT NULL DEFAULT 0,
+	zip_bytes BIGINT NOT NULL DEFAULT 0,
+	content_text TEXT,
+	memo TEXT,
+	uploaded_by TEXT,
+	uploaded_at TEXT NOT NULL,
+	deleted_by TEXT,
+	deleted_at TEXT,
+	previous_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mockups_previous_id ON mockups (previous_id);
+
 CREATE TABLE IF NOT EXISTS allowed_users (
 	email TEXT PRIMARY KEY,
 	role TEXT NOT NULL DEFAULT 'readonly' CHECK (role IN ('admin', 'readwrite', 'readonly')),
@@ -203,6 +224,26 @@ const MIGRATIONS = [
 	`},
 	{version: 6, sql: `
 		ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS notified_build TEXT;
+	`},
+	{version: 7, sql: `
+		CREATE TABLE IF NOT EXISTS mockups (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			zip_file TEXT NOT NULL,
+			entry_file TEXT,
+			preview_file TEXT,
+			file_count INTEGER NOT NULL DEFAULT 0,
+			total_bytes BIGINT NOT NULL DEFAULT 0,
+			zip_bytes BIGINT NOT NULL DEFAULT 0,
+			content_text TEXT,
+			memo TEXT,
+			uploaded_by TEXT,
+			uploaded_at TEXT NOT NULL,
+			deleted_by TEXT,
+			deleted_at TEXT,
+			previous_id TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_mockups_previous_id ON mockups (previous_id);
 	`}
 ];
 
