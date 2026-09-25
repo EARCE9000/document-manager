@@ -783,6 +783,7 @@ const VectorSearch = require("./lib/vector-search.js");
 const {extractDrawioText} = require("./lib/drawio.js");
 const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 const OfficeRender = require("./lib/office-render.js");
+const DbIntegrity = require("./lib/db-integrity.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -1542,6 +1543,31 @@ app.get(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireWrite, 
  * ベクトル検索のチャンク分割設定をGUIから変更する(要 admin ロール。システム全体に影響するため)。
  * 変更は新規に索引付けする文書からのみ反映され、既存の索引付け済み文書には遡って適用されない
  */
+/**
+ * DBの整合性を確認する(要 admin ロール)。
+ *
+ * SQLiteの破損は、書き込みは通り続けたまま一部のページだけ読めなくなる形で進むことがあり、
+ * 画面上は正常に見えるのに特定の文書だけ消えている、という気づきにくい壊れ方をする。
+ * 起動時にも自動で簡易確認しているが(結果はログ)、任意のタイミングで確認できるようにする。
+ *
+ * `?mode=full` は索引と表の整合まで検査する。確実だが、better-sqlite3は同期APIのため
+ * 検査中はサーバーの他の処理が止まる。大きなDBでは業務時間外に実行すること。
+ */
+app.get(BASE_URL_PATH + 'api/db-integrity', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const mode = DbIntegrity.MODES.includes(String(req.query.mode)) ? String(req.query.mode) : "quick";
+		const result = await DbIntegrity.check(mode);
+		if (result.supported && !result.healthy) {
+			logger.error({problems: result.problems, problemCount: result.problemCount, user: req.authData.user_identifier}, "DBの整合性に問題が見つかりました");
+		}
+		res.status(200).json(result);
+	} catch (err) {
+		logger.error(err, "::api/db-integrity");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 app.put(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
@@ -3157,6 +3183,10 @@ const main = async () => {
 	// 「無期限」を選べた頃に発行されたAPIキーがあれば、現在の上限(1年)へ切り詰める
 	await ApiKeys.capUnlimitedKeys();
 	await VectorSearch.recoverStaleProcessing();
+	// DBの破損を検知する。壊れているのに気づかないまま使い続けるのを避けるため、起動のたびに
+	// 一度だけ簡易確認して結果をログに残す(問題があればerrorレベル)。起動は止めない
+	DbIntegrity.checkOnStartup();
+
 	// 過去にアップロードされた(このベクトル検索機能の導入前からある)文書を差分バックフィルする。
 	// サーバー起動をブロックしないよう非同期で流す。WEAVIATE_URL未設定時はisEnabled()の時点で
 	// 弾き、全文書のcontent_textを読み出すクエリ自体を実行しない(単体SQLiteモードと同じ動作にする)

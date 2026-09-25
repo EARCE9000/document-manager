@@ -215,6 +215,13 @@ const OPERATIONS = [
 	},
 	// ---- その他(ガイドには載せない)
 	{id: "getVersion", method: "get", path: "/api/version", role: "public", tag: "その他", summary: "アプリのバージョン(ビルド日付)", aiGuide: false},
+	{
+		id: "getDbIntegrity", method: "get", path: "/api/db-integrity", role: "admin", tag: "その他",
+		summary: "DBの整合性確認(破損の検知)",
+		description: "SQLiteのみ。`?mode=full`で索引と表の整合まで検査する(遅い。検査中はサーバーの他の処理が止まる)。既定は簡易確認。Postgresでは`supported:false`を返す",
+		params: [{name: "mode", in: "query", description: "quick(既定) / full"}],
+		aiGuide: false
+	},
 	{id: "checkAccessToken", method: "get", path: "/api/check_access_token", role: "readonly", tag: "その他", summary: "ログイン状態・ロールの確認(画面用)", aiGuide: false},
 	{id: "getHistory", method: "get", path: "/api/history", role: "readonly", tag: "その他", summary: "自分の操作履歴(直近30日)", aiGuide: false},
 	{id: "getSkillZip", method: "get", path: "/api/claude-skill.zip", role: "readonly", tag: "その他", summary: "AIエージェント用SkillのZIP取得", produces: "application/zip", aiGuide: false},
