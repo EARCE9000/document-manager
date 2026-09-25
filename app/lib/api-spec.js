@@ -218,6 +218,84 @@ const OPERATIONS = [
 	},
 	// ---- その他(ガイドには載せない)
 	{id: "getVersion", method: "get", path: "/api/version", role: "public", tag: "その他", summary: "アプリのバージョン(ビルド日付)", aiGuide: false},
+	// ---- モックアップ(ビルド済みの静的サイト一式。docs/mockup.md) ----
+	// 文書とは別のコレクション。AI向けの利用ガイドには載せない(人が作って人が見るもので、
+	// AIに操作させる想定が今のところ無いため)。仕様(OpenAPI)には載るので、必要なら辿れる
+	{
+		id: "listMockups", method: "get", path: "/api/mockups", role: "readonly", tag: "モックアップ",
+		summary: "モックアップの一覧・検索",
+		description: "`q`で名前・メモ・本文(HTMLから抽出)を部分一致検索する。`archived=1`で過去の版を見る。ローカル保存の構成でのみ使える(それ以外は503)",
+		params: [
+			{name: "q", in: "query", description: "検索語(省略時は全件)"},
+			{name: "archived", in: "query", description: "1でアーカイブ済み(過去の版)を返す"}
+		],
+		aiGuide: false
+	},
+	{
+		id: "uploadMockup", method: "post", path: "/api/mockups", role: "readwrite", tag: "モックアップ",
+		summary: "モックアップの登録",
+		description: "`multipart/form-data`。`mockupfile`にビルド済み一式のZIP、`previewfile`に一覧へ出す画像(任意)。`previousId`を付けると新しい版として登録し、旧版はアーカイブされる。ZIPは展開して配信し、原本も保持する",
+		body: {contentType: "multipart/form-data", schema: {
+			type: "object", required: ["mockupfile"],
+			properties: {
+				mockupfile: {type: "string", format: "binary", description: "ビルド済み一式のZIP"},
+				previewfile: {type: "string", format: "binary", description: "一覧に出すプレビュー画像(svg/png/jpg/jpeg。任意)"},
+				name: {type: "string", description: "表示名(省略時はZIPのファイル名)"},
+				previousId: {type: "string", description: "置き換える旧版のモックアップID(任意)"}
+			}
+		}},
+		responses: {400: "ZIPとして読めない/展開できない/上限を超えた", 404: "previousIdが存在しない", 409: "指定した版には既に新しい版がある", 413: "サイズ超過", 503: "ローカル保存以外の構成"},
+		aiGuide: false
+	},
+	{
+		id: "getMockup", method: "get", path: "/api/mockups/:id", role: "readonly", tag: "モックアップ",
+		summary: "モックアップ1件の情報", description: "`previousId`/`nextId`で前後の版が分かる", aiGuide: false
+	},
+	{
+		id: "getMockupVersions", method: "get", path: "/api/mockups/:id/versions", role: "readonly", tag: "モックアップ",
+		summary: "モックアップの版履歴", description: "古い順。どの版から引いても同じ並びを返す", aiGuide: false
+	},
+	{
+		id: "getMockupPreview", method: "get", path: "/api/mockups/:id/preview", role: "readonly", tag: "モックアップ",
+		summary: "一覧に出すプレビュー画像", produces: "image/*", aiGuide: false
+	},
+	{
+		id: "downloadMockup", method: "get", path: "/api/mockups/:id/download", role: "readonly", tag: "モックアップ",
+		summary: "原本のZIPをダウンロード", produces: "application/zip", aiGuide: false
+	},
+	{
+		id: "viewMockup", method: "get", path: "/api/mockups/:id/view", role: "readonly", tag: "モックアップ",
+		summary: "モックアップを開く(入口へ転送)",
+		description: "短時間だけ有効な引換券を発行し、`/view/<引換券>/<入口>`へリダイレクトする。以降の相対パスは引換券の下でブラウザが解決する。モックアップを見るときはここから入る",
+		aiGuide: false
+	},
+	{
+		id: "viewMockupFile", method: "get", path: "/api/mockups/:id/view/:token/*", role: "public", tag: "モックアップ",
+		summary: "モックアップの中のファイルを配信(引換券で認可)",
+		description: "展開したファイルを返す。ここだけはスクリプトを止めず、代わりに`Content-Security-Policy: sandbox allow-scripts`でオリジンを落とす(このアプリのAPI・cookieには手が届かない)。ただしオリジンを落とすと副リソースの要求がクロスサイト扱いになりセッションcookieが届かないため、認証の代わりに`/view`で発行した引換券(そのモックアップ1件・短時間のみ有効)で認可する。券は認証できた利用者にしか発行されない。Content-Typeは固定表から引き、表に無い種類はダウンロード扱いにする",
+		responses: {401: "引換券が無効・期限切れ(`/view`から開き直す)", 404: "モックアップもしくはファイルが無い"},
+		aiGuide: false
+	},
+	{
+		id: "updateMockupMemo", method: "put", path: "/api/mockups/:id/memo", role: "readwrite", tag: "モックアップ",
+		summary: "モックアップのメモ更新",
+		body: {schema: {type: "object", properties: {memo: {type: "string"}}}},
+		aiGuide: false
+	},
+	{
+		id: "renameMockup", method: "put", path: "/api/mockups/:id/name", role: "readwrite", tag: "モックアップ",
+		summary: "モックアップの名前変更",
+		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}}}},
+		aiGuide: false
+	},
+	{
+		id: "archiveMockup", method: "delete", path: "/api/mockups/:id", role: "readwrite", tag: "モックアップ",
+		summary: "モックアップのアーカイブ(論理削除)", description: "実ファイルは残る。restoreで戻せる", aiGuide: false
+	},
+	{
+		id: "restoreMockup", method: "post", path: "/api/mockups/:id/restore", role: "readwrite", tag: "モックアップ",
+		summary: "モックアップの復元", aiGuide: false
+	},
 	{
 		id: "getStorageReconcile", method: "get", path: "/api/storage-reconcile", role: "admin", tag: "その他",
 		summary: "DBと実ファイルの照合",

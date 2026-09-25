@@ -790,6 +790,10 @@ const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 const OfficeRender = require("./lib/office-render.js");
 const DbIntegrity = require("./lib/db-integrity.js");
 const StorageReconcile = require("./lib/storage-reconcile.js");
+const Mockups = require("./lib/mockups.js");
+const MockupStorage = require("./lib/mockup-storage.js");
+const MockupZip = require("./lib/mockup-zip.js");
+const MockupToken = require("./lib/mockup-token.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -3360,6 +3364,405 @@ app.put(BASE_URL_PATH + 'api/projects/:id/reorder', requireAuth, requireWrite, a
 		res.status(200).json(await Projects.getProjectTree(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/reorder");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+
+/* _/_/_/ モックアップ(ビルド済みの静的サイト一式。docs/mockup.md) _/_/_/ */
+
+// 配信する中身は利用者がアップロードしたものなので、拡張子から推測した型をそのまま使わない。
+// この表に無いものは「保存してもらう」扱い(application/octet-stream + attachment)にする
+const MOCKUP_CONTENT_TYPES = {
+	".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+	".css": "text/css; charset=utf-8",
+	".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
+	".json": "application/json; charset=utf-8", ".map": "application/json; charset=utf-8",
+	".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon", ".avif": "image/avif",
+	".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+	".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
+	".webm": "video/webm", ".mp4": "video/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav",
+	".pdf": "application/pdf"
+};
+
+// モックアップのJSを動かすため、スクリプトは止めない。代わりに sandbox でオリジンを落とす。
+// こうするとページは origin: null になり、このアプリのAPIにもcookieにも手が届かない
+// (実測で確認済み。docs/mockup.md 参照)。allow-scripts 以外は与えないため、
+// 親ウィンドウの操作・フォーム送信・ポップアップもできない。
+// 取得先(CDN)は制限しない。LLMが作るモックアップはほぼ必ず外部CDNを参照するため
+const MOCKUP_VIEW_CSP = "sandbox allow-scripts";
+
+const mockupsEnabled = () => MockupStorage.isEnabled();
+const requireMockups = (req, res, next) => {
+	if (!mockupsEnabled()) {
+		res.status(503).json({error: "モックアップ機能はローカル保存の構成でのみ使えます(STORAGE_BACKEND=local)"});
+		return;
+	}
+	next();
+};
+
+/**
+ * モックアップの一覧。`q`で名前・メモ・本文を部分一致検索し、`archived=1`で過去の版を見る。
+ */
+app.get(BASE_URL_PATH + 'api/mockups', requireAuth, requireMockups, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const archived = String(req.query.archived || "") === "1";
+		const items = await Mockups.listMockups({archived, q: String(req.query.q || "")});
+		res.status(200).json(items);
+	} catch (err) {
+		logger.error(err, "::api/mockups:list");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * モックアップの登録。`mockupfile`にZIP、`previewfile`に一覧へ出す画像を添える。
+ * `previousId`を付けると、その版を置き換えた新しい版として登録する(旧版はアーカイブされる)。
+ */
+app.post(BASE_URL_PATH + 'api/mockups', requireAuth, requireWrite, requireMockups, fileUpload({
+	limits: {fileSize: MockupZip.LIMITS.maxTotalBytes},
+	abortOnLimit: true,
+	limitHandler: (req, res) => {
+		res.status(413).json({error: "ファイルサイズが大きすぎます"});
+	}
+}), async (req, res) => {
+	// 失敗したら書いたものを捨てる。捨ててよいのはこのリクエストで採番したIDのものだけ
+	let mockupId = null;
+	let written = [];
+	let registered = false;
+	try {
+		setHTTPHeaders(res);
+		const upload = req.files == null ? null : req.files.mockupfile;
+		if (upload == null) {
+			res.status(400).json({error: "mockupfile (ZIP) が必要です"});
+			return;
+		}
+		const zipName = path.basename(fixUploadedFilenameEncoding(String(upload.name || "")));
+		if (path.extname(zipName).toLowerCase() !== ".zip") {
+			res.status(400).json({error: "ZIPファイルをアップロードしてください"});
+			return;
+		}
+		if (upload.data.length < 4 || upload.data.readUInt32LE(0) !== 0x04034b50) {
+			res.status(400).json({error: "ZIPとして読めません"});
+			return;
+		}
+
+		// プレビュー画像(任意)。拡張子は画像に限る
+		const previewUpload = req.files.previewfile ?? null;
+		let previewName = null;
+		if (previewUpload != null) {
+			const ext = path.extname(path.basename(fixUploadedFilenameEncoding(String(previewUpload.name || "")))).toLowerCase();
+			if (!IMAGE_EXTENSIONS.includes(ext)) {
+				res.status(400).json({error: "プレビュー画像は svg / png / jpg / jpeg を指定してください"});
+				return;
+			}
+			previewName = `preview${ext}`;
+		}
+
+		// 新しい版として登録する場合の確認(文書側と同じ考え方)
+		const previousId = String(req.body?.previousId ?? "").trim() || null;
+		if (previousId != null) {
+			const previous = await Mockups.getMockup(previousId);
+			if (previous == null) {
+				res.status(404).json({error: "previousId で指定されたモックアップが見つかりません"});
+				return;
+			}
+			const existingNext = await Mockups.getNextVersionId(previousId);
+			if (existingNext != null) {
+				res.status(409).json({error: "指定された版には既に新しい版があります。最新版を指定してください", nextId: existingNext});
+				return;
+			}
+		}
+
+		mockupId = `${currentYearMonth()}_${uuidv4()}`;
+		MockupStorage.prepare(mockupId);
+
+		// 展開。受け入れられない書庫なら、書いてしまった分を添えて例外になる
+		let extracted;
+		try {
+			extracted = MockupZip.extract(upload.data, MockupStorage.siteDir(mockupId));
+			written = extracted.files.map((file) => file.path);
+		} catch (err) {
+			written = Array.isArray(err.written) ? err.written : [];
+			if (err instanceof MockupZip.MockupZipError) {
+				res.status(400).json({error: err.message});
+				return;
+			}
+			throw err;
+		}
+
+		MockupStorage.writeFile(mockupId, MockupStorage.ZIP_FILE, upload.data);
+		if (previewName != null) MockupStorage.writeFile(mockupId, previewName, previewUpload.data);
+
+		// 全文検索用のテキスト。HTMLから抜くだけで、ビルド済みのJSに埋もれた文言は拾えない
+		const contentText = extractMockupText(mockupId, extracted.files);
+
+		const {mockup, archivedPrevious} = await Mockups.createMockup({
+			id: mockupId,
+			name: String(req.body?.name ?? "").trim() || path.basename(zipName, path.extname(zipName)),
+			zipFile: zipName,
+			entryFile: extracted.entryFile,
+			previewFile: previewName,
+			fileCount: extracted.files.length,
+			totalBytes: extracted.totalBytes,
+			zipBytes: upload.data.length,
+			contentText,
+            uploadedBy: req.authData.user_identifier,
+			previousId
+		});
+		registered = true;
+
+		logger.info({audit: "mockup_upload", user: req.authData.user_identifier, mockupId, files: extracted.files.length}, "audit");
+		res.status(200).json({...mockup, archivedPrevious});
+	} catch (err) {
+		logger.error(err, "::api/mockups:upload");
+		if (mockupId != null && !registered) {
+			try {
+				MockupStorage.discard(mockupId, written);
+				logger.info({mockupId}, "::api/mockups:upload:discard: 登録できなかったファイルを捨てました");
+			} catch (discardErr) {
+				logger.error({err: discardErr, mockupId}, "::api/mockups:upload:discard");
+			}
+		}
+		if (!res.headersSent) res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * HTMLからテキストを抜く(全文検索用)。ビルド済みのJSに埋もれた文言は拾えない。
+ */
+const extractMockupText = (id, files) => {
+	const parts = [];
+	let total = 0;
+	for (const file of files) {
+		if (!/\.html?$/i.test(file.path)) continue;
+		if (total >= CONTENT_TEXT_MAX_CHARS) break;
+		try {
+			const html = fs.readFileSync(path.join(MockupStorage.siteDir(id), file.path), "utf-8");
+			const text = htmlToText(html, {wordwrap: false});
+			parts.push(text);
+			total += text.length;
+		} catch {
+			// 読めないファイルは飛ばす(モックアップとしては成立するため)
+		}
+	}
+	return truncateContentText(parts.join("\n")).contentText;
+};
+
+app.get(BASE_URL_PATH + 'api/mockups/:id', requireAuth, requireMockups, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const mockup = await Mockups.getMockup(req.params.id);
+		if (mockup == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		res.status(200).json({...mockup, nextId: await Mockups.getNextVersionId(mockup.id)});
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+app.get(BASE_URL_PATH + 'api/mockups/:id/versions', requireAuth, requireMockups, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const versions = await Mockups.listVersions(req.params.id);
+		if (versions == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		res.status(200).json(versions);
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id/versions");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 一覧に出すプレビュー画像 */
+app.get(BASE_URL_PATH + 'api/mockups/:id/preview', requireAuth, requireMockups, async (req, res) => {
+	try {
+		const mockup = await Mockups.getMockup(req.params.id);
+		if (mockup == null || mockup.previewFile == null) {
+			setHTTPHeaders(res);
+			res.status(404).json({error: "プレビュー画像はありません"});
+			return;
+		}
+		const buffer = MockupStorage.readFile(mockup.id, mockup.previewFile);
+		if (buffer == null) {
+			setHTTPHeaders(res);
+			res.status(404).json({error: "プレビュー画像はありません"});
+			return;
+		}
+		setHTTPHeaders(res);
+		res.setHeader("Content-Type", CONTENT_TYPE_BY_EXTENSION[path.extname(mockup.previewFile).toLowerCase()] || "application/octet-stream");
+		// 画像にスクリプトを仕込める形式(svg)があるため、ここでも実行を止めておく
+		res.setHeader("Content-Security-Policy", ACTIVE_CONTENT_CSP);
+		res.status(200).end(buffer);
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id/preview");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 原本のZIPをダウンロードする */
+app.get(BASE_URL_PATH + 'api/mockups/:id/download', requireAuth, requireMockups, async (req, res) => {
+	try {
+		const mockup = await Mockups.getMockup(req.params.id);
+		if (mockup == null) {
+			setHTTPHeaders(res);
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const buffer = MockupStorage.readFile(mockup.id, MockupStorage.ZIP_FILE);
+		if (buffer == null) {
+			setHTTPHeaders(res);
+			res.status(404).json({error: "原本が見つかりません"});
+			return;
+		}
+		logger.info({audit: "mockup_download", user: req.authData.user_identifier, mockupId: mockup.id}, "audit");
+		setHTTPHeaders(res);
+		res.setHeader("Content-Type", "application/zip");
+		res.setHeader("Content-Disposition", contentDisposition("attachment", mockup.zipFile));
+		res.status(200).end(buffer);
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id/download");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * モックアップ本体の配信。別ウィンドウで開く前提。
+ *
+ * ここだけは**スクリプトを止めない**(モックアップの意味が無くなるため)。代わりに
+ * sandbox でオリジンを落とし、このアプリのAPI・cookieに手が届かないようにする。
+ *
+ * ただしオリジンを落とすと、そのページからのCSS・JS・画像の要求は**クロスサイト扱い**になり、
+ * SameSite=Lax のセッションcookieが送られてこない。素朴に requireAuth を置くと、
+ * HTMLは開けるのに中の部品が全部401で遮断される(実測: ERR_BLOCKED_BY_ORB)。
+ * そこで入口(ここは通常のページ遷移なのでcookieが届く)で短時間有効の引換券を発行し、
+ * URLのパスに埋めて、その下で配信する。認証を外しているのではなく、認証できた人にだけ
+ * 券を渡している。詳しくは lib/mockup-token.js。
+ *
+ * URLのパスは利用者が送ってくる値なので、展開時とは別にここでも置き場所の内側かを確かめる。
+ */
+app.get(BASE_URL_PATH + 'api/mockups/:id/view', requireAuth, requireMockups, async (req, res) => {
+	try {
+		const mockup = await Mockups.getMockup(req.params.id);
+		if (mockup == null || mockup.entryFile == null) {
+			setHTTPHeaders(res);
+			res.status(404).json({error: "表示できる入口(index.html)がありません"});
+			return;
+		}
+		const token = MockupToken.issue(mockup.id, req.authData?.user_identifier ?? "unknown");
+		const entry = mockup.entryFile.split("/").map(encodeURIComponent).join("/");
+		// 入口へ寄せる。以降の相対パスは引換券の下でブラウザが解決する
+		res.redirect(`${BASE_URL_PATH}api/mockups/${encodeURIComponent(mockup.id)}/view/${token}/${entry}`);
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id/view");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+// 引換券で守る配信。requireAuth を置かないのは上のコメントの通りで、cookieが届かないため。
+// 券は「そのモックアップ1件・短時間だけ」有効で、偽造できない
+app.get(BASE_URL_PATH + 'api/mockups/:id/view/:token/*', requireMockups, async (req, res) => {
+	try {
+		if (!MockupToken.verify(req.params.token, req.params.id)) {
+			setHTTPHeaders(res);
+			logger.warn({mockupId: req.params.id}, "::api/mockups/:id/view: 引換券が無効な要求を拒否しました");
+			res.status(401).json({error: "表示の有効期限が切れています。もう一度開き直してください"});
+			return;
+		}
+		const mockup = await Mockups.getMockup(req.params.id);
+		if (mockup == null) {
+			setHTTPHeaders(res);
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const target = MockupStorage.resolveSiteFile(mockup.id, req.params[0]);
+		if (target == null) {
+			setHTTPHeaders(res);
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const extension = path.extname(target).toLowerCase();
+		const contentType = MOCKUP_CONTENT_TYPES[extension];
+
+		setHTTPHeaders(res);
+		res.setHeader("Content-Security-Policy", MOCKUP_VIEW_CSP);
+		if (contentType == null) {
+			// 表に無い種類は、ブラウザに解釈させず保存してもらう
+			res.setHeader("Content-Type", "application/octet-stream");
+			res.setHeader("Content-Disposition", contentDisposition("attachment", path.basename(target)));
+		} else {
+			res.setHeader("Content-Type", contentType);
+		}
+		res.status(200).end(fs.readFileSync(target));
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id/view/:token/*");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+app.put(BASE_URL_PATH + 'api/mockups/:id/memo', requireAuth, requireWrite, requireMockups, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const memo = await Mockups.updateMemo(req.params.id, req.body?.memo);
+		if (memo == null && (await Mockups.getMockup(req.params.id)) == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		res.status(200).json({memo: memo ?? ""});
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id/memo");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+app.put(BASE_URL_PATH + 'api/mockups/:id/name', requireAuth, requireWrite, requireMockups, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const name = await Mockups.rename(req.params.id, req.body?.name);
+		if (name == null) {
+			res.status(400).json({error: "名前を指定してください"});
+			return;
+		}
+		res.status(200).json({name});
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id/name");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+app.delete(BASE_URL_PATH + 'api/mockups/:id', requireAuth, requireWrite, requireMockups, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!await Mockups.archiveMockup(req.params.id, req.authData.user_identifier)) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		logger.info({audit: "mockup_archive", user: req.authData.user_identifier, mockupId: req.params.id}, "audit");
+		res.status(204).end();
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id:delete");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+app.post(BASE_URL_PATH + 'api/mockups/:id/restore', requireAuth, requireWrite, requireMockups, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!await Mockups.restoreMockup(req.params.id)) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		logger.info({audit: "mockup_restore", user: req.authData.user_identifier, mockupId: req.params.id}, "audit");
+		res.status(200).json(await Mockups.getMockup(req.params.id));
+	} catch (err) {
+		logger.error(err, "::api/mockups/:id/restore");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
