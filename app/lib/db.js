@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -242,6 +242,18 @@ const createSchema = (targetDb) => {
 	// (VECTOR_CHUNK_SIZE/VECTOR_CHUNK_OVERLAP/WEAVIATE_VECTORIZER)の既定値を使う
 	// (admin画面から上書きされたらそちらを優先する。vector-search.js参照)。vectorizerの
 	// 実際の認証情報(APIキー等)はDBには保存せず環境変数のまま(vector-search.js冒頭のコメント参照)
+	// 機能のOn/Off等、管理画面から変えられる設定(v17で追加)。環境変数は「その環境の既定値」で、
+	// ここに行があればそちらを優先する(vector_search_settingsと同じ考え方)。
+	// キーと値の形にしているのは、この先トグルが増えても表を増やさずに済むようにするため
+	targetDb.exec(`
+		CREATE TABLE IF NOT EXISTS app_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_by TEXT,
+			updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)
+	`);
+
 	targetDb.exec(`
 		CREATE TABLE IF NOT EXISTS vector_search_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -597,6 +609,51 @@ const MIGRATIONS = {
 	},
 	// v16: お品書き用の説明書き(project_documents.note / project_folders.note)を足した。
 	// どちらも新しい列のため、引き継ぐものは無い(空で始まる)
+	// v17: 機能のOn/Offを保存する app_settings を足した。新しい表のため引き継ぐものは無い
+	17: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at, notified_build)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at, notified_build FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at, locked)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at, locked FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at, note)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at, note FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at, note)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at, note FROM old.project_documents;
+
+				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
+				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
+
+				INSERT INTO document_links (document_id_a, document_id_b, created_by, created_at)
+				SELECT document_id_a, document_id_b, created_by, created_at FROM old.document_links;
+
+				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
+				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
+
+				INSERT INTO mockups (id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, deleted_by, deleted_at, previous_id)
+				SELECT id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, deleted_by, deleted_at, previous_id FROM old.mockups;
+			`);
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
+	},
 	16: (newDb, oldDbPath) => {
 		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
 		try {

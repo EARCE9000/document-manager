@@ -66,7 +66,7 @@ test("operationId・パスが重複していない", () => {
 });
 
 test("OpenAPIが組み立てられ、全操作が含まれる", () => {
-	const spec = ApiSpec.buildOpenApi({baseUrl: "https://example.com/", vectorSearchEnabled: true, version: "20260101"});
+	const spec = ApiSpec.buildOpenApi({baseUrl: "https://example.com/", vectorSearchEnabled: true, mockupsEnabled: true, version: "20260101"});
 	assert.equal(spec.openapi, "3.1.0");
 	assert.equal(spec.servers[0].url, "https://example.com");
 	const count = Object.values(spec.paths).reduce((n, item) => n + Object.keys(item).length, 0);
@@ -81,6 +81,17 @@ test("OpenAPIが組み立てられ、全操作が含まれる", () => {
 	// adminロールの操作はAPIキーから実行できないことが分かる
 	assert.equal(spec.paths["/api/allowed_users"].get["x-api-key-usable"], false);
 	assert.equal(spec.paths["/api/documents"].get["x-api-key-usable"], true);
+});
+
+// 載っていると、AIが呼んで503を食う。使えない機能は仕様にもガイドにも出さない
+test("モックアップが無効な環境では、その操作を仕様にもガイドにも載せない", () => {
+	const off = ApiSpec.buildOpenApi({baseUrl: "https://example.com", vectorSearchEnabled: false, mockupsEnabled: false});
+	assert.equal(Object.keys(off.paths).filter((p) => p.startsWith("/api/mockups")).length, 0, "OpenAPIに残っている");
+	const offMarkdown = ApiSpec.buildUsageMarkdown({baseUrl: "https://example.com", vectorSearchEnabled: false, mockupsEnabled: false});
+	assert.ok(!offMarkdown.includes("モックアップ"), "AI向けガイドに残っている");
+
+	const on = ApiSpec.buildOpenApi({baseUrl: "https://example.com", vectorSearchEnabled: false, mockupsEnabled: true});
+	assert.ok(Object.keys(on.paths).filter((p) => p.startsWith("/api/mockups")).length > 0, "有効なら載る");
 });
 
 test("ベクトル検索が無効な環境では、その操作を仕様に載せない", () => {
@@ -139,7 +150,7 @@ test("AI向けガイドの内容と aiGuide の指定が一致している", () 
 
 // モックアップはAIが作って登録するもの。ガイドに載っていなければAIは存在に気づけない
 test("AI向けガイドにモックアップとお品書きが載る", () => {
-	const markdown = ApiSpec.buildUsageMarkdown({baseUrl: "https://example.com", vectorSearchEnabled: false});
+	const markdown = ApiSpec.buildUsageMarkdown({baseUrl: "https://example.com", vectorSearchEnabled: false, mockupsEnabled: true});
 	for (const expected of [
 		"モックアップの一覧・検索",
 		"モックアップの登録",

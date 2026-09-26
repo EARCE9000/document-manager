@@ -246,7 +246,7 @@ const OPERATIONS = [
 	// 文書とは別のコレクション。AI向けの利用ガイドには載せない(人が作って人が見るもので、
 	// AIに操作させる想定が今のところ無いため)。仕様(OpenAPI)には載るので、必要なら辿れる
 	{
-		id: "listMockups", method: "get", path: "/api/mockups", role: "readonly", tag: "モックアップ",
+		mockupOnly: true, id: "listMockups", method: "get", path: "/api/mockups", role: "readonly", tag: "モックアップ",
 		summary: "現役のモックアップの一覧・検索",
 		description: "`q`で名前・メモ・本文(HTMLから抽出)を部分一致検索する。過去の版は`/api/mockups/archived`。ローカル保存の構成でのみ使える(それ以外は503)",
 		params: [
@@ -254,7 +254,7 @@ const OPERATIONS = [
 		]
 	},
 	{
-		id: "listArchivedMockups", method: "get", path: "/api/mockups/archived", role: "readwrite", tag: "モックアップ",
+		mockupOnly: true, id: "listArchivedMockups", method: "get", path: "/api/mockups/archived", role: "readwrite", tag: "モックアップ",
 		summary: "アーカイブ済みモックアップの一覧・検索",
 		description: "置き換えられた旧版と、手でアーカイブしたもの。文書のアーカイブ(`/api/documents/archived`)と同じくreadwrite以上に限っている(readonlyは今あるものだけを見るロール)",
 		params: [
@@ -262,7 +262,7 @@ const OPERATIONS = [
 		]
 	},
 	{
-		id: "uploadMockup", method: "post", path: "/api/mockups", role: "readwrite", tag: "モックアップ",
+		mockupOnly: true, id: "uploadMockup", method: "post", path: "/api/mockups", role: "readwrite", tag: "モックアップ",
 		summary: "モックアップの登録",
 		description: "`multipart/form-data`。`mockupfile`にビルド済み一式のZIP、`previewfile`に一覧へ出す画像(任意)。`previousId`を付けると新しい版として登録し、旧版はアーカイブされる。ZIPは展開して配信し、原本も保持する",
 		body: {contentType: "multipart/form-data", schema: {
@@ -277,50 +277,64 @@ const OPERATIONS = [
 		responses: {400: "ZIPとして読めない/展開できない/上限を超えた", 404: "previousIdが存在しない", 409: "指定した版には既に新しい版がある", 413: "サイズ超過", 503: "ローカル保存以外の構成"}
 	},
 	{
-		id: "getMockup", method: "get", path: "/api/mockups/:id", role: "readonly", tag: "モックアップ",
+		mockupOnly: true, id: "getMockup", method: "get", path: "/api/mockups/:id", role: "readonly", tag: "モックアップ",
 		summary: "モックアップ1件の情報", description: "`previousId`/`nextId`で前後の版が分かる"
 	},
 	{
-		id: "getMockupVersions", method: "get", path: "/api/mockups/:id/versions", role: "readonly", tag: "モックアップ",
+		mockupOnly: true, id: "getMockupVersions", method: "get", path: "/api/mockups/:id/versions", role: "readonly", tag: "モックアップ",
 		summary: "モックアップの版履歴", description: "古い順。どの版から引いても同じ並びを返す"
 	},
 	{
-		id: "getMockupPreview", method: "get", path: "/api/mockups/:id/preview", role: "readonly", tag: "モックアップ",
+		mockupOnly: true, id: "getMockupPreview", method: "get", path: "/api/mockups/:id/preview", role: "readonly", tag: "モックアップ",
 		summary: "一覧に出すプレビュー画像", produces: "image/*", aiGuide: false
 	},
 	{
-		id: "downloadMockup", method: "get", path: "/api/mockups/:id/download", role: "readonly", tag: "モックアップ",
+		mockupOnly: true, id: "downloadMockup", method: "get", path: "/api/mockups/:id/download", role: "readonly", tag: "モックアップ",
 		summary: "原本のZIPをダウンロード", produces: "application/zip"
 	},
 	{
-		id: "viewMockup", method: "get", path: "/api/mockups/:id/view", role: "readonly", tag: "モックアップ",
+		mockupOnly: true, id: "viewMockup", method: "get", path: "/api/mockups/:id/view", role: "readonly", tag: "モックアップ",
 		summary: "モックアップを開く(入口へ転送)",
 		description: "短時間だけ有効な引換券を発行し、`/view/<引換券>/<入口>`へリダイレクトする。以降の相対パスは引換券の下でブラウザが解決する。モックアップを見るときはここから入る"
 	},
 	{
-		id: "viewMockupFile", method: "get", path: "/api/mockups/:id/view/:token/*", role: "public", tag: "モックアップ",
+		mockupOnly: true, id: "viewMockupFile", method: "get", path: "/api/mockups/:id/view/:token/*", role: "public", tag: "モックアップ",
 		summary: "モックアップの中のファイルを配信(引換券で認可)",
 		description: "展開したファイルを返す。ここだけはスクリプトを止めず、代わりに`Content-Security-Policy: sandbox allow-scripts`でオリジンを落とす(このアプリのAPI・cookieには手が届かない)。ただしオリジンを落とすと副リソースの要求がクロスサイト扱いになりセッションcookieが届かないため、認証の代わりに`/view`で発行した引換券(そのモックアップ1件・短時間のみ有効)で認可する。券は認証できた利用者にしか発行されない。Content-Typeは固定表から引き、表に無い種類はダウンロード扱いにする",
 		responses: {401: "引換券が無効・期限切れ(`/view`から開き直す)", 404: "モックアップもしくはファイルが無い"},
 		aiGuide: false
 	},
 	{
-		id: "updateMockupMemo", method: "put", path: "/api/mockups/:id/memo", role: "readwrite", tag: "モックアップ",
+		mockupOnly: true, id: "updateMockupMemo", method: "put", path: "/api/mockups/:id/memo", role: "readwrite", tag: "モックアップ",
 		summary: "モックアップのメモ更新",
 		body: {schema: {type: "object", properties: {memo: {type: "string"}}}}
 	},
 	{
-		id: "renameMockup", method: "put", path: "/api/mockups/:id/name", role: "readwrite", tag: "モックアップ",
+		mockupOnly: true, id: "renameMockup", method: "put", path: "/api/mockups/:id/name", role: "readwrite", tag: "モックアップ",
 		summary: "モックアップの名前変更",
 		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}}}}
 	},
 	{
-		id: "archiveMockup", method: "delete", path: "/api/mockups/:id", role: "readwrite", tag: "モックアップ",
+		mockupOnly: true, id: "archiveMockup", method: "delete", path: "/api/mockups/:id", role: "readwrite", tag: "モックアップ",
 		summary: "モックアップのアーカイブ(論理削除)", description: "実ファイルは残る。restoreで戻せる"
 	},
 	{
-		id: "restoreMockup", method: "post", path: "/api/mockups/:id/restore", role: "readwrite", tag: "モックアップ",
+		mockupOnly: true, id: "restoreMockup", method: "post", path: "/api/mockups/:id/restore", role: "readwrite", tag: "モックアップ",
 		summary: "モックアップの復元"
+	},
+	{
+		id: "getFeatures", method: "get", path: "/api/features", role: "admin", tag: "その他",
+		summary: "機能のOn/Offの状態",
+		description: "既定はOffで、管理画面の「サーバー」タブから切り替える。`source`が`setting`なら画面で変更された値、`env`なら環境変数の既定のまま",
+		aiGuide: false
+	},
+	{
+		id: "updateMockupsFeature", method: "put", path: "/api/features/mockups", role: "admin", tag: "その他",
+		summary: "モックアップ機能のOn/Off",
+		description: "DBに保存するため再起動は不要で、複数インスタンス構成でも全台に効く。無効にしても登録済みのモックアップは消えない",
+		body: {schema: {type: "object", required: ["enabled"], properties: {enabled: {type: "boolean"}}}},
+		responses: {409: "ローカル保存以外の構成では有効にできない"},
+		aiGuide: false
 	},
 	{
 		id: "getStorageReconcile", method: "get", path: "/api/storage-reconcile", role: "admin", tag: "その他",
@@ -599,7 +613,7 @@ const GUIDE_SECTIONS = [
 		]
 	},
 	{
-		title: "モックアップの一覧・検索",
+		title: "モックアップの一覧・検索", mockupOnly: true,
 		entries: [
 			{id: "listMockups", suffix: "?q=<検索語>", trail: "現役のモックアップ"},
 			{id: "listArchivedMockups", trail: "置き換えられた旧版・アーカイブしたもの(要 admin/readwrite ロール)"},
@@ -613,7 +627,7 @@ const GUIDE_SECTIONS = [
 		]
 	},
 	{
-		title: "モックアップの登録", roleNote: ROLE_NOTES.readwrite,
+		title: "モックアップの登録", mockupOnly: true, roleNote: ROLE_NOTES.readwrite,
 		entries: [{id: "uploadMockup"}],
 		notes: [
 			"`multipart/form-data`、一式のZIPのフィールド名は `mockupfile`",
@@ -625,7 +639,7 @@ const GUIDE_SECTIONS = [
 		]
 	},
 	{
-		title: "モックアップを開く・取得する",
+		title: "モックアップを開く・取得する", mockupOnly: true,
 		entries: [
 			{id: "viewMockup", trail: "**利用者がブラウザで開くためのURL**。ここから短時間有効のURLへ転送される"},
 			{id: "downloadMockup", trail: "登録した原本のZIP"}
@@ -636,7 +650,7 @@ const GUIDE_SECTIONS = [
 		]
 	},
 	{
-		title: "モックアップの編集・アーカイブ", roleNote: ROLE_NOTES.readwrite,
+		title: "モックアップの編集・アーカイブ", mockupOnly: true, roleNote: ROLE_NOTES.readwrite,
 		entries: [
 			{id: "renameMockup", trail: "JSONボディ: `{\"name\": \"...\"}`"},
 			{id: "updateMockupMemo", trail: "JSONボディ: `{\"memo\": \"...\"}`"},
@@ -668,7 +682,7 @@ const CURL_EXAMPLES = (baseUrl) => [
 		command: `curl -X POST "${baseUrl}/api/documents/<id>/vector-index/retry" \\\n  -H "Authorization: Bearer <APIキー>"`
 	},
 	{title: "アップロード", command: `curl -X POST "${baseUrl}/api/documents" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "uploadfile=@./report.md"`},
-	{title: "モックアップの登録(ビルド済み一式のZIP)", command: `curl -X POST "${baseUrl}/api/mockups" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "mockupfile=@./site.zip" \\\n  -F "name=受注管理画面 v1"`},
+	{title: "モックアップの登録(ビルド済み一式のZIP)", mockupOnly: true, command: `curl -X POST "${baseUrl}/api/mockups" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "mockupfile=@./site.zip" \\\n  -F "name=受注管理画面 v1"`},
 	{title: "プロジェクトのお品書き(人に渡せるMarkdown)", command: `curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/projects/<projectId>/manifest.md"`},
 	{
 		title: "アップロード(.drawio。画像を添える必要はない)",
@@ -752,6 +766,7 @@ PDFを取得できます。**忠実な再現ではありません**(LibreOffice�
   行うようユーザーに案内してください`
 	},
 	{
+		mockupOnly: true,
 		when: "「この画面案をアップして」「モックアップ作ったから登録して」「画面のイメージ見せて」",
 		do: `あなたが作ったWebページ一式(HTML/CSS/JS)を、上記の「モックアップの登録」APIで登録してください。
 文書とは別のコレクションで、**そのままブラウザで動かして確認するためのもの**です。
@@ -836,9 +851,10 @@ const buildSourcesTable = ({base, version, clientVersion, today}) => [
 	`| サーバーの版の確認 | - | \`GET ${base}/api/version\` (認証不要・数十バイト) |`
 ].join("\n");
 
-module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, version, clientVersion}) => {
+module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, mockupsEnabled, version, clientVersion}) => {
 	const base = String(baseUrl).replace(/\/$/, "");
-	const include = (item) => !item.vectorOnly || vectorSearchEnabled;
+	// 無効な機能は載せない。載っていると、AIが呼んで503を食う(意味検索と同じ扱い)
+	const include = (item) => (!item.vectorOnly || vectorSearchEnabled) && (!item.mockupOnly || mockupsEnabled);
 
 	const sections = GUIDE_SECTIONS.filter(include).map((section) => {
 		const lines = [`### ${section.title}${section.roleNote ? ` (${section.roleNote})` : ""}`];
@@ -925,11 +941,13 @@ const COMMON_RESPONSES = {
 /**
  * OpenAPI 3.1 ドキュメントを組み立てる(GET api/openapi.json)
  */
-module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, version, clientVersion}) => {
+module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, mockupsEnabled, version, clientVersion}) => {
 	const base = String(baseUrl).replace(/\/$/, "");
 	const paths = {};
 	for (const op of OPERATIONS) {
 		if (op.vectorOnly && !vectorSearchEnabled) continue;
+		// 無効な機能は載せない(呼んでも503になるものを仕様に出さない)
+		if (op.mockupOnly && !mockupsEnabled) continue;
 		const openApiPath = toOpenApiPath(op.path);
 		paths[openApiPath] = paths[openApiPath] || {};
 		const parameters = [

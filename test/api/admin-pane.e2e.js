@@ -189,4 +189,28 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 			await expect(page.locator("#allowedUserList tr", {hasText: TEST_EMAIL})).toHaveCount(0);
 		});
 	});
+
+	// 機能のOn/Offは、押した結果がその場でメニューに反映されないと「効いたのか」が分からない
+	test("サーバータブから、モックアップ機能をその場で切り替えられる", async ({page}) => {
+		await page.goto("./");
+		await expect(page.locator("#menuMockupsLink")).toBeVisible();
+
+		await page.click("#allowedUsersManageLink");
+		await page.click('.adminTab[data-tab="server"]');
+		await page.locator("#featureList .featureRow").waitFor();
+		await expect(page.locator("#featureList .featureState")).toHaveText("有効");
+
+		// 無効にすると、確認を挟んでからメニューごと消える
+		await page.click("#featureMockupsToggle");
+		await page.click("#confirmYesButton");
+		await expect(page.locator("#featureList .featureState")).toHaveText("無効");
+		await expect(page.locator("#menuMockupsLink")).toBeHidden();
+		// 何を根拠に今の状態なのかが出ること
+		await expect(page.locator("#featureList .featureMeta")).toContainText("この画面で変更されました");
+
+		// 戻すと、再読み込みなしでメニューが出る
+        await page.click("#featureMockupsToggle");
+		await expect(page.locator("#featureList .featureState")).toHaveText("有効");
+		await expect(page.locator("#menuMockupsLink")).toBeVisible();
+	});
 });

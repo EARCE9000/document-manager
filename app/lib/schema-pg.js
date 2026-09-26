@@ -159,6 +159,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_user_created ON audit_log (user_identifier, created_at);
 
+CREATE TABLE IF NOT EXISTS app_settings (
+	key TEXT PRIMARY KEY,
+	value TEXT NOT NULL,
+	updated_by TEXT,
+	updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS vector_search_settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	chunk_size INTEGER,
@@ -251,6 +258,15 @@ const MIGRATIONS = [
 	{version: 8, sql: `
 		ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS note TEXT;
 		ALTER TABLE project_folders ADD COLUMN IF NOT EXISTS note TEXT;
+	`},
+	// 機能のOn/Off等、管理画面から変えられる設定
+	{version: 9, sql: `
+		CREATE TABLE IF NOT EXISTS app_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_by TEXT,
+			updated_at TEXT NOT NULL
+		);
 	`}
 ];
 

@@ -288,7 +288,7 @@ const main = async () => {
 	const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dm-screenshots-"));
 	const server = spawn(process.execPath, [path.join(REPO, "app", "server.js")], {
 		cwd: path.join(REPO, "app"),
-		env: {...process.env, AUTH_DISABLED: "true", DATA_DIR: dataDir, LISTEN_PORT: String(PORT), LOG_LEVEL: "warn", SESSION_SECRET: "screenshots"},
+		env: {...process.env, AUTH_DISABLED: "true", DATA_DIR: dataDir, LISTEN_PORT: String(PORT), LOG_LEVEL: "warn", SESSION_SECRET: "screenshots", MOCKUPS_ENABLED: "true"},
 		stdio: "inherit"
 	});
 	const browser = await chromium.launch();

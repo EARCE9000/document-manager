@@ -348,6 +348,8 @@ def main():
         "DATA_DIR": data_dir,
         "LISTEN_PORT": str(PORT),
         "SESSION_SECRET": "skill-smoke",
+        # モックアップは既定Off。クライアントのコマンドを試すため開けておく
+        "MOCKUPS_ENABLED": "true",
         "LOG_LEVEL": "warn"
     }
     server = subprocess.Popen(["node", os.path.join(REPO, "test", "api", "serve.js")], cwd=REPO, env=server_env)

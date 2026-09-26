@@ -23,6 +23,9 @@ const serverEnv = {
 	DATA_DIR: TEST_DATA_DIR,
 	LISTEN_PORT: String(PORT),
 	SESSION_SECRET: "test-secret",
+	// モックアップは既定Off。テストでは有効な状態を検証したいので開けておく
+	// (Offのときの振る舞いは test/api/features.spec.js で別途確認する)
+	MOCKUPS_ENABLED: "true",
 	LOG_LEVEL: process.env.LOG_LEVEL || "warn",
 	// 本文の保存上限。テストでは小さくして、超過時の挙動(切り詰め・検索対象外)を検証する
 	CONTENT_TEXT_MAX_CHARS: process.env.CONTENT_TEXT_MAX_CHARS || "5000",

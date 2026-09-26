@@ -37,6 +37,8 @@ const assertId = (id) => {
 };
 
 /** この構成で使えるか(ローカル保存のみ対応) */
+// ここは「置き場所が使えるか」だけを見る(モックアップはローカルディスクにしか置けない)。
+// 機能そのもののOn/Off(既定Off・管理画面からの切り替え)は server.js 側で判断する
 module.exports.isEnabled = () => Storage.STORAGE_BACKEND === "local";
 module.exports.MOCKUPS_DIR = MOCKUPS_DIR;
 module.exports.ZIP_FILE = ZIP_FILE;

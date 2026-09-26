@@ -636,7 +636,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 		setHTTPHeaders(res);
 
 		if (AUTH_DISABLED) {
-			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: MockupStorage.isEnabled()});
+			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled()});
 			return;
 		}
 
@@ -648,8 +648,8 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 					isAdmin: role === AllowedUsers.ROLES.ADMIN,
 					role,
 					vectorSearchEnabled: VectorSearch.isEnabled(),
-					// 画面側はこれを見てモックアップの入口を出すか決める(ローカル保存のみ対応)
-					mockupsEnabled: MockupStorage.isEnabled()
+					// 画面側はこれを見てモックアップの入口を出すか決める
+					mockupsEnabled: await mockupsEnabled()
 				});
 				return;
 			}
@@ -797,6 +797,7 @@ const Mockups = require("./lib/mockups.js");
 const MockupStorage = require("./lib/mockup-storage.js");
 const MockupZip = require("./lib/mockup-zip.js");
 const MockupToken = require("./lib/mockup-token.js");
+const AppSettings = require("./lib/app-settings.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -2718,12 +2719,13 @@ const resolveSpecBaseUrl = (req) => {
 	return base.replace(/\/$/, "");
 };
 
-app.get(BASE_URL_PATH + 'api/openapi.json', requireAuth, (req, res) => {
+app.get(BASE_URL_PATH + 'api/openapi.json', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		res.status(200).json(ApiSpec.buildOpenApi({
 			baseUrl: resolveSpecBaseUrl(req),
 			vectorSearchEnabled: VectorSearch.isEnabled(),
+			mockupsEnabled: await mockupsEnabled(),
 			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0",
 			clientVersion: bundledSkillClientVersion()
 		}));
@@ -2733,13 +2735,14 @@ app.get(BASE_URL_PATH + 'api/openapi.json', requireAuth, (req, res) => {
 	}
 });
 
-app.get(BASE_URL_PATH + 'api/usage.md', requireAuth, (req, res) => {
+app.get(BASE_URL_PATH + 'api/usage.md', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		res.setHeader("Content-Type", "text/markdown; charset=utf-8");
 		res.status(200).send(ApiSpec.buildUsageMarkdown({
 			baseUrl: resolveSpecBaseUrl(req),
 			vectorSearchEnabled: VectorSearch.isEnabled(),
+			mockupsEnabled: await mockupsEnabled(),
 			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0",
 			clientVersion: bundledSkillClientVersion()
 		}));
@@ -3522,14 +3525,91 @@ const getVisibleMockup = async (req) => {
 	return mockup;
 };
 
-const mockupsEnabled = () => MockupStorage.isEnabled();
-const requireMockups = (req, res, next) => {
-	if (!mockupsEnabled()) {
-		res.status(503).json({error: "モックアップ機能はローカル保存の構成でのみ使えます(STORAGE_BACKEND=local)"});
-		return;
-	}
-	next();
+/**
+ * モックアップ機能が使えるか。
+ *
+ * **既定はOff**。文書管理とは目的の違う機能で、信用できないHTML/JSを配信し、原本と展開後の
+ * 両方でディスクを使うため、要る人だけが開ける形にしている。開け方は2つ:
+ *   - 環境変数 MOCKUPS_ENABLED=true … その環境の既定値
+ *   - 管理画面の「サーバー」タブ … DBに保存され、環境変数より優先される(再起動不要・全インスタンスに効く)
+ *
+ * どちらで開けても、置き場所が無い構成(STORAGE_BACKEND != local)では使えない。
+ */
+const MOCKUPS_ENABLED_DEFAULT = /^(1|true)$/i.test(process.env.MOCKUPS_ENABLED || "");
+
+const mockupsSetting = async () => {
+    const setting = await AppSettings.getBoolean(AppSettings.KEYS.MOCKUPS_ENABLED, MOCKUPS_ENABLED_DEFAULT);
+    return {...setting, storageSupported: MockupStorage.isEnabled(), enabled: setting.enabled && MockupStorage.isEnabled()};
 };
+
+const mockupsEnabled = async () => (await mockupsSetting()).enabled;
+
+const requireMockups = async (req, res, next) => {
+	try {
+		const setting = await mockupsSetting();
+		if (setting.enabled) {
+			next();
+			return;
+		}
+		setHTTPHeaders(res);
+		res.status(503).json({
+			error: setting.storageSupported
+				? "モックアップ機能は無効です(管理画面の「サーバー」タブ、または MOCKUPS_ENABLED=true で有効にできます)"
+				: "モックアップ機能はローカル保存の構成でのみ使えます(STORAGE_BACKEND=local)"
+		});
+	} catch (err) {
+		logger.error(err, "::requireMockups");
+		res.status(500).json({error: "Internal Error"});
+	}
+};
+
+/**
+ * 機能のOn/Off(admin限定)。
+ *
+ * 既定はOffで、管理画面の「機能」タブから切り替える。DBに保存するため再起動は要らず、
+ * 複数インスタンス構成でも全台に効く。環境変数はこの設定が無いときの既定値として残る。
+ */
+app.get(BASE_URL_PATH + 'api/features', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const mockups = await mockupsSetting();
+		res.status(200).json({
+			mockups: {
+				enabled: mockups.enabled,
+				// 何を根拠に今の状態になっているのかが分かるようにする
+				source: mockups.fromSetting ? "setting" : "env",
+				envDefault: mockups.envDefault,
+				storageSupported: mockups.storageSupported,
+				updatedBy: mockups.updatedBy,
+				updatedAt: mockups.updatedAt
+			}
+		});
+	} catch (err) {
+		logger.error(err, "::api/features");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+app.put(BASE_URL_PATH + 'api/features/mockups', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (typeof req.body?.enabled !== "boolean") {
+			res.status(400).json({error: "enabled は true か false で指定してください"});
+			return;
+		}
+		if (req.body.enabled && !MockupStorage.isEnabled()) {
+			// 開けても使えないので、設定を書く前に断る
+			res.status(409).json({error: "モックアップ機能はローカル保存の構成でのみ使えます(STORAGE_BACKEND=local)"});
+			return;
+		}
+		await AppSettings.setBoolean(AppSettings.KEYS.MOCKUPS_ENABLED, req.body.enabled, req.authData.user_identifier);
+		const mockups = await mockupsSetting();
+		res.status(200).json({enabled: mockups.enabled, updatedBy: mockups.updatedBy, updatedAt: mockups.updatedAt});
+	} catch (err) {
+		logger.error(err, "::api/features/mockups");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
 
 /**
  * 現役のモックアップの一覧。`q`で名前・メモ・本文を部分一致検索する。

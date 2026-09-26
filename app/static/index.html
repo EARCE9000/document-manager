@@ -316,6 +316,16 @@
 	.adminProblemList { margin: 10px 0 0; padding-left: 1.2em; color: #c0392b; font-size: 0.85em; }
 	.adminCurrentFile { font-weight: 600; }
 	#adminPane table { max-width: 1100px; }
+	/* 機能のOn/Off。今は1つだが、増えても同じ見た目で並ぶようにしている */
+	.featureRow { display: flex; align-items: flex-start; gap: 14px; border: 1px solid #e2e2e2; border-radius: 6px; padding: 12px 14px; max-width: 900px; margin-bottom: 8px; }
+	.featureRow .featureBody { flex: 1; min-width: 0; }
+	.featureRow .featureName { font-weight: 600; font-size: 0.95em; }
+	.featureRow .featureDesc { color: #666; font-size: 0.85em; line-height: 1.6; margin-top: 4px; }
+	.featureRow .featureMeta { color: #888; font-size: 0.8em; margin-top: 6px; }
+	.featureRow .modalButton { flex-shrink: 0; white-space: nowrap; }
+	.featureState { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; margin-left: 8px; }
+	.featureState.on { background: #e6f4ea; color: #1e7e34; }
+	.featureState.off { background: #eee; color: #666; }
 
 	/* モックアップ。プレビュー画像を見せたいので表ではなくカード並べにする。
 	   ペインの出し方は上の #vectorIndexPane / #adminPane と同じ */
@@ -1302,7 +1312,9 @@
 	#claudeSkillBox .skillAgentTab:hover { color: #1a56db; }
 	#claudeSkillBox .skillAgentTab.selected { background: #fff; border-color: #d0d7de; color: #1a56db; font-weight: 600; }
 	.apiKeyNewBoxButtons .modalButton { font-size: 0.95em; padding: 6px 14px; }
-	#apiKeyList { list-style: none; margin: 10px 0; padding: 0; max-height: 320px; overflow-y: auto; }
+	/* キーが増えるとモーダルの縦があふれるため、3件分で頭打ちにして中をスクロールさせる
+	   (1行 = 高さ46px + 下の余白6px。行を1行表示にしたので3件でも十分に見分けられる) */
+	#apiKeyList { list-style: none; margin: 10px 0; padding: 0; max-height: 156px; overflow-y: auto; }
 	#apiKeyList li {
 		border: 1px solid #e2e2e2;
 		border-radius: 6px;
@@ -1667,6 +1679,12 @@
 						<button type="button" id="serverStatusRefreshButton" class="modalButton">再読み込み</button>
 					</div>
 					<dl class="adminDefList" id="serverStatusList"></dl>
+					<h3>機能のOn/Off</h3>
+					<div class="adminSectionNote">
+						使う構成でだけ開ける機能です。切り替えは<strong>すぐ反映され、再起動は要りません</strong>(複数台で動かしている場合も全台に効きます)。
+					</div>
+					<div id="featureList"></div>
+
 					<h3>データベースのファイル</h3>
 					<div class="adminSectionNote">スキーマを更新すると新しいファイルを作り、古いファイルは消さずに残します(1つ前へ戻せるようにするため)。</div>
 					<div id="serverDbFilesWrap"></div>
@@ -4560,9 +4578,64 @@ apiKeyCreateButton.addEventListener("click", async () => {
 // loadは「そのタブを開いたとき」に呼ばれる。開いていないタブのために重い処理を走らせない
 const adminTabs = document.getElementById("adminTabs");
 const adminPaneBody = document.getElementById("adminPaneBody");
+// 機能のOn/Off(admin限定)。既定はOffで、ここで開ける。DBに保存するので再起動は要らない
+const featureList = document.getElementById("featureList");
+
+const renderFeatures = (features) => {
+	const mockups = features.mockups;
+	// なぜ今その状態なのかが分かるようにする(環境変数の既定のままか、誰かが切り替えたのか)
+	const meta = mockups.source === "setting"
+		? `この画面で変更されました(${escapeHtml(mockups.updatedBy || "不明")} / ${formatDateTime(mockups.updatedAt)})`
+		: `環境変数 MOCKUPS_ENABLED の既定(${mockups.envDefault ? "有効" : "無効"})のままです`;
+	const blocked = !mockups.storageSupported;
+	featureList.innerHTML = `<div class="featureRow">
+		<div class="featureBody">
+			<div class="featureName">モックアップ管理<span class="featureState ${mockups.enabled ? "on" : "off"}">${mockups.enabled ? "有効" : "無効"}</span></div>
+			<div class="featureDesc">
+				ビルド済みのWebページ一式(ZIP)を登録し、別ウィンドウで動かして確認する機能です。文書とは別のコレクションとして扱います。<br>
+				無効にすると、メニュー・APIとも使えなくなります(<strong>登録済みのモックアップは消えません</strong>。有効に戻せばそのまま見られます)。
+				${blocked ? "<br><strong>この構成では使えません</strong>(ローカル保存のときだけ使えます)。" : ""}
+			</div>
+			<div class="featureMeta">${meta}</div>
+		</div>
+		<button type="button" class="modalButton ${mockups.enabled ? "" : "save"}" id="featureMockupsToggle" ${blocked ? "disabled" : ""}>
+			${mockups.enabled ? "無効にする" : "有効にする"}
+		</button>
+	</div>`;
+
+	const toggle = document.getElementById("featureMockupsToggle");
+	if (toggle == null || blocked) return;
+	toggle.addEventListener("click", async () => {
+		const next = !mockups.enabled;
+		if (!next && !await showConfirmDialog("モックアップ機能を無効にしますか?(登録済みのものは消えません。メニューとAPIから使えなくなります)")) return;
+		const res = await fetch("./api/features/mockups", {
+			method: "PUT",
+			headers: {"Content-Type": "application/json"},
+			body: JSON.stringify({enabled: next})
+		});
+		if (res.status !== 200) {
+			alert((await res.json().catch(() => ({}))).error || "切り替えられませんでした");
+			return;
+		}
+		await loadFeatures();
+		// メニューの出し分けは check_access_token の値で決めているので、そちらも取り直す
+		const auth = await (await fetch("./api/check_access_token")).json().catch(() => null);
+		if (auth != null) appShell.classList.toggle("mockupsEnabled", !!auth.mockupsEnabled);
+	});
+};
+
+const loadFeatures = async () => {
+	const res = await fetch("./api/features");
+	if (res.status !== 200) {
+		featureList.innerHTML = `<div class="emptyMessage">機能の状態を取得できませんでした。</div>`;
+		return;
+	}
+	renderFeatures(await res.json());
+};
+
 const ADMIN_TABS = [
 	{key: "allowedUsers", label: "アクセス許可ユーザー", load: () => loadAllowedUsers()},
-	{key: "server", label: "サーバー", load: () => loadServerStatus()},
+	{key: "server", label: "サーバー", load: () => Promise.all([loadServerStatus(), loadFeatures()])},
 	{key: "database", label: "データベース", load: () => loadDatabaseTab()},
 	{key: "convert", label: "変換サービス", load: () => loadConvertTab()}
 ];
