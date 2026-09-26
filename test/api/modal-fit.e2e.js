@@ -72,6 +72,27 @@ test.describe("モーダルが画面に収まる(実ブラウザ)", () => {
 		await expectFits(page, "#apiKeyModalBox");
 	});
 
+	// 横を広く取ったのは、キーの一覧・手順・コマンドを折り返させないため。
+	// 折り返すと1件が何行にもなり、キーが増えたときに一覧として読めなくなる
+	test("発行済みキーは1件が1行に収まる", async ({page}) => {
+		await page.setViewportSize({width: 1920, height: 1080});
+		await page.goto("./");
+		await page.click("#apiKeyManageLink");
+
+		await page.fill("#apiKeyLabelInput", `1行表示の確認 ${Date.now()}`);
+		await page.click("#apiKeyCreateButton");
+		await page.locator("#apiKeyList li").first().waitFor();
+
+		// 行の中の要素(発行日時・用途・最終使用・有効期限)が同じ高さに並んでいること。
+		// 高さの絶対値で見ると余白やフォントの変更で壊れるため、縦位置の揃いで見る
+		const centers = await page.locator("#apiKeyList li").first().locator(".apiKeyInfo > *").evaluateAll(
+			(els) => els.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; })
+		);
+		expect(centers.length, "行の中身が取れていない").toBeGreaterThan(2);
+		const spread = Math.max(...centers) - Math.min(...centers);
+		expect(spread, `1行に並んでいない(縦のばらつき ${Math.round(spread)}px)`).toBeLessThan(6);
+	});
+
 	// 他のモーダルも同じ仕組み(.modalBox)で出しているため、まとめて確かめる
 	test("他のモーダルも収まる", async ({page}) => {
 		await page.setViewportSize(NARROW);

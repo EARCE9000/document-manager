@@ -850,7 +850,13 @@
 	}
 	.tagSuggestionChip:hover { background: #eaf2ff; }
 
-	#apiKeyModalBox { max-width: 620px; width: 92%; }
+	/* このモーダルは他と違い「キーの一覧」「手順」「コマンド」が並ぶ。横を取ると手順が
+	   折り返さなくなり、結果として縦も短くなる(実測で高さ1080px超→684px) */
+	#apiKeyModalBox { max-width: 1600px; width: 92%; }
+	/* ただし説明の地の文まで横いっぱいに伸ばすと1行が100文字を超えて読みにくい。
+	   一覧・手順・コマンドは幅の恩恵を受けるので、地の文だけ行の長さを抑える */
+	#apiKeyModalBox > .docMeta,
+	#apiKeyModalBox .skillIntro { max-width: 80em; }
 	#apiKeyModalBox code { background: #f1f3f5; padding: 1px 4px; border-radius: 3px; }
 	.apiKeyCreateRow { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
 	.apiKeyCreateRow input,
@@ -1270,7 +1276,7 @@
 	#claudeSkillBox .skillAgentTab:hover { color: #1a56db; }
 	#claudeSkillBox .skillAgentTab.selected { background: #fff; border-color: #d0d7de; color: #1a56db; font-weight: 600; }
 	.apiKeyNewBoxButtons .modalButton { font-size: 0.95em; padding: 6px 14px; }
-	#apiKeyList { list-style: none; margin: 10px 0; padding: 0; max-height: 240px; overflow-y: auto; }
+	#apiKeyList { list-style: none; margin: 10px 0; padding: 0; max-height: 320px; overflow-y: auto; }
 	#apiKeyList li {
 		border: 1px solid #e2e2e2;
 		border-radius: 6px;
@@ -1281,9 +1287,13 @@
 		align-items: center;
 		gap: 0.5em;
 	}
-	#apiKeyList .apiKeyInfo { font-size: 0.8em; }
-	#apiKeyList .apiKeyLabel { font-weight: 600; display: flex; align-items: center; gap: 6px; }
-	#apiKeyList .apiKeyMeta { color: #777; font-size: 0.85em; }
+	/* 発行日時・ロール・用途・最終使用・有効期限を1行に並べる。横幅が足りないときだけ
+	   折り返す(wrap)ので、狭い画面では従来どおり複数行になって崩れない */
+	#apiKeyList .apiKeyInfo { font-size: 0.8em; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 16px; min-width: 0; }
+	#apiKeyList .apiKeyLabel { font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+	#apiKeyList .apiKeyMeta { color: #777; font-size: 0.85em; white-space: nowrap; }
+	/* 用途メモだけは長くなりうるので、1行に収まる範囲で切る(全文はtitleで読める) */
+	#apiKeyList .apiKeyNote { max-width: 32em; overflow: hidden; text-overflow: ellipsis; }
 	#apiKeyList .apiKeyRoleBadge {
 		display: inline-block;
 		font-size: 0.75em;
@@ -1294,7 +1304,7 @@
 		color: #1a56db;
 	}
 	#apiKeyList .apiKeyRoleBadge.readwrite { background: #fff3cd; color: #b8860b; }
-	#apiKeyList .apiKeyExpiry { margin-top: 2px; }
+	#apiKeyList .apiKeyExpiry { white-space: nowrap; }
 	#apiKeyList .apiKeyExpiry.warnSoon { color: #d9480f; font-weight: 600; }
 	#apiKeyList li.apiKeyExpired { background: #f4f5f7; border-color: #e2e2e2; opacity: 0.75; }
 	#apiKeyList li.apiKeyExpired .apiKeyLabel { color: #888; }
@@ -1745,7 +1755,7 @@
 		<ul id="apiKeyList"></ul>
 		<details id="claudeSkillBox">
 			<summary>AIエージェント用 Skill(Claude Code / Codex / Antigravity からアップロード・検索)</summary>
-			<div style="margin-top:6px;">AIエージェントに「この資料アップして」「前の版を置き換えて」「〜を探して」と話しかけるだけで、このDocument Managerを操作できるようにするSkillです(Python/Node.jsのAPIクライアント同梱)。Skillの形式は共通のため、どのエージェントでも同じZIPを使えます(置き場所だけが違います)。</div>
+			<div class="skillIntro" style="margin-top:6px;">AIエージェントに「この資料アップして」「前の版を置き換えて」「〜を探して」と話しかけるだけで、このDocument Managerを操作できるようにするSkillです(Python/Node.jsのAPIクライアント同梱)。Skillの形式は共通のため、どのエージェントでも同じZIPを使えます(置き場所だけが違います)。</div>
 			<div class="skillAgentTabs" role="tablist">
 				<button type="button" class="skillAgentTab" data-agent="claude" role="tab">Claude Code</button>
 				<button type="button" class="skillAgentTab" data-agent="codex" role="tab">Codex</button>
@@ -4256,15 +4266,18 @@ const loadApiKeys = async () => {
 			const warnSoon = !isExpired && (expiresAtMs - now) < 60 * 60 * 1000;
 			const expiryHtml = isExpired
 				? `<span class="apiKeyExpiredBadge">失効済み</span>`
-				: `<div class="apiKeyExpiry ${warnSoon ? "warnSoon" : ""}">有効期限: ${formatDateTime(row.expiresAt)}(${formatRemainingTime(row.expiresAt)})</div>`;
-			// 発行日時を主見出しにし、用途(label)は入力されていれば備考として下に添える
-			const noteHtml = row.label ? `<div class="apiKeyMeta">${escapeHtml(row.label)}</div>` : "";
+				: `<span class="apiKeyExpiry ${warnSoon ? "warnSoon" : ""}">有効期限: ${formatDateTime(row.expiresAt)}(${formatRemainingTime(row.expiresAt)})</span>`;
+			// 発行日時を主見出しにし、用途(label)は入力されていれば横に添える
+			const noteHtml = row.label
+				? `<span class="apiKeyMeta apiKeyNote" title="${escapeHtml(row.label)}">${escapeHtml(row.label)}</span>`
+				: "";
+			// 1件を1行に並べる(横幅が足りなければ折り返す)
 			return `
 				<li class="${isExpired ? "apiKeyExpired" : ""}">
 					<div class="apiKeyInfo">
-						<div class="apiKeyLabel">発行: ${formatDateTime(row.createdAt)} <span class="apiKeyRoleBadge ${row.role}">${row.role}</span></div>
+						<span class="apiKeyLabel">発行: ${formatDateTime(row.createdAt)} <span class="apiKeyRoleBadge ${row.role}">${row.role}</span></span>
 						${noteHtml}
-						<div class="apiKeyMeta">${row.lastUsedAt ? `最終使用: ${formatDateTime(row.lastUsedAt)}` : "未使用"}</div>
+						<span class="apiKeyMeta">${row.lastUsedAt ? `最終使用: ${formatDateTime(row.lastUsedAt)}` : "未使用"}</span>
 						${expiryHtml}
 					</div>
 					<button type="button" class="iconButton apiKeyRevokeButton" data-id="${row.id}" data-label="${escapeHtml(row.label || formatDateTime(row.createdAt))}" title="失効" aria-label="失効">

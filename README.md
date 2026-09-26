@@ -29,7 +29,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 
 | APIキー管理・AIエージェント用 Skill |
 |---|
-| <img src="docs/screenshots/api-keys-skill.png" alt="APIキー管理とAIエージェント用Skill" width="420"> |
+| <img src="docs/screenshots/api-keys-skill.png" alt="APIキー管理とAIエージェント用Skill" width="720"> |
 
 画像はダミーのサンプルデータで撮影したもの。画面が変わったら `npm run screenshots`([docs/screenshots/capture.js](docs/screenshots/capture.js))で撮り直せる。
 
