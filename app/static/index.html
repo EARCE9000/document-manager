@@ -270,6 +270,12 @@
 	#projectTreePane { display: none; width: 300px; min-width: 300px; background: #fff; border-right: 1px solid #ddd; flex-direction: column; }
 	#appShell.projectsMode #projectTreePane { display: flex; }
 	#appShell.projectsMode:not(.projectsEditMode) #sideBar { display: none; }
+	/* 編集中は「ファイルを探す → 置き場所を決める → 中身を見る」の順に並べる。
+	   文書一覧から切り替えても検索欄の位置が動かず、ツリーへ入れる向き(左→右)とも揃う
+	   (DOMの順ではなく order で入れ替えているのは、他の画面の並びに影響させないため) */
+	#appShell.projectsMode #sideBar { order: 1; }
+	#appShell.projectsMode #projectTreePane { order: 2; }
+	#appShell.projectsMode #previewArea { order: 3; }
 
 	/* ベクトル索引: 件数が多くなる想定のため、モーダルではなく文書一覧/プレビューを両方隠して
 	   ページ全体(#vectorIndexPane)に表として表示する */
