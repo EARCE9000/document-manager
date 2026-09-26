@@ -3395,6 +3395,31 @@ const MOCKUP_CONTENT_TYPES = {
 // 取得先(CDN)は制限しない。LLMが作るモックアップはほぼ必ず外部CDNを参照するため
 const MOCKUP_VIEW_CSP = "sandbox allow-scripts";
 
+/**
+ * アーカイブ済みのモックアップを見てよい相手か。
+ *
+ * 一覧(api/mockups/archived)を readwrite 以上に限っただけでは線を引いたことにならない。
+ * 版履歴(api/mockups/:id/versions)は readonly に開けてあり、そこには旧版のIDが載るため、
+ * IDを手がかりに原本ZIPや本体へ手が届いてしまう。中身に触れる経路はすべてここで断る。
+ */
+const canSeeArchivedMockup = (req) => AUTH_DISABLED
+	|| req.authData?.role === AllowedUsers.ROLES.ADMIN
+	|| req.authData?.role === AllowedUsers.ROLES.READWRITE;
+
+/**
+ * モックアップを取り出す。readonly にとってアーカイブ済みは「無い」ものとして扱う
+ * (403だと存在を教えることになるため、呼び出し側は404を返す)。
+ */
+const getVisibleMockup = async (req) => {
+	const mockup = await Mockups.getMockup(req.params.id);
+	if (mockup == null) return null;
+	if (mockup.archived && !canSeeArchivedMockup(req)) {
+		logger.info({mockupId: mockup.id}, "::mockups: アーカイブ済みへの権限のない要求を断りました");
+		return null;
+	}
+	return mockup;
+};
+
 const mockupsEnabled = () => MockupStorage.isEnabled();
 const requireMockups = (req, res, next) => {
 	if (!mockupsEnabled()) {
@@ -3573,7 +3598,7 @@ const extractMockupText = (id, files) => {
 app.get(BASE_URL_PATH + 'api/mockups/:id', requireAuth, requireMockups, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const mockup = await Mockups.getMockup(req.params.id);
+		const mockup = await getVisibleMockup(req);
 		if (mockup == null) {
 			res.status(404).json({error: "not found"});
 			return;
@@ -3603,7 +3628,7 @@ app.get(BASE_URL_PATH + 'api/mockups/:id/versions', requireAuth, requireMockups,
 /** 一覧に出すプレビュー画像 */
 app.get(BASE_URL_PATH + 'api/mockups/:id/preview', requireAuth, requireMockups, async (req, res) => {
 	try {
-		const mockup = await Mockups.getMockup(req.params.id);
+		const mockup = await getVisibleMockup(req);
 		if (mockup == null || mockup.previewFile == null) {
 			setHTTPHeaders(res);
 			res.status(404).json({error: "プレビュー画像はありません"});
@@ -3629,7 +3654,7 @@ app.get(BASE_URL_PATH + 'api/mockups/:id/preview', requireAuth, requireMockups, 
 /** 原本のZIPをダウンロードする */
 app.get(BASE_URL_PATH + 'api/mockups/:id/download', requireAuth, requireMockups, async (req, res) => {
 	try {
-		const mockup = await Mockups.getMockup(req.params.id);
+		const mockup = await getVisibleMockup(req);
 		if (mockup == null) {
 			setHTTPHeaders(res);
 			res.status(404).json({error: "not found"});
@@ -3669,7 +3694,7 @@ app.get(BASE_URL_PATH + 'api/mockups/:id/download', requireAuth, requireMockups,
  */
 app.get(BASE_URL_PATH + 'api/mockups/:id/view', requireAuth, requireMockups, async (req, res) => {
 	try {
-		const mockup = await Mockups.getMockup(req.params.id);
+		const mockup = await getVisibleMockup(req);
 		if (mockup == null || mockup.entryFile == null) {
 			setHTTPHeaders(res);
 			res.status(404).json({error: "表示できる入口(index.html)がありません"});
