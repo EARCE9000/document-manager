@@ -48,6 +48,59 @@ const upload = async (name, content, {previousId, preview} = {}) => {
 
 const setTags = (id, tags) => api("PUT", `api/documents/${encodeURIComponent(id)}/tags`, {tags});
 
+// モックアップは「ビルド済みのページ一式のZIP」を受け取る。撮影用にその場で組み立てる
+// (依存を増やさないよう、zlibだけでZIPの最小構成を作る)
+const zlib = require("node:zlib");
+const buildZip = (entries) => {
+	const locals = [];
+	const centrals = [];
+	let offset = 0;
+	for (const {name, data} of entries) {
+		const nameBuf = Buffer.from(name, "utf-8");
+		const body = Buffer.from(data, "utf-8");
+		const payload = zlib.deflateRawSync(body, {level: 9});
+		const local = Buffer.alloc(30);
+		local.writeUInt32LE(0x04034b50, 0);
+		local.writeUInt16LE(20, 4);
+		local.writeUInt16LE(8, 8);
+		local.writeUInt32LE(payload.length, 18);
+		local.writeUInt32LE(body.length, 22);
+		local.writeUInt16LE(nameBuf.length, 26);
+		locals.push(local, nameBuf, payload);
+		const central = Buffer.alloc(46);
+		central.writeUInt32LE(0x02014b50, 0);
+		central.writeUInt16LE(20, 4);
+		central.writeUInt16LE(20, 6);
+		central.writeUInt16LE(8, 10);
+		central.writeUInt32LE(payload.length, 20);
+		central.writeUInt32LE(body.length, 24);
+		central.writeUInt16LE(nameBuf.length, 28);
+		central.writeUInt32LE(offset, 42);
+		centrals.push(central, nameBuf);
+		offset += local.length + nameBuf.length + payload.length;
+	}
+	const localPart = Buffer.concat(locals);
+	const centralPart = Buffer.concat(centrals);
+	const end = Buffer.alloc(22);
+	end.writeUInt32LE(0x06054b50, 0);
+	end.writeUInt16LE(entries.length, 8);
+	end.writeUInt16LE(entries.length, 10);
+	end.writeUInt32LE(centralPart.length, 12);
+	end.writeUInt32LE(localPart.length, 16);
+	return Buffer.concat([localPart, centralPart, end]);
+};
+
+const uploadMockup = async (name, zip, previewSvg) => {
+	const form = new FormData();
+	form.append("mockupfile", new Blob([zip], {type: "application/zip"}), "site.zip");
+	form.append("name", name);
+	if (previewSvg) form.append("previewfile", new Blob([previewSvg], {type: "image/svg+xml"}), "preview.svg");
+	const res = await fetch(new URL("api/mockups", BASE_URL), {method: "POST", body: form});
+	const text = await res.text();
+	if (!res.ok) throw new Error(`api/mockups ${res.status}: ${text}`);
+	return JSON.parse(text);
+};
+
 const SPEC_V1 = `# 文書管理システム 仕様書
 
 ## 概要
@@ -121,6 +174,57 @@ const DRAWIO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="
 <g stroke="#555" stroke-width="2"><line x1="170" y1="125" x2="245" y2="125"/><line x1="415" y1="115" x2="480" y2="75"/><line x1="415" y1="135" x2="480" y2="180"/></g>
 </svg>`;
 
+const MOCKUP_SITE = [
+	{name: "index.html", data: `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">`
+		+ `<title>受注管理 モックアップ</title><link rel="stylesheet" href="./assets/style.css"></head>`
+		+ `<body><header><h1>受注管理</h1><nav><a href="./index.html">一覧</a>`
+		+ `<a href="./pages/detail.html">明細</a></nav></header>`
+		+ `<main><div id="app">読み込み中...</div></main><script src="./app.js"></scr` + `ipt></body></html>`},
+	{name: "app.js", data: `const rows = [\n`
+		+ `\t{id: "SO-1024", customer: "サンプル商事", amount: 482000, status: "手配中"},\n`
+		+ `\t{id: "SO-1025", customer: "テスト工業", amount: 128400, status: "出荷済"},\n`
+		+ `\t{id: "SO-1026", customer: "デモ物産", amount: 996000, status: "見積"}\n`
+		+ `];\n`
+		+ `document.getElementById("app").innerHTML =\n`
+		+ `\t'<table><thead><tr><th>受注番号</th><th>取引先</th><th>金額</th><th>状態</th></tr></thead><tbody>'\n`
+		+ `\t+ rows.map((r) => \`<tr><td>\${r.id}</td><td>\${r.customer}</td>`
+		+ `<td class="num">\${r.amount.toLocaleString()}</td><td><span class="badge">\${r.status}</span></td></tr>\`).join("")\n`
+		+ `\t+ '</tbody></table>';\n`},
+	{name: "assets/style.css", data: `body { font-family: sans-serif; margin: 0; color: #333; }\n`
+		+ `header { background: #2b2b2b; color: #fff; padding: 14px 24px; display: flex; gap: 24px; align-items: center; }\n`
+		+ `header h1 { font-size: 1.1em; margin: 0; }\n`
+		+ `header a { color: #ddd; margin-right: 16px; text-decoration: none; }\n`
+		+ `main { padding: 24px; }\n`
+		+ `table { border-collapse: collapse; width: 100%; max-width: 760px; }\n`
+		+ `th, td { border-bottom: 1px solid #e3e3e3; padding: 10px 12px; text-align: left; font-size: 0.9em; }\n`
+		+ `th { background: #f6f7f9; }\n`
+		+ `td.num { text-align: right; }\n`
+		+ `.badge { background: #eef3fb; color: #1a56db; border-radius: 10px; padding: 2px 10px; font-size: 0.85em; }\n`},
+	{name: "pages/detail.html", data: `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">`
+		+ `<title>明細</title><link rel="stylesheet" href="../assets/style.css"></head>`
+		+ `<body><header><h1>受注明細</h1><nav><a href="../index.html">一覧へ戻る</a></nav></header>`
+		+ `<main><p>SO-1024 の明細です。</p></main></body></html>`},
+	{name: "sample.csv", data: "受注番号,取引先,金額\nSO-1024,サンプル商事,482000\n"}
+];
+
+const MOCKUP_PREVIEW = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400" font-family="sans-serif">
+<rect width="640" height="400" fill="#ffffff"/>
+<rect width="640" height="52" fill="#2b2b2b"/>
+<text x="24" y="33" fill="#ffffff" font-size="17" font-weight="700">受注管理</text>
+<text x="140" y="33" fill="#cccccc" font-size="13">一覧    明細</text>
+<rect x="24" y="84" width="592" height="34" fill="#f6f7f9"/>
+<text x="38" y="106" fill="#555" font-size="13">受注番号        取引先                金額          状態</text>
+<g font-size="13" fill="#333">
+<text x="38" y="150">SO-1024      サンプル商事      482,000</text>
+<text x="38" y="192">SO-1025      テスト工業        128,400</text>
+<text x="38" y="234">SO-1026      デモ物産          996,000</text>
+</g>
+<g><rect x="470" y="136" rx="10" width="72" height="20" fill="#eef3fb"/><text x="484" y="151" fill="#1a56db" font-size="12">手配中</text>
+<rect x="470" y="178" rx="10" width="72" height="20" fill="#eef3fb"/><text x="484" y="193" fill="#1a56db" font-size="12">出荷済</text>
+<rect x="470" y="220" rx="10" width="72" height="20" fill="#eef3fb"/><text x="490" y="235" fill="#1a56db" font-size="12">見積</text></g>
+<line x1="24" y1="160" x2="616" y2="160" stroke="#e3e3e3"/><line x1="24" y1="202" x2="616" y2="202" stroke="#e3e3e3"/>
+<line x1="24" y1="244" x2="616" y2="244" stroke="#e3e3e3"/></svg>`;
+
 const seed = async () => {
 	const customers = await upload("顧客リスト.csv", CUSTOMERS);
 	await setTags(customers.id, ["顧客管理"]);
@@ -149,6 +253,20 @@ const seed = async () => {
 	// 関連文書(種類・方向を持たない紐付け): 仕様書と、その内容を決めた議事録・構成図
 	await api("PUT", `api/documents/${specV2.id}/links/${minutes.id}`);
 	await api("PUT", `api/documents/${specV2.id}/links/${drawio.id}`);
+
+	// お品書き(プロジェクトの資料一覧に付ける説明書き)
+	const note = (documentId, text) => api("PUT", `api/projects/${project.id}/documents/${documentId}/note`, {note: text});
+	await api("PUT", `api/projects/${project.id}/folders/${designFolder.id}/note`, {note: "実装に入る前のレビュー対象。ここが確定したら着手します。"});
+	await api("PUT", `api/projects/${project.id}/folders/${salesFolder.id}/note`, {note: "先方へ提出済みのもの。金額の変更はここに追記します。"});
+	await note(specV2.id, "第2版が最新。版管理とAIエージェント連携の章が今回の追加分です。");
+	await note(drawio.id, "構成の全体像。変換サービスと意味検索は任意なので、無い構成もあります。");
+	await note(estimate.id, "初回提示分。値引き後の金額で出しています。");
+	await note(minutes.id, "この会議で仕様書の第2版の方針を決めました。");
+
+	// モックアップ(文書とは別のコレクション。ビルド済みのページ一式)
+	const mockup = await uploadMockup("受注管理画面 モックアップ", buildZip(MOCKUP_SITE), MOCKUP_PREVIEW);
+	await api("PUT", `api/mockups/${mockup.id}/memo`, {memo: "一覧の絞り込みと、状態バッジの色を見てほしい版。明細ページはまだ仮です。"});
+	await uploadMockup("在庫照会画面 モックアップ", buildZip(MOCKUP_SITE));
 
 	await api("PUT", "api/tag_order", {tags: ["仕様書", "設計", "見積書", "議事録", "顧客管理"]});
 	return {specV2, project};
@@ -209,13 +327,27 @@ const main = async () => {
 		await page.frameLocator("#previewFrame").locator("h1").waitFor();
 		await shot("projects");
 
-		// 4. 操作履歴
+		// 4. お品書き(プロジェクト名を押すと、資料一覧と説明書きがプレビュー領域に出る)
+		await page.locator("#projectTreeTitle").click();
+		await page.locator(".manifestItem").first().waitFor();
+		await shot("project-manifest");
+
+		// 5. モックアップ(文書とは別のコレクション)
+		await page.locator("#menuMockupsLink").click();
+		await page.locator(".mockupCard").first().waitFor();
+		// 版履歴は、プレビュー画像のあるカード側で開く(READMEでは見栄えのする方を写す)
+		const mockupCard = page.locator(".mockupCard", {hasText: "受注管理画面"});
+		await mockupCard.locator(".mockupVersionsToggle").click();
+		await mockupCard.locator(".mockupVersionList").waitFor();
+		await shot("mockups");
+
+		// 6. 操作履歴
 		await page.locator("#historyManageLink").click();
 		await page.locator("#historyList tr").first().waitFor();
 		await shot("history");
 		await page.locator("#historyCloseButton").click();
 
-		// 5. APIキー管理と AIエージェント用 Skill
+		// 7. APIキー管理と AIエージェント用 Skill
 		await page.locator("#menuDocumentsLink").click();
 		await page.locator("#apiKeyManageLink").click();
 		await page.selectOption("#apiKeyRoleInput", "readwrite");

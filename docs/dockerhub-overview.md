@@ -13,8 +13,8 @@ Self-hosted document manager with versioning, tagging, full-text/semantic search
 # Document Manager
 
 *Self-hosted document management service for single-file documents (HTML / MHTML / Markdown / PDF / images /
-CSV / TSV / text / log / JSON / draw.io / Excel / Word / PowerPoint). Versioning, tagging, projects,
-full-text and semantic search, and a
+CSV / TSV / text / log / JSON / draw.io / Excel / Word / PowerPoint). Versioning, tagging, projects with
+annotated contents lists, sandboxed hosting of web-page mockups, full-text and semantic search, and a
 token-authenticated REST API designed for AI agents. Documentation below is in Japanese; see the
 [GitHub repository](https://github.com/EARCE9000/document-manager) for details.*
 
@@ -53,10 +53,38 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 
 ![プロジェクト](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/projects.png)
 
+**「お品書き」で案件の資料を人に渡せます。** 資料を集めても、ファイル名だけでは受け取った側が
+全部開くことになります。プロジェクト名をクリックすると、その案件にどんな資料が揃っていて
+**それぞれが何なのか**を1枚にした一覧が出ます。資料ごとの説明はその場で書け、フォルダは章の
+見出しになります。そのままMarkdownでコピーできるので、引き継ぎ・レビュー依頼・打ち合わせの
+資料としてメールや議事録に貼れます。
+
+説明は**プロジェクトごとに持ちます**。同じ設計書でも「A案件では前提資料、B案件では参考」と
+書き分けられます。
+
+![お品書き](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/project-manifest.png)
+
 **削除はありません。** 「アーカイブ」は Gmail と同じ論理削除で、実ファイルは残り、いつでも元に戻せます。
 誰が何をしたかは操作履歴に残り、他の利用者がアップロードやタグ付けをすると、画面の右下に小さな通知が出ます。
 
 ![操作履歴](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/history.png)
+
+**Webページのモックアップを、そのまま動かして確認できます。** LLMなどで作った画面案の一式を
+ZIPでアップロードすると、別ウィンドウで**実際に動く状態**で開けます(JavaScriptも動きます)。
+React のようにJSが画面を組み立てるものでも構いません。文書とは別のコレクションとして管理し、
+版を重ねると古い版は自動でアーカイブされ、版履歴から辿れます。サンプルのExcelやPDFを同梱して
+ダウンロードさせることもできます。
+
+![モックアップ管理](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/mockups.png)
+
+安全のため、モックアップは**このアプリから切り離した状態**で配信します。ブラウザから見ると
+モックアップのページは「どこのサイトでもない」扱いになり、**このアプリの文書やAPI、ログイン情報には
+一切手が届きません**。アップロードされたJavaScriptが、見ている人の権限で勝手に操作することは
+できない、ということです。ZIPの展開時にも、決められた置き場所の外へ書き出そうとするものや、
+極端に膨らむように細工されたものは受け付けません。
+
+なお、この機能はファイルをローカルディスクに保存する構成(既定)でのみ使えます。
+S3 / GCS 構成ではメニューごと表示されません。
 
 **検索**は、ファイル名・タグ・メモ・本文を対象にした部分一致検索が標準です。日本語でも単語の区切りを
 気にせず探せます。加えて、Weaviate を併せて起動すると**意味検索**(言い換えや表記ゆれを含めて近い資料を
@@ -242,6 +270,9 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 | `WEAVIATE_URL` | (未設定) | 設定すると意味検索が有効になる |
 | `UPLOAD_MAX_BYTES` | `268435456` | 1ファイルのアップロード上限(256MB)。超過時は413 |
 | `CONTENT_TEXT_MAX_CHARS` | `300000` | 検索用に保存する本文の上限。超過分は検索対象外(ファイル自体は全て保存される) |
+| `MOCKUP_MAX_TOTAL_BYTES` | `314572800` | モックアップZIPの展開後の合計サイズの上限(300MB) |
+| `MOCKUP_VIEW_TOKEN_MINUTES` | `60` | モックアップを開いていられる時間(分)。切れても開き直せます |
+| `PROJECT_NOTE_MAX_CHARS` | `500` | お品書きの説明書き1件の上限(文字数) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を無効化(開発用。本番では使わない) |
 | `LOG_LEVEL` | `info` | ログレベル |
 | `TZ` | (ホスト依存) | タイムゾーン(例: `Asia/Tokyo`) |
@@ -251,7 +282,7 @@ S3 の認証情報は AWS SDK の標準の取得順(IAMロール優先)、GCS �
 
 ### 7. データの扱いと更新・切り戻し
 
-`/data` をマウントしておけば、文書と SQLite のデータベースはそこに残ります。
+`/data` をマウントしておけば、文書・モックアップと SQLite のデータベースはそこに残ります。
 
 SQLite のスキーマにはバージョンがあり、更新時には**新しいファイルを作ってデータを移し、古いファイルは
 そのまま残します**。古いイメージへ戻せるようにするためです。更新前に `/data/db` のバックアップを取ってください。
