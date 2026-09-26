@@ -65,9 +65,15 @@ try {
 		process.exitCode = 2;
 	} else {
 		// 1. 移行元のバージョンのDBを作り、各表に1行入れる
-		runNode(`
+		//
+		// 表や列は後から増える。移行元が古いと、まだ無い表への種まきは失敗する。
+		// そこで1件ずつ try で包み、**入れられたものだけ**を後段で確認する
+		// (入れられなかったものを「失敗」と数えると、古いコミットからは常に落ちてしまう)
+		const seedOut = runNode(`
 			const db = require("./lib/${path.basename(OLD_DB_JS)}");
 			const now = new Date().toISOString();
+			const seeded = [];
+			const trySeed = (name, fn) => { try { fn(); seeded.push(name); } catch {} };
 			db.prepare("INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, memo) VALUES (?,?,?,?,?,?,?,?)")
 				.run("doc-1", "報告書.xlsx", "preview.html", "本文テキスト", 123, "someone@example.com", now, "メモ本文");
 			db.prepare("INSERT INTO document_tags (document_id, tag) VALUES (?,?)").run("doc-1", "設計");
@@ -78,8 +84,24 @@ try {
 			db.prepare("INSERT INTO projects (id, name, created_by, created_at, sort_order) VALUES (?,?,?,?,?)").run("prj-1", "案件A", "someone@example.com", now, 1);
 			db.prepare("INSERT INTO project_documents (project_id, document_id, sort_order, added_by, added_at) VALUES (?,?,?,?,?)").run("prj-1", "doc-1", 1, "someone@example.com", now);
 			db.prepare("INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, created_at) VALUES (?,?,?,?,?,?)").run("log-1", "someone@example.com", "upload", "doc-1", "報告書.xlsx", now);
+
+			// ここから下は後のバージョンで増えたもの。移行元に無ければ黙って飛ばす
+			trySeed("folder", () => db.prepare("INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at) VALUES (?,?,?,?,?,?,?)")
+				.run("fld-1", "prj-1", null, "1. 要件", 1, "someone@example.com", now));
+			trySeed("link", () => db.prepare("INSERT INTO document_links (document_id_a, document_id_b, created_by, created_at) VALUES (?,?,?,?)")
+				.run("doc-1", "doc-2", "someone@example.com", now));
+			// モックアップは実体のファイルがIDで紐づく。表が落ちるとファイルだけ残って気づけない
+			trySeed("mockup", () => db.prepare("INSERT INTO mockups (id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, previous_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+				.run("mock-2", "受注管理画面 v2", "site.zip", "index.html", "preview.png", 12, 34567, 8901, "モックアップの本文", "メモ", "someone@example.com", now, "mock-1"));
+			// お品書きの説明書き(v16で追加)
+			trySeed("note", () => {
+				db.prepare("UPDATE project_documents SET note = ? WHERE project_id = ? AND document_id = ?").run("この案件では前提資料です。", "prj-1", "doc-1");
+				db.prepare("UPDATE project_folders SET note = ? WHERE id = ?").run("合意した範囲です。", "fld-1");
+			});
+			console.log(JSON.stringify({seeded}));
 			db.close();
 		`);
+		const seeded = new Set(JSON.parse(seedOut.trim().split("\n").pop()).seeded);
 		check(fs.existsSync(path.join(dbDir, `document_manager_v${oldVersion}.sqlite`)), `移行元(v${oldVersion})のDBを用意した`);
 
 		// 2. 作業ツリーの db.js を読み込む = 移行が走る
@@ -95,7 +117,12 @@ try {
 				project: one("SELECT id, name FROM projects WHERE id='prj-1'"),
 				placement: one("SELECT project_id, document_id FROM project_documents WHERE document_id='doc-1'"),
 				log: one("SELECT id, action, entry_file FROM audit_log WHERE id='log-1'"),
-				fts: one("SELECT id FROM documents_fts WHERE id='doc-1'")
+				fts: one("SELECT id FROM documents_fts WHERE id='doc-1'"),
+				folder: one("SELECT id, name, sort_order FROM project_folders WHERE id='fld-1'"),
+				link: one("SELECT document_id_a, document_id_b FROM document_links WHERE document_id_a='doc-1'"),
+				mockup: one("SELECT id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, previous_id FROM mockups WHERE id='mock-2'"),
+				docNote: one("SELECT note FROM project_documents WHERE project_id='prj-1' AND document_id='doc-1'"),
+				folderNote: one("SELECT note FROM project_folders WHERE id='fld-1'")
 			}));
 		`);
 		const result = JSON.parse(out.trim().split("\n").pop());
@@ -112,6 +139,30 @@ try {
 		check(result.placement != null && result.placement.project_id === "prj-1", "プロジェクトへの配置");
 		check(result.log != null && result.log.action === "upload", "操作履歴");
 		check(result.fts != null && result.fts.id === "doc-1", "全文検索の索引");
+
+		// 移行元に無かったものは確認できない。見ていないことが分かるよう、その旨を出す
+		const checkIfSeeded = (name, ok, message) => {
+			if (!seeded.has(name)) {
+				console.log(`  --   ${message}(移行元(v${oldVersion})に無いため確認できません)`);
+				return;
+			}
+			check(ok, message);
+		};
+		checkIfSeeded("folder", result.folder != null && result.folder.name === "1. 要件" && result.folder.sort_order === 1, "プロジェクトのフォルダ");
+		checkIfSeeded("link", result.link != null && result.link.document_id_b === "doc-2", "関連文書の紐付け");
+		checkIfSeeded("mockup", result.mockup != null
+			&& result.mockup.name === "受注管理画面 v2"
+			&& result.mockup.zip_file === "site.zip"
+			&& result.mockup.entry_file === "index.html"
+			&& result.mockup.preview_file === "preview.png"
+			&& result.mockup.file_count === 12
+			&& result.mockup.total_bytes === 34567
+			&& result.mockup.zip_bytes === 8901
+			&& result.mockup.content_text === "モックアップの本文"
+			&& result.mockup.memo === "メモ"
+			&& result.mockup.previous_id === "mock-1", "モックアップ(実体のファイルがIDで紐づく)");
+		checkIfSeeded("note", result.docNote != null && result.docNote.note === "この案件では前提資料です。", "お品書きの資料の説明");
+		checkIfSeeded("note", result.folderNote != null && result.folderNote.note === "合意した範囲です。", "お品書きのフォルダの説明");
 
 		console.log("\n■ 切り戻しのための旧ファイル");
 		const files = fs.readdirSync(dbDir).filter((f) => f.endsWith(".sqlite")).sort();
