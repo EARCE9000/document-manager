@@ -481,6 +481,7 @@
 	#projectTreeList { list-style: none; margin: 0; padding: 8px; flex: 1; overflow-y: auto; }
 	#projectTreeList ul.treeChildren { list-style: none; margin: 0; padding-left: 1.1em; }
 	#projectTreeList .treeFolderRow, #projectTreeList .treeDocRow {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 4px;
@@ -498,8 +499,18 @@
 	#projectTreeList .treeDocRow.treeDocArchived .treeDocName { color: #999; font-style: italic; }
 	#projectTreeList .treeToggleIcon { width: 1.1em; flex-shrink: 0; color: #888; font-size: 0.85em; text-align: center; }
 	#projectTreeList .treeFolderName, #projectTreeList .treeDocName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	#projectTreeList .treeRowActions { display: none; align-items: center; gap: 2px; flex-shrink: 0; }
-	#appShell.projectsEditMode #projectTreeList .treeRowActions { display: flex; }
+	/* 操作ボタンは行の右端に**重ねて**置き、マウスを乗せたときだけ出す。
+	   常に出しているとファイル名の幅を常時 80px ほど奪い、長い名前が読めなくなるため。
+	   背景は行の色を継ぐので、名前の末尾に重なっても読みにくくならない。
+	   ※マウス前提の操作になる(キーボードだけでは届かない)。ツリーの編集は
+	   　ドラッグ&ドロップも含めてマウス前提のため、ここは割り切っている */
+	#projectTreeList .treeRowActions {
+		display: none; align-items: center; gap: 2px; flex-shrink: 0;
+		position: absolute; right: 4px; top: 0; bottom: 0;
+		background: inherit; padding-left: 10px;
+	}
+	#appShell.projectsEditMode #projectTreeList .treeFolderRow:hover .treeRowActions,
+	#appShell.projectsEditMode #projectTreeList .treeDocRow:hover .treeRowActions { display: flex; }
 	#projectTreeList .treeMiniButton {
 		border: none;
 		background: none;

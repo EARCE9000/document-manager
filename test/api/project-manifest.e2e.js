@@ -171,13 +171,17 @@ test.describe.serial("お品書き(実ブラウザ)", () => {
 		const chapterNames = () => chapters.allTextContents();
 		expect(await chapterNames()).toEqual(["要件", "参考"]);
 
-		// 「参考」を上へ
-		await page.locator(".treeFolderRow", {hasText: "参考"}).locator(".treeFolderUpButton").click();
+		// 「参考」を上へ(操作ボタンは行に乗せたときだけ出る)
+		const refRow = page.locator(".treeFolderRow", {hasText: "参考"});
+		await refRow.hover();
+		await refRow.locator(".treeFolderUpButton").click();
 		await expect(page.locator("#manifestBody > .manifestFolder > .manifestFolderName").first()).toHaveText("参考");
 		expect(await chapterNames()).toEqual(["参考", "要件"]);
 
 		// 先頭では上へ押せない(端で押しても何も起きない、が分かるように無効化する)
-		await expect(page.locator(".treeFolderRow", {hasText: "参考"}).locator(".treeFolderUpButton")).toBeDisabled();
+		const movedRow = page.locator(".treeFolderRow", {hasText: "参考"});
+		await movedRow.hover();
+		await expect(movedRow.locator(".treeFolderUpButton")).toBeDisabled();
 	});
 
 	test("Markdownをコピーできる", async ({page}) => {

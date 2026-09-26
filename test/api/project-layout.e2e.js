@@ -131,4 +131,36 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 			.map((id) => Math.round(document.getElementById(id).getBoundingClientRect().width)));
 		expect(widths[1], `文書一覧 ${widths[0]}px / ツリー ${widths[1]}px`).toBe(widths[0]);
 	});
+
+	// 常に出していると、ファイル名の幅を常時80pxほど奪って長い名前が読めなくなる
+	test("行の操作ボタンは、マウスを乗せた行だけに出る", async ({page, request}) => {
+		const name = `とても長いファイル名のサンプル_datasheet_reference_${Date.now()}.txt`;
+		const doc = await (await request.post("api/documents", {
+			headers: rw, multipart: {uploadfile: {name, mimeType: "text/plain", buffer: Buffer.from("x")}}
+		})).json();
+		const projects = await (await request.get("api/projects", {headers: rw})).json();
+		const target = projects.find((p) => p.name === PROJECT);
+		await request.put(`api/projects/${target.id}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
+
+		await page.goto("./");
+		await page.click("#menuProjectsLink");
+		await page.click(`.projectTab:has-text("${PROJECT}")`);
+		const row = page.locator(".treeDocRow", {hasText: name.slice(0, 12)});
+		await expect(row).toBeVisible();
+
+		// 乗せる前は出ていない
+		await expect(row.locator(".treeRowActions")).toBeHidden();
+		// そのぶん名前が幅いっぱいを使える(行の幅とほぼ同じ)
+		const widths = await row.evaluate((el) => ({
+			row: el.clientWidth,
+			name: el.querySelector(".treeDocName").clientWidth
+		}));
+		expect(widths.name, `名前 ${widths.name}px / 行 ${widths.row}px`).toBeGreaterThan(widths.row - 60);
+
+		await row.hover();
+		await expect(row.locator(".treeRowActions")).toBeVisible();
+		// 乗せていない行には出ない
+		const other = page.locator(".treeFolderRow", {hasText: "資料"});
+		await expect(other.locator(".treeRowActions")).toBeHidden();
+	});
 });
