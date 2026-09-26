@@ -100,6 +100,23 @@ test.describe.serial("プロジェクトのお品書き", () => {
 		expect(md.indexOf("cover-")).toBeLessThan(md.indexOf("## 要件"));
 	});
 
+	// 説明書きは自由入力で、それがそのままMarkdownの本文になる。ブラウザがこれをHTMLとして
+	// 解釈すると、書いた人が見た人のブラウザで同一オリジンのまま好きなことをできてしまう
+	test("Markdownの配信をブラウザにHTMLとして解釈させない", async ({request}) => {
+		await request.put(`api/projects/${projectId}/documents/${coverId}/note`, {
+			headers: rw, data: {note: "<html><script>window.x=1</scr" + "ipt><h1>見出し</h1>"}
+		});
+		const res = await request.get(`api/projects/${projectId}/manifest.md`, {headers: ro});
+		expect(res.status()).toBe(200);
+		expect(res.headers()["content-type"]).toBe("text/markdown; charset=utf-8");
+		expect(res.headers()["x-content-type-options"], "型を推測させない").toBe("nosniff");
+		expect(res.headers()["x-frame-options"], "他所の画面に埋め込ませない").toBe("SAMEORIGIN");
+		expect(res.headers()["cache-control"]).toBe("no-store");
+
+		// 中身は消さずそのまま返す(見せるための文字なので、勝手に削らない)
+		expect(await res.text()).toContain("<h1>見出し</h1>");
+	});
+
 	test("空文字を送ると説明が消える", async ({request}) => {
 		await request.put(`api/projects/${projectId}/documents/${coverId}/note`, {headers: rw, data: {note: "いったん書く"}});
 		const cleared = await request.put(`api/projects/${projectId}/documents/${coverId}/note`, {headers: rw, data: {note: "   "}});
