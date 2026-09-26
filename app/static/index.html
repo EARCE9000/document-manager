@@ -791,6 +791,8 @@
 		align-items: center;
 		justify-content: center;
 		z-index: 1000;
+		/* 画面の端に貼り付かないよう余白を取る(下のmax-heightと対になっている) */
+		padding: 16px;
 	}
 	/* 確認ダイアログは他のモーダル(APIキー管理/アクセス許可ユーザー等)の内側から
 	   呼ばれることがあるため、常に最前面に表示されるようz-indexを高くする */
@@ -802,6 +804,12 @@
 		width: 90%;
 		max-width: 360px;
 		box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+		/* 中身が画面より高くなることがある(APIキー管理でSkillの手順を開いた場合など)。
+		   上限を付けずに中央寄せすると、上下が画面の外へはみ出してスクロールもできず、
+		   説明の先頭と末尾のボタンに永久に届かなくなる。ここで頭打ちにして自分でスクロールさせる */
+		max-height: calc(100vh - 32px);
+		max-height: calc(100dvh - 32px); /* モバイルのURLバー分。未対応ブラウザは上の行が残る */
+		overflow-y: auto;
 	}
 	.modalBox p { margin: 0 0 18px; font-size: 0.95em; color: #24292f; line-height: 1.5; }
 	.modalButtons { display: flex; justify-content: flex-end; gap: 8px; }
