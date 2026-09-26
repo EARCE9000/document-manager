@@ -232,6 +232,47 @@ test.describe.serial("モックアップ管理の画面(実ブラウザ)", () =>
 		await expect(card(page, NAME_V2)).toBeVisible();
 	});
 
+	// 文書のアップロードと操作を揃えた。input を隠して枠で受けているため、
+	// 「ドロップで本当に入るか」はファイル選択の経路とは別に確かめる必要がある
+	test("ZIPをドラッグ&ドロップで登録できる", async ({page}) => {
+		await page.goto("./");
+		await page.click("#menuMockupsLink");
+		await page.click("#mockupUploadOpenButton");
+
+		const zone = page.locator("#mockupZipDropZone");
+		await expect(zone).toContainText("ドラッグ&ドロップ");
+		await expect(zone).not.toHaveClass(/hasFile/);
+
+		const name = `drop-${Date.now()}.zip`;
+		const base64 = site("ドロップで入った").toString("base64");
+		const dataTransfer = await page.evaluateHandle(({fileName, b64}) => {
+			const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+			const dt = new DataTransfer();
+			dt.items.add(new File([bytes], fileName, {type: "application/zip"}));
+			return dt;
+		}, {fileName: name, b64: base64});
+		await page.dispatchEvent("#mockupZipDropZone", "drop", {dataTransfer});
+
+		// 何が入ったかが枠に出る(選び間違いに気づけること)
+		await expect(zone).toHaveClass(/hasFile/);
+		await expect(zone).toContainText(name);
+
+		const dropped = `ドロップ登録 ${Date.now()}`;
+		await page.fill("#mockupNameInput", dropped);
+		const [opened] = await Promise.all([
+			page.context().waitForEvent("page"),
+			page.click("#mockupUploadSubmitButton")
+		]);
+		await expect(opened.locator("#app")).toHaveText("ドロップで入った");
+		await opened.close();
+		await expect(card(page, dropped)).toBeVisible();
+
+		// 開き直すと前回のファイルは残っていない(次の登録に持ち越さない)
+		await page.click("#mockupUploadOpenButton");
+		await expect(page.locator("#mockupZipDropZone")).not.toHaveClass(/hasFile/);
+		await page.click("#mockupUploadCancelButton");
+	});
+
 	test("壊れたZIPはモーダルの中で理由が出る(画面は壊れない)", async ({page}) => {
 		await page.goto("./");
 		await page.click("#menuMockupsLink");
