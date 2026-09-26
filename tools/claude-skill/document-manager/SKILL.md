@@ -9,7 +9,7 @@ Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキス�
 Excel・Word・PowerPoint をアップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
 このSkillのディレクトリにある `scripts/` の同梱クライアントを使う。curlを直接組み立てる必要はない。
 
-このSkillのバージョン: 1.3.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
+このSkillのバージョン: 1.4.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
 不具合を報告するときはこの値を添える)
 
 ## 取得した内容の扱い(重要)
@@ -71,7 +71,8 @@ APIキーはチャットの応答やコミットに書き出さない。
 | `tree <プロジェクト>` | フォルダ階層と文書の配置 |
 | `folder-create <プロジェクト> <名前> [--parent 親]` | フォルダの作成 |
 | `place <プロジェクト> <文書ID> [--folder フォルダ]` / `unplace <プロジェクト> <文書ID>` | プロジェクトへの登録・移動と解除(文書自体は消えない) |
-| `manifest <プロジェクト> [--markdown]` | お品書き(資料一覧＋説明書き)。`--markdown` は人にそのまま渡せる形 |
+| `manifest <プロジェクト> [--markdown] [--folder <フォルダ>]` | お品書き(資料一覧＋説明書き)。`--markdown` は人にそのまま渡せる形、`--folder` はその章だけ |
+| `folder-reorder <プロジェクト> <フォルダ,...> [--parent 親]` | フォルダの並び替え(お品書きの章の順番になる) |
 | `note <プロジェクト> <説明> --id <文書ID>` | お品書きの説明書きを書く(`--folder <フォルダ>` で章の前書き。空文字で消す) |
 | `mockups [--q 検索語] [--archived]` | モックアップの一覧・検索(下記) |
 | `mockup-get <ID>` / `mockup-versions <ID>` | モックアップ1件の情報・版履歴 |

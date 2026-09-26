@@ -41,6 +41,7 @@ const SQL_INSERT_FOLDER = `
 `;
 const SQL_UPDATE_FOLDER_NAME = `UPDATE project_folders SET name = ? WHERE id = ? AND project_id = ?`;
 const SQL_UPDATE_FOLDER_NOTE = `UPDATE project_folders SET note = ? WHERE id = ? AND project_id = ?`;
+const SQL_UPDATE_FOLDER_SORT_ORDER = `UPDATE project_folders SET sort_order = ? WHERE id = ? AND project_id = ?`;
 const SQL_DELETE_FOLDER = `DELETE FROM project_folders WHERE id = ? AND project_id = ?`;
 const SQL_COUNT_SUBFOLDERS = `SELECT COUNT(*) AS c FROM project_folders WHERE parent_folder_id = ?`;
 const SQL_COUNT_DOCUMENTS_IN_FOLDER = `SELECT COUNT(*) AS c FROM project_documents WHERE project_id = ? AND folder_id = ?`;
@@ -337,6 +338,30 @@ module.exports.removeDocument = async (projectId, documentId) => {
  * 一括で書き換える(ドラッグによる並び替え用)。安全のため、指定されたdocumentIdが
  * 実際にそのproject+folderに属していないものはすべて無視する
  */
+/**
+ * 同じ親を持つフォルダの並び順を、渡した配列の順に付け直す。
+ *
+ * お品書きでは**フォルダがそのまま章の順番**になるため、作成順に固定されたままだと
+ * 人に渡す資料の章立てを直せない。文書の並び替えと同じ作法にしている。
+ *
+ * @param {?string} parentFolderId 省略・nullならプロジェクト直下のフォルダが対象
+ */
+module.exports.reorderFolders = async (projectId, parentFolderId, folderIds) => {
+	await ds.transaction(async (tx) => {
+		const rows = await tx.all(SQL_LIST_FOLDERS_BY_PROJECT, [projectId]);
+		// 指定した親の直下にあるものだけを動かす(別の階層のIDを混ぜられても無視する)
+		const siblings = new Set(rows
+			.filter((row) => (row.parent_folder_id ?? null) === (parentFolderId ?? null))
+			.map((row) => row.id));
+		let index = 0;
+		for (const folderId of folderIds) {
+			if (!siblings.has(folderId)) continue;
+			await tx.run(SQL_UPDATE_FOLDER_SORT_ORDER, [index, folderId, projectId]);
+			index++;
+		}
+	});
+};
+
 module.exports.reorderDocuments = async (projectId, folderId, documentIds) => {
 	await ds.transaction(async (tx) => {
 		const rows = await tx.all(SQL_LIST_DOCUMENTS_BY_PROJECT, [projectId]);

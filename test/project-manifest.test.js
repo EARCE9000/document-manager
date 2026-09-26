@@ -154,6 +154,48 @@ test("フォルダの親子が循環していても止まる", () => {
 	assert.ok(Array.isArray(folders));
 });
 
+// 案件全体ではなく「この章だけ渡したい」ことがある(画面でフォルダ名を押したときもこれ)
+test("章を指定すると、その章から下だけを切り出す", () => {
+	const tree = {
+		folders: [
+			folder("f1", "要件", {note: "合意した範囲です。"}),
+			folder("f1a", "画面", {parentFolderId: "f1"}),
+			folder("f2", "設計")
+		],
+		documents: [
+			doc("d0", "表紙.md"),
+			doc("d1", "要件定義.docx", {folderId: "f1"}),
+			doc("d2", "画面一覧.xlsx", {folderId: "f1a"}),
+			doc("d3", "テーブル定義.md", {folderId: "f2"})
+		]
+	};
+	const scoped = Manifest.build(project, tree, {folderId: "f1"});
+
+	assert.equal(scoped.folderName, "要件");
+	assert.equal(scoped.folderNote, "合意した範囲です。");
+	// 直下の資料と、その下のフォルダだけ
+	assert.deepEqual(scoped.rootDocuments.map((d) => d.entryFile), ["要件定義.docx"]);
+	assert.deepEqual(scoped.folders.map((f) => f.name), ["画面"]);
+	// 件数はその章から下にあるものだけ(表紙.md と テーブル定義.md は数えない)
+	assert.equal(scoped.documentCount, 2);
+});
+
+test("章のMarkdownは、どの案件のどの章か分かる見出しになる", () => {
+	const tree = {
+		folders: [folder("f1", "要件", {note: "合意した範囲です。"})],
+		documents: [doc("d1", "要件定義.docx", {folderId: "f1", note: "3章が変更点。"})]
+	};
+	const markdown = Manifest.toMarkdown(Manifest.build(project, tree, {folderId: "f1"}));
+	assert.ok(markdown.startsWith("# 受注管理の再構築 › 要件 お品書き"), markdown);
+	assert.ok(markdown.includes("合意した範囲です。"), "章の前書きが冒頭に出る");
+	assert.ok(markdown.includes("- **要件定義.docx** — 3章が変更点。"));
+});
+
+test("存在しない章を指定したら null(呼び出し元が404にできる)", () => {
+	const built = Manifest.build(project, {folders: [], documents: []}, {folderId: "いない"});
+	assert.equal(built, null);
+});
+
 test("空のツリー・欠けた入力でも落ちない", () => {
 	for (const input of [undefined, null, {}, {folders: null, documents: null}]) {
 		const manifest = Manifest.build(undefined, input);

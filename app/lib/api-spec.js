@@ -194,12 +194,16 @@ const OPERATIONS = [
 	{
 		id: "getProjectManifest", method: "get", path: "/api/projects/:id/manifest", role: "readonly", tag: "プロジェクト",
 		summary: "お品書き(資料一覧と説明書き)",
-		description: "ツリーと同じ中身を、読む順(直下の資料→フォルダ)に並べ直したもの。フォルダが章立てになり、資料ごとに`note`(このプロジェクトでの位置づけ)が付く"
+		description: "ツリーと同じ中身を、読む順(直下の資料→フォルダ)に並べ直したもの。フォルダが章立てになり、資料ごとに`note`(このプロジェクトでの位置づけ)が付く。`folderId`を付けるとその章から下だけを返す",
+		params: [{name: "folderId", in: "query", description: "この章から下だけを返す(省略時はプロジェクト全体)"}],
+		responses: {404: "プロジェクト、または指定したフォルダが無い"}
 	},
 	{
 		id: "getProjectManifestMarkdown", method: "get", path: "/api/projects/:id/manifest.md", role: "readonly", tag: "プロジェクト",
 		summary: "お品書きのMarkdown",
-		description: "議事録・メールにそのまま貼れる形。案件にどんな資料が揃っているかを人に伝えるときに使う",
+		description: "議事録・メールにそのまま貼れる形。案件にどんな資料が揃っているかを人に伝えるときに使う。`folderId`でその章だけを切り出せる",
+		params: [{name: "folderId", in: "query", description: "この章から下だけを返す(省略時はプロジェクト全体)"}],
+		responses: {404: "プロジェクト、または指定したフォルダが無い"},
 		produces: "text/markdown"
 	},
 	{
@@ -234,6 +238,15 @@ const OPERATIONS = [
 		body: {schema: {type: "object", properties: {folderId: {type: ["string", "null"], description: "省略・nullでプロジェクト直下"}}}}
 	},
 	{id: "removeDocumentFromProject", method: "delete", path: "/api/projects/:id/documents/:documentId", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトから文書を外す(文書自体は削除されない)"},
+	{
+		id: "reorderFolders", method: "put", path: "/api/projects/:id/folders/reorder", role: "readwrite", tag: "プロジェクト",
+		summary: "フォルダの並び替え",
+		description: "同じ親を持つフォルダの順番を、渡した配列の順に付け直す。お品書きではフォルダがそのまま章の順番になる",
+		body: {schema: {type: "object", required: ["folderIds"], properties: {
+			parentFolderId: {type: "string", nullable: true}, folderIds: {type: "array", items: {type: "string"}}
+		}}},
+		responses: {423: "プロジェクトが施錠されている"}
+	},
 	{
 		id: "reorderDocuments", method: "put", path: "/api/projects/:id/reorder", role: "readwrite", tag: "プロジェクト",
 		summary: "フォルダ内の文書の並び替え",
@@ -573,11 +586,15 @@ const GUIDE_SECTIONS = [
 		notes: ["同じ文書を複数のプロジェクトへ登録できるが、1プロジェクト内では1箇所にしか置けない"]
 	},
 	{
-		title: "フォルダ内の文書の並び替え", roleNote: ROLE_NOTES.readwrite,
-		entries: [{id: "reorderDocuments"}],
+		title: "フォルダ内の文書・フォルダの並び替え", roleNote: ROLE_NOTES.readwrite,
+		entries: [
+			{id: "reorderDocuments", trail: "JSONボディ: `{\"folderId\": null, \"documentIds\": [\"docId1\", \"docId2\", ...]}`"},
+			{id: "reorderFolders", trail: "JSONボディ: `{\"parentFolderId\": null, \"folderIds\": [\"folderId1\", ...]}`"}
+		],
 		notes: [
-			"JSONボディ: `{\"folderId\": null, \"documentIds\": [\"docId1\", \"docId2\", ...]}`(`folderId`省略・nullはプロジェクト直下が対象)",
-			"渡した配列の順番どおりに並び替える"
+			"どちらも`folderId`/`parentFolderId`を省略・nullにするとプロジェクト直下が対象",
+			"渡した配列の順番どおりに並び替える。配列に含めなかったものは後ろに残る",
+			"お品書き(上記)では**フォルダがそのまま章の順番**になるため、人に渡す前に章立てを整えるときに使う"
 		]
 	},
 	{

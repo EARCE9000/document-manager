@@ -48,7 +48,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.3.0";
+const CLIENT_VERSION = "1.4.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -431,10 +431,32 @@ const commands = {
 	},
 
 	// ---- お品書き(プロジェクトの資料一覧＋説明書き) ----
-	manifest: async ([project]) => {
+	manifest: async ([project], opts) => {
 		requireArg(project, "プロジェクト");
 		const resolved = await resolveProject(project);
-		return request("GET", `api/projects/${encodeURIComponent(resolved.id)}/manifest`);
+		// 章だけを切り出す(案件全体ではなく「この章だけ渡したい」ことがある)
+		const query = {};
+		if (opts.folder) {
+			const folderId = await resolveFolder(resolved.id, opts.folder);
+			if (!folderId) throw new DmError(`フォルダが見つかりません: ${opts.folder}`);
+			query.folderId = folderId;
+		}
+		return request("GET", `api/projects/${encodeURIComponent(resolved.id)}/manifest`, {query});
+	},
+	// お品書きではフォルダがそのまま章の順番になるため、人に渡す前に整えるために使う
+	"folder-reorder": async ([project, folders], opts) => {
+		requireArg(project, "プロジェクト");
+		requireArg(folders, "並べたい順のフォルダ(カンマ区切り)");
+		const resolved = await resolveProject(project);
+		const parentFolderId = opts.parent ? await resolveFolder(resolved.id, opts.parent) : null;
+		const folderIds = [];
+		for (const value of splitList(folders)) {
+			const folderId = await resolveFolder(resolved.id, value);
+			if (!folderId) throw new DmError(`フォルダが見つかりません: ${value}`);
+			folderIds.push(folderId);
+		}
+		return request("PUT", `api/projects/${encodeURIComponent(resolved.id)}/folders/reorder`,
+			{json: {parentFolderId, folderIds}});
 	},
 	note: async ([project, text], opts) => {
 		requireArg(project, "プロジェクト");
@@ -525,10 +547,16 @@ const commands = {
 };
 
 // お品書きのMarkdownは人に渡す文面なので、JSONで包まずそのまま流す(specと同じ扱い)
-const manifestMarkdown = async (project) => {
+const manifestMarkdown = async (project, opts) => {
 	requireArg(project, "プロジェクト");
 	const resolved = await resolveProject(project);
-	const payload = await request("GET", `api/projects/${encodeURIComponent(resolved.id)}/manifest.md`, {raw: true});
+	const query = {};
+	if (opts.folder) {
+		const folderId = await resolveFolder(resolved.id, opts.folder);
+		if (!folderId) throw new DmError(`フォルダが見つかりません: ${opts.folder}`);
+		query.folderId = folderId;
+	}
+	const payload = await request("GET", `api/projects/${encodeURIComponent(resolved.id)}/manifest.md`, {query, raw: true});
 	process.stdout.write(payload.toString("utf8"));
 };
 
@@ -700,7 +728,7 @@ const main = async () => {
 	}
 	if (command === "manifest" && values.markdown) {
 		try {
-			await manifestMarkdown(rest[0]);
+			await manifestMarkdown(rest[0], values);
 		} catch (err) {
 			if (!(err instanceof DmError)) throw err;
 			fail(err.message);

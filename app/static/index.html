@@ -436,6 +436,8 @@
 	#manifestActions { display: flex; gap: 6px; flex-shrink: 0; }
 	#manifestActions .modalButton { font-size: 0.8em; padding: 5px 12px; white-space: nowrap; }
 	#manifestSummary { color: #888; font-size: 0.8em; margin-bottom: 18px; }
+	.manifestScopeLink { color: #1a56db; cursor: pointer; }
+	.manifestScopeLink:hover { text-decoration: underline; }
 	.manifestFolder { margin-top: 22px; }
 	.manifestFolderName { font-weight: 700; font-size: 1em; border-bottom: 2px solid #eee; padding-bottom: 5px; }
 	.manifestFolder.depth2 .manifestFolderName { font-size: 0.95em; border-bottom-style: dotted; }
@@ -481,6 +483,10 @@
 		font-size: 0.85em;
 	}
 	#projectTreeList .treeFolderRow:hover, #projectTreeList .treeDocRow:hover { background: #f1f3f5; }
+	/* フォルダを押すと、開閉すると同時にその章だけのお品書きが右に出る。
+	   いまどの章を見ているかが分かるよう、その行に印を付ける */
+	#projectTreeList .treeFolderRow.manifestOpen { background: #fff4e8; }
+	#projectTreeList .treeFolderRow.manifestOpen .treeFolderName { color: #ee7800; font-weight: 600; }
 	#projectTreeList .treeDocRow.selected { background: #eef3ff; color: #1a56db; }
 	#projectTreeList .treeDocRow.treeDocArchived .treeDocName { color: #999; font-style: italic; }
 	#projectTreeList .treeToggleIcon { width: 1.1em; flex-shrink: 0; color: #888; font-size: 0.85em; text-align: center; }
@@ -3417,11 +3423,15 @@ mockupFilterInput.addEventListener("input", () => {
 // ここは受け取った順に描くだけ。Markdownの持ち出しと並びが食い違わないようにするため
 let currentManifest = null;
 let manifestEditing = null;
+// 章だけを見ているときの対象フォルダ(nullならプロジェクト全体)
+let currentManifestFolderId = null;
 
 const hideManifest = () => {
 	manifestPane.classList.remove("visible");
 	projectTreeTitle.classList.remove("active");
+	projectTreeList.querySelectorAll(".treeFolderRow.manifestOpen").forEach((row) => row.classList.remove("manifestOpen"));
 	manifestEditing = null;
+	currentManifestFolderId = null;
 };
 
 // モックアップのカードの操作アイコン。絵柄はアプリ内の同じ操作から持ってきている
@@ -3474,39 +3484,65 @@ const manifestFolderHtml = (folder) => {
 
 const renderManifest = () => {
 	if (currentManifest == null) return;
-	manifestTitle.textContent = `${currentManifest.projectName} お品書き`;
-	manifestSummary.textContent = `資料 ${currentManifest.documentCount} 件`;
+	const inFolder = currentManifest.folderName != null;
+	manifestTitle.textContent = inFolder
+		? `${currentManifest.projectName} › ${currentManifest.folderName} お品書き`
+		: `${currentManifest.projectName} お品書き`;
+	// 章だけを見ているときは、全体へ戻る道を必ず出す(どこを見ているか分からなくならないように)
+	manifestSummary.innerHTML = inFolder
+		? `この章の資料 ${currentManifest.documentCount} 件 ・ <span class="manifestScopeLink" id="manifestWholeLink">プロジェクト全体を見る</span>`
+		: `資料 ${currentManifest.documentCount} 件`;
+	const wholeLink = document.getElementById("manifestWholeLink");
+	if (wholeLink != null) wholeLink.addEventListener("click", () => showManifest(null));
 	manifestEmpty.style.display = currentManifest.documentCount === 0 ? "block" : "none";
-	manifestBody.innerHTML =
-		currentManifest.rootDocuments.map(manifestItemHtml).join("")
+	const folderNote = currentManifest.folderName == null ? "" : (currentManifest.folderNote != null
+		? `<div class="manifestFolderNote manifestNote" data-kind="folder" data-id="${escapeHtml(currentManifest.folderId)}">${escapeHtml(currentManifest.folderNote)}</div>`
+		: `<div class="manifestFolderNote manifestNote empty" data-kind="folder" data-id="${escapeHtml(currentManifest.folderId)}">説明を書く</div>`);
+	manifestBody.innerHTML = folderNote
+		+ currentManifest.rootDocuments.map(manifestItemHtml).join("")
 		+ currentManifest.folders.map(manifestFolderHtml).join("");
 };
 
 const loadManifest = async () => {
 	if (currentProjectId == null) return;
-	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/manifest`);
-	if (res.status !== 200) return;
+	const query = currentManifestFolderId == null ? "" : `?folderId=${encodeURIComponent(currentManifestFolderId)}`;
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/manifest${query}`);
+	if (res.status !== 200) {
+		// 章が消えていた場合はプロジェクト全体へ落とす(空白のまま固まらせない)
+		if (res.status === 404 && currentManifestFolderId != null) {
+			await showManifest(null);
+			return;
+		}
+		return;
+	}
 	currentManifest = await res.json();
 	renderManifest();
 };
 
-const showManifest = async () => {
+/** folderId を渡すとその章だけ、null ならプロジェクト全体のお品書きを出す */
+const showManifest = async (folderId = null) => {
 	clearPreview();
-	previewTitle.textContent = "お品書き";
+	currentManifestFolderId = folderId;
+	previewTitle.textContent = folderId == null ? "お品書き" : "お品書き(この章)";
 	manifestPane.classList.add("visible");
-	projectTreeTitle.classList.add("active");
+	projectTreeTitle.classList.toggle("active", folderId == null);
+	projectTreeList.querySelectorAll(".treeFolderRow.manifestOpen").forEach((row) => row.classList.remove("manifestOpen"));
+	if (folderId != null) {
+		const row = projectTreeList.querySelector(`.treeFolderRow[data-folder-id="${CSS.escape(folderId)}"]`);
+		if (row != null) row.classList.add("manifestOpen");
+	}
 	await loadManifest();
 };
 
 projectTreeTitle.addEventListener("click", () => {
 	if (currentProjectId == null) return;
 	// もう開いていれば閉じる(同じ入口で行き来できるように)
-	if (manifestPane.classList.contains("visible")) {
+	if (manifestPane.classList.contains("visible") && currentManifestFolderId == null) {
 		hideManifest();
 		previewTitle.textContent = "左の一覧から文書を選択してください。";
 		return;
 	}
-	showManifest();
+	showManifest(null);
 });
 
 // 説明書きの編集。空欄も押せるようにしてあるので、書き始めるのに何も要らない
@@ -3577,7 +3613,8 @@ manifestBody.addEventListener("click", (ev) => {
 });
 
 manifestCopyButton.addEventListener("click", async () => {
-	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/manifest.md`);
+	const query = currentManifestFolderId == null ? "" : `?folderId=${encodeURIComponent(currentManifestFolderId)}`;
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/manifest.md${query}`);
 	if (res.status !== 200) {
 		alert("お品書きを取得できませんでした");
 		return;
@@ -3822,15 +3859,22 @@ const renderProjectTree = () => {
 		return li;
 	};
 
-	const buildFolderNode = (folder) => {
+	const buildFolderNode = (folder, folderIndex, folderTotal) => {
 		const li = document.createElement("li");
 		const expanded = !collapsedFolderIds.has(folder.id);
 		const row = document.createElement("div");
 		row.className = "treeFolderRow";
+		row.dataset.folderId = folder.id;
 		row.innerHTML = `
 			<span class="treeToggleIcon">${expanded ? "▼" : "▶"}</span>
-			<span class="treeFolderName" title="${escapeHtml(folder.name)}">📁 ${escapeHtml(folder.name)}</span>
+			<span class="treeFolderName" title="${escapeHtml(folder.name)}(押すと開閉＋この章のお品書き)">📁 ${escapeHtml(folder.name)}</span>
 			<div class="treeRowActions">
+				<button type="button" class="treeMiniButton treeFolderUpButton" data-folder-id="${folder.id}" data-parent-id="${folder.parentFolderId ?? ""}" title="上へ" aria-label="上へ" ${folderIndex === 0 ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+				</button>
+				<button type="button" class="treeMiniButton treeFolderDownButton" data-folder-id="${folder.id}" data-parent-id="${folder.parentFolderId ?? ""}" title="下へ" aria-label="下へ" ${folderIndex === folderTotal - 1 ? "disabled" : ""}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+				</button>
 				<button type="button" class="treeMiniButton addSubfolderButton" data-folder-id="${folder.id}" title="サブフォルダ追加" aria-label="サブフォルダ追加">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
 				</button>
@@ -3844,8 +3888,12 @@ const renderProjectTree = () => {
 		`;
 		row.addEventListener("click", (ev) => {
 			if (ev.target.closest(".treeRowActions")) return;
+			// 開閉と、その章のお品書きの表示を同時に行う。どちらも見て確かめるための操作で、
+			// 押し分けさせるほどの違いが無いため(renderProjectTreeの後にお品書きを出すのは、
+			// 描き直しで選択中の目印が消えるため)
 			if (collapsedFolderIds.has(folder.id)) collapsedFolderIds.delete(folder.id); else collapsedFolderIds.add(folder.id);
 			renderProjectTree();
+			showManifest(folder.id);
 		});
 		li.appendChild(row);
 		if (expanded) li.appendChild(buildList(folder.id));
@@ -3858,7 +3906,7 @@ const renderProjectTree = () => {
 		ul.className = "treeChildren";
 		const folders = foldersByParent.get(parentKey) || [];
 		const docs = docsByFolder.get(parentKey) || [];
-		for (const folder of folders) ul.appendChild(buildFolderNode(folder));
+		folders.forEach((folder, idx) => ul.appendChild(buildFolderNode(folder, idx, folders.length)));
 		docs.forEach((placement, idx) => ul.appendChild(buildDocNode(placement, parentKey, idx, docs.length)));
 		if (folders.length === 0 && docs.length === 0) {
 			const hint = document.createElement("li");
@@ -3903,6 +3951,16 @@ const renderProjectTree = () => {
 			await removeDocumentFromProject(btn.dataset.documentId);
 		});
 	});
+	for (const [selector, direction] of [[".treeFolderUpButton", "up"], [".treeFolderDownButton", "down"]]) {
+		projectTreeList.querySelectorAll(selector).forEach((btn) => {
+			btn.addEventListener("click", (ev) => {
+				// 行のクリック(開閉＋お品書き)まで巻き込まないようにする
+				ev.stopPropagation();
+				if (btn.disabled) return;
+				moveFolderInParent(btn.dataset.folderId, btn.dataset.parentId || null, direction);
+			});
+		});
+	}
 	projectTreeList.querySelectorAll(".treeDocUpButton").forEach((btn) => {
 		btn.addEventListener("click", (ev) => {
 			ev.stopPropagation();
@@ -3987,6 +4045,32 @@ const placeDocumentInProject = async (documentId, folderId) => {
 const removeDocumentFromProject = async (documentId) => {
 	await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/documents/${encodeURIComponent(documentId)}`, {method: "DELETE"});
 	await loadProjectTree();
+};
+
+// お品書きではフォルダがそのまま章の順番になるため、作成順のままにしておけない
+const moveFolderInParent = async (folderId, parentFolderId, direction) => {
+	const key = parentFolderId ?? "root";
+	const siblings = currentProjectTree.folders
+		.filter((f) => (f.parentFolderId ?? "root") === key)
+		.sort((a, b) => a.sortOrder - b.sortOrder)
+		.map((f) => f.id);
+	const i = siblings.indexOf(folderId);
+	if (i < 0) return;
+	const j = direction === "up" ? i - 1 : i + 1;
+	if (j < 0 || j >= siblings.length) return;
+	[siblings[i], siblings[j]] = [siblings[j], siblings[i]];
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/folders/reorder`, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({parentFolderId, folderIds: siblings})
+	});
+	if (res.status !== 200) {
+		alert((await res.json().catch(() => ({}))).error || "並び替えできませんでした");
+		return;
+	}
+	await loadProjectTree();
+	// 章の順番が変わるので、お品書きを開いていれば取り直す
+	if (manifestPane.classList.contains("visible")) await loadManifest();
 };
 
 const moveDocumentInFolder = async (documentId, folderId, direction) => {

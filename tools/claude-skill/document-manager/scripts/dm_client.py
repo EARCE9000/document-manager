@@ -61,7 +61,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.3.0"
+CLIENT_VERSION = "1.4.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -559,12 +559,33 @@ def cmd_mockup_restore(args):
 
 def cmd_manifest(args):
     project_id = resolve_project(args.project)["id"]
+    # 章だけを切り出す(案件全体ではなく「この章だけ渡したい」ことがある)
+    query = None
+    if getattr(args, "folder", None):
+        folder_id = resolve_folder(project_id, args.folder)
+        if not folder_id:
+            raise DmError(f"フォルダが見つかりません: {args.folder}")
+        query = {"folderId": folder_id}
     if args.markdown:
         # 人に渡す文面なので、JSONで包まずそのまま出す(spec と同じ扱い)
-        payload, _headers = request("GET", f"api/projects/{quote_id(project_id)}/manifest.md", raw=True)
+        payload, _headers = request("GET", f"api/projects/{quote_id(project_id)}/manifest.md", query=query, raw=True)
         sys.stdout.write(payload.decode("utf-8", "replace"))
         return None
-    return request("GET", f"api/projects/{quote_id(project_id)}/manifest")
+    return request("GET", f"api/projects/{quote_id(project_id)}/manifest", query=query)
+
+
+def cmd_folder_reorder(args):
+    """お品書きではフォルダがそのまま章の順番になるため、人に渡す前に整えるために使う"""
+    project_id = resolve_project(args.project)["id"]
+    parent_id = resolve_folder(project_id, args.parent) if args.parent else None
+    folder_ids = []
+    for value in split_list(args.folders):
+        folder_id = resolve_folder(project_id, value)
+        if not folder_id:
+            raise DmError(f"フォルダが見つかりません: {value}")
+        folder_ids.append(folder_id)
+    return request("PUT", f"api/projects/{quote_id(project_id)}/folders/reorder",
+                   body={"parentFolderId": parent_id, "folderIds": folder_ids})
 
 
 def cmd_note(args):
@@ -821,7 +842,13 @@ def main():
     p = sub.add_parser("manifest", help="プロジェクトのお品書き(資料一覧＋説明書き)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("--markdown", action="store_true", help="人に渡せるMarkdownで出す(JSONで包まずそのまま出力)")
+    p.add_argument("--folder", help="この章から下だけを出す(フォルダIDまたは名前)")
     p.set_defaults(func=cmd_manifest, streaming_if="markdown")
+    p = sub.add_parser("folder-reorder", help="フォルダの並び替え(お品書きの章の順番になる)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("folders", help="並べたい順のフォルダ(カンマ区切り。IDでも名前でも可)")
+    p.add_argument("--parent", help="対象の親フォルダ(省略時はプロジェクト直下)")
+    p.set_defaults(func=cmd_folder_reorder)
     p = sub.add_parser("note", help="お品書きの説明書きを書く(空文字で消す)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("text", help="説明(この案件での位置づけ)")

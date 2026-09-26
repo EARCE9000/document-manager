@@ -20,11 +20,16 @@
  *   1. プロジェクト直下の資料(フォルダに入っていないもの)
  *   2. フォルダ(並び順どおり)。入れ子のフォルダはその中に続く
  *
+ * `folderId` を渡すと、**その章から下だけ**を切り出す。案件全体ではなく
+ * 「この章の資料だけ渡したい」ことがあるため(画面でフォルダ名を押したときもこれを使う)。
+ *
  * @param {{name: string}} project
  * @param {{folders: object[], documents: object[]}} tree
- * @returns {{projectName: string, rootDocuments: object[], folders: object[], documentCount: number}}
+ * @param {{folderId?: ?string}} [options]
+ * @returns {{projectName: string, folderId: ?string, folderName: ?string, folderNote: ?string,
+ *            rootDocuments: object[], folders: object[], documentCount: number}}
  */
-module.exports.build = (project, tree) => {
+module.exports.build = (project, tree, options = {}) => {
 	const folders = tree?.folders ?? [];
 	const documents = tree?.documents ?? [];
 
@@ -64,11 +69,25 @@ module.exports.build = (project, tree) => {
 		}];
 	});
 
+	// 章を指定された場合は、その章の直下の資料と、その下のフォルダだけを返す
+	const scopeId = options.folderId ?? null;
+	const scope = scopeId == null ? null : folders.find((f) => f.id === scopeId);
+	if (scopeId != null && scope == null) return null;
+
+	const rootDocuments = scope == null ? (byFolder.get(null) ?? []) : (byFolder.get(scope.id) ?? []);
+	const childFolders = buildFolders(scope == null ? null : scope.id, 1);
+
+	// 件数はその章から下にあるものだけを数える(「この章には何件あるか」を答えるため)
+	const countIn = (list) => list.reduce((sum, f) => sum + f.documents.length + countIn(f.folders), 0);
+
 	return {
 		projectName: project?.name ?? "",
-		rootDocuments: byFolder.get(null) ?? [],
-		folders: buildFolders(null, 1),
-		documentCount: documents.length
+		folderId: scope?.id ?? null,
+		folderName: scope?.name ?? null,
+		folderNote: scope?.note ?? null,
+		rootDocuments,
+		folders: childFolders,
+		documentCount: scope == null ? documents.length : rootDocuments.length + countIn(childFolders)
 	};
 };
 
@@ -89,7 +108,12 @@ const documentLine = (doc) => {
  * @param {object} manifest build() の結果
  */
 module.exports.toMarkdown = (manifest) => {
-	const lines = [`# ${manifest.projectName} お品書き`, ""];
+	// 章だけを切り出した場合は、どの案件のどの章かが分かる見出しにする
+	const title = manifest.folderName != null
+		? `${manifest.projectName} › ${manifest.folderName} お品書き`
+		: `${manifest.projectName} お品書き`;
+	const lines = [`# ${title}`, ""];
+	if (manifest.folderNote != null) lines.push(manifest.folderNote, "");
 
 	for (const doc of manifest.rootDocuments) lines.push(documentLine(doc));
 	if (manifest.rootDocuments.length > 0) lines.push("");

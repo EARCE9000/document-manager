@@ -123,6 +123,63 @@ test.describe.serial("お品書き(実ブラウザ)", () => {
 		await expect(page.locator("#previewTitle")).toHaveText(COVER);
 	});
 
+	// 案件が大きくなると全体のお品書きは長い。「この章だけ」を見たい/渡したいことがある
+	test("フォルダを押すと、開閉すると同時にその章のお品書きが出る", async ({page}) => {
+		await openProject(page);
+		const folderRow = page.locator(".treeFolderRow", {hasText: "要件"});
+		await expect(folderRow).toBeVisible();
+
+		await folderRow.click();
+		await expect(page.locator("#manifestPane")).toBeVisible();
+		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} › 要件 お品書き`);
+		// その章の資料だけが並ぶ(プロジェクト直下の表紙は出ない)
+		await expect(page.locator(".manifestItem")).toHaveCount(1);
+		await expect(page.locator(".manifestItem")).toContainText(SPEC);
+		// いま見ている章が、ツリー側でも分かる
+		await expect(folderRow).toHaveClass(/manifestOpen/);
+		// 同時に開閉もしている(1回押したので閉じている)
+		await expect(page.locator(".treeFolderRow", {hasText: "要件"}).locator(".treeToggleIcon")).toHaveText("▶");
+
+		// 全体へ戻れる
+		await page.click("#manifestWholeLink");
+		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} お品書き`);
+		await expect(page.locator(".manifestItem")).toHaveCount(2);
+	});
+
+	test("章の前書きも、その場で書ける", async ({page}) => {
+		await openProject(page);
+		await page.locator(".treeFolderRow", {hasText: "要件"}).click();
+		await expect(page.locator("#manifestPane")).toBeVisible();
+
+		await page.locator("#manifestBody > .manifestNote").first().click();
+		await page.locator(".manifestNoteEditor textarea").fill("この章だけ先に見てください。");
+		await page.keyboard.press("Control+Enter");
+		await expect(page.locator("#manifestBody > .manifestNote").first()).toHaveText("この章だけ先に見てください。");
+	});
+
+	// お品書きではフォルダがそのまま章の順番になる
+	test("フォルダを上下に動かすと、お品書きの章の順番が変わる", async ({page, request}) => {
+		const projects = await (await request.get("api/projects", {headers: rw})).json();
+		const target = projects.find((p) => p.name === PROJECT);
+		await request.post(`api/projects/${target.id}/folders`, {headers: rw, data: {name: "参考"}});
+
+		await openProject(page);
+		await page.click("#projectTreeTitle");
+		const chapters = page.locator("#manifestBody > .manifestFolder > .manifestFolderName");
+		// allTextContents は自動待機しないので、描画を待ってから読む
+		await expect(chapters).toHaveCount(2);
+		const chapterNames = () => chapters.allTextContents();
+		expect(await chapterNames()).toEqual(["要件", "参考"]);
+
+		// 「参考」を上へ
+		await page.locator(".treeFolderRow", {hasText: "参考"}).locator(".treeFolderUpButton").click();
+		await expect(page.locator("#manifestBody > .manifestFolder > .manifestFolderName").first()).toHaveText("参考");
+		expect(await chapterNames()).toEqual(["参考", "要件"]);
+
+		// 先頭では上へ押せない(端で押しても何も起きない、が分かるように無効化する)
+		await expect(page.locator(".treeFolderRow", {hasText: "参考"}).locator(".treeFolderUpButton")).toBeDisabled();
+	});
+
 	test("Markdownをコピーできる", async ({page}) => {
 		await openProject(page);
 		await page.click("#projectTreeTitle");

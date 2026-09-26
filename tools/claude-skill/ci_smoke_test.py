@@ -209,6 +209,20 @@ def smoke_manifest_commands(kind, env, doc_id):
     check(markdown.startswith(f"# {project_name} お品書き"), "manifest --markdown: 見出しから始まるMarkdownをそのまま出す")
     check("この案件では前提資料です。" in markdown, "manifest --markdown: 説明書きが含まれる")
 
+    # 章だけを切り出せること(案件全体ではなく「この章だけ渡したい」ことがある)
+    folder = json.loads(run_client(kind, ["folder-create", project_name, "要件"], env).stdout)
+    run_client(kind, ["place", project_name, doc_id, "--folder", "要件"], env)
+    scoped = json.loads(run_client(kind, ["manifest", project_name, "--folder", "要件"], env).stdout)
+    check(scoped["folderName"] == "要件", "manifest --folder: その章だけを切り出せる")
+    scoped_md = run_client(kind, ["manifest", project_name, "--markdown", "--folder", "要件"], env).stdout
+    check("› 要件 お品書き" in scoped_md, "manifest --folder --markdown: どの章かが見出しに出る")
+
+    # フォルダの並び替え(お品書きの章の順番になる)
+    run_client(kind, ["folder-create", project_name, "参考"], env)
+    reordered = json.loads(run_client(kind, ["folder-reorder", project_name, "参考,要件"], env).stdout)
+    order = [f["name"] for f in sorted(reordered["folders"], key=lambda f: f["sortOrder"]) if f["parentFolderId"] is None]
+    check(order[:2] == ["参考", "要件"], f"folder-reorder: 章の順番を変えられる(実際: {order[:2]})")
+
     # 説明書きは文書ではなくプロジェクトへの紐づけに付く(文書側のメモを侵さない)
     memo = json.loads(run_client(kind, ["get", doc_id], env).stdout).get("memo")
     check(memo != "この案件では前提資料です。", "note: 文書そのもののメモは書き換えない")

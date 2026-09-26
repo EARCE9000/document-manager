@@ -3187,7 +3187,13 @@ app.get(BASE_URL_PATH + 'api/projects/:id/manifest', requireAuth, async (req, re
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		res.status(200).json(ProjectManifest.build(project, await Projects.getProjectTree(req.params.id)));
+		const manifest = ProjectManifest.build(project, await Projects.getProjectTree(req.params.id),
+			{folderId: req.query.folderId || null});
+		if (manifest == null) {
+			res.status(404).json({error: "そのフォルダはこのプロジェクトにありません"});
+			return;
+		}
+		res.status(200).json(manifest);
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/manifest");
 		res.status(500).json({error: "Internal Error"});
@@ -3203,9 +3209,13 @@ app.get(BASE_URL_PATH + 'api/projects/:id/manifest.md', requireAuth, async (req,
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		const markdown = ProjectManifest.toMarkdown(
-			ProjectManifest.build(project, await Projects.getProjectTree(req.params.id))
-		);
+		const manifest = ProjectManifest.build(project, await Projects.getProjectTree(req.params.id),
+			{folderId: req.query.folderId || null});
+		if (manifest == null) {
+			res.status(404).json({error: "そのフォルダはこのプロジェクトにありません"});
+			return;
+		}
+		const markdown = ProjectManifest.toMarkdown(manifest);
 		res.setHeader("Content-Type", "text/markdown; charset=utf-8");
 		res.status(200).end(markdown);
 	} catch (err) {
@@ -3270,6 +3280,40 @@ app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId/note', requireAuth, 
 		res.status(200).json({note: folder?.note ?? null});
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/folders/:folderId/note");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * フォルダの並び替え (admin/readwrite)
+ * body: {parentFolderId?, folderIds: [...]}
+ *
+ * お品書きではフォルダがそのまま章の順番になるため、作成順のままだと人に渡す資料の
+ * 章立てを直せない。文書の並び替え(api/projects/:id/reorder)と対になる。
+ *
+ * `:folderId` のルートより**先に**登録すること(後だと "reorder" がフォルダIDとして拾われる)。
+ */
+app.put(BASE_URL_PATH + 'api/projects/:id/folders/reorder', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const project = await Projects.getProject(req.params.id);
+		if (project == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
+		if (!Array.isArray(req.body?.folderIds)) {
+			res.status(400).json({error: "folderIds は配列で指定してください"});
+			return;
+		}
+		await Projects.reorderFolders(req.params.id, req.body.parentFolderId ?? null, req.body.folderIds);
+		broadcastProjectsChanged();
+		res.status(200).json(await Projects.getProjectTree(req.params.id));
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/folders/reorder");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
