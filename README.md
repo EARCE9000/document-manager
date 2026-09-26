@@ -214,7 +214,7 @@ document-manager/
 │       └── vendor/drawio/    # draw.io公式のビューア(viewer-static.min.js。Apache-2.0)
 ├── deploy/                  # 運用サーバ(podman + リバースプロキシ)向けのcompose構成
 │   ├── compose.yml           # 公開イメージ + Weaviate + 推論サーバー(Weaviate側はポート非公開)
-│   ├── compose.sh            # 起動用ラッパー(up/down/logs/ps。必須設定が無ければ止める)
+│   ├── compose.sh            # 起動用ラッパー(up/verify/down/logs/ps。必須設定が無ければ止める。upは入れ替わったかまで確認する)
 │   ├── compose.env.example   # サイト固有の値のひな形(実ファイルはGit管理外)
 │   └── check-converter-isolation.sh # 変換サービスの隔離が実際に効いているかを実機で確認する
 ├── converter/               # Office→PDF 変換サービス(別イメージ。LibreOffice同梱)
@@ -525,7 +525,9 @@ podman rm -f document_manager
 - 切り戻したい場合はイメージのタグを指定する: `DOCUMENT_MANAGER_TAG=<日時タグ> ./deploy/compose.sh up`
 - SELinuxが有効(`getenforce` が `Enforcing`)なホストでは、ボリュームの `:z` が必要(compose.ymlには付けてある)
 - 外部ネットワーク(`application_network`)はcomposeでは作成しない(`external: true`)。既存のものをそのまま使うため、Apacheのリバースプロキシ設定は変更不要
-- 展開できたかどうかは、画面右上の歯車(管理)→「サーバー」タブの**ビルド時刻**で分かる。更新したはずなのに変わっていなければ入れ替わっていない
+- **更新は `./deploy/compose.sh up` を実行するだけ**(`pull` → `up -d` → 入れ替わったかの確認、まで行う)。`podman-compose`の版によっては、タグが同じ(`latest`)だと新しいイメージを取得しても`up -d`がコンテナを作り直さず、**古いイメージのまま成功したように見える**。そのため`up`の最後に、動いているコンテナのイメージIDと取得したイメージのIDを突き合わせ、食い違っていればそのコンテナだけ作り直す(関係ないサービスは止めないので、Weaviate等は動いたまま)。それでも入れ替わらなければ終了コード1で終わる
+- 変更せずに確認だけしたい場合は `./deploy/compose.sh verify`。動作中のアプリの版・リビジョン(イメージに焼き込んだ`/app/VERSION.json`)も表示する
+- 展開できたかどうかは、画面右上の歯車(管理)→「サーバー」タブの**ビルド時刻**、または認証不要の `GET /api/version` でも分かる。更新したはずなのに変わっていなければ入れ替わっていない
 - 変換サービス(converter)は`depends_on`に入れていない。イメージの取得や起動に失敗しても、アプリまで起動しなくなることは無い(体裁つき表示だけが使えなくなる)
 
 導入後、**既存の文書がバックグラウンドで順次索引付けされる**(1件あたり数秒。実測で約5.5秒/件)。進行状況は画面の「ベクトル索引」から確認できる。索引付け中はCPUを複数コア使い切るため、同居サービスがある場合は業務時間外に始めるか、`compose.yml` の `cpus`/`mem_limit` で上限を設けるとよい。
