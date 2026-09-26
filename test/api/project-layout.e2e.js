@@ -26,7 +26,9 @@ const PROJECT = `並び確認 ${Date.now()}`;
 test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () => {
 	test.beforeAll(async ({request}) => {
 		const project = await (await request.post("api/projects", {headers: rw, data: {name: PROJECT}})).json();
-		await request.post(`api/projects/${project.id}/folders`, {headers: rw, data: {name: "資料"}});
+		const parent = await (await request.post(`api/projects/${project.id}/folders`, {headers: rw, data: {name: "資料"}})).json();
+		// 入れ子を作っておく(全展開/全折りたたみは深いときにこそ効く)
+		await request.post(`api/projects/${project.id}/folders`, {headers: rw, data: {name: "内訳", parentFolderId: parent.id}});
 	});
 
 	test.beforeEach(async ({context}) => {
@@ -83,5 +85,50 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 		expect(order).toEqual(["projectTreePane", "previewArea"]);
 
 		await request.post(`api/projects/${target.id}/unlock`, {headers: rw});
+	});
+
+	// 階層が深くなると1つずつ開け閉めするのが手間になる
+	test("ツリーをまとめて展開・折りたたみできる", async ({page}) => {
+		await page.goto("./");
+		await page.click("#menuProjectsLink");
+		await page.click(`.projectTab:has-text("${PROJECT}")`);
+		await expect(page.locator("#projectTreePane")).toBeVisible();
+
+		const folderRows = page.locator(".treeFolderRow");
+		// 既定は開いた状態なので、入れ子の子まで見えている
+		await expect(folderRows).toHaveCount(2);
+
+		await page.click("#projectCollapseAllButton");
+		// 閉じると、直下のフォルダだけが残る
+		await expect(folderRows).toHaveCount(1);
+		await expect(folderRows.first().locator(".treeToggleIcon")).toHaveText("▶");
+
+		await page.click("#projectExpandAllButton");
+		await expect(folderRows).toHaveCount(2);
+		await expect(folderRows.first().locator(".treeToggleIcon")).toHaveText("▼");
+	});
+
+	// 押しても意味がないときに押せると、効かないのか壊れているのか分からない
+	test("フォルダが無いプロジェクトでは、展開・折りたたみは押せない", async ({page, request}) => {
+		const empty = `空のPJ ${Date.now()}`;
+		await request.post("api/projects", {headers: rw, data: {name: empty}});
+
+		await page.goto("./");
+		await page.click("#menuProjectsLink");
+		await page.click(`.projectTab:has-text("${empty}")`);
+		await expect(page.locator("#projectExpandAllButton")).toBeDisabled();
+		await expect(page.locator("#projectCollapseAllButton")).toBeDisabled();
+	});
+
+	// 2つの列は「揃っていること」自体が意図なので、片方だけ変わったら気づけるようにする
+	test("ツリーと文書一覧の幅が揃っている", async ({page}) => {
+		await page.goto("./");
+		await page.click("#menuProjectsLink");
+		await page.click(`.projectTab:has-text("${PROJECT}")`);
+		await expect(page.locator("#projectTreePane")).toBeVisible();
+
+		const widths = await page.evaluate(() => ["sideBar", "projectTreePane"]
+			.map((id) => Math.round(document.getElementById(id).getBoundingClientRect().width)));
+		expect(widths[1], `文書一覧 ${widths[0]}px / ツリー ${widths[1]}px`).toBe(widths[0]);
 	});
 });
