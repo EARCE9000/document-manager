@@ -184,12 +184,37 @@ const OPERATIONS = [
 	{id: "archiveProject", method: "post", path: "/api/projects/:id/archive", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトのアーカイブ(一覧から隠す。復元可能)"},
 	{id: "restoreProject", method: "post", path: "/api/projects/:id/restore", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトをアーカイブから戻す"},
 	{id: "deleteProject", method: "delete", path: "/api/projects/:id", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの完全削除", description: "フォルダ構成・登録情報ごと削除する(文書自体は削除されない)"},
-	{id: "unlockProject", method: "post", path: "/api/projects/:id/unlock", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの解錠", description: "施錠中は編集操作が409になる。解錠は全利用者で共有される状態", aiGuide: false},
+	{id: "unlockProject", method: "post", path: "/api/projects/:id/unlock", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの解錠", description: "施錠中は編集操作が423になる。解錠は全利用者で共有される状態", aiGuide: false},
 	{id: "lockProject", method: "post", path: "/api/projects/:id/lock", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの施錠", aiGuide: false},
 	{
 		id: "getProjectTree", method: "get", path: "/api/projects/:id/tree", role: "readonly", tag: "プロジェクト",
 		summary: "プロジェクトのツリー取得(フォルダ階層+文書の配置)",
 		description: "`folders`: `{id, parentFolderId, name, sortOrder}` の配列 / `documents`: `{documentId, folderId, sortOrder}` の配列(`folderId`が`null`はプロジェクト直下)"
+	},
+	{
+		id: "getProjectManifest", method: "get", path: "/api/projects/:id/manifest", role: "readonly", tag: "プロジェクト",
+		summary: "お品書き(資料一覧と説明書き)",
+		description: "ツリーと同じ中身を、読む順(直下の資料→フォルダ)に並べ直したもの。フォルダが章立てになり、資料ごとに`note`(このプロジェクトでの位置づけ)が付く"
+	},
+	{
+		id: "getProjectManifestMarkdown", method: "get", path: "/api/projects/:id/manifest.md", role: "readonly", tag: "プロジェクト",
+		summary: "お品書きのMarkdown",
+		description: "議事録・メールにそのまま貼れる形。案件にどんな資料が揃っているかを人に伝えるときに使う",
+		produces: "text/markdown"
+	},
+	{
+		id: "updateProjectDocumentNote", method: "put", path: "/api/projects/:id/documents/:documentId/note", role: "readwrite", tag: "プロジェクト",
+		summary: "お品書きの資料の説明書きを更新",
+		description: "「この資料がこのプロジェクトではどういう位置づけか」を書く。1つの文書は複数のプロジェクトに登録できるため、文書そのもののメモとは別に、プロジェクトごとに持つ。空文字を送ると説明を消す",
+		body: {schema: {type: "object", properties: {note: {type: "string"}}}},
+		responses: {404: "プロジェクトが無い、またはその文書が登録されていない", 423: "プロジェクトが施錠されている"}
+	},
+	{
+		id: "updateProjectFolderNote", method: "put", path: "/api/projects/:id/folders/:folderId/note", role: "readwrite", tag: "プロジェクト",
+		summary: "お品書きのフォルダ(章)の説明書きを更新",
+		body: {schema: {type: "object", properties: {note: {type: "string"}}}},
+		responses: {404: "プロジェクトまたはフォルダが無い", 423: "プロジェクトが施錠されている"},
+		aiGuide: false
 	},
 	{
 		id: "createFolder", method: "post", path: "/api/projects/:id/folders", role: "readwrite", tag: "プロジェクト", summary: "フォルダの作成",

@@ -506,6 +506,7 @@ app.all(BASE_URL_PATH + 'home', async (req, res) => {
 const initOidcClient = require("./lib/oidc-client.js");
 const TagOrder = require("./lib/tag-order.js");
 const Projects = require("./lib/projects.js");
+const ProjectManifest = require("./lib/project-manifest.js");
 const ClaudeSkill = require("./lib/claude-skill.js");
 const ApiSpec = require("./lib/api-spec.js");
 const DocumentLinks = require("./lib/document-links.js");
@@ -3165,6 +3166,107 @@ app.get(BASE_URL_PATH + 'api/projects/:id/tree', requireAuth, async (req, res) =
 		res.status(200).json(await Projects.getProjectTree(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/tree");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * お品書き(プロジェクトの資料一覧＋説明書き)。
+ *
+ * ツリーと同じ中身だが、読む順に並べ直し、フォルダを章立てとして扱ったもの。
+ * 画面とMarkdownで並びが食い違わないよう、組み立ては lib/project-manifest.js に寄せている。
+ */
+app.get(BASE_URL_PATH + 'api/projects/:id/manifest', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const project = await Projects.getProject(req.params.id);
+		if (project == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		res.status(200).json(ProjectManifest.build(project, await Projects.getProjectTree(req.params.id)));
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/manifest");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** お品書きのMarkdown。議事録・メールにそのまま貼れる形で返す */
+app.get(BASE_URL_PATH + 'api/projects/:id/manifest.md', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const project = await Projects.getProject(req.params.id);
+		if (project == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const markdown = ProjectManifest.toMarkdown(
+			ProjectManifest.build(project, await Projects.getProjectTree(req.params.id))
+		);
+		res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+		res.status(200).end(markdown);
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/manifest.md");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 資料の説明書きの更新 (admin/readwrite)
+ * body: {note}
+ *
+ * 説明は「この資料が、このプロジェクトではどういう位置づけか」であり、文書そのものの
+ * メモとは別物。1つの文書は複数のプロジェクトに登録できるため、紐づけ側に持たせている。
+ */
+app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId/note', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const project = await Projects.getProject(req.params.id);
+		if (project == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
+		if (!await Projects.updateDocumentNote(req.params.id, req.params.documentId, req.body?.note)) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		broadcastProjectsChanged();
+		const tree = await Projects.getProjectTree(req.params.id);
+		const placement = tree.documents.find((d) => d.documentId === req.params.documentId);
+		res.status(200).json({note: placement?.note ?? null});
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/documents/:documentId/note");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** フォルダ(お品書きでは章の見出し)の説明書きの更新 (admin/readwrite) */
+app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId/note', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const project = await Projects.getProject(req.params.id);
+		if (project == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		if (project.locked) {
+			respondProjectLocked(res);
+			return;
+		}
+		if (!await Projects.updateFolderNote(req.params.id, req.params.folderId, req.body?.note)) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		broadcastProjectsChanged();
+		const tree = await Projects.getProjectTree(req.params.id);
+		const folder = tree.folders.find((f) => f.id === req.params.folderId);
+		res.status(200).json({note: folder?.note ?? null});
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/folders/:folderId/note");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

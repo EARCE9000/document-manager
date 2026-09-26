@@ -380,7 +380,53 @@
 		width: 1px;
 		background: #ddd;
 	}
-	#projectTreeTitle { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	/* プロジェクト名はお品書きへの入口も兼ねる。押せることが分かるようにしておく */
+	#projectTreeTitle { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+	#projectTreeTitle:hover { color: #ee7800; text-decoration: underline; }
+	#projectTreeTitle.active { color: #ee7800; }
+
+	/* お品書き: プロジェクトにどんな資料が揃っているかを、説明つきで並べたもの。
+	   プロジェクト名を押すとプレビュー領域に出る(ツリーは左に残るので、見ながら書ける) */
+	#manifestPane { display: none; flex: 1; overflow-y: auto; padding: 18px 24px 40px; min-height: 0; }
+	#manifestPane.visible { display: block; }
+	#manifestHeaderRow { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 4px; }
+	#manifestTitle { font-size: 1.15em; font-weight: 700; margin: 0; flex: 1; min-width: 0; word-break: break-all; }
+	#manifestActions { display: flex; gap: 6px; flex-shrink: 0; }
+	#manifestActions .modalButton { font-size: 0.8em; padding: 5px 12px; white-space: nowrap; }
+	#manifestSummary { color: #888; font-size: 0.8em; margin-bottom: 18px; }
+	.manifestFolder { margin-top: 22px; }
+	.manifestFolderName { font-weight: 700; font-size: 1em; border-bottom: 2px solid #eee; padding-bottom: 5px; }
+	.manifestFolder.depth2 .manifestFolderName { font-size: 0.95em; border-bottom-style: dotted; }
+	.manifestFolder.depth3 .manifestFolderName,
+	.manifestFolder.depth4 .manifestFolderName { font-size: 0.9em; border-bottom: none; color: #555; }
+	.manifestChildren { margin-left: 18px; }
+	.manifestItem { padding: 9px 0; border-bottom: 1px solid #f2f2f2; display: flex; gap: 12px; align-items: flex-start; }
+	.manifestItemName { width: 300px; flex-shrink: 0; font-size: 0.9em; word-break: break-all; }
+	.manifestItemName .openLink { color: #1a56db; cursor: pointer; }
+	.manifestItemName .openLink:hover { text-decoration: underline; }
+	.manifestItemName .archivedMark { color: #b8860b; font-size: 0.8em; margin-left: 6px; }
+	.manifestItemName .missingMark { color: #c0392b; font-size: 0.85em; }
+	/* 説明書き。空でも押せる幅を残しておかないと、書き始められない */
+	.manifestNote { flex: 1; min-width: 0; font-size: 0.85em; color: #444; white-space: pre-wrap; word-break: break-all; min-height: 1.3em; }
+	.manifestNote.empty { color: #bbb; }
+	#appShell:not(.readOnlyMode) .manifestNote { cursor: text; border-radius: 3px; padding: 2px 6px; margin: -2px -6px; }
+	#appShell:not(.readOnlyMode) .manifestNote:hover { background: #f4f6fa; }
+	.manifestNoteEditor { flex: 1; min-width: 0; }
+	.manifestNoteEditor textarea {
+		width: 100%; box-sizing: border-box; font-family: inherit; font-size: 0.85em;
+		padding: 5px 7px; border: 1px solid #1a56db; border-radius: 4px; resize: vertical; min-height: 3em;
+	}
+	.manifestNoteEditorHint { color: #999; font-size: 0.75em; margin-top: 3px; }
+	.manifestFolderNote { font-size: 0.85em; color: #555; white-space: pre-wrap; margin: 8px 0 4px; }
+	#manifestEmpty { color: #888; font-size: 0.85em; padding: 20px 0; }
+	/* 印刷では、お品書きだけを紙に出す。編集用の飾りは落とす */
+	@media print {
+		body * { visibility: hidden; }
+		#manifestPane, #manifestPane * { visibility: visible; }
+		#manifestPane { position: absolute; left: 0; top: 0; width: 100%; padding: 0; overflow: visible; }
+		#manifestActions, .manifestNoteEditorHint { display: none !important; }
+		.manifestNote.empty { visibility: hidden; }
+	}
 	#projectTreeList { list-style: none; margin: 0; padding: 8px; flex: 1; overflow-y: auto; }
 	#projectTreeList ul.treeChildren { list-style: none; margin: 0; padding-left: 1.1em; }
 	#projectTreeList .treeFolderRow, #projectTreeList .treeDocRow {
@@ -1402,6 +1448,18 @@
 			<div id="versionHistoryRow"></div>
 			<div id="relatedDocsRow"></div>
 			<div id="contentTruncatedRow"></div>
+			<div id="manifestPane">
+				<div id="manifestHeaderRow">
+					<h2 id="manifestTitle"></h2>
+					<div id="manifestActions">
+						<button type="button" id="manifestCopyButton" class="modalButton">Markdownをコピー</button>
+						<button type="button" id="manifestPrintButton" class="modalButton">印刷</button>
+					</div>
+				</div>
+				<div id="manifestSummary"></div>
+				<div id="manifestBody"></div>
+				<div id="manifestEmpty" style="display:none;">この案件にはまだ資料がありません。左のツリーに文書を入れてください。</div>
+			</div>
 			<iframe id="previewFrame" style="display:none;" sandbox="allow-same-origin"></iframe>
 			<div id="previewOpenExternalBox" style="display:none;">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -1847,6 +1905,13 @@ const projectTabsEl = document.getElementById("projectTabs");
 const projectAddButton = document.getElementById("projectAddButton");
 const projectTreePane = document.getElementById("projectTreePane");
 const projectTreeTitle = document.getElementById("projectTreeTitle");
+const manifestPane = document.getElementById("manifestPane");
+const manifestTitle = document.getElementById("manifestTitle");
+const manifestSummary = document.getElementById("manifestSummary");
+const manifestBody = document.getElementById("manifestBody");
+const manifestEmpty = document.getElementById("manifestEmpty");
+const manifestCopyButton = document.getElementById("manifestCopyButton");
+const manifestPrintButton = document.getElementById("manifestPrintButton");
 const projectRenameButton = document.getElementById("projectRenameButton");
 const projectDeleteButton = document.getElementById("projectDeleteButton");
 const projectRestoreButton = document.getElementById("projectRestoreButton");
@@ -2400,6 +2465,7 @@ window.addEventListener("message", (event) => {
 });
 
 const clearPreview = () => {
+	hideManifest();
 	selectedId = null;
 	cancelDrawioPreview();
 	projectTreeList.querySelectorAll(".treeDocRow.selected").forEach((li) => li.classList.remove("selected"));
@@ -2425,6 +2491,8 @@ const clearPreview = () => {
 };
 
 const showPreview = (doc) => {
+	// お品書きとプレビューは同じ場所を使うので、文書を選んだら引っ込める
+	hideManifest();
 	cancelDrawioPreview();
 	selectedId = doc.id;
 	documentList.querySelectorAll("li").forEach((li) => {
@@ -3217,6 +3285,170 @@ mockupFilterInput.addEventListener("input", () => {
 	mockupFilterTimer = setTimeout(loadMockups, 250);
 });
 
+// ==== お品書き(プロジェクトの資料一覧＋説明書き) ====
+// プロジェクト名を押すとプレビュー領域に出る。ツリーは左に残るので、見ながら説明を書ける。
+// 並び(直下の資料→フォルダ)はサーバー側(lib/project-manifest.js)で決めており、
+// ここは受け取った順に描くだけ。Markdownの持ち出しと並びが食い違わないようにするため
+let currentManifest = null;
+let manifestEditing = null;
+
+const hideManifest = () => {
+	manifestPane.classList.remove("visible");
+	projectTreeTitle.classList.remove("active");
+	manifestEditing = null;
+};
+
+const manifestItemHtml = (doc) => {
+	const name = doc.entryFile != null
+		? `<span class="openLink" data-open="${escapeHtml(doc.documentId)}">${escapeHtml(doc.entryFile)}</span>`
+		: `<span class="missingMark">(この資料は見つかりません)</span>`;
+	const archived = doc.archived ? `<span class="archivedMark">アーカイブ済み</span>` : "";
+	const note = doc.note != null
+		? `<div class="manifestNote" data-kind="document" data-id="${escapeHtml(doc.documentId)}">${escapeHtml(doc.note)}</div>`
+		: `<div class="manifestNote empty" data-kind="document" data-id="${escapeHtml(doc.documentId)}">説明を書く</div>`;
+	return `<div class="manifestItem">
+		<div class="manifestItemName">${name}${archived}</div>
+		${note}
+	</div>`;
+};
+
+const manifestFolderHtml = (folder) => {
+	const note = folder.note != null
+		? `<div class="manifestFolderNote manifestNote" data-kind="folder" data-id="${escapeHtml(folder.id)}">${escapeHtml(folder.note)}</div>`
+		: `<div class="manifestFolderNote manifestNote empty" data-kind="folder" data-id="${escapeHtml(folder.id)}">説明を書く</div>`;
+	return `<div class="manifestFolder depth${Math.min(folder.depth, 4)}">
+		<div class="manifestFolderName">${escapeHtml(folder.name)}</div>
+		${note}
+		<div class="manifestChildren">
+			${folder.documents.map(manifestItemHtml).join("")}
+			${folder.folders.map(manifestFolderHtml).join("")}
+		</div>
+	</div>`;
+};
+
+const renderManifest = () => {
+	if (currentManifest == null) return;
+	manifestTitle.textContent = `${currentManifest.projectName} お品書き`;
+	manifestSummary.textContent = `資料 ${currentManifest.documentCount} 件`;
+	manifestEmpty.style.display = currentManifest.documentCount === 0 ? "block" : "none";
+	manifestBody.innerHTML =
+		currentManifest.rootDocuments.map(manifestItemHtml).join("")
+		+ currentManifest.folders.map(manifestFolderHtml).join("");
+};
+
+const loadManifest = async () => {
+	if (currentProjectId == null) return;
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/manifest`);
+	if (res.status !== 200) return;
+	currentManifest = await res.json();
+	renderManifest();
+};
+
+const showManifest = async () => {
+	clearPreview();
+	previewTitle.textContent = "お品書き";
+	manifestPane.classList.add("visible");
+	projectTreeTitle.classList.add("active");
+	await loadManifest();
+};
+
+projectTreeTitle.addEventListener("click", () => {
+	if (currentProjectId == null) return;
+	// もう開いていれば閉じる(同じ入口で行き来できるように)
+	if (manifestPane.classList.contains("visible")) {
+		hideManifest();
+		previewTitle.textContent = "左の一覧から文書を選択してください。";
+		return;
+	}
+	showManifest();
+});
+
+// 説明書きの編集。空欄も押せるようにしてあるので、書き始めるのに何も要らない
+const startNoteEdit = (target) => {
+	if (appShell.classList.contains("readOnlyMode")) return;
+	if (manifestEditing != null) return;
+	const kind = target.dataset.kind;
+	const id = target.dataset.id;
+	const current = target.classList.contains("empty") ? "" : target.textContent;
+
+	const editor = document.createElement("div");
+	editor.className = "manifestNoteEditor";
+	const textarea = document.createElement("textarea");
+	textarea.value = current;
+	textarea.maxLength = 500;
+	const hint = document.createElement("div");
+	hint.className = "manifestNoteEditorHint";
+	hint.textContent = "Ctrl+Enterで保存 / Escでやめる(空にすると説明を消します)";
+	editor.append(textarea, hint);
+	target.replaceWith(editor);
+	manifestEditing = {kind, id, editor, original: target};
+	textarea.focus();
+	textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+	const finish = (save) => {
+		if (manifestEditing == null) return;
+		const value = textarea.value;
+		manifestEditing = null;
+		editor.replaceWith(target);
+		if (!save || value === current) return;
+		saveNote(kind, id, value);
+	};
+	textarea.addEventListener("keydown", (ev) => {
+		if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+		if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); finish(true); }
+	});
+	textarea.addEventListener("blur", () => finish(true));
+};
+
+const saveNote = async (kind, id, note) => {
+	const path = kind === "folder"
+		? `./api/projects/${encodeURIComponent(currentProjectId)}/folders/${encodeURIComponent(id)}/note`
+		: `./api/projects/${encodeURIComponent(currentProjectId)}/documents/${encodeURIComponent(id)}/note`;
+	const res = await fetch(path, {
+		method: "PUT",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({note})
+	});
+	if (res.status !== 200) {
+		// 施錠中(423)は理由がはっきりしているので、そのまま伝える
+		alert((await res.json().catch(() => ({}))).error || "説明を保存できませんでした");
+		await loadManifest();
+		return;
+	}
+	await loadManifest();
+};
+
+manifestBody.addEventListener("click", (ev) => {
+	const open = ev.target.closest("[data-open]");
+	if (open != null) {
+		// お品書きから資料そのものへ飛べるようにする(説明だけ見て終わりにしない)
+		const doc = (currentProjectTree?.documents ?? []).find((d) => d.documentId === open.dataset.open);
+		if (doc != null) showPreview({id: doc.documentId, entryFile: doc.entryFile, previewFile: doc.previewFile, archived: doc.archived});
+		return;
+	}
+	const note = ev.target.closest(".manifestNote");
+	if (note != null) startNoteEdit(note);
+});
+
+manifestCopyButton.addEventListener("click", async () => {
+	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/manifest.md`);
+	if (res.status !== 200) {
+		alert("お品書きを取得できませんでした");
+		return;
+	}
+	const markdown = await res.text();
+	try {
+		await navigator.clipboard.writeText(markdown);
+		manifestCopyButton.textContent = "コピーしました";
+		setTimeout(() => { manifestCopyButton.textContent = "Markdownをコピー"; }, 1600);
+	} catch {
+		// クリップボードが使えない環境(非HTTPSなど)では、手で選べるように出す
+		window.prompt("コピーしてください", markdown);
+	}
+});
+
+manifestPrintButton.addEventListener("click", () => window.print());
+
 // ==== プロジェクト機能 ====
 // プロジェクト一覧を取得し、スイッチャー(ピルタブ)を描画したうえで、
 // 選択中プロジェクト(未選択なら先頭)のツリーを読み込む
@@ -3271,6 +3503,8 @@ const loadProjectTree = async () => {
 	appShell.classList.toggle("projectsEditMode", projectsEditMode);
 	applyProjectEditToggleState(projectsEditMode);
 	renderProjectTree();
+	// お品書きを開いたままプロジェクトを切り替えた場合も中身を合わせる
+	if (manifestPane.classList.contains("visible")) await loadManifest();
 };
 
 // フォルダ(またはルート)へのドラッグ&ドロップ受け入れを配線する。

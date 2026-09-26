@@ -132,7 +132,8 @@ CREATE TABLE IF NOT EXISTS project_folders (
 	name TEXT NOT NULL,
 	sort_order INTEGER NOT NULL DEFAULT 0,
 	created_by TEXT,
-	created_at TEXT NOT NULL
+	created_at TEXT NOT NULL,
+	note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS project_documents (
@@ -142,6 +143,7 @@ CREATE TABLE IF NOT EXISTS project_documents (
 	sort_order INTEGER NOT NULL DEFAULT 0,
 	added_by TEXT,
 	added_at TEXT NOT NULL,
+	note TEXT,
 	PRIMARY KEY (project_id, document_id)
 );
 
@@ -244,6 +246,11 @@ const MIGRATIONS = [
 			previous_id TEXT
 		);
 		CREATE INDEX IF NOT EXISTS idx_mockups_previous_id ON mockups (previous_id);
+	`},
+	// お品書き用の説明書き。資料の説明はプロジェクトごとに違うため、文書ではなく紐づけ表に持つ
+	{version: 8, sql: `
+		ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS note TEXT;
+		ALTER TABLE project_folders ADD COLUMN IF NOT EXISTS note TEXT;
 	`}
 ];
 

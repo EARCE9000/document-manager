@@ -31,15 +31,16 @@ const SQL_DELETE_DOCUMENTS_BY_PROJECT = `DELETE FROM project_documents WHERE pro
 const SQL_MAX_PROJECT_SORT_ORDER = `SELECT MAX(sort_order) AS "maxOrder" FROM projects`;
 
 const SQL_LIST_FOLDERS_BY_PROJECT = `
-	SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at
+	SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at, note
 	FROM project_folders WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC
 `;
-const SQL_GET_FOLDER = `SELECT id, project_id, parent_folder_id, name FROM project_folders WHERE id = ? AND project_id = ?`;
+const SQL_GET_FOLDER = `SELECT id, project_id, parent_folder_id, name, note FROM project_folders WHERE id = ? AND project_id = ?`;
 const SQL_INSERT_FOLDER = `
 	INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at)
 	VALUES (@id, @project_id, @parent_folder_id, @name, @sort_order, @created_by, @created_at)
 `;
 const SQL_UPDATE_FOLDER_NAME = `UPDATE project_folders SET name = ? WHERE id = ? AND project_id = ?`;
+const SQL_UPDATE_FOLDER_NOTE = `UPDATE project_folders SET note = ? WHERE id = ? AND project_id = ?`;
 const SQL_DELETE_FOLDER = `DELETE FROM project_folders WHERE id = ? AND project_id = ?`;
 const SQL_COUNT_SUBFOLDERS = `SELECT COUNT(*) AS c FROM project_folders WHERE parent_folder_id = ?`;
 const SQL_COUNT_DOCUMENTS_IN_FOLDER = `SELECT COUNT(*) AS c FROM project_documents WHERE project_id = ? AND folder_id = ?`;
@@ -53,7 +54,7 @@ const SQL_MAX_FOLDER_SORT_ORDER_CHILD = `SELECT MAX(sort_order) AS "maxOrder" FR
 // (document_idしか持たないと、通常の文書一覧APIにはアーカイブ済み文書が含まれないため解決できない)
 const SQL_LIST_DOCUMENTS_BY_PROJECT = `
 	SELECT pd.project_id AS project_id, pd.document_id AS document_id, pd.folder_id AS folder_id,
-		pd.sort_order AS sort_order, pd.added_by AS added_by, pd.added_at AS added_at,
+		pd.sort_order AS sort_order, pd.added_by AS added_by, pd.added_at AS added_at, pd.note AS note,
 		d.entry_file AS entry_file, d.preview_file AS preview_file, d.memo AS memo,
 		d.uploaded_by AS uploaded_by, d.uploaded_at AS uploaded_at, d.deleted_at AS deleted_at
 	FROM project_documents pd
@@ -73,6 +74,20 @@ const SQL_TRANSFER_PLACEMENT = `UPDATE project_documents SET document_id = ? WHE
 const SQL_MAX_DOCUMENT_SORT_ORDER_ROOT = `SELECT MAX(sort_order) AS "maxOrder" FROM project_documents WHERE project_id = ? AND folder_id IS NULL`;
 const SQL_MAX_DOCUMENT_SORT_ORDER_FOLDER = `SELECT MAX(sort_order) AS "maxOrder" FROM project_documents WHERE project_id = ? AND folder_id = ?`;
 const SQL_UPDATE_DOCUMENT_SORT_ORDER = `UPDATE project_documents SET sort_order = ? WHERE project_id = ? AND document_id = ?`;
+const SQL_UPDATE_DOCUMENT_NOTE = `UPDATE project_documents SET note = ? WHERE project_id = ? AND document_id = ?`;
+
+// お品書きの説明書きの上限。1件ずつがツリー取得の応答すべてに載るため、長文は持たせない
+// (長い説明は文書そのもののメモ側に書く)
+const NOTE_MAX_CHARS = Number(process.env.PROJECT_NOTE_MAX_CHARS || 500);
+module.exports.NOTE_MAX_CHARS = NOTE_MAX_CHARS;
+
+// 空文字は「説明なし」としてNULLに寄せる(空文字とNULLが混ざると表示側で場合分けが増える)
+const normalizeNote = (value) => {
+	if (value == null) return null;
+	const trimmed = String(value).trim();
+	if (trimmed === "") return null;
+	return trimmed.slice(0, NOTE_MAX_CHARS);
+};
 
 const toProjectResponse = (row) => ({
 	id: row.id,
@@ -92,7 +107,8 @@ const toFolderResponse = (row) => ({
 	name: row.name,
 	sortOrder: row.sort_order,
 	createdBy: row.created_by,
-	createdAt: row.created_at
+	createdAt: row.created_at,
+	note: row.note ?? null
 });
 
 const toDocumentPlacementResponse = (row) => ({
@@ -101,6 +117,9 @@ const toDocumentPlacementResponse = (row) => ({
 	sortOrder: row.sort_order,
 	addedBy: row.added_by,
 	addedAt: row.added_at,
+	// この資料が「このプロジェクトでは」どういう位置づけかの説明(お品書き用)。
+	// 1つの文書は複数のプロジェクトに登録できるため、文書側のメモとは別に持つ
+	note: row.note ?? null,
 	entryFile: row.entry_file ?? null,
 	previewFile: row.preview_file ?? null,
 	memo: row.memo ?? null,
@@ -190,6 +209,23 @@ module.exports.getProjectTree = async (projectId) => ({
 	folders: (await ds.all(SQL_LIST_FOLDERS_BY_PROJECT, [projectId])).map(toFolderResponse),
 	documents: (await ds.all(SQL_LIST_DOCUMENTS_BY_PROJECT, [projectId])).map(toDocumentPlacementResponse)
 });
+
+/**
+ * 資料の説明書きを更新する。空文字・空白のみは「説明なし」として消す。
+ * @returns {boolean} 対象の紐づけが無ければ false
+ */
+module.exports.updateDocumentNote = async (projectId, documentId, note) => {
+	if ((await ds.get(SQL_GET_PLACEMENT, [projectId, documentId])) == null) return false;
+	await ds.run(SQL_UPDATE_DOCUMENT_NOTE, [normalizeNote(note), projectId, documentId]);
+	return true;
+};
+
+/** フォルダ(お品書きでは章の見出しになる)の説明書きを更新する */
+module.exports.updateFolderNote = async (projectId, folderId, note) => {
+	if ((await ds.get(SQL_GET_FOLDER, [folderId, projectId])) == null) return false;
+	await ds.run(SQL_UPDATE_FOLDER_NOTE, [normalizeNote(note), folderId, projectId]);
+	return true;
+};
 
 module.exports.createFolder = async (projectId, name, parentFolderId, createdBy) => {
 	const trimmed = String(name || "").trim();
