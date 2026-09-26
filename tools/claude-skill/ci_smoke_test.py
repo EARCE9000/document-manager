@@ -126,6 +126,8 @@ def smoke_clients(env, workdir):
 
         smoke_edit_commands(kind, env, v2["id"], v1["id"])
         smoke_project_commands(kind, env, workdir, v2["id"])
+        smoke_manifest_commands(kind, env, v2["id"])
+        smoke_mockup_commands(kind, env, workdir)
         smoke_update_notice(kind, env)
         smoke_render(kind, env, workdir)
         smoke_spec(kind, env)
@@ -187,6 +189,74 @@ def smoke_project_commands(kind, env, workdir, doc_id):
     uploaded = json.loads(run_client(kind, ["upload", path, "--project", project_name], env).stdout)
     check(uploaded["project"]["projectId"] == project["id"] and uploaded["project"]["folderId"] is None,
           "upload --project: アップロードと同時にプロジェクト直下へ登録できる")
+
+
+def smoke_manifest_commands(kind, env, doc_id):
+    """お品書き: 資料一覧に説明書きを付けて、人に渡せる形で出せること"""
+    project_name = f"smoke-manifest-{kind}"
+    run_client(kind, ["project-create", project_name], env)
+    run_client(kind, ["place", project_name, doc_id], env)
+
+    written = json.loads(run_client(kind, ["note", project_name, "この案件では前提資料です。", "--id", doc_id], env).stdout)
+    check(written["note"] == "この案件では前提資料です。", "note: 資料に説明書きを書ける")
+
+    manifest = json.loads(run_client(kind, ["manifest", project_name], env).stdout)
+    check(manifest["documentCount"] == 1, "manifest: 資料の件数が返る")
+    check(manifest["rootDocuments"][0]["note"] == "この案件では前提資料です。", "manifest: 説明書きが載る")
+
+    # --markdown はJSONで包まず、そのまま人に渡せる形で出す
+    markdown = run_client(kind, ["manifest", project_name, "--markdown"], env).stdout
+    check(markdown.startswith(f"# {project_name} お品書き"), "manifest --markdown: 見出しから始まるMarkdownをそのまま出す")
+    check("この案件では前提資料です。" in markdown, "manifest --markdown: 説明書きが含まれる")
+
+    # 説明書きは文書ではなくプロジェクトへの紐づけに付く(文書側のメモを侵さない)
+    memo = json.loads(run_client(kind, ["get", doc_id], env).stdout).get("memo")
+    check(memo != "この案件では前提資料です。", "note: 文書そのもののメモは書き換えない")
+
+
+def smoke_mockup_commands(kind, env, workdir):
+    """モックアップ: ディレクトリをそのまま渡して登録でき、開くURLが返ること"""
+    site = os.path.join(workdir, f"mockup-{kind}")
+    os.makedirs(os.path.join(site, "assets"), exist_ok=True)
+    open(os.path.join(site, "index.html"), "w", encoding="utf-8").write(
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<link rel="stylesheet" href="./assets/s.css"></head>'
+        '<body><h1 id="t">画面案</h1><script src="./app.js"></script></body></html>')
+    open(os.path.join(site, "app.js"), "w", encoding="utf-8").write('document.getElementById("t").textContent="動いた";')
+    open(os.path.join(site, "assets", "s.css"), "w", encoding="utf-8").write("h1{color:green}")
+
+    created = json.loads(run_client(kind, ["mockup-upload", site, "--name", f"smoke-mockup-{kind}"], env).stdout)
+    check(created["fileCount"] == 3, "mockup-upload: ディレクトリをZIPに固めて登録できる")
+    check(created["entryFile"] == "index.html", "mockup-upload: 直下のindex.htmlが入口になる")
+    check(created["zipFile"].endswith(".zip") and not created["zipFile"].startswith("tmp"),
+          "mockup-upload: ZIPの名前がディレクトリ名から付く")
+    check(created["viewUrl"].endswith(f"/api/mockups/{created['id']}/view"),
+          "mockup-upload: 利用者に渡す表示URLを返す")
+
+    # 入口が無いまま登録すると「登録できたのに開けない」ものが出来る。送る前に止める
+    broken = os.path.join(workdir, f"mockup-broken-{kind}")
+    os.makedirs(broken, exist_ok=True)
+    open(os.path.join(broken, "main.html"), "w", encoding="utf-8").write("<html></html>")
+    failed = run_client(kind, ["mockup-upload", broken], env, expect_ok=False)
+    check(failed.returncode == 1 and "index.html" in failed.stderr, "mockup-upload: 入口が無ければ送る前に止める")
+
+    found = json.loads(run_client(kind, ["mockups", "--q", "画面案"], env).stdout)
+    check(any(m["id"] == created["id"] for m in found), "mockups --q: 中のHTMLのテキストで探せる")
+
+    renamed = json.loads(run_client(kind, ["mockup-rename", created["id"], f"改名-{kind}"], env).stdout)
+    check(renamed["name"] == f"改名-{kind}", "mockup-rename: 名前を変えられる")
+    memo = json.loads(run_client(kind, ["mockup-memo", created["id"], "確認してほしい点"], env).stdout)
+    check(memo["memo"] == "確認してほしい点", "mockup-memo: メモを書ける")
+
+    saved = json.loads(run_client(kind, ["mockup-download", created["id"], "-o", os.path.join(workdir, f"dl-{kind}.zip")], env).stdout)
+    check(saved["bytes"] > 0, "mockup-download: 原本のZIPを取得できる")
+
+    archived = json.loads(run_client(kind, ["mockup-archive", created["id"]], env).stdout)
+    check(archived["archived"] is True, "mockup-archive: アーカイブできる")
+    listed = json.loads(run_client(kind, ["mockups", "--archived"], env).stdout)
+    check(any(m["id"] == created["id"] for m in listed), "mockups --archived: アーカイブ済みを一覧できる")
+    restored = json.loads(run_client(kind, ["mockup-restore", created["id"]], env).stdout)
+    check(restored["archived"] is False, "mockup-restore: 元に戻せる")
 
 
 def smoke_update_notice(kind, env):

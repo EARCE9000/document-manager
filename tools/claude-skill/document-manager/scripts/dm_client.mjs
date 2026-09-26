@@ -41,13 +41,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 import {parseArgs} from "node:util";
 
 const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-manager.json");
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.2.0";
+const CLIENT_VERSION = "1.3.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -222,6 +223,86 @@ const placeDocument = async (projectValue, documentId, folderValue) => {
 	return {projectId: project.id, projectName: project.name, folderId};
 };
 
+// ---- モックアップ用: ディレクトリをZIPに固める ----
+// 外部依存を持たない方針のため、zlib だけで最小限のZIP(deflate)を書く。
+// 読む側(サーバー)は lib/mockup-zip.js で、ここで作る形をそのまま扱える
+const crc32Table = (() => {
+	const table = new Int32Array(256);
+	for (let i = 0; i < 256; i += 1) {
+		let c = i;
+		for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+		table[i] = c;
+	}
+	return table;
+})();
+
+const crc32 = (buffer) => {
+	let c = -1;
+	for (let i = 0; i < buffer.length; i += 1) c = crc32Table[(c ^ buffer[i]) & 0xff] ^ (c >>> 8);
+	return (c ^ -1) >>> 0;
+};
+
+const listFilesRecursive = (directory, prefix = "") => fs.readdirSync(directory, {withFileTypes: true})
+	.flatMap((entry) => {
+		const full = path.join(directory, entry.name);
+		const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+		return entry.isDirectory() ? listFilesRecursive(full, rel) : [{full, rel}];
+	});
+
+const buildZipFromDirectory = (directory) => {
+	const entries = listFilesRecursive(directory).sort((a, b) => a.rel.localeCompare(b.rel));
+	if (entries.length === 0) throw new DmError(`ファイルがありません: ${directory}`);
+	if (!entries.some((e) => e.rel === "index.html")) {
+		// ここで止めないと、登録はできるのに開けないモックアップが出来上がる
+		throw new DmError(`${directory} の直下に index.html がありません(これが表示の入口になります)。\n`
+			+ `含まれていたもの: ${entries.slice(0, 10).map((e) => e.rel).join(", ")}`);
+	}
+	const locals = [];
+	const centrals = [];
+	let offset = 0;
+	for (const {full, rel} of entries) {
+		const name = Buffer.from(rel, "utf-8");
+		const body = fs.readFileSync(full);
+		const deflated = zlib.deflateRawSync(body, {level: 9});
+		const sum = crc32(body);
+		const local = Buffer.alloc(30);
+		local.writeUInt32LE(0x04034b50, 0);
+		local.writeUInt16LE(20, 4);
+		local.writeUInt16LE(0x0800, 6); // ファイル名はUTF-8
+		local.writeUInt16LE(8, 8);
+		local.writeUInt32LE(sum, 14);
+		local.writeUInt32LE(deflated.length, 18);
+		local.writeUInt32LE(body.length, 22);
+		local.writeUInt16LE(name.length, 26);
+		locals.push(local, name, deflated);
+		const central = Buffer.alloc(46);
+		central.writeUInt32LE(0x02014b50, 0);
+		central.writeUInt16LE(20, 4);
+		central.writeUInt16LE(20, 6);
+		central.writeUInt16LE(0x0800, 8);
+		central.writeUInt16LE(8, 10);
+		central.writeUInt32LE(sum, 16);
+		central.writeUInt32LE(deflated.length, 20);
+		central.writeUInt32LE(body.length, 24);
+		central.writeUInt16LE(name.length, 28);
+		central.writeUInt32LE(offset, 42);
+		centrals.push(central, name);
+		offset += local.length + name.length + deflated.length;
+	}
+	const localPart = Buffer.concat(locals);
+	const centralPart = Buffer.concat(centrals);
+	const end = Buffer.alloc(22);
+	end.writeUInt32LE(0x06054b50, 0);
+	end.writeUInt16LE(entries.length, 8);
+	end.writeUInt16LE(entries.length, 10);
+	end.writeUInt32LE(centralPart.length, 12);
+	end.writeUInt32LE(localPart.length, 16);
+	return Buffer.concat([localPart, centralPart, end]);
+};
+
+const mockupPath = (id, suffix = "") => `api/mockups/${encodeURIComponent(id)}${suffix}`;
+const mockupViewUrl = (id) => new URL(mockupPath(id, "/view"), loadConfig().baseUrl).toString();
+
 const commands = {
 	config: async () => {
 		const {baseUrl, apiKey} = loadConfig();
@@ -285,6 +366,89 @@ const commands = {
 		fs.writeFileSync(out, payload);
 		return {id: doc.id, entryFile: doc.entryFile, savedTo: path.resolve(out), size: payload.length, rendered: Boolean(opts.render)};
 	},
+	// ---- モックアップ(ビルド済みのWebページ一式。文書とは別のコレクション) ----
+	mockups: async (_args, opts) => request("GET", opts.archived ? "api/mockups/archived" : "api/mockups",
+		{query: opts.q ? {q: opts.q} : undefined}),
+	"mockup-get": async ([id]) => {
+		requireArg(id, "モックアップID");
+		return request("GET", mockupPath(id));
+	},
+	"mockup-versions": async ([id]) => {
+		requireArg(id, "モックアップID");
+		return request("GET", mockupPath(id, "/versions"));
+	},
+	// ZIPでもディレクトリでも受け取る(AIが作るのはたいていディレクトリのため)
+	"mockup-upload": async ([target], opts) => {
+		requireArg(target, "ZIPまたはディレクトリ");
+		if (!fs.existsSync(target)) throw new DmError(`ファイルもディレクトリもありません: ${target}`);
+		const isDirectory = fs.statSync(target).isDirectory();
+		// ZIPのファイル名は表示名の既定値とダウンロード名に使われるので、ディレクトリ名を付ける
+		const zipName = isDirectory
+			? `${safeLocalFilename(path.basename(path.resolve(target))) || "mockup"}.zip`
+			: path.basename(target);
+		const zipBytes = isDirectory ? buildZipFromDirectory(target) : fs.readFileSync(target);
+
+		const formData = new FormData();
+		formData.append("mockupfile", new Blob([zipBytes], {type: "application/zip"}), zipName);
+		if (opts.name) formData.append("name", opts.name);
+		if (opts.preview) formData.append("previewfile", fileBlob(opts.preview), path.basename(opts.preview));
+		if (opts["previous-id"]) formData.append("previousId", opts["previous-id"]);
+		const created = await request("POST", "api/mockups", {formData});
+		// 登録しただけでは意味がないので、利用者に渡すURLを一緒に返す
+		created.viewUrl = mockupViewUrl(created.id);
+		return created;
+	},
+	"mockup-url": async ([id]) => {
+		requireArg(id, "モックアップID");
+		return {id, viewUrl: mockupViewUrl(id), note: "このURLを利用者に伝えて、ブラウザで開いてもらってください"};
+	},
+	"mockup-download": async ([id], opts) => {
+		requireArg(id, "モックアップID");
+		const mockup = await request("GET", mockupPath(id));
+		const payload = await request("GET", mockupPath(id, "/download"), {raw: true});
+		let out = opts.output || safeLocalFilename(mockup.zipFile || `${id}.zip`);
+		if (fs.existsSync(out) && fs.statSync(out).isDirectory()) out = path.join(out, safeLocalFilename(mockup.zipFile || `${id}.zip`));
+		fs.writeFileSync(out, payload);
+		return {id, savedTo: path.resolve(out), bytes: payload.length};
+	},
+	"mockup-memo": async ([id, text]) => {
+		requireArg(id, "モックアップID");
+		return request("PUT", mockupPath(id, "/memo"), {json: {memo: text ?? ""}});
+	},
+	"mockup-rename": async ([id, name]) => {
+		requireArg(id, "モックアップID");
+		requireArg(name, "新しい名前");
+		return request("PUT", mockupPath(id, "/name"), {json: {name}});
+	},
+	"mockup-archive": async ([id]) => {
+		requireArg(id, "モックアップID");
+		await request("DELETE", mockupPath(id));
+		return {id, archived: true, note: "完全削除ではありません。mockup-restore で元に戻せます"};
+	},
+	"mockup-restore": async ([id]) => {
+		requireArg(id, "モックアップID");
+		return request("POST", mockupPath(id, "/restore"));
+	},
+
+	// ---- お品書き(プロジェクトの資料一覧＋説明書き) ----
+	manifest: async ([project]) => {
+		requireArg(project, "プロジェクト");
+		const resolved = await resolveProject(project);
+		return request("GET", `api/projects/${encodeURIComponent(resolved.id)}/manifest`);
+	},
+	note: async ([project, text], opts) => {
+		requireArg(project, "プロジェクト");
+		requireArg(text, "説明");
+		const resolved = await resolveProject(project);
+		if (opts.folder) {
+			const folderId = await resolveFolder(resolved.id, opts.folder);
+			if (!folderId) throw new DmError(`フォルダが見つかりません: ${opts.folder}`);
+			return request("PUT", `api/projects/${encodeURIComponent(resolved.id)}/folders/${encodeURIComponent(folderId)}/note`, {json: {note: text}});
+		}
+		if (!opts.id) throw new DmError("文書ID(--id)かフォルダID(--folder)のどちらかを指定してください");
+		return request("PUT", `api/projects/${encodeURIComponent(resolved.id)}/documents/${encodeURIComponent(opts.id)}/note`, {json: {note: text}});
+	},
+
 	// タグAPIは一式置き換えのため、--add/--remove はここで現在のタグと合成する
 	tags: async ([id], opts) => {
 		requireArg(id, "文書ID");
@@ -358,6 +522,14 @@ const commands = {
 		await request("DELETE", `api/projects/${encodeURIComponent(resolved.id)}/documents/${encodeURIComponent(id)}`);
 		return {projectId: resolved.id, projectName: resolved.name, documentId: id, removed: true};
 	}
+};
+
+// お品書きのMarkdownは人に渡す文面なので、JSONで包まずそのまま流す(specと同じ扱い)
+const manifestMarkdown = async (project) => {
+	requireArg(project, "プロジェクト");
+	const resolved = await resolveProject(project);
+	const payload = await request("GET", `api/projects/${encodeURIComponent(resolved.id)}/manifest.md`, {raw: true});
+	process.stdout.write(payload.toString("utf8"));
 };
 
 // APIの仕様をそのまま出力する(同梱コマンドに無い操作を直接呼ぶときの参照用)。
@@ -502,6 +674,10 @@ const main = async () => {
 			folder: {type: "string"},
 			parent: {type: "string"},
 			openapi: {type: "boolean"},
+			q: {type: "string"},
+			name: {type: "string"},
+			id: {type: "string"},
+			markdown: {type: "boolean"},
 			render: {type: "boolean"},
 			version: {type: "boolean", short: "V"},
 			"no-reconnect": {type: "boolean"}
@@ -516,6 +692,15 @@ const main = async () => {
 		// specはMarkdown/JSONをそのまま流すため、最後のJSON一括出力はしない
 		try {
 			await spec(values);
+		} catch (err) {
+			if (!(err instanceof DmError)) throw err;
+			fail(err.message);
+		}
+		return;
+	}
+	if (command === "manifest" && values.markdown) {
+		try {
+			await manifestMarkdown(rest[0]);
 		} catch (err) {
 			if (!(err instanceof DmError)) throw err;
 			fail(err.message);

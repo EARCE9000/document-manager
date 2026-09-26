@@ -213,8 +213,7 @@ const OPERATIONS = [
 		id: "updateProjectFolderNote", method: "put", path: "/api/projects/:id/folders/:folderId/note", role: "readwrite", tag: "プロジェクト",
 		summary: "お品書きのフォルダ(章)の説明書きを更新",
 		body: {schema: {type: "object", properties: {note: {type: "string"}}}},
-		responses: {404: "プロジェクトまたはフォルダが無い", 423: "プロジェクトが施錠されている"},
-		aiGuide: false
+		responses: {404: "プロジェクトまたはフォルダが無い", 423: "プロジェクトが施錠されている"}
 	},
 	{
 		id: "createFolder", method: "post", path: "/api/projects/:id/folders", role: "readwrite", tag: "プロジェクト", summary: "フォルダの作成",
@@ -252,8 +251,7 @@ const OPERATIONS = [
 		description: "`q`で名前・メモ・本文(HTMLから抽出)を部分一致検索する。過去の版は`/api/mockups/archived`。ローカル保存の構成でのみ使える(それ以外は503)",
 		params: [
 			{name: "q", in: "query", description: "検索語(省略時は全件)"}
-		],
-		aiGuide: false
+		]
 	},
 	{
 		id: "listArchivedMockups", method: "get", path: "/api/mockups/archived", role: "readwrite", tag: "モックアップ",
@@ -261,8 +259,7 @@ const OPERATIONS = [
 		description: "置き換えられた旧版と、手でアーカイブしたもの。文書のアーカイブ(`/api/documents/archived`)と同じくreadwrite以上に限っている(readonlyは今あるものだけを見るロール)",
 		params: [
 			{name: "q", in: "query", description: "検索語(省略時は全件)"}
-		],
-		aiGuide: false
+		]
 	},
 	{
 		id: "uploadMockup", method: "post", path: "/api/mockups", role: "readwrite", tag: "モックアップ",
@@ -277,16 +274,15 @@ const OPERATIONS = [
 				previousId: {type: "string", description: "置き換える旧版のモックアップID(任意)"}
 			}
 		}},
-		responses: {400: "ZIPとして読めない/展開できない/上限を超えた", 404: "previousIdが存在しない", 409: "指定した版には既に新しい版がある", 413: "サイズ超過", 503: "ローカル保存以外の構成"},
-		aiGuide: false
+		responses: {400: "ZIPとして読めない/展開できない/上限を超えた", 404: "previousIdが存在しない", 409: "指定した版には既に新しい版がある", 413: "サイズ超過", 503: "ローカル保存以外の構成"}
 	},
 	{
 		id: "getMockup", method: "get", path: "/api/mockups/:id", role: "readonly", tag: "モックアップ",
-		summary: "モックアップ1件の情報", description: "`previousId`/`nextId`で前後の版が分かる", aiGuide: false
+		summary: "モックアップ1件の情報", description: "`previousId`/`nextId`で前後の版が分かる"
 	},
 	{
 		id: "getMockupVersions", method: "get", path: "/api/mockups/:id/versions", role: "readonly", tag: "モックアップ",
-		summary: "モックアップの版履歴", description: "古い順。どの版から引いても同じ並びを返す", aiGuide: false
+		summary: "モックアップの版履歴", description: "古い順。どの版から引いても同じ並びを返す"
 	},
 	{
 		id: "getMockupPreview", method: "get", path: "/api/mockups/:id/preview", role: "readonly", tag: "モックアップ",
@@ -294,13 +290,12 @@ const OPERATIONS = [
 	},
 	{
 		id: "downloadMockup", method: "get", path: "/api/mockups/:id/download", role: "readonly", tag: "モックアップ",
-		summary: "原本のZIPをダウンロード", produces: "application/zip", aiGuide: false
+		summary: "原本のZIPをダウンロード", produces: "application/zip"
 	},
 	{
 		id: "viewMockup", method: "get", path: "/api/mockups/:id/view", role: "readonly", tag: "モックアップ",
 		summary: "モックアップを開く(入口へ転送)",
-		description: "短時間だけ有効な引換券を発行し、`/view/<引換券>/<入口>`へリダイレクトする。以降の相対パスは引換券の下でブラウザが解決する。モックアップを見るときはここから入る",
-		aiGuide: false
+		description: "短時間だけ有効な引換券を発行し、`/view/<引換券>/<入口>`へリダイレクトする。以降の相対パスは引換券の下でブラウザが解決する。モックアップを見るときはここから入る"
 	},
 	{
 		id: "viewMockupFile", method: "get", path: "/api/mockups/:id/view/:token/*", role: "public", tag: "モックアップ",
@@ -312,22 +307,20 @@ const OPERATIONS = [
 	{
 		id: "updateMockupMemo", method: "put", path: "/api/mockups/:id/memo", role: "readwrite", tag: "モックアップ",
 		summary: "モックアップのメモ更新",
-		body: {schema: {type: "object", properties: {memo: {type: "string"}}}},
-		aiGuide: false
+		body: {schema: {type: "object", properties: {memo: {type: "string"}}}}
 	},
 	{
 		id: "renameMockup", method: "put", path: "/api/mockups/:id/name", role: "readwrite", tag: "モックアップ",
 		summary: "モックアップの名前変更",
-		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}}}},
-		aiGuide: false
+		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}}}}
 	},
 	{
 		id: "archiveMockup", method: "delete", path: "/api/mockups/:id", role: "readwrite", tag: "モックアップ",
-		summary: "モックアップのアーカイブ(論理削除)", description: "実ファイルは残る。restoreで戻せる", aiGuide: false
+		summary: "モックアップのアーカイブ(論理削除)", description: "実ファイルは残る。restoreで戻せる"
 	},
 	{
 		id: "restoreMockup", method: "post", path: "/api/mockups/:id/restore", role: "readwrite", tag: "モックアップ",
-		summary: "モックアップの復元", aiGuide: false
+		summary: "モックアップの復元"
 	},
 	{
 		id: "getStorageReconcile", method: "get", path: "/api/storage-reconcile", role: "admin", tag: "その他",
@@ -364,7 +357,7 @@ const OPERATIONS = [
 	},
 	{id: "checkAccessToken", method: "get", path: "/api/check_access_token", role: "readonly", tag: "その他", summary: "ログイン状態・ロールの確認(画面用)", aiGuide: false},
 	{id: "getHistory", method: "get", path: "/api/history", role: "readonly", tag: "その他", summary: "自分の操作履歴(直近30日)", aiGuide: false},
-	{id: "getSkillZip", method: "get", path: "/api/claude-skill.zip", role: "readonly", tag: "その他", summary: "AIエージェント用SkillのZIP取得", produces: "application/zip", aiGuide: false},
+	{id: "getSkillZip", method: "get", path: "/api/claude-skill.zip", role: "readonly", tag: "その他", summary: "AIエージェント用SkillのZIP取得", produces: "application/zip"},
 	{id: "getOpenApi", method: "get", path: "/api/openapi.json", role: "readonly", tag: "その他", summary: "このAPIの仕様(OpenAPI 3.1)", aiGuide: false},
 	{id: "getUsageMarkdown", method: "get", path: "/api/usage.md", role: "readonly", tag: "その他", summary: "AI向け利用ガイド(Markdown)", produces: "text/markdown", aiGuide: false},
 	// APIキー管理は画面(ログイン)からのみ。APIキーでAPIキーを発行できると、期限が切れる前に
@@ -574,6 +567,84 @@ const GUIDE_SECTIONS = [
 		]
 	},
 	{
+		title: "文書のメモの更新", roleNote: ROLE_NOTES.readwrite,
+		entries: [{id: "updateMemo", trail: "JSONボディ: `{\"memo\": \"...\"}`"}],
+		notes: [
+			"文書そのものに付く備忘録で、どのプロジェクトから見ても同じ内容になる。検索の対象にもなる",
+			"案件ごとの位置づけを書きたい場合は、下の「プロジェクトのお品書き」の説明書きを使う"
+		]
+	},
+	{
+		title: "プロジェクトのお品書き(資料一覧＋説明書き)",
+		entries: [
+			{id: "getProjectManifest", trail: "読む順(直下の資料→フォルダ)に並べ直した資料一覧。フォルダが章になる"},
+			{id: "getProjectManifestMarkdown", trail: "同じ内容のMarkdown。議事録やメールにそのまま貼れる形"}
+		],
+		notes: [
+			"「この案件にはどんな資料があるか」を1回で答えられる。資料ごとに `note`(この案件での位置づけ)が付く",
+			"人に渡す一覧を求められた場合は `manifest.md` をそのまま使うとよい"
+		]
+	},
+	{
+		title: "お品書きの説明書きを書く", roleNote: ROLE_NOTES.readwrite,
+		entries: [
+			{id: "updateProjectDocumentNote", trail: "JSONボディ: `{\"note\": \"...\"}`(空文字で消す)"},
+			{id: "updateProjectFolderNote", trail: "フォルダ(章)の前書き。同じくJSONボディ"}
+		],
+		notes: [
+			"**説明書きは文書ではなくプロジェクトへの紐づけに付く**。同じ資料でも案件ごとに違う説明を書ける(A案件では前提資料、B案件では参考、など)",
+			"1件500文字まで。超えた分は切り詰められる",
+			"その文書がそのプロジェクトに登録されていなければ404。先に登録してから書くこと",
+			"プロジェクトが施錠されている場合は423(利用者にブラウザで解錠してもらう必要がある)"
+		]
+	},
+	{
+		title: "モックアップの一覧・検索",
+		entries: [
+			{id: "listMockups", suffix: "?q=<検索語>", trail: "現役のモックアップ"},
+			{id: "listArchivedMockups", trail: "置き換えられた旧版・アーカイブしたもの(要 admin/readwrite ロール)"},
+			{id: "getMockup", trail: "1件の情報(`previousId`/`nextId` で前後の版が分かる)"},
+			{id: "getMockupVersions", trail: "一連の版を古い順に返す"}
+		],
+		notes: [
+			"モックアップは**ビルド済みのWebページ一式(ZIP)**で、文書とは別のコレクション。画面案を作って見てもらうためのもの",
+			"`q`は名前・メモ・中のHTMLから抽出したテキストを対象にする。ビルド済みJSの中の文言は拾えないため、見つからない場合は名前でも探すこと",
+			"ローカル保存の構成でのみ使える。それ以外の構成では503が返るので、その旨を利用者に伝えること"
+		]
+	},
+	{
+		title: "モックアップの登録", roleNote: ROLE_NOTES.readwrite,
+		entries: [{id: "uploadMockup"}],
+		notes: [
+			"`multipart/form-data`、一式のZIPのフィールド名は `mockupfile`",
+			"**ZIPの直下に `index.html` を入れること**。これが入口になり、無いと表示できない",
+			"相対パス(`./app.js` `../assets/style.css`)はそのまま動く。外部CDNの参照も可",
+			"`name` で表示名、`previewfile` で一覧に出す画像(`.svg`/`.png`/`.jpg`)を添えられる(いずれも任意。画像は自動生成されないので、無ければ一覧では名前だけになる)",
+			"既存のモックアップの新しい版として登録する場合は `previousId` に旧版のIDを指定する。旧版は自動でアーカイブされ、版履歴で辿れる(既に新しい版がある版を指定すると409)",
+			"上限: ZIP 100MB / 展開後の合計 300MB / ファイル数 2,000 / 1ファイル 50MB / 階層 20。超えると400か413が返る"
+		]
+	},
+	{
+		title: "モックアップを開く・取得する",
+		entries: [
+			{id: "viewMockup", trail: "**利用者がブラウザで開くためのURL**。ここから短時間有効のURLへ転送される"},
+			{id: "downloadMockup", trail: "登録した原本のZIP"}
+		],
+		notes: [
+			"モックアップは見て確かめるものなので、**AIが中身を読むのではなく、このURLを利用者に伝えて開いてもらうこと**",
+			"中のファイルを実際に読みたい場合は原本のZIPを取得して展開する(配信側のURLは短時間で切れるため当てにしない)"
+		]
+	},
+	{
+		title: "モックアップの編集・アーカイブ", roleNote: ROLE_NOTES.readwrite,
+		entries: [
+			{id: "renameMockup", trail: "JSONボディ: `{\"name\": \"...\"}`"},
+			{id: "updateMockupMemo", trail: "JSONボディ: `{\"memo\": \"...\"}`"},
+			{id: "archiveMockup", trail: "アーカイブ(実体は残り、復元できる)"},
+			{id: "restoreMockup", trail: "アーカイブから戻す"}
+		]
+	},
+	{
 		title: "同梱クライアント(Skill)の取得",
 		entries: [{id: "getSkillZip", trail: "Python/Node.jsのクライアントと手順書(SKILL.md)をZIPで返す"}],
 		notes: [
@@ -597,6 +668,8 @@ const CURL_EXAMPLES = (baseUrl) => [
 		command: `curl -X POST "${baseUrl}/api/documents/<id>/vector-index/retry" \\\n  -H "Authorization: Bearer <APIキー>"`
 	},
 	{title: "アップロード", command: `curl -X POST "${baseUrl}/api/documents" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "uploadfile=@./report.md"`},
+	{title: "モックアップの登録(ビルド済み一式のZIP)", command: `curl -X POST "${baseUrl}/api/mockups" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "mockupfile=@./site.zip" \\\n  -F "name=受注管理画面 v1"`},
+	{title: "プロジェクトのお品書き(人に渡せるMarkdown)", command: `curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/projects/<projectId>/manifest.md"`},
 	{
 		title: "アップロード(.drawio。画像を添える必要はない)",
 		command: `curl -X POST "${baseUrl}/api/documents" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "uploadfile=@./diagram.drawio"`
@@ -677,6 +750,31 @@ PDFを取得できます。**忠実な再現ではありません**(LibreOffice�
   AWS Bedrock等)を変更してほしいと言われた場合、これはAPIキー経由では変更できない(adminロールの
   APIキーが発行できない仕様のため)ことを伝え、ブラウザにログインして「ベクトル索引」画面から
   行うようユーザーに案内してください`
+	},
+	{
+		when: "「この画面案をアップして」「モックアップ作ったから登録して」「画面のイメージ見せて」",
+		do: `あなたが作ったWebページ一式(HTML/CSS/JS)を、上記の「モックアップの登録」APIで登録してください。
+文書とは別のコレクションで、**そのままブラウザで動かして確認するためのもの**です。
+
+- 一式をZIPにまとめ、\`mockupfile\` フィールドで送ってください。**ZIPの直下に \`index.html\` を置くこと**
+- 相対パス(\`./app.js\` \`../assets/style.css\`)はそのまま動きます。外部CDNの参照も可
+- 以前登録したものを作り直した場合は、新規ではなく \`previousId\` に旧版のIDを指定してください
+  (旧版は自動でアーカイブされ、版履歴で辿れます)
+- 登録できたら、**\`GET api/mockups/:id/view\` のURLをユーザーに伝えて、ブラウザで開いてもらってください**。
+  モックアップは見て確かめるものなので、あなたが中身を読み返す必要はありません
+- 「どんな画面案があったか」と聞かれたら一覧・検索APIを使ってください。ただし検索は中のHTMLの
+  テキストが対象で、JSの中に文言が埋まっている場合は拾えません`
+	},
+	{
+		when: "「この案件の資料一覧ちょうだい」「何が揃ってる?」「引き継ぎ資料まとめて」",
+		do: `プロジェクトの「お品書き」APIを使ってください。資料の一覧に、それぞれが何なのかの説明が付いたものです。
+
+- 人に渡す形が欲しい場合は \`GET api/projects/:id/manifest.md\` をそのまま使ってください
+- 資料に説明が付いていない場合、内容を読んで説明を書き足すことができます
+  (\`PUT api/projects/:id/documents/:documentId/note\`)。ただし**勝手に上書きせず**、
+  何を書くかをユーザーに確認してから書いてください
+- 説明はその案件での位置づけです。どの案件から見ても同じ内容を書きたい場合は、
+  文書そのもののメモ(\`PUT api/documents/:id/memo\`)のほうを使ってください`
 	}
 ];
 

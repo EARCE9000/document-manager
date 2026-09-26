@@ -61,7 +61,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.2.0"
+CLIENT_VERSION = "1.3.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -441,6 +441,146 @@ def cmd_unplace(args):
     return {"projectId": project["id"], "projectName": project.get("name"), "documentId": args.id, "removed": True}
 
 
+# ---- モックアップ(ビルド済みのWebページ一式。文書とは別のコレクション) ----
+
+def zip_site_directory(directory):
+    """ディレクトリをZIPに固める。中身が直下に来るように詰める(index.htmlを入口にするため)"""
+    import tempfile
+    import zipfile
+
+    entries = []
+    for root, _dirs, files in os.walk(directory):
+        for name in files:
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, directory).replace(os.sep, "/")
+            entries.append((full, rel))
+    if not entries:
+        raise DmError(f"ファイルがありません: {directory}")
+    if not any(rel == "index.html" for _full, rel in entries):
+        # ここで止めないと、登録はできるのに開けないモックアップが出来上がる
+        raise DmError(
+            f"{directory} の直下に index.html がありません(これが表示の入口になります)。\n"
+            f"含まれていたもの: {', '.join(sorted(rel for _f, rel in entries)[:10])}"
+        )
+    # ZIPのファイル名は表示名の既定値とダウンロード名に使われるので、一時ファイルの
+    # 無意味な名前ではなくディレクトリ名を付ける
+    name = os.path.basename(os.path.abspath(directory)) or "mockup"
+    path = os.path.join(tempfile.mkdtemp(prefix="dm-mockup-"), f"{safe_local_filename(name)}.zip")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for full, rel in sorted(entries, key=lambda e: e[1]):
+            zf.write(full, rel)
+    return path
+
+
+def cmd_mockups(args):
+    path = "api/mockups/archived" if args.archived else "api/mockups"
+    return request("GET", path, query={"q": args.q} if args.q else None)
+
+
+def cmd_mockup_get(args):
+    return request("GET", f"api/mockups/{quote_id(args.id)}")
+
+
+def cmd_mockup_versions(args):
+    return request("GET", f"api/mockups/{quote_id(args.id)}/versions")
+
+
+def cmd_mockup_upload(args):
+    """ZIPでもディレクトリでも受け取る(AIが作るのはたいていディレクトリのため)"""
+    temporary = None
+    try:
+        if os.path.isdir(args.path):
+            temporary = zip_site_directory(args.path)
+            zip_path = temporary
+        elif os.path.isfile(args.path):
+            zip_path = args.path
+        else:
+            raise DmError(f"ファイルもディレクトリもありません: {args.path}")
+
+        fields = {}
+        if args.name:
+            fields["name"] = args.name
+        if args.previous_id:
+            fields["previousId"] = args.previous_id
+        files = {"mockupfile": zip_path}
+        if args.preview:
+            files["previewfile"] = args.preview
+        body, content_type = build_multipart(fields, files)
+        created = request("POST", "api/mockups", body=body, content_type=content_type)
+    finally:
+        if temporary:
+            import shutil
+            shutil.rmtree(os.path.dirname(temporary), ignore_errors=True)
+    # 登録しただけでは意味がないので、利用者に渡すURLを一緒に返す
+    created["viewUrl"] = mockup_view_url(created["id"])
+    return created
+
+
+def mockup_view_url(mockup_id):
+    base, _key = load_config()
+    return f"{base}api/mockups/{quote_id(mockup_id)}/view"
+
+
+def cmd_mockup_url(args):
+    return {
+        "id": args.id,
+        "viewUrl": mockup_view_url(args.id),
+        "note": "このURLを利用者に伝えて、ブラウザで開いてもらってください"
+    }
+
+
+def cmd_mockup_download(args):
+    mockup = cmd_mockup_get(args)
+    data, _headers = request("GET", f"api/mockups/{quote_id(args.id)}/download", raw=True)
+    out = args.output or safe_local_filename(mockup.get("zipFile") or f"{args.id}.zip")
+    with open(out, "wb") as f:
+        f.write(data)
+    return {"id": args.id, "savedTo": os.path.abspath(out), "bytes": len(data)}
+
+
+def cmd_mockup_memo(args):
+    return request("PUT", f"api/mockups/{quote_id(args.id)}/memo", body={"memo": args.text})
+
+
+def cmd_mockup_rename(args):
+    return request("PUT", f"api/mockups/{quote_id(args.id)}/name", body={"name": args.name})
+
+
+def cmd_mockup_archive(args):
+    request("DELETE", f"api/mockups/{quote_id(args.id)}")
+    return {"id": args.id, "archived": True, "note": "完全削除ではありません。mockup-restore で元に戻せます"}
+
+
+def cmd_mockup_restore(args):
+    return request("POST", f"api/mockups/{quote_id(args.id)}/restore")
+
+
+# ---- お品書き(プロジェクトの資料一覧＋説明書き) ----
+
+def cmd_manifest(args):
+    project_id = resolve_project(args.project)["id"]
+    if args.markdown:
+        # 人に渡す文面なので、JSONで包まずそのまま出す(spec と同じ扱い)
+        payload, _headers = request("GET", f"api/projects/{quote_id(project_id)}/manifest.md", raw=True)
+        sys.stdout.write(payload.decode("utf-8", "replace"))
+        return None
+    return request("GET", f"api/projects/{quote_id(project_id)}/manifest")
+
+
+def cmd_note(args):
+    project_id = resolve_project(args.project)["id"]
+    if args.folder:
+        folder_id = resolve_folder(project_id, args.folder)
+        if not folder_id:
+            raise DmError(f"フォルダが見つかりません: {args.folder}")
+        return request("PUT", f"api/projects/{quote_id(project_id)}/folders/{quote_id(folder_id)}/note",
+                       body={"note": args.text})
+    if not args.id:
+        raise DmError("文書ID(--id)かフォルダID(--folder)のどちらかを指定してください")
+    return request("PUT", f"api/projects/{quote_id(project_id)}/documents/{quote_id(args.id)}/note",
+                   body={"note": args.text})
+
+
 def cmd_spec(args):
     """APIの仕様をそのまま出力する(同梱コマンドに無い操作を直接呼ぶときの参照用)"""
     payload, _headers = request("GET", "api/openapi.json" if args.openapi else "api/usage.md", raw=True)
@@ -638,6 +778,57 @@ def main():
     p.add_argument("project", help="プロジェクトのIDまたは名前")
     p.add_argument("id", help="文書ID")
     p.set_defaults(func=cmd_unplace)
+    # ---- モックアップ ----
+    p = sub.add_parser("mockups", help="モックアップの一覧・検索")
+    p.add_argument("--q", help="名前・メモ・中のHTMLのテキストで検索")
+    p.add_argument("--archived", action="store_true", help="置き換えられた旧版を見る(要 readwrite)")
+    p.set_defaults(func=cmd_mockups)
+    p = sub.add_parser("mockup-get", help="モックアップ1件の情報")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_mockup_get)
+    p = sub.add_parser("mockup-versions", help="モックアップの版履歴")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_mockup_versions)
+    p = sub.add_parser("mockup-upload", help="モックアップの登録(ZIPでもディレクトリでも可)")
+    p.add_argument("path", help="一式のZIP、またはディレクトリ(直下に index.html が必要)")
+    p.add_argument("--name", help="表示名(省略時はファイル名)")
+    p.add_argument("--preview", help="一覧に出す画像(svg/png/jpg)")
+    p.add_argument("--previous-id", dest="previous_id", help="置き換える旧版のID(旧版はアーカイブされる)")
+    p.set_defaults(func=cmd_mockup_upload)
+    p = sub.add_parser("mockup-url", help="利用者がブラウザで開くURLを出す")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_mockup_url)
+    p = sub.add_parser("mockup-download", help="原本のZIPをダウンロード")
+    p.add_argument("id")
+    p.add_argument("-o", "--output", help="保存先のパス")
+    p.set_defaults(func=cmd_mockup_download)
+    p = sub.add_parser("mockup-memo", help="モックアップのメモの更新")
+    p.add_argument("id")
+    p.add_argument("text")
+    p.set_defaults(func=cmd_mockup_memo)
+    p = sub.add_parser("mockup-rename", help="モックアップの名前変更")
+    p.add_argument("id")
+    p.add_argument("name")
+    p.set_defaults(func=cmd_mockup_rename)
+    p = sub.add_parser("mockup-archive", help="モックアップのアーカイブ(restoreで戻せる)")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_mockup_archive)
+    p = sub.add_parser("mockup-restore", help="モックアップをアーカイブから戻す")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_mockup_restore)
+
+    # ---- お品書き ----
+    p = sub.add_parser("manifest", help="プロジェクトのお品書き(資料一覧＋説明書き)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("--markdown", action="store_true", help="人に渡せるMarkdownで出す(JSONで包まずそのまま出力)")
+    p.set_defaults(func=cmd_manifest, streaming_if="markdown")
+    p = sub.add_parser("note", help="お品書きの説明書きを書く(空文字で消す)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("text", help="説明(この案件での位置づけ)")
+    p.add_argument("--id", help="対象の文書ID")
+    p.add_argument("--folder", help="対象のフォルダID(章の前書き)")
+    p.set_defaults(func=cmd_note)
+
     p = sub.add_parser("spec", help="APIの仕様を出力する(同梱コマンドに無い操作を呼ぶとき)")
     p.add_argument("--openapi", action="store_true", help="OpenAPI 3.1のJSONを出力する(既定はAI向けMarkdown)")
     p.set_defaults(func=cmd_spec, streaming=True)
@@ -660,7 +851,9 @@ def main():
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)
-    if getattr(args, "streaming", False):
+    # streaming_if は「この引数が指定されたときだけ生出力」(manifest --markdown など)
+    streaming_if = getattr(args, "streaming_if", None)
+    if getattr(args, "streaming", False) or (streaming_if and getattr(args, streaming_if, False)):
         return
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

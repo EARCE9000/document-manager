@@ -117,6 +117,43 @@ test("利用ガイド(Markdown)にベースURLとAIへの指示が反映され�
 	}
 });
 
+// aiGuide は「AI向けガイドに載せるか」を表す注釈だが、ガイド自体は手書きの
+// GUIDE_SECTIONS から組み立てている。二重管理なので、放っておくと必ずずれる
+// (実際、モックアップを足したときに aiGuide だけ書いて節を足し忘れていた)。
+// 片方だけ直しても気づけるよう、両者の一致をここで検査する
+test("AI向けガイドの内容と aiGuide の指定が一致している", () => {
+	const source = fs.readFileSync(path.join(__dirname, "..", "app", "lib", "api-spec.js"), "utf-8");
+	const sections = source.slice(source.indexOf("const GUIDE_SECTIONS = ["), source.indexOf("const CURL_EXAMPLES"));
+	const guided = new Set([...sections.matchAll(/\{id: "([A-Za-z]+)"/g)].map((m) => m[1]));
+	const byId = new Map(ApiSpec.OPERATIONS.map((op) => [op.id, op]));
+
+	const unknown = [...guided].filter((id) => !byId.has(id));
+	assert.deepEqual(unknown, [], `ガイドに、存在しない操作IDが書かれている: ${unknown.join(", ")}`);
+
+	const missing = ApiSpec.OPERATIONS.filter((op) => op.aiGuide !== false && !guided.has(op.id)).map((op) => op.id);
+	assert.deepEqual(missing, [], `AIに使わせる指定なのにガイドに載っていない(GUIDE_SECTIONSに節を足すか、aiGuide: false を付ける): ${missing.join(", ")}`);
+
+	const extra = [...guided].filter((id) => byId.get(id).aiGuide === false);
+	assert.deepEqual(extra, [], `aiGuide: false なのにガイドに載っている: ${extra.join(", ")}`);
+});
+
+// モックアップはAIが作って登録するもの。ガイドに載っていなければAIは存在に気づけない
+test("AI向けガイドにモックアップとお品書きが載る", () => {
+	const markdown = ApiSpec.buildUsageMarkdown({baseUrl: "https://example.com", vectorSearchEnabled: false});
+	for (const expected of [
+		"モックアップの一覧・検索",
+		"モックアップの登録",
+		"mockupfile",
+		"index.html",
+		"プロジェクトのお品書き",
+		"manifest.md"
+	]) {
+		assert.ok(markdown.includes(expected), `AI向けガイドに「${expected}」が無い`);
+	}
+	// 中を読ませるのではなく、利用者に開いてもらうものだと伝わること
+	assert.ok(markdown.includes("利用者に伝えて開いてもらう"), "モックアップの見せ方の指示が無い");
+});
+
 test.after(() => {
 	// SQLiteのファイルを掴んだままのことがある(Windows)。消せなくてもテストは失敗させない
 	try {
