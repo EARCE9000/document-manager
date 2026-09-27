@@ -47,7 +47,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - svg/png/jpg/jpeg: ブラウザがネイティブに描画できるためそのまま表示(全文検索の対象にはならない。svgに埋め込まれたスクリプトは`sandbox`属性により実行されない)
   - csv/tsv: 1行目をヘッダーとしてHTMLテーブルに変換して表示(生テキストのままだと列が揃わず読みにくいため)
   - txt/log/json: ブラウザがネイティブに描画できるためそのまま表示(jsonはChrome/Firefox標準の折りたたみ可能なビューアが`sandbox`付きiframe内でも問題なく動作する)
-  - drawio: サーバ側では画像化せず、**draw.io公式のビューア(`app/static/vendor/drawio/viewer-static.min.js`。Apache-2.0)を同梱し、ブラウザ上でXMLをそのまま描画する**。画像化を挟まないため図の大きさ・図形数に左右されず(実測: 4,000セル・731KBのXMLで約3.7秒)、複数ページの`.drawio`もツールバーのページ送りで切り替えられる。図のXMLは`GET api/documents/:id/file?source=1`で取得する(ダウンロード扱いにはせず監査ログにも残さない)。描画は[app/static/drawio-viewer.html](app/static/drawio-viewer.html)が行い、別ウィンドウ(`api/documents/:id/viewer`)もこのページへリダイレクトする。draw.ioの図はラベルにHTMLを書けるため、このページだけは`script-src 'self'`のCSPを付けて配信し、図に仕込まれたスクリプトが動かないようにしている(スクリプトは全て外部ファイルに分離)。ビューアの既定動作のうち外部(`viewer.diagrams.net`)に関わるものは全て無効化している: stencil・スタイル・数式(MathJax)等の取得先を自ドメイン配下へ差し替え、**図をクリックすると図の中身ごと第三者ページ(ライトボックス)が開く既定動作も止めている**。ページ自体も`default-src 'none'`のCSPで配信するため、取りこぼしがあってもブラウザ側で止まる(回帰は[test/api/preview-xss.e2e.js](test/api/preview-xss.e2e.js)で検証)。アップロード時にプレビュー画像(svg/png)を添えることもでき(同フォルダに `preview.<ext>` として保存)、ビューアで描画できなかった場合の代替として使う。実体(ダウンロード対象)は常に`.drawio`のまま保持する。XML内のページ名・図形ラベルは全文検索の対象になる
+  - drawio: サーバ側では画像化せず、**draw.io公式のビューア(`app/static/vendor/drawio/viewer-static.min.js`。Apache-2.0)を同梱し、ブラウザ上でXMLをそのまま描画する**。画像化を挟まないため図の大きさ・図形数に左右されず(実測: 4,000セル・731KBのXMLで約3.7秒)、複数ページの`.drawio`もツールバーのページ送りで切り替えられる。図のXMLは`GET api/documents/:id/file?source=1`で取得する(ダウンロード扱いにはせず監査ログにも残さない)。描画は[app/static/drawio-viewer.html](app/static/drawio-viewer.html)が行い、別ウィンドウ(`api/documents/:id/viewer`)もこのページへリダイレクトする。draw.ioの図はラベルにHTMLを書けるため、このページだけは`script-src 'self'`のCSPを付けて配信し、図に仕込まれたスクリプトが動かないようにしている(スクリプトは全て外部ファイルに分離)。ビューアの既定動作のうち外部(`viewer.diagrams.net`)に関わるものは全て無効化している: stencil・スタイル・数式(MathJax)等の取得先を自ドメイン配下へ差し替え(**拡張図形(stencils)は実体も同梱している**。無いと回路図の抵抗・コンデンサ等がただの四角に化けるため)、**図をクリックすると図の中身ごと第三者ページ(ライトボックス)が開く既定動作も止めている**。ページ自体も`default-src 'none'`のCSPで配信するため、取りこぼしがあってもブラウザ側で止まる(回帰は[test/api/preview-xss.e2e.js](test/api/preview-xss.e2e.js)で検証)。アップロード時にプレビュー画像(svg/png)を添えることもでき(同フォルダに `preview.<ext>` として保存)、ビューアで描画できなかった場合の代替として使う。実体(ダウンロード対象)は常に`.drawio`のまま保持する。XML内のページ名・図形ラベルは全文検索の対象になる
   - xlsx/docx/pptx(Excel/Word/PowerPoint): **内容の概要**をHTMLへ変換して表示する([app/lib/office.js](app/lib/office.js))。OOXML(ZIP+XML)を直接読むため外部プロセス(LibreOffice等)も追加の依存も不要で、Excelはシートごとの表(日付書式のセルは日付として表示)、Wordは見出し・段落・箇条書き・表、PowerPointはスライドごとのタイトル・本文・発表者ノートを出す。**この概要プレビューでは元の体裁(フォント・色・セル書式・図形・グラフ・画像)を再現しない**(プレビュー冒頭にその旨を明示する)。体裁ごと確認したい場合は、別イメージの変換サービスを併用するとPDFで開ける(下記「体裁つき表示」)。取り出したテキストはそのまま全文検索の対象になる(表の中身・スライドのノートも含む)。大きな文書は表示を打ち切る(シート300行×50列・3000段落・200スライド。[app/lib/office.js](app/lib/office.js)の`LIMITS`)。ZIP爆弾対策として展開後サイズに上限を設けている。マクロ(`.xlsm`等のvbaProject)は読まず、サーバ側でファイルを開くこともしない。読めない/壊れたファイルはプレビュー不可として登録され、ダウンロードはできる
   - 変換結果は元ファイルと同じフォルダに `preview.html` として保存する。ダウンロードは常に元ファイルを返す
 - **体裁つき表示(Office→PDF。任意機能)**: `OFFICE_RENDER_URL`を設定すると、xlsx/docx/pptxを**レイアウトのついたPDF**でも開けるようになる。変換はLibreOfficeを同梱した別イメージ([converter/](converter/)、`earce9000/document-manager-converter`)が行い、アップロード時に非同期で実行する。状態は文書情報の`renderStatus`(`ok`/`pending`/`failed`/`null`=対象外)で分かり、`ok`なら画面の「体裁つきで開く」ボタンと`GET api/documents/:id/file?render=1`から取得できる([app/lib/office-render.js](app/lib/office-render.js))
@@ -220,7 +220,7 @@ document-manager/
 │   └── static/
 │       ├── index.html        # フロントエンド(単一HTML)
 │       ├── drawio-viewer.*   # .drawio をブラウザ上で描画するページ(html/js/css)
-│       └── vendor/drawio/    # draw.io公式のビューア(viewer-static.min.js。Apache-2.0)
+│       └── vendor/drawio/    # draw.io公式のビューア(viewer-static.min.js)と拡張図形(stencils/。約42MB)。Apache-2.0
 ├── deploy/                  # 運用サーバ(podman + リバースプロキシ)向けのcompose構成
 │   ├── compose.yml           # 公開イメージ + Weaviate + 推論サーバー(Weaviate側はポート非公開)
 │   ├── compose.sh            # 起動用ラッパー(up/verify/down/logs/ps。必須設定が無ければ止める。upは入れ替わったかまで確認する)
@@ -643,4 +643,4 @@ docker run -d \
 
 | ファイル | 出典 | ライセンス |
 |---|---|---|
-| [app/static/vendor/drawio/viewer-static.min.js](app/static/vendor/drawio/viewer-static.min.js) | [jgraph/drawio](https://github.com/jgraph/drawio) v31.4.6 | Apache-2.0([全文](app/static/vendor/drawio/LICENSE)) |
+| [app/static/vendor/drawio/viewer-static.min.js](app/static/vendor/drawio/viewer-static.min.js) と [stencils/](app/static/vendor/drawio/stencils) | [jgraph/drawio](https://github.com/jgraph/drawio) v31.4.6 | Apache-2.0([全文](app/static/vendor/drawio/LICENSE)) |

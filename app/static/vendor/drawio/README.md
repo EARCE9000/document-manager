@@ -6,15 +6,24 @@
 
 | 項目 | 内容 |
 |---|---|
-| 取得元 | https://github.com/jgraph/drawio `src/main/webapp/js/viewer-static.min.js` |
-| バージョン | v31.4.6 |
+| 取得元 | https://github.com/jgraph/drawio `src/main/webapp/js/viewer-static.min.js` と `src/main/webapp/stencils/` |
+| バージョン | v31.4.6(本体と stencils は必ず同じタグで揃える) |
 | ライセンス | Apache License 2.0(全文は同じフォルダの [LICENSE](LICENSE)) |
 
-更新する場合は、同じパスから新しいタグのファイルを取得してこの表を書き換えてください。
+`stencils/`(約42MB・204ファイル)は**拡張図形の実体**です。これが無いと、回路図の抵抗・
+コンデンサなどが**ただの四角に化けます**(図自体は表示されるので気づきにくい)。
+
+更新する場合は、同じタグから両方を取得してこの表を書き換えてください。
 
 ```bash
 curl -fL -o app/static/vendor/drawio/viewer-static.min.js \
   https://raw.githubusercontent.com/jgraph/drawio/<タグ>/src/main/webapp/js/viewer-static.min.js
+
+# stencils はファイル数が多いので、sparse-checkout でそのフォルダだけ取り出す
+git clone --depth 1 --branch <タグ> --filter=blob:none --sparse https://github.com/jgraph/drawio.git /tmp/drawio
+git -C /tmp/drawio sparse-checkout set src/main/webapp/stencils
+rm -rf app/static/vendor/drawio/stencils
+cp -r /tmp/drawio/src/main/webapp/stencils app/static/vendor/drawio/stencils
 ```
 
 ## 外部通信について
@@ -29,8 +38,14 @@ curl -fL -o app/static/vendor/drawio/viewer-static.min.js \
 `default-src 'none'; script-src 'self'` のCSPで配信しているため(server.js参照)、
 仮に取りこぼしがあってもブラウザ側で外部への読み込みが止まります。
 
-標準の図形はこのファイル自身に含まれているため、通常の図はそのまま描画できます
-(ごく一部の拡張図形は簡略表示になります)。
+標準の図形はビューア本体に、拡張図形は同じフォルダの `stencils/` に入れてあるため、
+どちらも外部へ出ずにそのまま描画できます。
+
+`stencils/` を減らしたい場合は分類フォルダごと消せます(そこを使っている図だけが四角に化けます)。
+大きいのは `aws4.xml` 6.4MB / `rack` 5.6MB / `cisco_safe` 3.9MB あたりで、
+回路図に要る `electrical` は0.5MBです。落としたことに気づけるよう、
+[test/api/preview-xss.e2e.js](../../../../test/api/preview-xss.e2e.js) で
+「拡張図形が四角に化けていないこと」と「外部へ取りに行っていないこと」を見ています。
 
 新しいバージョンへ更新するときは、上記の既定値が増えていないか
 (`window.XXX_URL = window.XXX_URL || "https://..."` の箇所)を確認してください。

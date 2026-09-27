@@ -13,7 +13,7 @@
  */
 
 const {test, expect} = require("@playwright/test");
-const {loadKeys} = require("./config.js");
+const {loadKeys, BASE_URL} = require("./config.js");
 
 const keys = loadKeys();
 const rw = {Authorization: `Bearer ${keys.readwrite}`};
@@ -171,6 +171,44 @@ test.describe("プレビュー配信の保存型XSS対策(実ブラウザ)", () 
 		expect(popups).toEqual([]);
 		// クリックで開く設定自体が無効(有効だとカーソルがポインタになる)
 		expect(await page.evaluate(() => GraphViewer.prototype.lightboxClickEnabled === true)).toBe(false);
+
+		await request.delete(`api/documents/${id}`, {headers: rw});
+	});
+
+	// 拡張図形(stencil)は本体に入っておらず、別ファイルとして同梱している。
+	// 落ちていると図形が「ただの四角」に化けるが、図は出るので気づきにくい
+	// (実際、同梱前は回路図の抵抗・コンデンサが全部四角になっていた)。
+	// あわせて、取りに行く先が外部(viewer.diagrams.net)へ戻っていないことも見る
+	test("拡張図形が同梱されていて、外部へ取りに行かない", async ({page, context, request}) => {
+		// 図の中身まで描かせるので、ログイン済みのセッションが要る
+		// (このファイルの他のテストはページの枠組みだけを見ているため不要だった)
+		await context.addCookies([{name: keys.sessionCookieName, value: keys.sessionCookie, url: BASE_URL}]);
+		const xml = `<mxfile><diagram name="回路" id="p1"><mxGraphModel pageWidth="400" pageHeight="200"><root>`
+			+ `<mxCell id="0"/><mxCell id="1" parent="0"/>`
+			+ `<mxCell id="r1" value="R1" style="shape=mxgraph.electrical.resistors.resistor_1;html=1;" vertex="1" parent="1">`
+			+ `<mxGeometry x="40" y="40" width="100" height="20" as="geometry"/></mxCell>`
+			+ `</root></mxGraphModel></diagram></mxfile>`;
+		const uploaded = await request.post("api/documents", {
+			headers: rw,
+			multipart: {uploadfile: {name: "stencil-e2e.drawio", mimeType: "application/xml", buffer: Buffer.from(xml)}}
+		});
+		const id = (await uploaded.json()).id;
+
+		const notFound = [];
+		const outside = [];
+		page.on("response", (res) => { if (res.status() === 404) notFound.push(new URL(res.url()).pathname); });
+		page.on("request", (req) => {
+			const host = new URL(req.url()).hostname;
+			if (host !== new URL(BASE_URL).hostname) outside.push(host);
+		});
+
+		await page.goto(`drawio-viewer.html?id=${id}`);
+		// 拡張図形は後から読み込まれるため、描かれるまで待つ(固定待ちにしない)。
+		// 四角ではなく記号として描かれていること(抵抗はpathで描かれる)
+		await expect(page.locator("svg path").first()).toBeAttached({timeout: 10000});
+
+		expect(outside, "外部へ取りに行っている").toEqual([]);
+		expect(notFound.filter((p) => p.includes("/stencils/")), "同梱されていない拡張図形がある").toEqual([]);
 
 		await request.delete(`api/documents/${id}`, {headers: rw});
 	});
