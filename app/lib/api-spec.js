@@ -184,8 +184,8 @@ const OPERATIONS = [
 	{id: "archiveProject", method: "post", path: "/api/projects/:id/archive", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトのアーカイブ(一覧から隠す。復元可能)"},
 	{id: "restoreProject", method: "post", path: "/api/projects/:id/restore", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトをアーカイブから戻す"},
 	{id: "deleteProject", method: "delete", path: "/api/projects/:id", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの完全削除", description: "フォルダ構成・登録情報ごと削除する(文書自体は削除されない)"},
-	{id: "unlockProject", method: "post", path: "/api/projects/:id/unlock", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの解錠", description: "施錠中は編集操作が423になる。解錠は全利用者で共有される状態", aiGuide: false},
-	{id: "lockProject", method: "post", path: "/api/projects/:id/lock", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの施錠", aiGuide: false},
+	{id: "unlockProject", method: "post", path: "/api/projects/:id/unlock", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの完全ロック解除", description: "完全ロック中は編集操作が423になる。全利用者で共有される状態で、画面側の「編集モード」とは別物", aiGuide: false},
+	{id: "lockProject", method: "post", path: "/api/projects/:id/lock", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの完全ロック(画面からもAPIからも編集できなくなる)", aiGuide: false},
 	{
 		id: "getProjectTree", method: "get", path: "/api/projects/:id/tree", role: "readonly", tag: "プロジェクト",
 		summary: "プロジェクトのツリー取得(フォルダ階層+文書の配置)",
@@ -626,7 +626,7 @@ const GUIDE_SECTIONS = [
 			"**説明書きは文書ではなくプロジェクトへの紐づけに付く**。同じ資料でも案件ごとに違う説明を書ける(A案件では前提資料、B案件では参考、など)",
 			"1件500文字まで。超えた分は切り詰められる",
 			"その文書がそのプロジェクトに登録されていなければ404。先に登録してから書くこと",
-			"プロジェクトが施錠されている場合は423(利用者にブラウザで解錠してもらう必要がある)"
+			"プロジェクトが**完全ロック**されている場合は423(利用者にブラウザの南京錠ボタンで解除してもらう必要がある)。画面側の「編集モード」は表示だけの切り替えなので、オフでもAPIからの編集は通る"
 		]
 	},
 	{

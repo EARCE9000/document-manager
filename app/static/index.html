@@ -410,9 +410,33 @@
 	#mockupUploadStatus.error { color: #c0392b; }
 	#mockupUploadTarget { font-size: 0.85em; color: #1a56db; margin-top: 4px; }
 	#projectTreeToolbar { padding: 10px 12px; border-bottom: 1px solid #eee; }
-	#projectTreeHeaderRow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+	#projectTreeHeaderRow { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
+	/* 編集モードでは記号が2つ増えてバッジも出る。1行に詰めるとプロジェクト名が30px程度まで
+	   潰れて読めなくなるため、入りきらないときはボタン側をまとめて次の行へ送る。
+	   ひとかたまりにしているのは、途中で折り返すと区切り線で分けた意味が壊れるため */
+	#projectTreeHeaderActions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: none; }
 	/* 展開/折りたたみは「見るための操作」なので、編集モードや権限に関係なく出す。
 	   フォルダが1つも無いときは押せても意味がないため無効にする */
+	#projectTreeHeaderRow .toolbarDivider { width: 1px; align-self: stretch; background: #d8d8d8; margin: 2px 4px; flex: none; }
+	/* トグルの記号だけでは「何の」入/切かを言えない。切のときは記号だけにして幅を使わず、
+	   入にしたときだけこのバッジを出す。意味が要るのは最初の1回で、そこで分かればよい。
+	   加えて「いま編集できる状態」が常に見えること自体が、誤操作よけになる */
+	#projectEditingBadge {
+		flex: none; font-size: 10px; font-weight: 600; padding: 2px 5px; border-radius: 3px;
+		background: #eaf2ff; color: #1a56db; border: 1px solid #bfd4f7;
+	}
+	/* 編集モード中は、開いていることが一目で分かるようにする(アイコン自体は変えない) */
+	#projectTreeHeaderRow #projectEditToggleButton.editModeOn {
+		color: #1a56db;
+		background: #eaf2ff;
+		border-color: #bfd4f7;
+	}
+	/* 完全ロック中は、止まっていることが一目で分かるようにする(誰も編集できない状態なので) */
+	#projectTreeHeaderRow #projectFullLockButton.fullLockOn {
+		color: #92400e;
+		background: #fef3c7;
+		border-color: #fde68a;
+	}
 	#projectTreeHeaderRow #projectExpandAllButton[disabled],
 	#projectTreeHeaderRow #projectCollapseAllButton[disabled] { opacity: 0.35; cursor: default; }
 	/* 誤クリック防止のため、アーカイブ/元に戻すボタンは他の操作ボタンから間隔と区切り線を空けて配置する
@@ -430,7 +454,7 @@
 		background: #ddd;
 	}
 	/* プロジェクト名はお品書きへの入口も兼ねる。押せることが分かるようにしておく */
-	#projectTreeTitle { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+	#projectTreeTitle { font-weight: 700; flex: 1; min-width: 7em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 	#projectTreeTitle:hover { color: #ee7800; text-decoration: underline; }
 	#projectTreeTitle.active { color: #ee7800; }
 
@@ -509,8 +533,14 @@
 		position: absolute; right: 4px; top: 0; bottom: 0;
 		background: inherit; padding-left: 10px;
 	}
-	#appShell.projectsEditMode #projectTreeList .treeFolderRow:hover .treeRowActions,
-	#appShell.projectsEditMode #projectTreeList .treeDocRow:hover .treeRowActions { display: flex; }
+	/* 資料の行は、読むための「別ウィンドウで開く」があるので表示モードでも出す。
+	   フォルダの行は編集用しか無いため、従来どおり編集モードのときだけ */
+	#projectTreeList .treeDocRow:hover .treeRowActions,
+	#appShell.projectsEditMode #projectTreeList .treeFolderRow:hover .treeRowActions { display: flex; }
+	/* 構成を変えるボタンは編集モードのときだけ(表示モードでは「開く」だけが残る) */
+	#appShell:not(.projectsEditMode) #projectTreeList .treeEditAction { display: none; }
+	/* 「外す」(×)の隣に置くと押し間違えるため、少し離す */
+	#projectTreeList .treeOpenWindowButton { margin-left: 6px; }
 	#projectTreeList .treeMiniButton {
 		border: none;
 		background: none;
@@ -1444,27 +1474,30 @@
 			<div id="projectTreeToolbar">
 				<div class="toolbarRow" id="projectTreeHeaderRow">
 					<span id="projectTreeTitle"></span>
-					<button type="button" id="projectExpandAllButton" class="iconButton" title="すべて展開" aria-label="すべて展開">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
-					</button>
-					<button type="button" id="projectCollapseAllButton" class="iconButton" title="すべて折りたたむ" aria-label="すべて折りたたむ">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
-					</button>
-					<button type="button" id="projectAddRootFolderButton" class="iconButton" title="フォルダ追加" aria-label="フォルダ追加" style="display:none;">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-					</button>
-					<button type="button" id="projectRenameButton" class="iconButton" title="プロジェクト名を変更" aria-label="プロジェクト名を変更" style="display:none;">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .622.622l4.353-1.32a2 2 0 0 0 .83-.497Z"/><path d="m15 5 4 4"/></svg>
-					</button>
-					<button type="button" id="projectEditToggleButton" class="iconButton" title="編集モードへ切り替え" aria-label="編集モードへ切り替え">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-					</button>
-					<button type="button" id="projectDeleteButton" class="iconButton" title="アーカイブ" aria-label="アーカイブ">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
-					</button>
-					<button type="button" id="projectRestoreButton" class="iconButton" title="元に戻す" aria-label="元に戻す">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
-					</button>
+					<span id="projectEditingBadge" hidden>編集中</span>
+					<div id="projectTreeHeaderActions">
+						<button type="button" id="projectExpandAllButton" class="iconButton" title="すべて展開" aria-label="すべて展開">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
+						</button>
+						<button type="button" id="projectCollapseAllButton" class="iconButton" title="すべて折りたたむ" aria-label="すべて折りたたむ">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
+						</button>
+						<button type="button" id="projectAddRootFolderButton" class="iconButton" title="フォルダ追加" aria-label="フォルダ追加" style="display:none;">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+						</button>
+						<button type="button" id="projectRenameButton" class="iconButton" title="プロジェクト名を変更" aria-label="プロジェクト名を変更" style="display:none;">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .622.622l4.353-1.32a2 2 0 0 0 .83-.497Z"/><path d="m15 5 4 4"/></svg>
+						</button>
+						<span class="toolbarDivider" aria-hidden="true"></span>
+						<button type="button" id="projectEditToggleButton" class="iconButton" title="編集モードにする" aria-label="編集モードにする" aria-pressed="false" disabled></button>
+						<button type="button" id="projectFullLockButton" class="iconButton" title="完全ロック" aria-label="完全ロック" disabled></button>
+						<button type="button" id="projectDeleteButton" class="iconButton" title="アーカイブ" aria-label="アーカイブ">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+						</button>
+						<button type="button" id="projectRestoreButton" class="iconButton" title="元に戻す" aria-label="元に戻す">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+						</button>
+					</div>
 				</div>
 			</div>
 			<ul id="projectTreeList"></ul>
@@ -2023,19 +2056,64 @@ const projectDeleteButton = document.getElementById("projectDeleteButton");
 const projectRestoreButton = document.getElementById("projectRestoreButton");
 const projectArchiveToggleButton = document.getElementById("projectArchiveToggleButton");
 const projectEditToggleButton = document.getElementById("projectEditToggleButton");
+const projectFullLockButton = document.getElementById("projectFullLockButton");
+const projectEditingBadge = document.getElementById("projectEditingBadge");
 const projectAddRootFolderButton = document.getElementById("projectAddRootFolderButton");
 const projectTreeList = document.getElementById("projectTreeList");
 
-// 編集モード切り替え(南京錠アイコン): 表示モード=施錠、編集モード=解錠
+// ---- プロジェクトの2つの「止め方」----
+//
+// 止め方が1つだと、誤操作を防ぐために閉じるとAIエージェント(APIキー)からの編集まで
+// 止まってしまう。実際の並べ替えはAI側で行うことが多いため、用途の違う2つに分けている。
+//
+//   編集モード(鉛筆)  : この画面だけの話。開かないと並べ替え等の操作が出ない。
+//                       既定は「表示」。誤って行の↑↓を触るのを防ぐのが目的なので、
+//                       APIには何も送らない = AIからの編集は止まらない
+//   完全ロック(南京錠): サーバーに保存する全利用者共有の状態。編集APIが423を返すので、
+//                       画面からもAIからも編集できなくなる。仕上がった案件を固めるときに使う
+//
+// 完全ロック中は編集モードを開けない(開けても何も通らないため)。
+// 鉛筆は「名前を変更」(プロジェクト名・フォルダ名・モックアップ名)で既に使っている記号なので、
+// ここでは使わない。こちらは押すと終わる操作ではなく、押すと居座る状態なので、
+// つまみの位置で入/切が読めるトグルにしている(色だけに頼らない)
+const PROJECT_MODE_OFF_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="5" width="22" height="14" rx="7"/><circle cx="8" cy="12" r="3"/></svg>';
+const PROJECT_MODE_ON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="5" width="22" height="14" rx="7"/><circle cx="16" cy="12" r="3"/></svg>';
 const PROJECT_LOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 const PROJECT_UNLOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
-const applyProjectEditToggleState = (isEditMode) => {
-	projectEditToggleButton.innerHTML = isEditMode ? PROJECT_UNLOCK_ICON : PROJECT_LOCK_ICON;
-	const label = isEditMode ? "表示モードへ切り替え" : "編集モードへ切り替え";
-	projectEditToggleButton.title = label;
-	projectEditToggleButton.setAttribute("aria-label", label);
-	projectAddRootFolderButton.style.display = isEditMode ? "inline-flex" : "none";
-	projectRenameButton.style.display = isEditMode ? "inline-flex" : "none";
+
+// サーバー側の完全ロック(全利用者共有)。プロジェクトを開くたびにサーバーの値へ合わせる
+let projectFullyLocked = false;
+// この画面で編集を開いているか。既定はオフ(表示モード)。保存もしない
+let projectLocalEditMode = false;
+
+const setButtonLabel = (button, label) => {
+	button.title = label;
+	button.setAttribute("aria-label", label);
+};
+
+/** 2つの状態から、実際に編集できるか(projectsEditMode)を決めて画面へ反映する */
+const applyProjectModeState = () => {
+	projectsEditMode = !projectFullyLocked && projectLocalEditMode;
+	appShell.classList.toggle("projectsEditMode", projectsEditMode);
+
+	projectEditToggleButton.innerHTML = projectsEditMode ? PROJECT_MODE_ON_ICON : PROJECT_MODE_OFF_ICON;
+	projectEditingBadge.hidden = !projectsEditMode;
+	projectEditToggleButton.classList.toggle("editModeOn", projectsEditMode);
+	projectEditToggleButton.setAttribute("aria-pressed", projectsEditMode ? "true" : "false");
+	setButtonLabel(projectEditToggleButton, projectFullyLocked
+		? "完全ロック中は編集できません"
+		: (projectsEditMode ? "編集モードをやめる" : "編集モードにする"));
+	projectEditToggleButton.disabled = currentProjectId == null || projectFullyLocked;
+
+	projectFullLockButton.innerHTML = projectFullyLocked ? PROJECT_LOCK_ICON : PROJECT_UNLOCK_ICON;
+	projectFullLockButton.classList.toggle("fullLockOn", projectFullyLocked);
+	setButtonLabel(projectFullLockButton, projectFullyLocked
+		? "完全ロックを解除する(全員が編集できるようになります)"
+		: "完全ロックする(AIを含め、誰も編集できなくなります)");
+	projectFullLockButton.disabled = currentProjectId == null;
+
+	projectAddRootFolderButton.style.display = projectsEditMode ? "inline-flex" : "none";
+	projectRenameButton.style.display = projectsEditMode ? "inline-flex" : "none";
 };
 
 let allDocuments = [];
@@ -2050,6 +2128,8 @@ let currentProjects = [];
 let currentProjectId = null;
 let currentProjectTree = null; // {folders:[...], documents:[...]} (直近取得したツリー)
 let projectsEditMode = false;
+// 編集モードを閉じるのは「別のプロジェクトへ移ったとき」だけにするための目印
+let lastTreeProjectId = null;
 let projectsArchiveMode = false; // true = アーカイブ済みプロジェクトの一覧・ツリーを表示中(表示専用)
 // フォルダは既定で開いた状態にしたいので、「開いているID」ではなく「閉じたID」を記録する
 // (未登録=既定どおり開いている、として扱う。新規作成したフォルダも自動的に開いた状態になる)
@@ -3050,9 +3130,9 @@ const setView = (view) => {
 	// これは安全のためではなく「中身が何も取れない空のペインを開かせない」ため
 	appShell.classList.toggle("adminPaneMode", view === "admin" && appShell.classList.contains("adminMode"));
 	if (view !== "projects") {
-		projectsEditMode = false;
-		appShell.classList.remove("projectsEditMode");
-		applyProjectEditToggleState(false);
+		projectFullyLocked = false;
+		projectLocalEditMode = false;
+		applyProjectModeState();
 		projectsArchiveMode = false;
 		appShell.classList.remove("projectsArchiveMode");
 		projectArchiveToggleButton.textContent = "アーカイブ済み";
@@ -3691,9 +3771,9 @@ const loadProjectTree = async () => {
 	if (currentProjectId == null) {
 		currentProjectTree = null;
 		projectTreeTitle.textContent = "";
-		projectsEditMode = false;
-		appShell.classList.remove("projectsEditMode");
-		applyProjectEditToggleState(false);
+		projectFullyLocked = false;
+		projectLocalEditMode = false;
+		applyProjectModeState();
 		renderProjectTree();
 		return;
 	}
@@ -3706,11 +3786,18 @@ const loadProjectTree = async () => {
 	currentProjectTree = await res.json();
 	const project = currentProjects.find((p) => p.id === currentProjectId);
 	projectTreeTitle.textContent = project ? project.name : "";
-	// 施錠状態は全利用者で共有されるサーバー側の値なので、プロジェクト切り替え・SSE通知の
-	// たびにここで同期する(ローカルでの独自トグルは持たない)
-	projectsEditMode = project ? !project.locked : false;
-	appShell.classList.toggle("projectsEditMode", projectsEditMode);
-	applyProjectEditToggleState(projectsEditMode);
+	// 幅が足りないと末尾が省略されるので、全体はマウスを乗せれば読めるようにする
+	projectTreeTitle.title = project ? project.name : "";
+	// 完全ロックは全利用者で共有されるサーバー側の値なので、プロジェクト切り替え・SSE通知の
+	// たびにここで同期する(他の人が掛けたら、こちらの画面でも編集できなくなる)
+	projectFullyLocked = project ? project.locked : false;
+	// 編集モードは開いた画面ごとの状態。プロジェクトを移ったときだけ閉じる。
+	// SSE通知のたびに閉じると、書いている最中に操作が消えてしまう
+	if (lastTreeProjectId !== currentProjectId) {
+		projectLocalEditMode = false;
+		lastTreeProjectId = currentProjectId;
+	}
+	applyProjectModeState();
 	renderProjectTree();
 	// お品書きを開いたままプロジェクトを切り替えた場合も中身を合わせる
 	if (manifestPane.classList.contains("visible")) await loadManifest();
@@ -3858,14 +3945,17 @@ const renderProjectTree = () => {
 			<span class="treeToggleIcon"></span>
 			<span class="treeDocName" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}${isArchivedOnly ? " (アーカイブ済み)" : ""}</span>
 			<div class="treeRowActions">
-				<button type="button" class="treeMiniButton treeDocUpButton" data-document-id="${placement.documentId}" data-folder-id="${folderIdAttr}" title="上へ" aria-label="上へ" ${index === 0 ? "disabled" : ""}>
+				<button type="button" class="treeMiniButton treeEditAction treeDocUpButton" data-document-id="${placement.documentId}" data-folder-id="${folderIdAttr}" title="上へ" aria-label="上へ" ${index === 0 ? "disabled" : ""}>
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
 				</button>
-				<button type="button" class="treeMiniButton treeDocDownButton" data-document-id="${placement.documentId}" data-folder-id="${folderIdAttr}" title="下へ" aria-label="下へ" ${index === total - 1 ? "disabled" : ""}>
+				<button type="button" class="treeMiniButton treeEditAction treeDocDownButton" data-document-id="${placement.documentId}" data-folder-id="${folderIdAttr}" title="下へ" aria-label="下へ" ${index === total - 1 ? "disabled" : ""}>
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
 				</button>
-				<button type="button" class="treeMiniButton removeDocButton" data-document-id="${placement.documentId}" title="プロジェクトから外す" aria-label="プロジェクトから外す">
+				<button type="button" class="treeMiniButton treeEditAction removeDocButton" data-document-id="${placement.documentId}" title="プロジェクトから外す" aria-label="プロジェクトから外す">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+				</button>
+				<button type="button" class="treeMiniButton treeOpenWindowButton" data-document-id="${placement.documentId}" title="別ウィンドウで開く" aria-label="別ウィンドウで開く" ${doc != null && canPreviewDocument(doc) ? "" : "disabled"}>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
 				</button>
 			</div>
 		`;
@@ -3895,19 +3985,19 @@ const renderProjectTree = () => {
 			<span class="treeToggleIcon">${expanded ? "▼" : "▶"}</span>
 			<span class="treeFolderName" title="${escapeHtml(folder.name)}(押すと開閉＋この章のお品書き)">📁 ${escapeHtml(folder.name)}</span>
 			<div class="treeRowActions">
-				<button type="button" class="treeMiniButton treeFolderUpButton" data-folder-id="${folder.id}" data-parent-id="${folder.parentFolderId ?? ""}" title="上へ" aria-label="上へ" ${folderIndex === 0 ? "disabled" : ""}>
+				<button type="button" class="treeMiniButton treeEditAction treeFolderUpButton" data-folder-id="${folder.id}" data-parent-id="${folder.parentFolderId ?? ""}" title="上へ" aria-label="上へ" ${folderIndex === 0 ? "disabled" : ""}>
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
 				</button>
-				<button type="button" class="treeMiniButton treeFolderDownButton" data-folder-id="${folder.id}" data-parent-id="${folder.parentFolderId ?? ""}" title="下へ" aria-label="下へ" ${folderIndex === folderTotal - 1 ? "disabled" : ""}>
+				<button type="button" class="treeMiniButton treeEditAction treeFolderDownButton" data-folder-id="${folder.id}" data-parent-id="${folder.parentFolderId ?? ""}" title="下へ" aria-label="下へ" ${folderIndex === folderTotal - 1 ? "disabled" : ""}>
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
 				</button>
-				<button type="button" class="treeMiniButton addSubfolderButton" data-folder-id="${folder.id}" title="サブフォルダ追加" aria-label="サブフォルダ追加">
+				<button type="button" class="treeMiniButton treeEditAction addSubfolderButton" data-folder-id="${folder.id}" title="サブフォルダ追加" aria-label="サブフォルダ追加">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
 				</button>
-				<button type="button" class="treeMiniButton renameFolderButton" data-folder-id="${folder.id}" data-name="${escapeHtml(folder.name)}" title="名前を変更" aria-label="名前を変更">
+				<button type="button" class="treeMiniButton treeEditAction renameFolderButton" data-folder-id="${folder.id}" data-name="${escapeHtml(folder.name)}" title="名前を変更" aria-label="名前を変更">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .622.622l4.353-1.32a2 2 0 0 0 .83-.497Z"/><path d="m15 5 4 4"/></svg>
 				</button>
-				<button type="button" class="treeMiniButton deleteFolderButton" data-folder-id="${folder.id}" title="削除" aria-label="削除">
+				<button type="button" class="treeMiniButton treeEditAction deleteFolderButton" data-folder-id="${folder.id}" title="削除" aria-label="削除">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
 				</button>
 			</div>
@@ -3973,6 +4063,15 @@ const renderProjectTree = () => {
 			ev.stopPropagation();
 			if (!(await showConfirmDialog("このフォルダを削除しますか?(中身が空の場合のみ削除できます)"))) return;
 			await deleteProjectFolder(btn.dataset.folderId);
+		});
+	});
+	// 資料を別ウィンドウで開く。読む操作なので表示モードでも使える
+	// (文書一覧のカードにある同名のボタンと同じ挙動にしている)
+	projectTreeList.querySelectorAll(".treeOpenWindowButton").forEach((btn) => {
+		btn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			if (btn.disabled) return;
+			window.open(`./api/documents/${encodeURIComponent(btn.dataset.documentId)}/viewer`, "_blank");
 		});
 	});
 	projectTreeList.querySelectorAll(".removeDocButton").forEach((btn) => {
@@ -4196,27 +4295,37 @@ projectArchiveToggleButton.addEventListener("click", async () => {
 	projectsArchiveMode = !projectsArchiveMode;
 	appShell.classList.toggle("projectsArchiveMode", projectsArchiveMode);
 	projectArchiveToggleButton.textContent = projectsArchiveMode ? "戻る" : "アーカイブ済み";
-	projectsEditMode = false;
-	appShell.classList.remove("projectsEditMode");
-	applyProjectEditToggleState(false);
+	projectFullyLocked = false;
+	projectLocalEditMode = false;
 	currentProjectId = null;
+	applyProjectModeState();
 	clearPreview();
 	await loadProjects();
 });
 
-// 施錠/解錠は全利用者で共有される状態のため、サーバーに保存してSSEで他クライアントにも通知する
+// 編集モードはこの画面だけの状態。APIには何も送らないので、AIからの編集は止まらない
+projectEditToggleButton.addEventListener("click", () => {
+	if (currentProjectId == null || projectFullyLocked) return;
+	projectLocalEditMode = !projectLocalEditMode;
+	applyProjectModeState();
+	renderProjectTree();
+	renderDocumentList();
+});
+
+// 完全ロックは全利用者で共有される状態のため、サーバーに保存してSSEで他クライアントにも通知する
 // (ここでの変更は自分の画面ではAPIレスポンスを使って即時反映し、SSE通知の到着は待たない)
-projectEditToggleButton.addEventListener("click", async () => {
+projectFullLockButton.addEventListener("click", async () => {
 	if (currentProjectId == null) return;
-	const endpoint = projectsEditMode ? "lock" : "unlock";
+	const endpoint = projectFullyLocked ? "unlock" : "lock";
 	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}/${endpoint}`, {method: "POST"});
 	if (res.status !== 200) return;
 	const project = await res.json();
 	const cached = currentProjects.find((p) => p.id === project.id);
 	if (cached) cached.locked = project.locked;
-	projectsEditMode = !project.locked;
-	appShell.classList.toggle("projectsEditMode", projectsEditMode);
-	applyProjectEditToggleState(projectsEditMode);
+	projectFullyLocked = project.locked;
+	// 掛けたのに編集の操作が残っていると、押しても423で弾かれるだけになる
+	if (projectFullyLocked) projectLocalEditMode = false;
+	applyProjectModeState();
 	renderProjectTree();
 	renderDocumentList();
 });

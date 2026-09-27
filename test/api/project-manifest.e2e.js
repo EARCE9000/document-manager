@@ -171,6 +171,8 @@ test.describe.serial("お品書き(実ブラウザ)", () => {
 		const chapterNames = () => chapters.allTextContents();
 		expect(await chapterNames()).toEqual(["要件", "参考"]);
 
+		// 並べ替えは編集モードのときだけ(既定は表示モード)
+		await page.click("#projectEditToggleButton");
 		// 「参考」を上へ(操作ボタンは行に乗せたときだけ出る)
 		const refRow = page.locator(".treeFolderRow", {hasText: "参考"});
 		await refRow.hover();

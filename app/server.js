@@ -168,7 +168,6 @@ const DRAWIO_VIEWER_CSP = [
 	"img-src 'self' data: blob:",
 	"font-src 'self' data:",
 	"connect-src 'self'",
-	"frame-ancestors 'self'",
 	"base-uri 'none'",
 	"form-action 'none'"
 ].join("; ");
@@ -2991,7 +2990,7 @@ app.put(BASE_URL_PATH + 'api/tag_order', requireAuth, requireAdmin, async (req, 
 // 一律で拒否するためのエラー応答。排他制御(誰かのロック)ではなく全利用者共有の状態で、
 // 「誰でも編集できる/誰も編集できない」を切り替えるだけ(423 Locked)
 const respondProjectLocked = (res) => {
-	res.status(423).json({error: "このプロジェクトは施錠されています。編集するには鍵を解錠してください。"});
+	res.status(423).json({error: "このプロジェクトは完全ロックされています。編集するにはブラウザの画面で南京錠のボタンを押して解除してください(画面だけの「編集モード」とは別のものです)。"});
 };
 
 /**

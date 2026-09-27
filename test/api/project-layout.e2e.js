@@ -13,6 +13,9 @@
  *
  * 並びはCSSの order で決めていてDOMの順とは違うため、見た目の左右を実際に測って確かめる。
  *
+ * 編集モードは既定でオフ(表示モード)。文書一覧は編集モードのときだけ出るため、
+ * 並びを見るテストでは先に鉛筆ボタンを押して開く。
+ *
  * 実行には Chromium が必要: `npx playwright install chromium`
  */
 
@@ -35,6 +38,16 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 		await context.addCookies([{name: keys.sessionCookieName, value: keys.sessionCookie, url: BASE_URL}]);
 	});
 
+	// プロジェクトを開いて、編集モードにする(既定は表示モード)
+	const openInEditMode = async (page, name = PROJECT) => {
+		await page.goto("./");
+		await page.click("#menuProjectsLink");
+		await page.click(`.projectTab:has-text("${name}")`);
+		await expect(page.locator("#projectTreePane")).toBeVisible();
+		await page.click("#projectEditToggleButton");
+		await expect(page.locator("#sideBar")).toBeVisible();
+	};
+
 	const leftEdges = (page) => page.evaluate(() => {
 		const rect = (id) => {
 			const el = document.getElementById(id);
@@ -45,11 +58,7 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 	});
 
 	test("編集中は 検索 → フォルダ構成 → プレビュー の順に並ぶ", async ({page}) => {
-		await page.goto("./");
-		await page.click("#menuProjectsLink");
-		await page.click(`.projectTab:has-text("${PROJECT}")`);
-		await expect(page.locator("#projectTreePane")).toBeVisible();
-		await expect(page.locator("#sideBar")).toBeVisible();
+		await openInEditMode(page);
 
 		const boxes = await leftEdges(page);
 		const order = boxes.filter((b) => b.visible).sort((a, b) => a.left - b.left).map((b) => b.id);
@@ -64,17 +73,15 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 		await page.click("#menuProjectsLink");
 		await page.click(`.projectTab:has-text("${PROJECT}")`);
 		await expect(page.locator("#projectTreePane")).toBeVisible();
+		await page.click("#projectEditToggleButton");
+		await expect(page.locator("#sideBar")).toBeVisible();
 		const after = (await leftEdges(page)).find((b) => b.id === "sideBar").left;
 
 		expect(after, `切り替えで検索欄が ${before}px → ${after}px へ動いた`).toBe(before);
 	});
 
-	// 施錠すると編集モードが解ける。そのときは一覧を出さず、ツリーとプレビューだけになる
-	test("編集中でなければ、フォルダ構成とプレビューだけになる", async ({page, request}) => {
-		const projects = await (await request.get("api/projects", {headers: rw})).json();
-		const target = projects.find((p) => p.name === PROJECT);
-		await request.post(`api/projects/${target.id}/lock`, {headers: rw});
-
+	// 開いた直後は表示モード。一覧を出さず、ツリーとプレビューだけになる
+	test("編集中でなければ、フォルダ構成とプレビューだけになる", async ({page}) => {
 		await page.goto("./");
 		await page.click("#menuProjectsLink");
 		await page.click(`.projectTab:has-text("${PROJECT}")`);
@@ -83,8 +90,6 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 
 		const order = (await leftEdges(page)).filter((b) => b.visible).sort((a, b) => a.left - b.left).map((b) => b.id);
 		expect(order).toEqual(["projectTreePane", "previewArea"]);
-
-		await request.post(`api/projects/${target.id}/unlock`, {headers: rw});
 	});
 
 	// 階層が深くなると1つずつ開け閉めするのが手間になる
@@ -122,10 +127,7 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 
 	// 2つの列は「揃っていること」自体が意図なので、片方だけ変わったら気づけるようにする
 	test("ツリーと文書一覧の幅が揃っている", async ({page}) => {
-		await page.goto("./");
-		await page.click("#menuProjectsLink");
-		await page.click(`.projectTab:has-text("${PROJECT}")`);
-		await expect(page.locator("#projectTreePane")).toBeVisible();
+		await openInEditMode(page);
 
 		const widths = await page.evaluate(() => ["sideBar", "projectTreePane"]
 			.map((id) => Math.round(document.getElementById(id).getBoundingClientRect().width)));
@@ -142,9 +144,7 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 		const target = projects.find((p) => p.name === PROJECT);
 		await request.put(`api/projects/${target.id}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
 
-		await page.goto("./");
-		await page.click("#menuProjectsLink");
-		await page.click(`.projectTab:has-text("${PROJECT}")`);
+		await openInEditMode(page);
 		const row = page.locator(".treeDocRow", {hasText: name.slice(0, 12)});
 		await expect(row).toBeVisible();
 
@@ -162,5 +162,62 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 		// 乗せていない行には出ない
 		const other = page.locator(".treeFolderRow", {hasText: "資料"});
 		await expect(other.locator(".treeRowActions")).toBeHidden();
+	});
+
+	// 資料を開くのは読む操作なので、編集モードを開いていなくてもできる必要がある
+	// (既定が表示モードになったため、ここが編集モード任せだと既定では一切開けない)
+	test.describe("行から資料を別ウィンドウで開く", () => {
+		const DRAWING = `別窓で開く図-${Date.now()}.drawio`;
+		let drawingId;
+
+		test.beforeAll(async ({request}) => {
+			const xml = `<mxfile><diagram name="p1"><mxGraphModel><root>`
+				+ `<mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>`;
+			const doc = await (await request.post("api/documents", {
+				headers: rw, multipart: {uploadfile: {name: DRAWING, mimeType: "application/xml", buffer: Buffer.from(xml)}}
+			})).json();
+			drawingId = doc.id;
+			const projects = await (await request.get("api/projects", {headers: rw})).json();
+			const target = projects.find((p) => p.name === PROJECT);
+			await request.put(`api/projects/${target.id}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
+		});
+
+		const drawingRow = (page) => page.locator(".treeDocRow", {hasText: DRAWING.slice(0, 14)});
+
+		test("表示モードでも出ていて、押すとその資料が別ウィンドウで開く", async ({page, context}) => {
+			await page.goto("./");
+			await page.click("#menuProjectsLink");
+			await page.click(`.projectTab:has-text("${PROJECT}")`);
+			// 編集モードにはしない(既定のまま)
+			await expect(page.locator("#sideBar")).toBeHidden();
+
+			const row = drawingRow(page);
+			await row.hover();
+			await expect(row.locator(".treeOpenWindowButton")).toBeVisible();
+			// 構成を変えるボタンは出ていない
+			await expect(row.locator(".treeDocUpButton")).toBeHidden();
+			await expect(row.locator(".removeDocButton")).toBeHidden();
+
+			const [win] = await Promise.all([
+				context.waitForEvent("page"),
+				row.locator(".treeOpenWindowButton").click()
+			]);
+			await win.waitForLoadState("domcontentloaded");
+			// .drawio はビューアのページへ転送される。行き先そのものより「どの資料か」が要点
+			expect(win.url(), "別の資料が開いている").toContain(encodeURIComponent(drawingId));
+			await win.close();
+
+			// 行そのもののクリック(プレビュー切り替え)は巻き込まない
+			await expect(row).not.toHaveClass(/selected/);
+		});
+
+		test("編集モードにすると、並べ替え等と並んで出る", async ({page}) => {
+			await openInEditMode(page);
+			const row = drawingRow(page);
+			await row.hover();
+			await expect(row.locator(".treeOpenWindowButton")).toBeVisible();
+			await expect(row.locator(".treeDocUpButton")).toBeVisible();
+			await expect(row.locator(".removeDocButton")).toBeVisible();
+		});
 	});
 });
