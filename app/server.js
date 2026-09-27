@@ -919,8 +919,21 @@ const fixUploadedFilenameEncoding = (name) => {
 	return fixed.includes("�") ? name : fixed;
 };
 
+// プレビューの版。表の折り返し方などを変えたらここを上げる。
+// 既に作ってあるpreview.htmlは中身にこの印を持っており、古ければ配信時に作り直す
+// (作り直さないと、直しても既存の文書には反映されない)
+const PREVIEW_TEMPLATE_VERSION = 2;
+const PREVIEW_VERSION_MARK = (version) => `<meta name="dm-preview-version" content="${version}">`;
+
+// 表を横スクロールできる枠で包む。markedは <table> をそのまま出すので、ここで被せる。
+// (コードブロックに書かれた "<table>" は marked が &lt;table&gt; へ直すため巻き込まれない)
+const wrapMarkdownTables = (html) => html
+	.replace(/<table>/g, '<div class="tableWrap"><table>')
+	.replace(/<\/table>/g, "</table></div>");
+
 const MARKDOWN_PREVIEW_TEMPLATE = (bodyHtml) => `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
+${PREVIEW_VERSION_MARK(PREVIEW_TEMPLATE_VERSION)}
 <meta http-equiv="content-security-policy" content="default-src 'none'; img-src 'self' data: https:; style-src 'unsafe-inline'; script-src 'none';">
 <style>
 body { font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; max-width: 800px; margin: 2em auto; padding: 0 1em; line-height: 1.7; color: #24292f; }
@@ -928,14 +941,23 @@ pre { background: #f6f8fa; padding: 1em; overflow-x: auto; border-radius: 4px; }
 code { background: #f6f8fa; padding: 0.15em 0.35em; border-radius: 3px; font-size: 0.9em; }
 pre code { background: none; padding: 0; }
 blockquote { border-left: 4px solid #ddd; margin: 0; padding-left: 1em; color: #666; }
+/* 表のセルは折り返さない。途中で改行が入ると意味が取りにくくなるため
+   (「2026年9月30日まで」が「2026年9月 / 30日まで」に割れる、など)。
+   本文の幅(800px)に収めようとすると狭い列から先に折り返されるので、表には内容なりの幅
+   (max-content)を取らせ、はみ出す分を枠側の横スクロールへ逃がす。
+   ただし1つのセルが際限なく伸びると読む側が横に振られ続けるため、640pxで頭打ちにし、
+   そこを超えるものだけ折り返す */
+.tableWrap { overflow-x: auto; max-width: 100%; }
+.tableWrap table { width: max-content; }
 table { border-collapse: collapse; }
-th, td { border: 1px solid #ddd; padding: 0.4em 0.8em; }
+th, td { border: 1px solid #ddd; padding: 0.4em 0.8em; max-width: 640px; overflow-wrap: anywhere; }
 img { max-width: 100%; }
 </style>
 </head><body>${bodyHtml}</body></html>`;
 
 const CSV_PREVIEW_TEMPLATE = (tableHtml) => `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
+${PREVIEW_VERSION_MARK(PREVIEW_TEMPLATE_VERSION)}
 <meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none';">
 <style>
 body { font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; margin: 1em; }
@@ -984,6 +1006,42 @@ const buildCsvPreviewHtml = (csvText, extension) => {
 	return CSV_PREVIEW_TEMPLATE(theadHtml + tbodyHtml);
 };
 
+/**
+ * 既に作ってあるpreview.htmlが古い版なら作り直す。
+ *
+ * preview.htmlはアップロード時に1度だけ作られ、あとは保存されたものを配信している。
+ * そのため見た目を直しても、既にある文書には反映されない。かといって全件を一括で
+ * 作り直すと、大量の書き込みが一度に走る(S3構成では特に)。
+ *
+ * 配信するときに、その1件だけを見て古ければ作り直す形にしている。1文書につき1回で済み、
+ * 触られない文書には何も起きない。作り直しに失敗しても、古いものをそのまま配信する
+ * (見た目が古いだけで読めるため、ここで404にする方が困る)。
+ *
+ * 元ファイルから作り直せるものだけが対象。mhtmlは元の構造を解いて作っており、
+ * 作り直しても同じ結果になる保証が無いので触らない。
+ */
+const REBUILDABLE_PREVIEW_EXTENSIONS = [...MARKDOWN_EXTENSIONS, ...CSV_EXTENSIONS];
+
+const rebuildPreviewIfOutdated = async (document) => {
+	const extension = path.extname(document.entry_file || "").toLowerCase();
+	if (!REBUILDABLE_PREVIEW_EXTENSIONS.includes(extension)) return;
+	if (document.preview_file == null) return;
+	try {
+		const current = (await storage.readFile(document.id, document.preview_file)).toString("utf-8");
+		if (current.includes(PREVIEW_VERSION_MARK(PREVIEW_TEMPLATE_VERSION))) return;
+
+		const source = (await storage.readFile(document.id, document.entry_file)).toString("utf-8");
+		const html = MARKDOWN_EXTENSIONS.includes(extension)
+			? MARKDOWN_PREVIEW_TEMPLATE(wrapMarkdownTables(marked.parse(source)))
+			: buildCsvPreviewHtml(source, extension);
+		await storage.writeFile(document.id, document.preview_file, Buffer.from(html, "utf-8"));
+		logger.info({documentId: document.id, entryFile: document.entry_file}, "古い版のプレビューを作り直しました");
+	} catch (err) {
+		// 作り直せなくても、今あるものを配信すれば読める
+		logger.warn({err, documentId: document.id}, "::rebuildPreviewIfOutdated");
+	}
+};
+
 // mhtml/mht・md/markdown・csv/tsv を単一HTMLに変換する (対象外/失敗時は null を返し、プレビュー不可として扱う)
 const buildPreviewFile = async (documentId, originalName, extension, officeContent) => {
 	try {
@@ -1002,7 +1060,7 @@ const buildPreviewFile = async (documentId, originalName, extension, officeConte
 		}
 		if (MARKDOWN_EXTENSIONS.includes(extension)) {
 			const markdownContent = (await storage.readFile(documentId, originalName)).toString("utf-8");
-			const html = MARKDOWN_PREVIEW_TEMPLATE(marked.parse(markdownContent));
+			const html = MARKDOWN_PREVIEW_TEMPLATE(wrapMarkdownTables(marked.parse(markdownContent)));
 			await storage.writeFile(documentId, PREVIEW_FILENAME, Buffer.from(html, "utf-8"));
 			return PREVIEW_FILENAME;
 		}
@@ -2126,6 +2184,8 @@ const serveDocumentFile = async (req, res) => {
 		res.status(404).json({error: "体裁つきの表示は用意されていません", renderStatus: document.render_status ?? null});
 		return;
 	}
+	// プレビューを返すときだけ、古い版なら作り直す(ダウンロードは元ファイルなので関係ない)
+	if (!isRender && !isDownload && !isDrawioSource) await rebuildPreviewIfOutdated(document);
 	const targetFile = isRender ? document.render_file
 		: (isDownload || isDrawioSource ? document.entry_file : document.preview_file);
 	if (targetFile == null) {
