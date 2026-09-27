@@ -1231,105 +1231,99 @@ const SQL_SELECT_ACTIVE_DOCUMENTS_FOR_INDEXING = `SELECT id, content_text FROM d
 // (タグは元々短い文字列でLIKEで十分高速なため、こちらは常にLIKEのまま)。
 const MIN_FTS_QUERY_LENGTH = 3;
 
-const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo, d.previous_id
-	FROM documents d
-	LEFT JOIN document_tags t ON t.document_id = d.id
-	WHERE d.deleted_at IS NULL
-	AND (
-		d.entry_file LIKE '%' || @q || '%'
-		OR d.content_text LIKE '%' || @q || '%'
-		OR d.memo LIKE '%' || @q || '%'
-		OR t.tag LIKE '%' || @q || '%'
-	)
-	ORDER BY d.uploaded_at DESC
-`;
-
-const SQL_SEARCH_ACTIVE_DOCUMENTS_BY_FTS = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo, d.previous_id
-	FROM documents d
-	WHERE d.deleted_at IS NULL
-	AND (
-		d.id IN (SELECT id FROM documents_fts WHERE documents_fts MATCH @ftsQuery)
-		OR d.memo LIKE '%' || @q || '%'
-		OR d.id IN (SELECT document_id FROM document_tags WHERE tag LIKE '%' || @q || '%')
-	)
-	ORDER BY d.uploaded_at DESC
-`;
-
-// Postgresでは FTS5 が無いため、pg_trgm(GINインデックス)で加速される ILIKE 部分一致を使う。
-// LIKE版と同じ条件だが ILIKE で大文字小文字を無視する(SQLiteのLIKEの既定挙動に合わせる)
-const SQL_SEARCH_ACTIVE_DOCUMENTS_PG = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo, d.previous_id
-	FROM documents d
-	LEFT JOIN document_tags t ON t.document_id = d.id
-	WHERE d.deleted_at IS NULL
-	AND (
-		d.entry_file ILIKE '%' || @q || '%'
-		OR d.content_text ILIKE '%' || @q || '%'
-		OR d.memo ILIKE '%' || @q || '%'
-		OR t.tag ILIKE '%' || @q || '%'
-	)
-	ORDER BY d.uploaded_at DESC
-`;
-
 // ユーザー入力をFTS5のフレーズクエリとして安全に組み立てる(演算子等として解釈させない)
 const toFtsPhraseQuery = (q) => `"${q.replace(/"/g, '""')}"`;
 
-const searchActiveDocuments = async (q) => {
-	if (ds.backend === "postgres") {
-		return ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_PG, {q});
-	}
-	if (q.length < MIN_FTS_QUERY_LENGTH) {
-		return ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE, {q});
-	}
-	try {
-		return await ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_BY_FTS, {ftsQuery: toFtsPhraseQuery(q), q});
-	} catch (err) {
-		logger.error(err, "::searchActiveDocuments:fts_fallback");
-		return ds.all(SQL_SEARCH_ACTIVE_DOCUMENTS_BY_LIKE, {q});
-	}
+/**
+ * 検索語をスペースで区切る。全角スペースも区切りとして扱う。
+ *
+ * 日本語入力のままスペースを打つと全角になるため、半角だけを見ていると
+ * 「setup　md」が1語として扱われ、何も見つからない状態になる。
+ */
+const splitSearchTerms = (q) => String(q || "").split(/[\s\u3000]+/).filter((term) => term !== "");
+
+/**
+ * 複数の語を「すべて含む」条件(AND)として組み立てる。
+ *
+ * 語ごとの条件は ファイル名 / 本文 / メモ / タグ のいずれかに当たればよい(OR)。
+ * 語と語はANDでつなぐ。「setup md」でファイル名 rpi_python_setup.md を見つけたい一方、
+ * 「請求書 2026」のようにファイル名とタグにまたがる指定もしたいため。
+ *
+ * 本文とファイル名はFTS5(trigram)で引く。trigramは3文字ないと索引を引けないので、
+ * それより短い語だけLIKEに落とす(「md」「AI」のような短い語は実際によく使われる)。
+ *
+ * @param useFts false のときは全部LIKEで組み立てる(Postgres・FTSが失敗したときの退避)
+ * @param like   'LIKE' か 'ILIKE'(Postgresは大文字小文字を無視するためILIKE)
+ * @returns {{where: string, params: object}}
+ */
+const buildSearchConditions = (terms, {useFts, like}) => {
+	const params = {};
+	const conditions = terms.map((term, index) => {
+		const key = `q${index}`;
+		params[key] = term;
+		const parts = [];
+		if (useFts && term.length >= MIN_FTS_QUERY_LENGTH) {
+			params[`fts${index}`] = toFtsPhraseQuery(term);
+			parts.push(`d.id IN (SELECT id FROM documents_fts WHERE documents_fts MATCH @fts${index})`);
+		} else {
+			parts.push(`d.entry_file ${like} '%' || @${key} || '%'`);
+			parts.push(`d.content_text ${like} '%' || @${key} || '%'`);
+		}
+		parts.push(`d.memo ${like} '%' || @${key} || '%'`);
+		// タグはJOINではなくEXISTSで見る。JOINだと語ごとに別の行へ当たったときに
+		// 「すべて含む」を表せない(1行では1つのタグしか見えないため)
+		parts.push(`EXISTS (SELECT 1 FROM document_tags t WHERE t.document_id = d.id AND t.tag ${like} '%' || @${key} || '%')`);
+		return `(${parts.join(" OR ")})`;
+	});
+	return {where: conditions.join(" AND "), params};
 };
 
-// アーカイブ(論理削除済み)一覧・検索。アクティブ一覧と同じ検索方式(FTS5/LIKE)を、
-// 対象をdeleted_at IS NOT NULLに変えて流用する
-const SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo, d.previous_id
-	FROM documents d
-	LEFT JOIN document_tags t ON t.document_id = d.id
-	WHERE d.deleted_at IS NOT NULL
-	AND (
-		d.entry_file LIKE '%' || @q || '%'
-		OR d.content_text LIKE '%' || @q || '%'
-		OR d.memo LIKE '%' || @q || '%'
-		OR t.tag LIKE '%' || @q || '%'
-	)
-	ORDER BY d.deleted_at DESC
-`;
+const DOCUMENT_SEARCH_COLUMNS = "d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.memo, d.previous_id";
+const DELETED_SEARCH_COLUMNS = `${DOCUMENT_SEARCH_COLUMNS}, d.deleted_by, d.deleted_at`;
 
-const SQL_SEARCH_DELETED_DOCUMENTS_PG = `
-	SELECT DISTINCT d.id, d.entry_file, d.preview_file, d.size, d.uploaded_by, d.uploaded_at, d.deleted_by, d.deleted_at, d.memo, d.previous_id
-	FROM documents d
-	LEFT JOIN document_tags t ON t.document_id = d.id
-	WHERE d.deleted_at IS NOT NULL
-	AND (
-		d.entry_file ILIKE '%' || @q || '%'
-		OR d.content_text ILIKE '%' || @q || '%'
-		OR d.memo ILIKE '%' || @q || '%'
-		OR t.tag ILIKE '%' || @q || '%'
-	)
-	ORDER BY d.deleted_at DESC
-`;
-
-// アーカイブ済みはFTSの索引に載せていないため、本文へのLIKEで検索する(索引なしの走査だが、
-// 1万件規模でも実測で100ms未満。アーカイブ画面は利用頻度も低い)。Postgresも本文の索引は
-// アクティブ限定のため、こちらは索引なしのILIKEになる
-const searchDeletedDocuments = async (q) => {
-	if (ds.backend === "postgres") {
-		return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_PG, {q});
-	}
-	return ds.all(SQL_SEARCH_DELETED_DOCUMENTS_BY_LIKE, {q});
+const buildSearchSql = (terms, {archived, useFts, like}) => {
+	const {where, params} = buildSearchConditions(terms, {useFts, like});
+	const sql = `
+		SELECT ${archived ? DELETED_SEARCH_COLUMNS : DOCUMENT_SEARCH_COLUMNS}
+		FROM documents d
+		WHERE d.deleted_at IS ${archived ? "NOT NULL" : "NULL"}
+		AND ${where}
+		ORDER BY d.${archived ? "deleted_at" : "uploaded_at"} DESC
+	`;
+	return {sql, params};
 };
+
+/**
+ * 文書を検索する。語がスペースで区切られていれば、すべてを含むものだけを返す。
+ *
+ * FTSが使えない語(3文字未満)や、FTSそのものが失敗した場合はLIKEへ落とす。
+ * 落としても結果が減らないようにしているので、利用者からは同じに見える(速さだけ違う)。
+ */
+const searchDocuments = async (q, {archived = false} = {}) => {
+	const terms = splitSearchTerms(q);
+	if (terms.length === 0) return [];
+	const isPostgres = ds.backend === "postgres";
+	const like = isPostgres ? "ILIKE" : "LIKE";
+	// アーカイブ済みはFTSの索引から外してあるので、索引を引くと何も出ない。LIKEで走査する
+	// (索引なしだが、1万件規模でも実測100ms未満。アーカイブ画面は利用頻度も低い)
+	if (!isPostgres && !archived) {
+		try {
+			const {sql, params} = buildSearchSql(terms, {archived, useFts: true, like});
+			return await ds.all(sql, params);
+		} catch (err) {
+			logger.error(err, "::searchDocuments:fts_fallback");
+		}
+	}
+	const {sql, params} = buildSearchSql(terms, {archived, useFts: false, like});
+	return ds.all(sql, params);
+};
+
+const searchActiveDocuments = (q) => searchDocuments(q, {archived: false});
+
+// アーカイブ(論理削除済み)の検索。アクティブと同じ組み立てを使い、対象だけを入れ替える。
+// アーカイブ済みはFTSの索引に載せていないため本文へのLIKEになる(索引なしの走査だが、
+// 1万件規模でも実測で100ms未満。アーカイブ画面は利用頻度も低い)
+const searchDeletedDocuments = (q) => searchDocuments(q, {archived: true});
 
 const SQL_SELECT_ACTIVE_DOCUMENT_BY_ID = `
 	SELECT id, entry_file, preview_file, size, uploaded_by, uploaded_at, memo, previous_id, content_truncated, render_status, render_error, render_file

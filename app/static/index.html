@@ -2787,8 +2787,111 @@ const showPreview = (doc) => {
 
 	previewFrame.style.display = "block";
 	previewFrame.setAttribute("sandbox", "allow-same-origin");
+	// コードブロックが出るのはMarkdownから作ったプレビューだけ。アップロードされた生の
+	// HTMLには手を入れない(見せているものを書き換えると、原本と違うものを見ることになる)
+	const isMarkdownPreview = previewExt === "html" && ["md", "markdown"].includes(extOfName(doc.entryFile));
+	pendingCodeCopyTarget = isMarkdownPreview ? doc.id : null;
 	previewFrame.src = `./api/documents/${encodeURIComponent(doc.id)}/file`;
 };
+
+// ---- コードブロックのコピー ----
+//
+// プレビューのHTMLは script-src 'none' で配信し、iframeも allow-scripts を外してある
+// (Markdownには生のHTMLを書けるため、仕込まれたスクリプトを走らせない)。
+// ボタンのためにそこを緩めると、守りたかったものが崩れる。
+//
+// iframeは同一オリジンなので、**こちら側の**スクリプトから中のDOMへ触れる。
+// ボタンの追加もクリップボードへの書き込みもこの画面の権限で行い、プレビュー側は
+// スクリプトが動かないまま変えずに済ませている。
+let pendingCodeCopyTarget = null;
+
+const copyTextToClipboard = async (text) => {
+	// navigator.clipboard はセキュアコンテキスト(https/localhost)でしか使えない。
+	// 社内をhttpで見ている場合に何も起きないと壊れて見えるので、古い手段へ落とす
+	try {
+		await navigator.clipboard.writeText(text);
+		return true;
+	} catch (err) {
+		try {
+			const area = document.createElement("textarea");
+			area.value = text;
+			area.style.position = "fixed";
+			area.style.opacity = "0";
+			document.body.appendChild(area);
+			area.select();
+			const ok = document.execCommand("copy");
+			document.body.removeChild(area);
+			return ok;
+		} catch (err2) {
+			return false;
+		}
+	}
+};
+
+// ボタンの見た目。プレビューのCSPは style-src 'unsafe-inline' を許しているので、
+// 中へstyle要素を入れられる(script-src 'none' のままで済む)。
+// 出し入れをJSのイベントではなくCSSの:hoverでやるのは、そのほうが取りこぼしが無いため
+const CODE_COPY_STYLE = `
+.dmCodeWrap { position: relative; }
+.dmCopyButton {
+	position: absolute; top: 8px; right: 8px;
+	font: 12px/1 inherit; padding: 5px 9px; cursor: pointer;
+	border: 1px solid #d0d7de; border-radius: 4px;
+	background: #fff; color: #57606a;
+	opacity: 0; transition: opacity 0.12s;
+}
+/* 常に出ているとコードの1行目に重なる。乗せたときだけ出す(ツリーの行と同じ考え方) */
+.dmCodeWrap:hover .dmCopyButton, .dmCopyButton:focus { opacity: 1; }
+.dmCopyButton:hover { background: #f3f4f6; }
+.dmCopyButton.done { color: #1a7f37; border-color: #1a7f37; opacity: 1; }
+.dmCopyButton.failed { color: #b42318; border-color: #b42318; opacity: 1; }
+`;
+
+const addCodeCopyButtons = (frameDocument) => {
+	if (frameDocument.getElementById("dmCopyStyle") == null) {
+		const style = frameDocument.createElement("style");
+		style.id = "dmCopyStyle";
+		style.textContent = CODE_COPY_STYLE;
+		(frameDocument.head || frameDocument.documentElement).appendChild(style);
+	}
+	for (const pre of frameDocument.querySelectorAll("pre")) {
+		if (pre.parentElement?.classList.contains("dmCodeWrap")) continue;
+		// ボタンを入れる前に中身を控える(入れた後だとボタンの文字まで拾ってしまう)
+		const text = (pre.querySelector("code") || pre).textContent;
+		if (text.trim() === "") continue;
+
+		const wrap = frameDocument.createElement("div");
+		wrap.className = "dmCodeWrap";
+		pre.parentNode.insertBefore(wrap, pre);
+		wrap.appendChild(pre);
+
+		const button = frameDocument.createElement("button");
+		button.type = "button";
+		button.className = "dmCopyButton";
+		button.textContent = "コピー";
+		button.addEventListener("click", async () => {
+			const ok = await copyTextToClipboard(text);
+			button.textContent = ok ? "コピーしました" : "コピーできませんでした";
+			button.classList.add(ok ? "done" : "failed");
+			setTimeout(() => {
+				button.textContent = "コピー";
+				button.classList.remove("done", "failed");
+			}, 1500);
+		});
+		wrap.appendChild(button);
+	}
+};
+
+previewFrame.addEventListener("load", () => {
+	if (pendingCodeCopyTarget == null) return;
+	pendingCodeCopyTarget = null;
+	try {
+		const frameDocument = previewFrame.contentDocument;
+		if (frameDocument != null) addCodeCopyButtons(frameDocument);
+	} catch (err) {
+		// 別オリジンだと触れない。ボタンが出ないだけで、プレビュー自体は読める
+	}
+});
 
 memoSaveButton.addEventListener("click", async () => {
 	if (selectedId == null) return;
