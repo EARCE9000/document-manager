@@ -208,7 +208,9 @@ test.describe("プレビュー配信の保存型XSS対策(実ブラウザ)", () 
 		await expect(page.locator("svg path").first()).toBeAttached({timeout: 10000});
 
 		expect(outside, "外部へ取りに行っている").toEqual([]);
-		expect(notFound.filter((p) => p.includes("/stencils/")), "同梱されていない拡張図形がある").toEqual([]);
+		// 取りに行った先はすべて手元にある。1つでも欠けると、本物の不具合を探すときに
+		// DevTools が赤くなっていて紛らわしい(数式の startup.js が長らくそうなっていた)
+		expect(notFound, "同梱できていないものがある").toEqual([]);
 
 		await request.delete(`api/documents/${id}`, {headers: rw});
 	});

@@ -41,11 +41,19 @@ cp -r /tmp/drawio/src/main/webapp/stencils app/static/vendor/drawio/stencils
 標準の図形はビューア本体に、拡張図形は同じフォルダの `stencils/` に入れてあるため、
 どちらも外部へ出ずにそのまま描画できます。
 
+数式だけは事情が違います。ビューア本体は図の中身に関わらず必ず MathJax の `startup.js` を
+読みに行くため、行き先を変えただけでは毎回404になります。MathJax 本体(数MB)は同梱せず、
+[app/static/drawio-math/startup.js](../../drawio-math/startup.js) という**こちらで用意した
+差し替え**を置いています(vendor配下ではありません)。数式(LaTeX)は組版されず
+`$$E = mc^2$$` のような元の文字列のまま出ます。図形や他のラベルには影響しません。
+組版させたい場合は MathJax を同梱し、`drawio-math/` をその中身に差し替えてください。
+
 `stencils/` を減らしたい場合は分類フォルダごと消せます(そこを使っている図だけが四角に化けます)。
 大きいのは `aws4.xml` 6.4MB / `rack` 5.6MB / `cisco_safe` 3.9MB あたりで、
 回路図に要る `electrical` は0.5MBです。落としたことに気づけるよう、
 [test/api/preview-xss.e2e.js](../../../../test/api/preview-xss.e2e.js) で
-「拡張図形が四角に化けていないこと」と「外部へ取りに行っていないこと」を見ています。
+「拡張図形が四角に化けていないこと」「外部へ取りに行っていないこと」に加えて、
+**ビューアが取りに行った先がすべて手元にあること(404が1件も出ないこと)**を見ています。
 
 新しいバージョンへ更新するときは、上記の既定値が増えていないか
 (`window.XXX_URL = window.XXX_URL || "https://..."` の箇所)を確認してください。
