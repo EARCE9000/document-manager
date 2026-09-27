@@ -265,7 +265,7 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 | `OIDC_REDIRECT_URI` | (必須) | コールバックURL。プロバイダ側にも同じ値を登録する |
 | `ADMIN_EMAIL` | (未設定) | 管理者が1人もいない間だけ働く、自己修復用のアドレス |
 | `SESSION_SECRET` | (ランダム) | セッションの署名鍵。必ず固定値を指定する |
-| `SESSION_MAX_AGE_HOURS` | `8` | ログインセッションの寿命(時間) |
+| `SESSION_MAX_AGE_HOURS` | `16` | ログインセッションの寿命(時間)。ログイン時点からの絶対時間で、操作しても延びない |
 | `BASE_PATH` | `/document_management` | 公開時のパスprefix |
 | `DATA_DIR` | `/data` | SQLite とローカル保存時の文書ファイルの置き場所 |
 | `DATABASE_BACKEND` | `sqlite` | `sqlite` / `postgres`(複数インスタンス構成では必須) |

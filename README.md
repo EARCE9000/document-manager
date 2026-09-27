@@ -303,7 +303,7 @@ document-manager/
 | `OIDC_SCOPE` | `openid profile email` | 要求スコープ。プロバイダのアプリクライアントで許可されているものに合わせること(EntraIDでrefresh_tokenが必要な場合は `offline_access` を追加。ただし本アプリはaccess_tokenのTTLに依存しないため通常は不要) |
 | `OIDC_USERNAME_CLAIM` | `email` | ユーザー識別子として使うid_tokenのクレーム名 |
 | `SESSION_SECRET` | (ランダム生成) | ログインセッションの署名鍵。セッション本体は永続ストア(SQLite/Postgres)に保存されるため、この値を固定すればコンテナ再起動をまたいでログイン状態が維持される。未設定だと起動のたびにランダム生成され、署名鍵が変わるため全セッションが無効になる |
-| `SESSION_MAX_AGE_HOURS` | `8` | ログインセッションの寿命(時間) |
+| `SESSION_MAX_AGE_HOURS` | `16` | ログインセッションの寿命(時間)。ログイン時点からの絶対時間で、操作しても延びない |
 | `ADMIN_EMAIL` | (未設定) | adminロールのユーザーが1人もいない場合にだけ、ログイン時に自動でadminとして登録される自己修復用のメールアドレス。常設の特別枠ではない |
 
 S3の認証情報は、AWS SDKの標準クレデンシャルチェーン(ECSタスクロール/EC2インスタンスロール等のIAMロールを優先し、未設定時は`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`環境変数や共有設定ファイルにフォールバック)にそのまま従う。アプリ側で個別の環境変数は用意していない。

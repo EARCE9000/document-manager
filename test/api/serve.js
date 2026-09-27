@@ -81,9 +81,12 @@ const {server} = require("../../app/server.js");
 	// session-store.jsのset()と同じ形(sid/JSON化したセッション/失効epoch ms)で1行入れるだけでよく、
 	// express-session本体(app/node_modules)への依存を避けられる
 	const sid = crypto.randomBytes(24).toString("hex");
-	const sessionExpiresAt = Date.now() + 8 * 60 * 60 * 1000;
+	// 寿命はserver.jsと同じ既定に合わせる(テストが数分で終わるので値自体は何でもよいが、
+	// 別の数字を書いておくと「アプリの既定はこれ」と誤解される)
+	const sessionMaxAgeMs = Number(process.env.SESSION_MAX_AGE_HOURS || 16) * 60 * 60 * 1000;
+	const sessionExpiresAt = Date.now() + sessionMaxAgeMs;
 	const sessionData = {
-		cookie: {originalMaxAge: 8 * 60 * 60 * 1000, expires: new Date(sessionExpiresAt).toISOString(), httpOnly: true, path: "/", sameSite: "lax"},
+		cookie: {originalMaxAge: sessionMaxAgeMs, expires: new Date(sessionExpiresAt).toISOString(), httpOnly: true, path: "/", sameSite: "lax"},
 		user: {identifier: owner}
 	};
 	await ds.run("INSERT INTO sessions (sid, data, expires_at) VALUES (?, ?, ?)", [sid, JSON.stringify(sessionData), sessionExpiresAt]);

@@ -101,7 +101,12 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "";
 if (SESSION_SECRET === "") {
 	logger.warn("SESSION_SECRET is not set. generating a random value (sessions will be invalidated on every restart)");
 }
-const SESSION_MAX_AGE_MS = Number(process.env.SESSION_MAX_AGE_HOURS || 8) * 60 * 60 * 1000;
+// ログイン状態の寿命。ログイン時点からの絶対時間で、操作しても延びない(rollingは使わない)。
+// 16時間にしているのは、朝ログインしてその日のうちに作業を終える使い方で、途中で切れて
+// 作業中の入力が飛ぶのを避けるため。短くしたい場合は SESSION_MAX_AGE_HOURS で上書きする。
+// 既定値を変えるときは deploy/compose.yml と compose.env.example も合わせること
+// (ずれると「入れたはずの設定が効かない」ことになる。test/deploy.test.js で見ている)
+const SESSION_MAX_AGE_MS = Number(process.env.SESSION_MAX_AGE_HOURS || 16) * 60 * 60 * 1000;
 
 app.use(session({
 	store: createSessionStore(session),

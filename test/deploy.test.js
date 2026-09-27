@@ -81,3 +81,21 @@ test("compose: converterは書き込み不可・権限昇格不可で動かす",
 	assert.doesNotMatch(converter, /^\s*volumes:/m, "ホストのディレクトリを渡さない");
 	assert.doesNotMatch(converter, /^\s*ports:/m, "ホストにポートを公開しない");
 });
+
+// 既定値がコード・compose.yml・ひな形の3か所に散っている。ずれると
+// 「ひな形どおりに置いたのに効き方が違う」となり、原因が非常に追いにくい
+test("既定のセッション寿命が、コードとcomposeとひな形で一致している", () => {
+	const read = (...p) => fs.readFileSync(path.join(__dirname, "..", ...p), "utf-8");
+	const pick = (text, re, where) => {
+		const m = text.match(re);
+		assert.ok(m, `${where} に SESSION_MAX_AGE_HOURS の既定値が見つからない`);
+		return m[1];
+	};
+
+	const inCode = pick(read("app", "server.js"), /SESSION_MAX_AGE_HOURS \|\| (\d+)\)/, "app/server.js");
+	const inCompose = pick(read("deploy", "compose.yml"), /SESSION_MAX_AGE_HOURS:\s*\$\{SESSION_MAX_AGE_HOURS:-(\d+)\}/, "deploy/compose.yml");
+	const inExample = pick(read("deploy", "compose.env.example"), /^SESSION_MAX_AGE_HOURS="(\d+)"/m, "deploy/compose.env.example");
+
+	assert.equal(inCompose, inCode, `compose.yml ${inCompose}h / server.js ${inCode}h`);
+	assert.equal(inExample, inCode, `compose.env.example ${inExample}h / server.js ${inCode}h`);
+});
