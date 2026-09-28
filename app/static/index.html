@@ -363,7 +363,13 @@
 	.mockupCardBody { padding: 10px 12px; flex: 1; min-width: 0; }
 	.mockupCardName { font-weight: 600; font-size: 0.95em; word-break: break-all; }
 	.mockupCardMeta { color: #888; font-size: 0.78em; margin-top: 5px; line-height: 1.6; }
-	.mockupCardMemo { color: #555; font-size: 0.8em; margin-top: 7px; white-space: pre-wrap; word-break: break-all; }
+	/* メモの長さでカードの高さが変わると、並べたときに目が滑る。3行で打ち切り、
+	   全文はマウスを乗せる(title)か、メモの編集を開けば読める。
+	   実測(幅264px・12.8px)で1行は約20文字なので、3行はおよそ60文字 */
+	.mockupCardMemo {
+		color: #555; font-size: 0.8em; margin-top: 7px; white-space: pre-wrap; word-break: break-all;
+		display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+	}
 	.mockupVersionsToggle { margin-top: 7px; font-size: 0.78em; color: #1a56db; cursor: pointer; display: inline-block; }
 	.mockupVersionsToggle:hover { text-decoration: underline; }
 	.mockupVersionList { margin: 6px 0 0; padding-left: 1.2em; font-size: 0.78em; color: #555; }
@@ -404,7 +410,8 @@
 		width: 100%; box-sizing: border-box; margin-top: 5px; padding: 6px 10px;
 		border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; font-family: inherit;
 	}
-	#mockupMemoModalBox textarea { height: 180px; resize: vertical; }
+	#mockupMemoModalBox textarea { height: 110px; resize: vertical; }
+	#mockupMemoCount.overLimit { color: #b42318; font-weight: 600; }
 	#mockupUploadNote { color: #666; font-size: 0.8em; line-height: 1.7; margin-top: 14px; }
 	#mockupUploadStatus { font-size: 0.85em; margin-top: 12px; min-height: 1.2em; }
 	#mockupUploadStatus.error { color: #c0392b; }
@@ -1973,10 +1980,14 @@
 <div id="mockupMemoOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="mockupMemoModalBox">
 		<p>メモを編集</p>
-		<textarea id="mockupMemoInput" placeholder="何を試した版か、どこを見てほしいか など"></textarea>
-		<div class="modalButtons">
+		<div class="docMeta">どんなモックアップかが1〜2文で分かるように書いてください(一覧のカードに出ます)。</div>
+		<textarea id="mockupMemoInput" maxlength="120" placeholder="例) 受注登録画面のスマホ版。入力項目を絞って1画面に収めた案。"></textarea>
+		<div class="modalButtons" style="justify-content: space-between;">
+			<span id="mockupMemoCount" class="docMeta"></span>
+			<span>
 			<button type="button" id="mockupMemoCancelButton" class="modalButton">キャンセル</button>
 			<button type="button" id="mockupMemoSaveButton" class="modalButton save">保存</button>
+			</span>
 		</div>
 	</div>
 </div>
@@ -3370,6 +3381,16 @@ const mockupUploadSubmitButton = document.getElementById("mockupUploadSubmitButt
 const mockupUploadCancelButton = document.getElementById("mockupUploadCancelButton");
 const mockupMemoOverlay = document.getElementById("mockupMemoOverlay");
 const mockupMemoInput = document.getElementById("mockupMemoInput");
+const mockupMemoCount = document.getElementById("mockupMemoCount");
+
+// カードに並べて出すものなので、長いと1枚だけ背が高くなる。書いている途中から残りが見えるようにする
+const MOCKUP_MEMO_MAX_CHARS = 120;
+const renderMockupMemoCount = () => {
+	const used = mockupMemoInput.value.length;
+	mockupMemoCount.textContent = `${used} / ${MOCKUP_MEMO_MAX_CHARS} 文字(カードには3行まで出ます)`;
+	mockupMemoCount.classList.toggle("overLimit", used >= MOCKUP_MEMO_MAX_CHARS);
+};
+mockupMemoInput.addEventListener("input", renderMockupMemoCount);
 const mockupMemoSaveButton = document.getElementById("mockupMemoSaveButton");
 const mockupMemoCancelButton = document.getElementById("mockupMemoCancelButton");
 
@@ -3428,16 +3449,19 @@ const renderMockupList = () => {
 			formatBytes(item.totalBytes),
 			item.entryFile || "入口なし"
 		].join(" / ");
+		// 一覧は最終更新の新しい順に並ぶので、並びの根拠になっている値を出す
+		// (登録したときと同じなら「登録」と書く。別物なら「更新」)
+		const updatedLabel = item.updatedAt && item.updatedAt !== item.uploadedAt ? "更新" : "登録";
 		const dates = item.archived
 			? `アーカイブ: ${formatDateTime(item.deletedAt)}`
-			: `登録: ${formatDateTime(item.uploadedAt)}${item.uploadedBy ? ` / ${escapeHtml(item.uploadedBy)}` : ""}`;
+			: `${updatedLabel}: ${formatDateTime(item.updatedAt || item.uploadedAt)}${item.uploadedBy ? ` / ${escapeHtml(item.uploadedBy)}` : ""}`;
 		const openable = item.entryFile != null;
 		return `<div class="mockupCard ${item.archived ? "archived" : ""}" data-id="${id}">
 			<div class="mockupCardThumb" data-action="open" title="${openable ? "別ウィンドウで開く" : "入口(index.html)が無いため開けません"}">${thumb}</div>
 			<div class="mockupCardBody">
 				<div class="mockupCardName">${escapeHtml(item.name)}</div>
 				<div class="mockupCardMeta">${escapeHtml(meta)}<br>${dates}</div>
-				${item.memo ? `<div class="mockupCardMemo">${escapeHtml(item.memo)}</div>` : ""}
+				${item.memo ? `<div class="mockupCardMemo" title="${escapeHtml(item.memo)}">${escapeHtml(item.memo)}</div>` : ""}
 				<span class="mockupVersionsToggle" data-action="versions">版履歴を見る</span>
 				<div class="mockupVersionsBox"></div>
 			</div>
@@ -3514,6 +3538,7 @@ mockupGrid.addEventListener("click", async (ev) => {
 		case "memo":
 			mockupMemoTargetId = id;
 			mockupMemoInput.value = item.memo || "";
+			renderMockupMemoCount();
 			mockupMemoOverlay.style.display = "flex";
 			mockupMemoInput.focus();
 			return;
@@ -5893,6 +5918,10 @@ const subscribeDocumentEvents = () => {
 	});
 	eventSource.addEventListener("projects-changed", () => {
 		if (currentView === "projects") loadProjects();
+	});
+	// モックアップも他の人が登録・更新する。開いたままでも並びが古くならないようにする
+	eventSource.addEventListener("mockups-changed", () => {
+		if (currentView === "mockups" || (currentView === "archive" && archiveTab === "mockups")) loadMockups();
 	});
 	eventSource.addEventListener("document-activity", (ev) => {
 		try {

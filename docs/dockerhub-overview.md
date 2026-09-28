@@ -79,7 +79,7 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 **Webページのモックアップを、そのまま動かして確認できます。** LLMなどで作った画面案の一式を
 ZIPでアップロードすると、別ウィンドウで**実際に動く状態**で開けます(JavaScriptも動きます)。
 React のようにJSが画面を組み立てるものでも構いません。文書とは別のコレクションとして管理し、
-版を重ねると古い版は自動でアーカイブされ、版履歴から辿れます。サンプルのExcelやPDFを同梱して
+版を重ねると古い版は自動でアーカイブされ、版履歴から辿れます。一覧は最後に触ったものが左上に来ます。サンプルのExcelやPDFを同梱して
 ダウンロードさせることもできます。
 
 ![モックアップ管理](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/mockups.png)

@@ -94,11 +94,14 @@ CREATE TABLE IF NOT EXISTS mockups (
 	memo TEXT,
 	uploaded_by TEXT,
 	uploaded_at TEXT NOT NULL,
+	-- 一覧の並び順に使う。登録だけでなく、名前やメモを直したときも進む
+	updated_at TEXT,
 	deleted_by TEXT,
 	deleted_at TEXT,
 	previous_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_mockups_previous_id ON mockups (previous_id);
+CREATE INDEX IF NOT EXISTS idx_mockups_updated_at ON mockups (updated_at);
 
 CREATE TABLE IF NOT EXISTS allowed_users (
 	email TEXT PRIMARY KEY,
@@ -267,6 +270,13 @@ const MIGRATIONS = [
 			updated_by TEXT,
 			updated_at TEXT NOT NULL
 		);
+	`},
+	// 一覧を「最後に触ったものが左上」にするための列(v18相当)。
+	// 既存の行は登録時刻で埋める(これまで触った時刻を持っていないため)
+	{version: 10, sql: `
+		ALTER TABLE mockups ADD COLUMN IF NOT EXISTS updated_at TEXT;
+		UPDATE mockups SET updated_at = uploaded_at WHERE updated_at IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_mockups_updated_at ON mockups (updated_at);
 	`}
 ];
 

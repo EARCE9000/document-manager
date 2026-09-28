@@ -19,23 +19,37 @@ const logger = require("./logger.js")(path.basename(__filename));
 const ds = require("./datastore.js");
 
 const COLUMNS = `id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes,
-	memo, uploaded_by, uploaded_at, deleted_by, deleted_at, previous_id`;
+	memo, uploaded_by, uploaded_at, updated_at, deleted_by, deleted_at, previous_id`;
+
+// 一覧の並びに使う値。updated_at は v18 で足したので、古い行では空のことがある
+// (移行では登録時刻で埋めているが、移行を経ていない経路に備えて式の側でも守る)
+const SORT_KEY = "COALESCE(updated_at, uploaded_at)";
 
 const SQL_INSERT = `
-	INSERT INTO mockups (id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, previous_id)
-	VALUES (@id, @name, @zip_file, @entry_file, @preview_file, @file_count, @total_bytes, @zip_bytes, @content_text, @memo, @uploaded_by, @uploaded_at, @previous_id)
+	INSERT INTO mockups (id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, updated_at, previous_id)
+	VALUES (@id, @name, @zip_file, @entry_file, @preview_file, @file_count, @total_bytes, @zip_bytes, @content_text, @memo, @uploaded_by, @uploaded_at, @uploaded_at, @previous_id)
 `;
 const SQL_SELECT_BY_ID = `SELECT ${COLUMNS} FROM mockups WHERE id = ?`;
-const SQL_SELECT_ACTIVE = `SELECT ${COLUMNS} FROM mockups WHERE deleted_at IS NULL ORDER BY uploaded_at DESC`;
+const SQL_SELECT_ACTIVE = `SELECT ${COLUMNS} FROM mockups WHERE deleted_at IS NULL ORDER BY ${SORT_KEY} DESC`;
 const SQL_SELECT_ARCHIVED = `SELECT ${COLUMNS} FROM mockups WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`;
 const SQL_SELECT_NEXT = `SELECT id FROM mockups WHERE previous_id = ?`;
 const SQL_ARCHIVE = `UPDATE mockups SET deleted_at = @deleted_at, deleted_by = @deleted_by WHERE id = @id AND deleted_at IS NULL`;
 const SQL_RESTORE = `UPDATE mockups SET deleted_at = NULL, deleted_by = NULL WHERE id = ?`;
-const SQL_UPDATE_MEMO = `UPDATE mockups SET memo = ? WHERE id = ?`;
-const SQL_UPDATE_NAME = `UPDATE mockups SET name = ? WHERE id = ?`;
+const SQL_UPDATE_MEMO = `UPDATE mockups SET memo = ?, updated_at = ? WHERE id = ?`;
+const SQL_UPDATE_NAME = `UPDATE mockups SET name = ?, updated_at = ? WHERE id = ?`;
 
-// メモは一覧の応答すべてに載るため上限を設ける(文書側と同じ理由・同じ既定値)
-const MEMO_MAX_CHARS = Number(process.env.MEMO_MAX_CHARS || 4000);
+/*
+ * メモの上限。文書側(4000文字)より大幅に短くしている。
+ *
+ * 文書のメモは「開いた1件の備忘」だが、モックアップのメモはカードに並べて出るため、
+ * 長いと1枚だけ背が高くなり、並べたときに目が滑る。実測(幅264px・12.8px)で1行は
+ * 約20文字なので、120文字はおよそ6行。カードでは3行で打ち切り、全文はマウスを
+ * 乗せるか編集を開けば読める(画面側 .mockupCardMemo)。
+ *
+ * 用途は「何のモックアップか」を1〜2文で書くこと。それ以上の説明は、
+ * モックアップ自身のページに書いたほうが読まれる。
+ */
+const MEMO_MAX_CHARS = Number(process.env.MOCKUP_MEMO_MAX_CHARS || 120);
 const NAME_MAX_CHARS = 200;
 
 const toResponse = (row) => row == null ? null : {
@@ -50,6 +64,8 @@ const toResponse = (row) => row == null ? null : {
 	memo: row.memo,
 	uploadedBy: row.uploaded_by,
 	uploadedAt: row.uploaded_at,
+	// 名前やメモを直すと進む。一覧はこの新しい順に並ぶ
+	updatedAt: row.updated_at ?? row.uploaded_at,
 	archived: row.deleted_at != null,
 	deletedBy: row.deleted_by,
 	deletedAt: row.deleted_at,
@@ -117,7 +133,7 @@ module.exports.listMockups = async ({archived = false, q = ""} = {}) => {
 	// 文書側と同じく、バックエンドごとに大文字小文字の扱いが違うため演算子を分ける
 	const like = ds.backend === "postgres" ? "ILIKE" : "LIKE";
 	const where = archived ? "deleted_at IS NOT NULL" : "deleted_at IS NULL";
-	const order = archived ? "deleted_at DESC" : "uploaded_at DESC";
+	const order = archived ? "deleted_at DESC" : `${SORT_KEY} DESC`;
 	// LIKEのワイルドカードを打ち消してから前後に付ける(検索語に % や _ が入っても素直に探す)
 	const escaped = keyword.replace(/[\\%_]/g, (c) => `\\${c}`);
 	const pattern = `%${escaped}%`;
@@ -174,14 +190,14 @@ module.exports.restoreMockup = async (id) => (await ds.run(SQL_RESTORE, [id])).c
 
 module.exports.updateMemo = async (id, memo) => {
 	const value = String(memo ?? "").slice(0, MEMO_MAX_CHARS);
-	const result = await ds.run(SQL_UPDATE_MEMO, [value === "" ? null : value, id]);
+	const result = await ds.run(SQL_UPDATE_MEMO, [value === "" ? null : value, new Date().toISOString(), id]);
 	return result.changes > 0 ? value : null;
 };
 
 module.exports.rename = async (id, name) => {
 	const value = String(name ?? "").trim().slice(0, NAME_MAX_CHARS);
 	if (value === "") return null;
-	const result = await ds.run(SQL_UPDATE_NAME, [value, id]);
+	const result = await ds.run(SQL_UPDATE_NAME, [value, new Date().toISOString(), id]);
 	return result.changes > 0 ? value : null;
 };
 

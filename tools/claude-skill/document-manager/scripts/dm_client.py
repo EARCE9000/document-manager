@@ -823,7 +823,7 @@ def main():
     p.add_argument("id")
     p.add_argument("-o", "--output", help="保存先のパス")
     p.set_defaults(func=cmd_mockup_download)
-    p = sub.add_parser("mockup-memo", help="モックアップのメモの更新")
+    p = sub.add_parser("mockup-memo", help="モックアップのメモの更新(120文字まで。一覧のカードに出る)")
     p.add_argument("id")
     p.add_argument("text")
     p.set_defaults(func=cmd_mockup_memo)

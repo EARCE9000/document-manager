@@ -1434,6 +1434,11 @@ const deliverProjectsChanged = () => {
 		client.write("event: projects-changed\ndata: {}\n\n");
 	}
 };
+const deliverMockupsChanged = () => {
+	for (const client of sseClients) {
+		client.write("event: mockups-changed\ndata: {}\n\n");
+	}
+};
 // 誰かの操作(アップロード・新しい版・タグ付け・アーカイブ・復元)を画面右下のポップアップ通知用に配信する。
 // payloadは broadcastActivity() が作るJSON文字列(改行を含まない)をそのまま流す
 const deliverDocumentActivity = (payload) => {
@@ -1451,6 +1456,9 @@ const broadcastDocumentsChanged = () => {
 };
 const broadcastProjectsChanged = () => {
 	ds.notify("projects_changed").catch((err) => logger.error({err}, "::notify:projects_changed"));
+};
+const broadcastMockupsChanged = () => {
+	ds.notify("mockups_changed").catch((err) => logger.error({err}, "::notify:mockups_changed"));
 };
 
 // 操作通知(ポップアップ用)のペイロードは Postgres の NOTIFY 上限(8000バイト)に収まるよう、
@@ -1475,11 +1483,13 @@ const broadcastActivity = (req, {action, documentId, entryFile, tags, relatedEnt
 };
 
 // 通知チャンネルを購読し、受信したら対応するローカル配信を行う
-ds.subscribe(["documents_changed", "projects_changed", "document_activity"], (channel, payload) => {
+ds.subscribe(["documents_changed", "projects_changed", "mockups_changed", "document_activity"], (channel, payload) => {
 	if (channel === "documents_changed") {
 		deliverDocumentsChanged();
 	} else if (channel === "projects_changed") {
 		deliverProjectsChanged();
+	} else if (channel === "mockups_changed") {
+		deliverMockupsChanged();
 	} else if (channel === "document_activity" && payload) {
 		deliverDocumentActivity(payload);
 	}
@@ -1493,7 +1503,8 @@ VectorSearch.setStatusChangeListener(broadcastDocumentsChanged);
 /**
  * 文書一覧変更通知 (SSE)
  * ブラウザ(ログインセッション)だけでなく、APIキー(Authorization: Bearer)でも購読できる
- * (readonlyキー可)。イベント: documents-changed / projects-changed(中身は{}。再取得のきっかけ)、
+ * (readonlyキー可)。イベント: documents-changed / projects-changed / mockups-changed
+ * (中身は{}。再取得のきっかけ)、
  * document-activity(誰が・どの文書に・何をしたか。JSON)。30秒ごとにコメント行(:heartbeat)を送る。
  * 切断中のイベントは再送しない(Last-Event-IDは未対応)ため、再接続後は必要に応じて一覧を取り直すこと
  */
@@ -3844,6 +3855,7 @@ app.post(BASE_URL_PATH + 'api/mockups', requireAuth, requireWrite, requireMockup
 		registered = true;
 
 		logger.info({audit: "mockup_upload", user: req.authData.user_identifier, mockupId, files: extracted.files.length}, "audit");
+		broadcastMockupsChanged();
 		res.status(200).json({...mockup, archivedPrevious});
 	} catch (err) {
 		logger.error(err, "::api/mockups:upload");
@@ -4053,6 +4065,7 @@ app.put(BASE_URL_PATH + 'api/mockups/:id/memo', requireAuth, requireWrite, requi
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		broadcastMockupsChanged();
 		res.status(200).json({memo: memo ?? ""});
 	} catch (err) {
 		logger.error(err, "::api/mockups/:id/memo");
@@ -4068,6 +4081,7 @@ app.put(BASE_URL_PATH + 'api/mockups/:id/name', requireAuth, requireWrite, requi
 			res.status(400).json({error: "名前を指定してください"});
 			return;
 		}
+		broadcastMockupsChanged();
 		res.status(200).json({name});
 	} catch (err) {
 		logger.error(err, "::api/mockups/:id/name");
@@ -4083,6 +4097,7 @@ app.delete(BASE_URL_PATH + 'api/mockups/:id', requireAuth, requireWrite, require
 			return;
 		}
 		logger.info({audit: "mockup_archive", user: req.authData.user_identifier, mockupId: req.params.id}, "audit");
+		broadcastMockupsChanged();
 		res.status(204).end();
 	} catch (err) {
 		logger.error(err, "::api/mockups/:id:delete");
@@ -4098,6 +4113,7 @@ app.post(BASE_URL_PATH + 'api/mockups/:id/restore', requireAuth, requireWrite, r
 			return;
 		}
 		logger.info({audit: "mockup_restore", user: req.authData.user_identifier, mockupId: req.params.id}, "audit");
+		broadcastMockupsChanged();
 		res.status(200).json(await Mockups.getMockup(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/mockups/:id/restore");

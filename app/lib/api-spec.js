@@ -261,7 +261,7 @@ const OPERATIONS = [
 	{
 		mockupOnly: true, id: "listMockups", method: "get", path: "/api/mockups", role: "readonly", tag: "モックアップ",
 		summary: "現役のモックアップの一覧・検索",
-		description: "`q`で名前・メモ・本文(HTMLから抽出)を部分一致検索する。過去の版は`/api/mockups/archived`。ローカル保存の構成でのみ使える(それ以外は503)",
+		description: "`q`で名前・メモ・本文(HTMLから抽出)を部分一致検索する。**最終更新(`updatedAt`)の新しい順**に返る(登録だけでなく、名前やメモを直したときも進む)。過去の版は`/api/mockups/archived`。機能が無効な構成では503",
 		params: [
 			{name: "q", in: "query", description: "検索語(省略時は全件)"}
 		]
@@ -319,12 +319,14 @@ const OPERATIONS = [
 	},
 	{
 		mockupOnly: true, id: "updateMockupMemo", method: "put", path: "/api/mockups/:id/memo", role: "readwrite", tag: "モックアップ",
-		summary: "モックアップのメモ更新",
-		body: {schema: {type: "object", properties: {memo: {type: "string"}}}}
+		summary: "モックアップのメモ更新(120文字まで)",
+		description: "一覧のカードに出る短い説明。**120文字まで**(超えた分は切り詰められる)。何のモックアップかが1〜2文で分かるように書く。更新すると`updatedAt`が進み、一覧の先頭に来る",
+		body: {schema: {type: "object", properties: {memo: {type: "string", maxLength: 120}}}}
 	},
 	{
 		mockupOnly: true, id: "renameMockup", method: "put", path: "/api/mockups/:id/name", role: "readwrite", tag: "モックアップ",
 		summary: "モックアップの名前変更",
+		description: "更新すると`updatedAt`が進み、一覧の先頭に来る",
 		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}}}}
 	},
 	{
@@ -519,7 +521,7 @@ const GUIDE_SECTIONS = [
 		notes: [
 			"Server-Sent Events。APIキー(readonlyでも可)で購読できる。接続を開いたままにすると、誰かが文書を操作するたびにイベントが届く",
 			"`event: document-activity` の `data` は `{\"action\": \"upload|revise|tags|archive|restore\", \"documentId\", \"entryFile\", \"tags\", \"user\", \"viaApiKey\", \"at\"}` のJSON(`tags` はタグ付けで追加されたタグ)",
-			"ほかに一覧の再取得のきっかけとして `documents-changed` / `projects-changed`(中身は `{}`)が届く。30秒ごとに `:heartbeat` のコメント行が届く",
+			"ほかに一覧の再取得のきっかけとして `documents-changed` / `projects-changed` / `mockups-changed`(中身は `{}`)が届く。30秒ごとに `:heartbeat` のコメント行が届く",
 			"切断中のイベントは再送されないため、再接続後は必要に応じて一覧を取り直す"
 		]
 	},
@@ -640,7 +642,19 @@ const GUIDE_SECTIONS = [
 		notes: [
 			"モックアップは**ビルド済みのWebページ一式(ZIP)**で、文書とは別のコレクション。画面案を作って見てもらうためのもの",
 			"`q`は名前・メモ・中のHTMLから抽出したテキストを対象にする。ビルド済みJSの中の文言は拾えないため、見つからない場合は名前でも探すこと",
-			"ローカル保存の構成でのみ使える。それ以外の構成では503が返るので、その旨を利用者に伝えること"
+			"**最終更新(`updatedAt`)の新しい順**に返る。登録だけでなく、名前やメモを直したときも進むので、直近に触ったものが先頭に来る",
+			"機能が無効な構成では503が返るので、その旨を利用者に伝えること"
+		]
+	},
+	{
+		title: "モックアップのメモ(一覧に出る短い説明)", mockupOnly: true, roleNote: ROLE_NOTES.readwrite,
+		entries: [{id: "updateMockupMemo"}, {id: "renameMockup"}],
+		notes: [
+			"メモは**120文字まで**。一覧のカードに並べて出るため、長いとそのカードだけ背が高くなり読みにくくなる",
+			"書くのは**何のモックアップか**の1〜2文。例: 「受注登録画面のスマホ版。入力項目を絞って1画面に収めた案。」",
+			"画面に出るのは先頭の3行(およそ60文字)まで。それ以上は畳まれるので、**大事なことを先に書く**こと",
+			"細かい説明はモックアップ自身のページに書いたほうが読まれる。メモに詰め込まない",
+			"メモや名前を直すと`updatedAt`が進み、一覧の先頭に来る"
 		]
 	},
 	{
