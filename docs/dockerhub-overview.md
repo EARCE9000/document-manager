@@ -3,8 +3,9 @@ Docker Hub (https://hub.docker.com/r/earce9000/document-manager) の
 "Repository overview" へ貼り付ける説明文。機能を追加したらここも更新し、Docker Hub側へ反映する。
 貼り付けるのは、このコメントより下の本文すべて。
 
-短い説明(Description)欄には次の1行を使う:
-Self-hosted document manager with versioning, tagging, full-text/semantic search, and an API for AI agents.
+短い説明(Description)欄には次の1行を使う。Docker Hub側の上限は100文字なので、
+書き換えるときは必ず文字数を数えること(超えると入らない)。
+Self-hosted document manager: versioning, tagging, full-text/semantic search, API for AI agents.
 
 画像はGitHub(raw.githubusercontent.com)の公開URLを参照している。スクリーンショットを
 撮り直した場合(npm run screenshots)は、pushすればDocker Hub側の表示も自動的に新しくなる。
@@ -26,7 +27,8 @@ Node.js (Express) 製で、このイメージを起動するだけで動きま�
 扱うのは「1ファイルで完結する文書」です。HTML / MHTML / Markdown / PDF / 画像(SVG・PNG・JPEG) /
 CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint に対応していて、どれも
 ダウンロードせずにブラウザ上でそのまま閲覧できます。Markdown や MHTML はサーバー側で見やすい形に
-変換し、PDF はブラウザ標準のビューアで開きます。draw.io は公式ビューアを同梱しており、図をそのまま
+変換し、PDF はブラウザ標準のビューアで開きます。Markdown の表は途中で折り返さずに表示し、
+手順書に貼られたコマンドは**ボタン1つでコピー**できます。draw.io は公式ビューアを同梱しており、図をそのまま
 描画します(画像を別途用意する必要はありません)。Excel・Word・PowerPoint は**内容の概要**
 (シートの表・見出しと段落・スライドごとの本文と発表者ノート)を表示し、中身の文字は全文検索の
 対象になります(この概要表示では書式・図・グラフは再現しません)。
@@ -62,6 +64,11 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 説明は**プロジェクトごとに持ちます**。同じ設計書でも「A案件では前提資料、B案件では参考」と
 書き分けられます。
 
+プロジェクトの構成は、既定では**表示だけ**の状態で開きます。並べ替えや資料の出し入れをするときに、
+見出しのトグルで編集モードにします(触るつもりのない操作を誤って押さないためです)。これは開いている
+画面だけの切り替えで、AIエージェントからの編集は止まりません。案件が仕上がって全員の編集を止めたい
+ときは、隣の南京錠で**完全ロック**します。こちらは画面からもAIからも編集できなくなります。
+
 ![お品書き](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/project-manifest.png)
 
 **削除はありません。** 「アーカイブ」は Gmail と同じ論理削除で、実ファイルは残り、いつでも元に戻せます。
@@ -87,8 +94,9 @@ React のようにJSが画面を組み立てるものでも構いません。文
 有効にしてください(再起動は要りません)。ファイルをローカルディスクに保存する構成でのみ使えます。
 
 **検索**は、ファイル名・タグ・メモ・本文を対象にした部分一致検索が標準です。日本語でも単語の区切りを
-気にせず探せます。加えて、Weaviate を併せて起動すると**意味検索**(言い換えや表記ゆれを含めて近い資料を
-探す)も使えるようになります。
+気にせず探せます。**スペースで区切ると、すべてを含む資料だけに絞り込めます**(全角スペースでも構いません)。
+語ごとに当たる場所は違っていてよいので、「請求書 2026年度」のようにファイル名とタグにまたがる指定もできます。
+加えて、Weaviate を併せて起動すると**意味検索**(言い換えや表記ゆれを含めて近い資料を探す)も使えるようになります。
 
 **ログイン**は OpenID Connect です。Entra ID・Cognito・Google・Synology SSO など、標準的なプロバイダなら
 設定を差し替えるだけで使えます。利用できるのは許可リストに登録された人だけで、権限は管理者・読み書き・
