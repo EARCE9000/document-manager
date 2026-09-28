@@ -1029,20 +1029,20 @@
 	#allowedUserAddButton { padding: 0 18px; white-space: nowrap; }
 
 	#helpModalBox { max-width: 720px; width: 94%; }
-	#helpMarkdownText {
-		width: 100%;
-		height: 380px;
-		margin-top: 10px;
-		padding: 10px;
-		border: 1px solid #ccc;
-		border-radius: 4px;
-		font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace;
-		font-size: 0.78em;
-		line-height: 1.5;
-		white-space: pre;
-		resize: vertical;
+	/* 説明が長くなっても画面からはみ出さないようにする(小さいノートPCでも読めること) */
+	#helpBody { max-height: 62vh; overflow-y: auto; margin: 4px 0 12px; padding-right: 8px; }
+	#helpBody .helpLead { margin: 0 0 14px; color: #333; }
+	#helpBody section { margin-bottom: 16px; }
+	#helpBody h3 {
+		font-size: 0.95em; margin: 0 0 6px; color: #1a56db;
+		border-bottom: 1px solid #e5e7eb; padding-bottom: 4px;
 	}
-
+	#helpBody p { margin: 0 0 6px; line-height: 1.75; font-size: 0.92em; }
+	#helpBody .helpNote { color: #666; font-size: 0.87em; }
+	#helpBody code { background: #f3f4f6; padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.95em; }
+	/* 使えない機能の説明は出さない。書いてあるのに見当たらない、が一番困る */
+	#helpBody.hideMockups .helpMockups { display: none; }
+	#helpBody.readOnly .helpWriteOnly { display: none; }
 	/* 10人分程度を目安の高さとし、それを超えたらヘッダー固定でスクロールさせる */
 	#allowedUserTableWrap {
 		max-height: 400px;
@@ -1436,7 +1436,7 @@
 				<svg class="bellOn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
 				<svg class="bellOff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.9 17.9 0 0 1 18 8"/><path d="M6.26 6.26A5.9 5.9 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
 			</button>
-			<button type="button" id="helpButton" class="topBarIconButton" title="ヘルプ(AIからの利用方法)" aria-label="ヘルプ">
+			<button type="button" id="helpButton" class="topBarIconButton" title="使い方" aria-label="使い方">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
 			</button>
 			<!-- 管理画面(adminのみ)。アクセス許可ユーザー専用だった頃の名残でidは allowedUsersManageLink のまま -->
@@ -1983,11 +1983,65 @@
 
 <div id="helpOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="helpModalBox">
-		<p>ヘルプ</p>
-		<div class="docMeta">Claude Desktop・Antigravity等のデスクトップAIからこのサービスを直接操作したい場合は、下記のMarkdownをコピーしてAIへの指示(カスタム指示・プロジェクトのナレッジ等)として渡してください。AIがAPIの呼び出し方を理解できるようになります。</div>
-		<textarea id="helpMarkdownText" readonly></textarea>
-		<div class="modalButtons" style="justify-content: space-between;">
-			<button id="helpCopyButton" type="button" class="modalButton save">Markdownをコピー</button>
+		<p>使い方</p>
+		<div id="helpBody">
+			<p class="helpLead">資料を1か所に集めて、探して、そのままブラウザで読むためのものです。<strong>消す操作はありません</strong>(アーカイブは元に戻せます)。</p>
+
+			<section class="helpWriteOnly">
+				<h3>資料を入れる</h3>
+				<p>左の枠に<strong>ドラッグ＆ドロップ</strong>するか、枠を押してファイルを選びます。HTML / Markdown / PDF / 画像 / CSV・TSV / テキスト / draw.io / Excel・Word・PowerPoint が入ります。</p>
+				<p class="helpNote">Excel・Word・PowerPoint は<strong>内容の概要</strong>が表示されます(書式・図・グラフは再現しません)。原本はダウンロードしてください。</p>
+			</section>
+
+			<section>
+				<h3>探す</h3>
+				<p>検索欄はファイル名・タグ・メモ・本文が対象です。日本語も単語の区切りを気にせず探せます。</p>
+				<p><strong>スペースで区切ると、すべてを含む資料だけ</strong>に絞り込めます(全角スペースでも構いません)。<code>請求書 2026年度</code> のように、ファイル名とタグにまたがる指定もできます。</p>
+				<p class="helpNote">「セマンティック検索」に印を付けると、言い換えや表記ゆれを含めて近いものを探します(この機能が有効な場合)。日付でも絞り込めます。</p>
+			</section>
+
+			<section>
+				<h3>見る</h3>
+				<p>一覧から選ぶと右に表示されます。ファイル名の右の<strong>外部リンクのアイコン</strong>で別ウィンドウに開けます。</p>
+				<p class="helpNote">Markdown の手順書にあるコマンドは、コードの枠にマウスを乗せると出る「コピー」で丸ごと取れます。draw.io はそのまま図として表示されます。</p>
+			</section>
+
+			<section>
+				<h3>整理する — タグとプロジェクト</h3>
+				<p><strong>タグ</strong>は資料の性格を表す目印です。自由に付けられ、「タグ体系」の画面でよく使うものだけを並べて見られます。</p>
+				<p><strong>プロジェクト</strong>は案件ごとの入れ物で、フォルダで階層を作れます。1つの資料を複数のプロジェクトに置けます。</p>
+				<p class="helpNote">プロジェクトの構成は<strong>既定では表示だけ</strong>です。並べ替えや出し入れをするときは、見出しのトグルを押して編集モードにします。</p>
+			</section>
+
+			<section>
+				<h3>おしながき</h3>
+				<p>プロジェクト名を押すと、その案件に<strong>どんな資料が揃っていて、それぞれが何なのか</strong>を1枚にした一覧が出ます。引き継ぎやレビュー依頼でそのまま渡せます。</p>
+				<p class="helpWriteOnly helpNote">説明はその場で書けます(Ctrl+Enterで保存)。フォルダは章の見出しになります。「Markdownをコピー」でメールや議事録に貼れます。</p>
+			</section>
+
+			<section>
+				<h3>版と関連文書</h3>
+				<p>直した資料は<strong>「新しい版」</strong>として上げると、古い版は自動でアーカイブされ、タグとプロジェクトへの登録が引き継がれます。上部の「v1 › v2」から過去の版も開けます。</p>
+				<p class="helpNote">見積書と契約書のように、版ではないが関係のあるものは<strong>関連文書</strong>として結べます。</p>
+			</section>
+
+			<section>
+				<h3>アーカイブ(消さない削除)</h3>
+				<p>アーカイブは<strong>見えなくするだけ</strong>で、ファイルは残ります。「アーカイブ」の画面からいつでも元に戻せます。</p>
+			</section>
+
+			<section class="helpMockups">
+				<h3>モックアップ</h3>
+				<p>画面案のページ一式(ZIP)を登録すると、別ウィンドウで<strong>実際に動く状態</strong>で開けます。版を重ねると古いものは自動でアーカイブされます。</p>
+			</section>
+
+			<section>
+				<h3>そのほか</h3>
+				<p>他の人がアップロードやタグ付けをすると、右下に小さな通知が出ます(ベルのアイコンで止められます)。自分が行った操作は、時計のアイコンから30日分見られます。</p>
+				<p class="helpNote">権限は3種類です。<strong>閲覧のみ</strong>の場合、アップロードやアーカイブの操作は表示されません。</p>
+			</section>
+		</div>
+		<div class="modalButtons">
 			<button id="helpCloseButton" type="button" class="modalButton">閉じる</button>
 		</div>
 	</div>
@@ -5798,10 +5852,12 @@ tagOrderSaveButton.addEventListener("click", async () => {
 });
 
 
-// ヘルプ(Claude Desktop等のデスクトップAIからの利用方法)モーダル
+// 使い方モーダル。
+// 以前はAI向けの利用ガイド(api/usage.md)をそのまま載せていたが、APIキーの発行画面が
+// 同じものを**実際のキーに差し替えた形**で出しており、ヘルプ側はそのままでは動かない版だった。
+// 重複を畳んで、こちらは画面の使い方に充てている。
 const helpOverlay = document.getElementById("helpOverlay");
-const helpMarkdownText = document.getElementById("helpMarkdownText");
-const helpCopyButton = document.getElementById("helpCopyButton");
+const helpBody = document.getElementById("helpBody");
 const helpCloseButton = document.getElementById("helpCloseButton");
 
 // Claude Desktop / Antigravity 等のデスクトップAIに、このAPIの使い方をそのまま
@@ -5816,23 +5872,18 @@ const fetchAiUsageMarkdown = async () => {
 	return res.text();
 };
 
-document.getElementById("helpButton").addEventListener("click", async () => {
-	helpMarkdownText.value = "読み込み中...";
+document.getElementById("helpButton").addEventListener("click", () => {
+	// 使えないものの説明を出すと「書いてあるのに見当たらない」になるため、
+	// 画面の状態に合わせて出し分ける
+	helpBody.classList.toggle("hideMockups", !appShell.classList.contains("mockupsEnabled"));
+	helpBody.classList.toggle("readOnly", appShell.classList.contains("readOnlyMode"));
+	helpBody.scrollTop = 0;
 	helpOverlay.style.display = "flex";
-	try {
-		helpMarkdownText.value = await fetchAiUsageMarkdown();
-	} catch (err) {
-		helpMarkdownText.value = "利用ガイドの取得に失敗しました。時間をおいて再度お試しください。";
-	}
 });
 helpCloseButton.addEventListener("click", () => { helpOverlay.style.display = "none"; });
 helpOverlay.addEventListener("click", (ev) => {
 	if (ev.target === helpOverlay) helpOverlay.style.display = "none";
 });
-helpCopyButton.addEventListener("click", () => {
-	copyTextWithFeedback(helpMarkdownText.value, helpCopyButton);
-});
-
 // 他クライアントによるアップロード/削除・プロジェクトの施錠/解錠や構成変更をSSEで受け取り、
 // 表示中の画面を自動更新する(施錠状態は全利用者で共有されるため、他の人が変更したら反映する)
 const subscribeDocumentEvents = () => {
