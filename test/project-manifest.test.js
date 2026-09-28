@@ -1,5 +1,5 @@
 /*!
- * project-manifest.test.js : お品書きの組み立て(app/lib/project-manifest.js)の検証
+ * project-manifest.test.js : おしながきの組み立て(app/lib/project-manifest.js)の検証
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
@@ -85,7 +85,7 @@ test("Markdownが章立てになり、説明書きが資料の後ろに付く", 
 	const markdown = Manifest.toMarkdown(Manifest.build(project, tree));
 
 	assert.equal(markdown, [
-		"# 受注管理の再構築 お品書き",
+		"# 受注管理の再構築 おしながき",
 		"",
 		"- **表紙.md** — 最初に読んでください。",
 		"",
@@ -131,7 +131,7 @@ test("文書が見つからない配置でも行は消さない", () => {
 	assert.ok(markdown.includes("(この資料は見つかりません)"), "黙って消えると、抜けに気づけない");
 });
 
-// データが壊れていても、お品書きから資料が消えないこと。
+// データが壊れていても、おしながきから資料が消えないこと。
 // 消えると「渡した一覧に載っていない資料がある」ことになり、いちばん困る
 test("親が見つからないフォルダも、直下として出る", () => {
 	const {folders} = Manifest.build(project, {
@@ -186,7 +186,7 @@ test("章のMarkdownは、どの案件のどの章か分かる見出しになる
 		documents: [doc("d1", "要件定義.docx", {folderId: "f1", note: "3章が変更点。"})]
 	};
 	const markdown = Manifest.toMarkdown(Manifest.build(project, tree, {folderId: "f1"}));
-	assert.ok(markdown.startsWith("# 受注管理の再構築 › 要件 お品書き"), markdown);
+	assert.ok(markdown.startsWith("# 受注管理の再構築 › 要件 おしながき"), markdown);
 	assert.ok(markdown.includes("合意した範囲です。"), "章の前書きが冒頭に出る");
 	assert.ok(markdown.includes("- **要件定義.docx** — 3章が変更点。"));
 });

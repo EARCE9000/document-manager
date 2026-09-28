@@ -3232,7 +3232,7 @@ app.get(BASE_URL_PATH + 'api/projects/:id/tree', requireAuth, async (req, res) =
 });
 
 /**
- * お品書き(プロジェクトの資料一覧＋説明書き)。
+ * おしながき(プロジェクトの資料一覧＋説明書き)。
  *
  * ツリーと同じ中身だが、読む順に並べ直し、フォルダを章立てとして扱ったもの。
  * 画面とMarkdownで並びが食い違わないよう、組み立ては lib/project-manifest.js に寄せている。
@@ -3258,7 +3258,7 @@ app.get(BASE_URL_PATH + 'api/projects/:id/manifest', requireAuth, async (req, re
 	}
 });
 
-/** お品書きのMarkdown。議事録・メールにそのまま貼れる形で返す */
+/** おしながきのMarkdown。議事録・メールにそのまま貼れる形で返す */
 app.get(BASE_URL_PATH + 'api/projects/:id/manifest.md', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
@@ -3315,7 +3315,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId/note', requireAu
 	}
 });
 
-/** フォルダ(お品書きでは章の見出し)の説明書きの更新 (admin/readwrite) */
+/** フォルダ(おしながきでは章の見出し)の説明書きの更新 (admin/readwrite) */
 app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId/note', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
@@ -3346,7 +3346,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/folders/:folderId/note', requireAuth, 
  * フォルダの並び替え (admin/readwrite)
  * body: {parentFolderId?, folderIds: [...]}
  *
- * お品書きではフォルダがそのまま章の順番になるため、作成順のままだと人に渡す資料の
+ * おしながきではフォルダがそのまま章の順番になるため、作成順のままだと人に渡す資料の
  * 章立てを直せない。文書の並び替え(api/projects/:id/reorder)と対になる。
  *
  * `:folderId` のルートより**先に**登録すること(後だと "reorder" がフォルダIDとして拾われる)。

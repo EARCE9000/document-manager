@@ -93,7 +93,7 @@ try {
 			// モックアップは実体のファイルがIDで紐づく。表が落ちるとファイルだけ残って気づけない
 			trySeed("mockup", () => db.prepare("INSERT INTO mockups (id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, previous_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
 				.run("mock-2", "受注管理画面 v2", "site.zip", "index.html", "preview.png", 12, 34567, 8901, "モックアップの本文", "メモ", "someone@example.com", now, "mock-1"));
-			// お品書きの説明書き(v16で追加)
+			// おしながきの説明書き(v16で追加)
 			trySeed("note", () => {
 				db.prepare("UPDATE project_documents SET note = ? WHERE project_id = ? AND document_id = ?").run("この案件では前提資料です。", "prj-1", "doc-1");
 				db.prepare("UPDATE project_folders SET note = ? WHERE id = ?").run("合意した範囲です。", "fld-1");
@@ -161,8 +161,8 @@ try {
 			&& result.mockup.content_text === "モックアップの本文"
 			&& result.mockup.memo === "メモ"
 			&& result.mockup.previous_id === "mock-1", "モックアップ(実体のファイルがIDで紐づく)");
-		checkIfSeeded("note", result.docNote != null && result.docNote.note === "この案件では前提資料です。", "お品書きの資料の説明");
-		checkIfSeeded("note", result.folderNote != null && result.folderNote.note === "合意した範囲です。", "お品書きのフォルダの説明");
+		checkIfSeeded("note", result.docNote != null && result.docNote.note === "この案件では前提資料です。", "おしながきの資料の説明");
+		checkIfSeeded("note", result.folderNote != null && result.folderNote.note === "合意した範囲です。", "おしながきのフォルダの説明");
 
 		console.log("\n■ 切り戻しのための旧ファイル");
 		const files = fs.readdirSync(dbDir).filter((f) => f.endsWith(".sqlite")).sort();

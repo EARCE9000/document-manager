@@ -2,7 +2,7 @@
 
 HTML / MHTML / Markdown / PDF / 画像(SVG/PNG/JPEG) / CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint をアップロードして一覧・プレビューできる社内向けドキュメント管理Webサービス。
 版管理(新しい版のアップロードと版履歴)、タグ・プロジェクトによる整理、全文検索/セマンティック検索、Claude Code・Codex・Antigravity 等のAIエージェントからAPIで登録・検索するための Skill を備える。
-文書とは別に、**ビルド済みのWebページ一式(ZIP)を登録して別ウィンドウで動かせる「モックアップ管理」**(既定は無効。管理画面から有効にする)と、プロジェクトの資料に説明書きを付けて一覧にする**「お品書き」**も持つ。
+文書とは別に、**ビルド済みのWebページ一式(ZIP)を登録して別ウィンドウで動かせる「モックアップ管理」**(既定は無効。管理画面から有効にする)と、プロジェクトの資料に説明書きを付けて一覧にする**「おしながき」**も持つ。
 Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite、文書ファイルはローカルディスク)で動くが、メタデータDBを PostgreSQL、文書ファイルを S3 / GCS に切り替えることで、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)のマネージド環境・複数インスタンス構成でも動作する(切り替えは環境変数のみ。詳細は「[マルチクラウド構成の要点](#マルチクラウド構成の要点)」)。
 
 ## システム構成
@@ -19,9 +19,9 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 |---|---|
 | ![文書一覧](docs/screenshots/document-list.png) | ![タグ体系](docs/screenshots/tag-tree.png) |
 
-| プロジェクト | プロジェクトのお品書き |
+| プロジェクト | プロジェクトのおしながき |
 |---|---|
-| ![プロジェクト](docs/screenshots/projects.png) | ![お品書き](docs/screenshots/project-manifest.png) |
+| ![プロジェクト](docs/screenshots/projects.png) | ![おしながき](docs/screenshots/project-manifest.png) |
 
 | モックアップ管理 | 操作履歴 |
 |---|---|
@@ -89,7 +89,7 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 - **プレビューの作り直し**: `.md`/`.csv`/`.tsv` の `preview.html` はアップロード時に1度だけ作られるため、見た目を直しても既にある文書には反映されない。全件を一括で作り直すと大量の書き込みが一度に走る(S3構成では特に)ので、**配信するときにその1件だけを見て、古い版なら作り直す**。版は `PREVIEW_TEMPLATE_VERSION` で管理し、生成したHTMLに `<meta name="dm-preview-version">` として埋め込んで判定する。1文書につき1回で済み、触られない文書には何も起きない。作り直しに失敗しても今あるものをそのまま配信する(見た目が古いだけで読めるため)。元ファイルから作り直せるものだけが対象で、`.mhtml` は元の構造を解いて作っているため触らない。**Markdownの表はセルを折り返さない**(「2026年9月30日まで」が途中で割れると別の日付に読めるため)。本文の幅(800px)に押し込めず内容なりの幅を取らせ、はみ出す分は表だけを横スクロールさせる。1つのセルが際限なく伸びないよう640pxで頭打ちにし、そこを超えるものだけ折り返す
 - **プロジェクトの2つの止め方(編集モード / 完全ロック)**: ツリーの見出しにトグルと南京錠の2つのボタンがある。**トグル=編集モード**はこの画面だけの切り替えで、開かないとフォルダ追加・並べ替えの↑↓・文書一覧へのドラッグが出ない(**既定はオフ**。行の↑↓を誤って触るのを防ぐため)。APIには何も送らないので、**オフでもAPIキー経由(AIエージェント)からの編集は通る**。**南京錠=完全ロック**は`projects.locked`に保存する全利用者共有の状態で、構成を変えるAPIが一律423になり、画面からもAIからも編集できなくなる(仕上がった案件を固めるためのもの)。完全ロック中は編集モードへ切り替えられない(切り替えても423で弾かれるだけのため)。編集モードは別のプロジェクトへ移ったときだけ閉じる(SSE通知のたびに閉じると、書いている最中に操作が消えるため)。記号をトグルにしているのは、これが押すと終わる**操作**ではなく押すと居座る**状態**だからで、つまみの位置で入/切が読める(鉛筆は「名前を変更」で既に使っている記号なので避けた)。トグルだけでは「何の」入/切かを言えないため、**入にしたときだけ「編集中」のバッジ**を見出しに出す(切のときは幅を使わない。いま編集できる状態が見えること自体が誤操作よけになる)。見出しは編集モードで記号が2つ増えるので、入りきらないときはボタン側をまとめて次の行へ送る(名前が30px程度まで潰れて読めなくなるため)
 - **ツリーの資料を別ウィンドウで開く**: ツリーの資料の行にマウスを乗せると右端に外部リンクのアイコンが出て、その資料を別ウィンドウで開ける(文書一覧のカードにある同名のボタンと同じ`GET api/documents/:id/viewer`。プレビューできない形式では押せない)。**読む操作なので表示モードでも出る**(構成を変える↑↓・「外す」は編集モードのときだけ)。資料を見ながら別の資料を開けるようにするためで、行そのもののクリック(プレビュー切り替え)は巻き込まない
-- **プロジェクトのお品書き**: プロジェクト名をクリックすると、その案件の資料一覧に**資料ごとの説明書き**を付けたものがプレビュー領域に出る(ツリーは左に残るため、構成を見ながら書ける)。フォルダは章の見出しになり、フォルダにも前書きを書ける。「引き継ぎ・レビュー依頼・打ち合わせで、どんな資料が揃っていて何なのかを1枚で渡す」ための画面。説明はクリックしてその場で編集し(Ctrl+Enterで保存)、`Markdownをコピー`でそのまま議事録やメールに貼れる(`GET api/projects/:id/manifest.md`。画面のコピーも同じAPIを使うので内容は必ず一致する)。印刷もできる。**ツリーのフォルダを押すと、開閉すると同時にその章だけのお品書きが出る**(案件が大きいと全体は長いため。`?folderId=`でAPIからも切り出せる)。**説明書きは文書ではなくプロジェクトへの紐づけ(`project_documents.note`)に持つ** ため、1つの文書を複数のプロジェクトに置いた場合でも「A案件では前提資料、B案件では参考」と書き分けられる(文書自身のメモとは別物)。並び順の決定は[lib/project-manifest.js](app/lib/project-manifest.js)1か所に寄せてあり、画面とMarkdownで食い違わない。説明1件あたり500文字(`PROJECT_NOTE_MAX_CHARS`)。詳細は[docs/project-manifest.md](docs/project-manifest.md)
+- **プロジェクトのおしながき**: プロジェクト名をクリックすると、その案件の資料一覧に**資料ごとの説明書き**を付けたものがプレビュー領域に出る(ツリーは左に残るため、構成を見ながら書ける)。フォルダは章の見出しになり、フォルダにも前書きを書ける。「引き継ぎ・レビュー依頼・打ち合わせで、どんな資料が揃っていて何なのかを1枚で渡す」ための画面。説明はクリックしてその場で編集し(Ctrl+Enterで保存)、`Markdownをコピー`でそのまま議事録やメールに貼れる(`GET api/projects/:id/manifest.md`。画面のコピーも同じAPIを使うので内容は必ず一致する)。印刷もできる。**ツリーのフォルダを押すと、開閉すると同時にその章だけのおしながきが出る**(案件が大きいと全体は長いため。`?folderId=`でAPIからも切り出せる)。**説明書きは文書ではなくプロジェクトへの紐づけ(`project_documents.note`)に持つ** ため、1つの文書を複数のプロジェクトに置いた場合でも「A案件では前提資料、B案件では参考」と書き分けられる(文書自身のメモとは別物)。並び順の決定は[lib/project-manifest.js](app/lib/project-manifest.js)1か所に寄せてあり、画面とMarkdownで食い違わない。説明1件あたり500文字(`PROJECT_NOTE_MAX_CHARS`)。詳細は[docs/project-manifest.md](docs/project-manifest.md)
 - **タグ体系(タグツリー表示)**: 「タグ体系」メニューで、通常の週単位一覧とは別に、タグ名を見出しにしたグループ表示へ切り替えられる(検索・日付絞り込み・アップロードはこの画面では行わない)。表示対象のタグと並び順は`tag_order`テーブルで管理し(`GET/PUT api/tag_order`。並び順の変更はadminロール限定)、画面内の「タグ体系を管理」ボタンから追加・並び替え(上下ボタン)・削除ができる。複数のタグを持つ文書は該当する全グループに重複表示され、登録していないタグしか持たない文書は「未分類」として末尾にまとめられる
 - **リアルタイム更新**: SSE (`GET api/documents/events`) で他クライアントのアップロード/削除を検知し、一覧を自動更新する
 - **操作のポップアップ通知**: 他の利用者がアップロード・新しい版の登録・タグ付け・アーカイブ・復元を行うと、画面右下に小さなポップアップで「誰が・どの文書に・何をしたか」を表示する(約6秒で自動的に消え、マウスを乗せている間は残る。クリックでその文書を開く)。自分がブラウザで行った操作は通知しないが、自分名義でもAPIキー経由(AIエージェント等)の操作は「APIキー経由」として通知する。画面右上のベルのボタンで利用者ごとにオン/オフでき、設定はそのブラウザに保存される。同じSSEの`document-activity`イベントで配信し、Postgres構成では`LISTEN/NOTIFY`のペイロードで全インスタンスへ伝播する(ファイル名・タグは切り詰め、NOTIFYの8000バイト上限に収める)
@@ -174,7 +174,7 @@ LLMなどで作ったWebページのモックアップ(ビルド済みの一式)
 
 ### AIエージェント用 Skill・APIクライアント(Claude Code / Codex / Antigravity)
 - [tools/claude-skill/](tools/claude-skill/) に、Claude Code・OpenAI Codex・Google Antigravity から「アップして」「新しい版で上げて」「探して」と話しかけるだけでこのAPIを操作できる Skill(`document-manager`)を同梱している。Skillの形式(`SKILL.md`+`scripts/`)は3つのエージェントで共通のため同じZIPを使い、展開先だけが異なる(Claude Code: `~/.claude/skills/`、Codex: `~/.agents/skills/`、Antigravity: `~/.gemini/config/skills/`)。Python版(`dm_client.py`、標準ライブラリのみ)と Node.js版(`dm_client.mjs`、外部依存なし)のクライアントはどちらも同じコマンドで、単体のCLIとしても使える
-- クライアントのコマンド: `config` / `search`(全文・`--semantic`で意味検索・`--archived`) / `get` / `versions` / `upload`(`--previous-id`・`--replace-same-name`・`--tags`・`--preview`・`--project`/`--folder`) / `download` / `tags`(`--add`/`--remove`/`--set`) / `memo` / `archive` / `restore` / `links`・`link`・`unlink` / `link-previous`・`unlink-previous` / `projects`・`project-create`・`tree`・`folder-create`・`place`・`unplace` / `manifest`(お品書き。`--markdown`で人に渡せる形、`--folder`でその章だけ)・`note`(説明書き)・`folder-reorder` / `mockups`・`mockup-upload`・`mockup-url`・`mockup-download`・`mockup-get`・`mockup-versions`・`mockup-rename`・`mockup-memo`・`mockup-archive`・`mockup-restore` / `watch`(SSE) / `spec`(`api/usage.md`、`--openapi`で`api/openapi.json`)。プロジェクト・フォルダはIDでも名前でも指定できる。ここに無い操作(タグ体系の管理など)は`spec`でAPI仕様を読んで直接呼ぶ
+- クライアントのコマンド: `config` / `search`(全文・`--semantic`で意味検索・`--archived`) / `get` / `versions` / `upload`(`--previous-id`・`--replace-same-name`・`--tags`・`--preview`・`--project`/`--folder`) / `download` / `tags`(`--add`/`--remove`/`--set`) / `memo` / `archive` / `restore` / `links`・`link`・`unlink` / `link-previous`・`unlink-previous` / `projects`・`project-create`・`tree`・`folder-create`・`place`・`unplace` / `manifest`(おしながき。`--markdown`で人に渡せる形、`--folder`でその章だけ)・`note`(説明書き)・`folder-reorder` / `mockups`・`mockup-upload`・`mockup-url`・`mockup-download`・`mockup-get`・`mockup-versions`・`mockup-rename`・`mockup-memo`・`mockup-archive`・`mockup-restore` / `watch`(SSE) / `spec`(`api/usage.md`、`--openapi`で`api/openapi.json`)。プロジェクト・フォルダはIDでも名前でも指定できる。ここに無い操作(タグ体系の管理など)は`spec`でAPI仕様を読んで直接呼ぶ
 - **モックアップはAIが作って登録するもの**なので、`mockup-upload` は**ディレクトリをそのまま渡せる**(ZIPに固めるのはクライアント側で行う)。直下に`index.html`が無ければ送る前にエラーにする(登録できるのに開けない、を防ぐため)。登録すると応答に`viewUrl`が入るので、AIはそのURLを利用者に伝えてブラウザで開いてもらう
 - **更新のお知らせ**: 手元のクライアントがサーバー同梱のものより古い場合、サーバーが応答ヘッダー`X-Skill-Latest-Version`で知らせ、クライアントが利用者とAIへ「ZIPを取り直してフォルダを置き換える」よう促す(認証に失敗した応答にも付くため、APIキーが期限切れでも気づける)。またサーバーが更新されたときは`X-Server-Updated`で**APIキーごとに1回だけ**知らせ、AIに`spec`での取り直しを促す。合図はビルドであって起動ではないため、クラッシュ復帰や再起動では通知されない
   - 貼り付けた利用ガイドで動くAI(コピペ経路)にはヘッダーが届かないため、ガイド自身の冒頭に「いつ・どの版の内容か」と入手先(ガイド・OpenAPI・同梱クライアントのZIP・`GET api/version`)を表で載せ、AIが自分で取り直せるようにしている
@@ -205,7 +205,7 @@ document-manager/
 │   │   ├── allowed-users.js   # ログイン許可ユーザーのホワイトリスト管理
 │   │   ├── tag-order.js       # タグ体系(タグツリー表示)の並び順管理
 │   │   ├── projects.js        # プロジェクト(フォルダ階層による文書整理)の管理
-│   │   ├── project-manifest.js # お品書き(プロジェクトの資料一覧＋説明書き)の組み立て・Markdown化
+│   │   ├── project-manifest.js # おしながき(プロジェクトの資料一覧＋説明書き)の組み立て・Markdown化
 │   │   ├── app-settings.js    # 管理画面から変えられる設定(機能のOn/Off。環境変数が既定でDBが優先)
 │   │   ├── mockups.js         # モックアップ(ビルド済みページ一式)のメタデータ管理
 │   │   ├── mockup-zip.js      # モックアップZIPの安全な展開(パス検査・ZIP爆弾対策)
@@ -248,7 +248,7 @@ document-manager/
 ├── docs/
 │   ├── admin-screen.md       # 管理者画面の定義(決めた理由と積み残しを含む)
 │   ├── mockup.md             # モックアップ管理の定義(隔離のしかたと、実測で確かめた結果)
-│   ├── project-manifest.md   # お品書きの定義(説明書きをプロジェクトごとに持つ理由)
+│   ├── project-manifest.md   # おしながきの定義(説明書きをプロジェクトごとに持つ理由)
 │   ├── dockerhub-overview.md # Docker Hubの説明文(機能を足したらここも更新する)
 │   └── screenshots/          # READMEのスクリーンショットと撮影スクリプト(capture.js)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
@@ -291,7 +291,7 @@ document-manager/
 | `VECTOR_INSERT_TIMEOUT_SECONDS` | `180` | Weaviateへの登録リクエストのタイムアウト(秒)。CPUでの埋め込み計算は遅いため既定より長めに取る |
 | `OFFICE_RENDER_URL` | (未設定) | 体裁つき表示(Office→PDF)の変換サービスのURL(例: `http://converter:3000`)。未設定の間はこの機能が無効になり、Office文書は概要プレビューだけで扱う(登録・検索・ダウンロードには影響しない) |
 | `MEMO_MAX_CHARS` | `4000` | 文書メモの上限(文字数)。メモは文書一覧・検索の応答すべてに載るため、1件で応答を埋め尽くせないようにする安全弁 |
-| `PROJECT_NOTE_MAX_CHARS` | `500` | お品書きの説明書き1件の上限(文字数)。説明はプロジェクトのツリー取得の応答すべてに載るため、長文を持たせないための安全弁(長い説明は文書のメモ側に書く) |
+| `PROJECT_NOTE_MAX_CHARS` | `500` | おしながきの説明書き1件の上限(文字数)。説明はプロジェクトのツリー取得の応答すべてに載るため、長文を持たせないための安全弁(長い説明は文書のメモ側に書く) |
 | `MOCKUPS_ENABLED` | (未設定=無効) | モックアップ機能の**既定値**。`true`でその環境の初期状態を有効にする。管理画面の「サーバー」タブで変更するとDBの値が優先される(再起動不要) |
 | `MOCKUP_STORAGE_PREFIX` | `mockups` | `STORAGE_BACKEND`がs3/gcsのときの、モックアップの原本を置くキーの先頭。文書側(`S3_PREFIX`/`GCS_PREFIX`、既定`documents`)と**必ず別にする**(同じにすると、文書とファイルの突き合わせが互いを身元不明のファイルとして拾う) |
 | `MOCKUP_VIEW_TOKEN_MINUTES` | `60` | モックアップ表示用の引換券の有効期限(分)。短くするとURLが漏れたときの露出は縮むが、長く開いたままにしていると途中で配信が止まる(開き直せば直る) |
@@ -377,7 +377,7 @@ python tools/claude-skill/ci_smoke_test.py  # AIエージェント用Skillのク
 - **`test/office-render.test.js`**: 変換サービスへ到達できないときに例外を投げないこと(落ちていてもアプリは動き続ける、という設計の根幹)
 - **`test/mockup-zip.test.js`**: モックアップZIPの展開の検証。展開先の外を指すエントリ・シンボリックリンク・階層や件数の上限に加え、**展開後サイズを小さく偽ったZIP爆弾**でも膨らまないこと(ヘッダーの値を信じず`zlib`の`maxOutputLength`で頭打ちにする)
 - **`test/mockup-token.test.js`**: モックアップ配信の引換券の検証。これは配信時に**認証の代わりになる**ため、偽造・対象の差し替え・期限の延長・使い回しを念入りに確かめる
-- **`test/project-manifest.test.js`**: お品書きの組み立ての検証。並び順・入れ子・Markdown化に加え、**データが壊れていても資料を落とさないこと**(親が見つからないフォルダ・見つからない文書でも行を残す)
+- **`test/project-manifest.test.js`**: おしながきの組み立ての検証。並び順・入れ子・Markdown化に加え、**データが壊れていても資料を落とさないこと**(親が見つからないフォルダ・見つからない文書でも行を残す)
 - **`test/integration-sqlite.test.js`**: 一時SQLiteに対する各モジュールのライフサイクル(projects/allowed-users/api-keys/tag-order/audit-log)
 - **`test/integration-postgres.test.js`**: Postgres固有の検証(`schema_migrations`の適用、横断SSEのバックプレーンである`LISTEN/NOTIFY`が実際に通知を届けること)。`DATABASE_BACKEND=postgres`＋`DATABASE_URL`未設定時は全てスキップ(`npm run test:pg`で実行)
 - **`test/api/`**: Playwright(`@playwright/test` のAPIリクエスト機能)による認証・認可の強制テスト。`serve.js` が認証を有効にしたまま(OIDC初期化のみ省略)テストサーバを起動し、APIキー(readonly/readwrite)で 401/403/200 とアップロード/アーカイブ/タグ/プロジェクトのCRUD、新しい版のアップロード(旧版のアーカイブ・タグとプロジェクト配置の引き継ぎ・版履歴・404/409)(`versions.spec.js`)、APIキーの有効期限(最長1年)、SkillのZIPダウンロード、および意味検索(ベクトル検索)を検証する。`*.spec.js` はブラウザを使わないため `npx playwright install` は不要
@@ -386,7 +386,7 @@ python tools/claude-skill/ci_smoke_test.py  # AIエージェント用Skillのク
   - `hardening.spec.js`は、防御ヘッダー・壊れたリクエストの応答・管理APIの権限(APIキーでは403)・応答に載る値の上限を、実サーバの応答として確認する(ミドルウェアの並び順やルートごとのヘッダー上書きで壊れるため)
   - `admin-pane.e2e.js`は管理画面(ページ切替・タブ・各タブの操作・adminでなければ開かないこと)を実ブラウザで確認する
   - モックアップは`mockups.spec.js`(登録・配信・引換券・置き場所の外への脱出・権限)、`mockups-archived-access.spec.js`(**アーカイブ済みへ至る経路の総当たり**。一覧を断るだけでは足りず、IDが分かれば中身に触れられてしまう穴を塞いだときに追加した)、`mockup-view.e2e.js`(実ブラウザで、JSは動くがオリジンを持たず、かつ**モックアップ自身のファイルが1つも遮断されないこと**)、`mockups-ui.e2e.js`(画面からの通し)で確認する
-  - お品書きは`project-manifest.spec.js`(説明書きの保存・プロジェクトごとに別であること・Markdown・権限・完全ロック)と、`project-manifest.e2e.js`/`project-manifest-xss.e2e.js`(実ブラウザでの編集と、**仕込まれた文字列が実行されないこと**)で確認する
+  - おしながきは`project-manifest.spec.js`(説明書きの保存・プロジェクトごとに別であること・Markdown・権限・完全ロック)と、`project-manifest.e2e.js`/`project-manifest-xss.e2e.js`(実ブラウザでの編集と、**仕込まれた文字列が実行されないこと**)で確認する
   - スペース区切りのAND検索は`search-and.spec.js`で確認する(全角スペース・語順・余分なスペース・3文字未満の語・ファイル名とタグにまたがる指定・アーカイブ側)
   - Markdownプレビューの表は`markdown-preview.e2e.js`で確認する(**640pxに収まるセルが折り返されないこと**・超えるものは折り返すこと・はみ出す分は表だけが横スクロールすること・古い版のプレビューが配信時に作り直されること)
   - プロジェクトの2つの止め方は`project-lock-modes.e2e.js`で確認する。**編集モードをオフにしてもAPIキー(AI)からの編集が通ること**と、**完全ロックはAIにも効くこと**の両方を見る(取り違えると、AIに任せた作業が黙って止まるか、固めたはずが固まっていないかのどちらかになる)

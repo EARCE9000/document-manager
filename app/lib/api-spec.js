@@ -193,14 +193,14 @@ const OPERATIONS = [
 	},
 	{
 		id: "getProjectManifest", method: "get", path: "/api/projects/:id/manifest", role: "readonly", tag: "プロジェクト",
-		summary: "お品書き(資料一覧と説明書き)",
+		summary: "おしながき(資料一覧と説明書き)",
 		description: "ツリーと同じ中身を、読む順(直下の資料→フォルダ)に並べ直したもの。フォルダが章立てになり、資料ごとに`note`(このプロジェクトでの位置づけ)が付く。`folderId`を付けるとその章から下だけを返す",
 		params: [{name: "folderId", in: "query", description: "この章から下だけを返す(省略時はプロジェクト全体)"}],
 		responses: {404: "プロジェクト、または指定したフォルダが無い"}
 	},
 	{
 		id: "getProjectManifestMarkdown", method: "get", path: "/api/projects/:id/manifest.md", role: "readonly", tag: "プロジェクト",
-		summary: "お品書きのMarkdown",
+		summary: "おしながきのMarkdown",
 		description: "議事録・メールにそのまま貼れる形。案件にどんな資料が揃っているかを人に伝えるときに使う。`folderId`でその章だけを切り出せる",
 		params: [{name: "folderId", in: "query", description: "この章から下だけを返す(省略時はプロジェクト全体)"}],
 		responses: {404: "プロジェクト、または指定したフォルダが無い"},
@@ -208,14 +208,14 @@ const OPERATIONS = [
 	},
 	{
 		id: "updateProjectDocumentNote", method: "put", path: "/api/projects/:id/documents/:documentId/note", role: "readwrite", tag: "プロジェクト",
-		summary: "お品書きの資料の説明書きを更新",
+		summary: "おしながきの資料の説明書きを更新",
 		description: "「この資料がこのプロジェクトではどういう位置づけか」を書く。1つの文書は複数のプロジェクトに登録できるため、文書そのもののメモとは別に、プロジェクトごとに持つ。空文字を送ると説明を消す",
 		body: {schema: {type: "object", properties: {note: {type: "string"}}}},
 		responses: {404: "プロジェクトが無い、またはその文書が登録されていない", 423: "プロジェクトが施錠されている"}
 	},
 	{
 		id: "updateProjectFolderNote", method: "put", path: "/api/projects/:id/folders/:folderId/note", role: "readwrite", tag: "プロジェクト",
-		summary: "お品書きのフォルダ(章)の説明書きを更新",
+		summary: "おしながきのフォルダ(章)の説明書きを更新",
 		body: {schema: {type: "object", properties: {note: {type: "string"}}}},
 		responses: {404: "プロジェクトまたはフォルダが無い", 423: "プロジェクトが施錠されている"}
 	},
@@ -241,7 +241,7 @@ const OPERATIONS = [
 	{
 		id: "reorderFolders", method: "put", path: "/api/projects/:id/folders/reorder", role: "readwrite", tag: "プロジェクト",
 		summary: "フォルダの並び替え",
-		description: "同じ親を持つフォルダの順番を、渡した配列の順に付け直す。お品書きではフォルダがそのまま章の順番になる",
+		description: "同じ親を持つフォルダの順番を、渡した配列の順に付け直す。おしながきではフォルダがそのまま章の順番になる",
 		body: {schema: {type: "object", required: ["folderIds"], properties: {
 			parentFolderId: {type: "string", nullable: true}, folderIds: {type: "array", items: {type: "string"}}
 		}}},
@@ -594,7 +594,7 @@ const GUIDE_SECTIONS = [
 		notes: [
 			"どちらも`folderId`/`parentFolderId`を省略・nullにするとプロジェクト直下が対象",
 			"渡した配列の順番どおりに並び替える。配列に含めなかったものは後ろに残る",
-			"お品書き(上記)では**フォルダがそのまま章の順番**になるため、人に渡す前に章立てを整えるときに使う"
+			"おしながき(上記)では**フォルダがそのまま章の順番**になるため、人に渡す前に章立てを整えるときに使う"
 		]
 	},
 	{
@@ -602,11 +602,11 @@ const GUIDE_SECTIONS = [
 		entries: [{id: "updateMemo", trail: "JSONボディ: `{\"memo\": \"...\"}`"}],
 		notes: [
 			"文書そのものに付く備忘録で、どのプロジェクトから見ても同じ内容になる。検索の対象にもなる",
-			"案件ごとの位置づけを書きたい場合は、下の「プロジェクトのお品書き」の説明書きを使う"
+			"案件ごとの位置づけを書きたい場合は、下の「プロジェクトのおしながき」の説明書きを使う"
 		]
 	},
 	{
-		title: "プロジェクトのお品書き(資料一覧＋説明書き)",
+		title: "プロジェクトのおしながき(資料一覧＋説明書き)",
 		entries: [
 			{id: "getProjectManifest", trail: "読む順(直下の資料→フォルダ)に並べ直した資料一覧。フォルダが章になる"},
 			{id: "getProjectManifestMarkdown", trail: "同じ内容のMarkdown。議事録やメールにそのまま貼れる形"}
@@ -617,7 +617,7 @@ const GUIDE_SECTIONS = [
 		]
 	},
 	{
-		title: "お品書きの説明書きを書く", roleNote: ROLE_NOTES.readwrite,
+		title: "おしながきの説明書きを書く", roleNote: ROLE_NOTES.readwrite,
 		entries: [
 			{id: "updateProjectDocumentNote", trail: "JSONボディ: `{\"note\": \"...\"}`(空文字で消す)"},
 			{id: "updateProjectFolderNote", trail: "フォルダ(章)の前書き。同じくJSONボディ"}
@@ -700,7 +700,7 @@ const CURL_EXAMPLES = (baseUrl) => [
 	},
 	{title: "アップロード", command: `curl -X POST "${baseUrl}/api/documents" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "uploadfile=@./report.md"`},
 	{title: "モックアップの登録(ビルド済み一式のZIP)", mockupOnly: true, command: `curl -X POST "${baseUrl}/api/mockups" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "mockupfile=@./site.zip" \\\n  -F "name=受注管理画面 v1"`},
-	{title: "プロジェクトのお品書き(人に渡せるMarkdown)", command: `curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/projects/<projectId>/manifest.md"`},
+	{title: "プロジェクトのおしながき(人に渡せるMarkdown)", command: `curl -H "Authorization: Bearer <APIキー>" "${baseUrl}/api/projects/<projectId>/manifest.md"`},
 	{
 		title: "アップロード(.drawio。画像を添える必要はない)",
 		command: `curl -X POST "${baseUrl}/api/documents" \\\n  -H "Authorization: Bearer <APIキー>" \\\n  -F "uploadfile=@./diagram.drawio"`
@@ -799,7 +799,7 @@ PDFを取得できます。**忠実な再現ではありません**(LibreOffice�
 	},
 	{
 		when: "「この案件の資料一覧ちょうだい」「何が揃ってる?」「引き継ぎ資料まとめて」",
-		do: `プロジェクトの「お品書き」APIを使ってください。資料の一覧に、それぞれが何なのかの説明が付いたものです。
+		do: `プロジェクトの「おしながき」APIを使ってください。資料の一覧に、それぞれが何なのかの説明が付いたものです。
 
 - 人に渡す形が欲しい場合は \`GET api/projects/:id/manifest.md\` をそのまま使ってください
 - 資料に説明が付いていない場合、内容を読んで説明を書き足すことができます

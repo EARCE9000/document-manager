@@ -555,7 +555,7 @@ def cmd_mockup_restore(args):
     return request("POST", f"api/mockups/{quote_id(args.id)}/restore")
 
 
-# ---- お品書き(プロジェクトの資料一覧＋説明書き) ----
+# ---- おしながき(プロジェクトの資料一覧＋説明書き) ----
 
 def cmd_manifest(args):
     project_id = resolve_project(args.project)["id"]
@@ -575,7 +575,7 @@ def cmd_manifest(args):
 
 
 def cmd_folder_reorder(args):
-    """お品書きではフォルダがそのまま章の順番になるため、人に渡す前に整えるために使う"""
+    """おしながきではフォルダがそのまま章の順番になるため、人に渡す前に整えるために使う"""
     project_id = resolve_project(args.project)["id"]
     parent_id = resolve_folder(project_id, args.parent) if args.parent else None
     folder_ids = []
@@ -838,18 +838,18 @@ def main():
     p.add_argument("id")
     p.set_defaults(func=cmd_mockup_restore)
 
-    # ---- お品書き ----
-    p = sub.add_parser("manifest", help="プロジェクトのお品書き(資料一覧＋説明書き)")
+    # ---- おしながき ----
+    p = sub.add_parser("manifest", help="プロジェクトのおしながき(資料一覧＋説明書き)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("--markdown", action="store_true", help="人に渡せるMarkdownで出す(JSONで包まずそのまま出力)")
     p.add_argument("--folder", help="この章から下だけを出す(フォルダIDまたは名前)")
     p.set_defaults(func=cmd_manifest, streaming_if="markdown")
-    p = sub.add_parser("folder-reorder", help="フォルダの並び替え(お品書きの章の順番になる)")
+    p = sub.add_parser("folder-reorder", help="フォルダの並び替え(おしながきの章の順番になる)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("folders", help="並べたい順のフォルダ(カンマ区切り。IDでも名前でも可)")
     p.add_argument("--parent", help="対象の親フォルダ(省略時はプロジェクト直下)")
     p.set_defaults(func=cmd_folder_reorder)
-    p = sub.add_parser("note", help="お品書きの説明書きを書く(空文字で消す)")
+    p = sub.add_parser("note", help="おしながきの説明書きを書く(空文字で消す)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("text", help="説明(この案件での位置づけ)")
     p.add_argument("--id", help="対象の文書ID")

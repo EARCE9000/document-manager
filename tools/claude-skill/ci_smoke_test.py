@@ -192,7 +192,7 @@ def smoke_project_commands(kind, env, workdir, doc_id):
 
 
 def smoke_manifest_commands(kind, env, doc_id):
-    """お品書き: 資料一覧に説明書きを付けて、人に渡せる形で出せること"""
+    """おしながき: 資料一覧に説明書きを付けて、人に渡せる形で出せること"""
     project_name = f"smoke-manifest-{kind}"
     run_client(kind, ["project-create", project_name], env)
     run_client(kind, ["place", project_name, doc_id], env)
@@ -206,7 +206,7 @@ def smoke_manifest_commands(kind, env, doc_id):
 
     # --markdown はJSONで包まず、そのまま人に渡せる形で出す
     markdown = run_client(kind, ["manifest", project_name, "--markdown"], env).stdout
-    check(markdown.startswith(f"# {project_name} お品書き"), "manifest --markdown: 見出しから始まるMarkdownをそのまま出す")
+    check(markdown.startswith(f"# {project_name} おしながき"), "manifest --markdown: 見出しから始まるMarkdownをそのまま出す")
     check("この案件では前提資料です。" in markdown, "manifest --markdown: 説明書きが含まれる")
 
     # 章だけを切り出せること(案件全体ではなく「この章だけ渡したい」ことがある)
@@ -215,9 +215,9 @@ def smoke_manifest_commands(kind, env, doc_id):
     scoped = json.loads(run_client(kind, ["manifest", project_name, "--folder", "要件"], env).stdout)
     check(scoped["folderName"] == "要件", "manifest --folder: その章だけを切り出せる")
     scoped_md = run_client(kind, ["manifest", project_name, "--markdown", "--folder", "要件"], env).stdout
-    check("› 要件 お品書き" in scoped_md, "manifest --folder --markdown: どの章かが見出しに出る")
+    check("› 要件 おしながき" in scoped_md, "manifest --folder --markdown: どの章かが見出しに出る")
 
-    # フォルダの並び替え(お品書きの章の順番になる)
+    # フォルダの並び替え(おしながきの章の順番になる)
     run_client(kind, ["folder-create", project_name, "参考"], env)
     reordered = json.loads(run_client(kind, ["folder-reorder", project_name, "参考,要件"], env).stdout)
     order = [f["name"] for f in sorted(reordered["folders"], key=lambda f: f["sortOrder"]) if f["parentFolderId"] is None]

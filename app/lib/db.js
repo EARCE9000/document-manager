@@ -607,7 +607,7 @@ const MIGRATIONS = {
 			newDb.exec("DETACH DATABASE old");
 		}
 	},
-	// v16: お品書き用の説明書き(project_documents.note / project_folders.note)を足した。
+	// v16: おしながき用の説明書き(project_documents.note / project_folders.note)を足した。
 	// どちらも新しい列のため、引き継ぐものは無い(空で始まる)
 	// v17: 機能のOn/Offを保存する app_settings を足した。新しい表のため引き継ぐものは無い
 	17: (newDb, oldDbPath) => {

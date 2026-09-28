@@ -149,14 +149,14 @@ test("AI向けガイドの内容と aiGuide の指定が一致している", () 
 });
 
 // モックアップはAIが作って登録するもの。ガイドに載っていなければAIは存在に気づけない
-test("AI向けガイドにモックアップとお品書きが載る", () => {
+test("AI向けガイドにモックアップとおしながきが載る", () => {
 	const markdown = ApiSpec.buildUsageMarkdown({baseUrl: "https://example.com", vectorSearchEnabled: false, mockupsEnabled: true});
 	for (const expected of [
 		"モックアップの一覧・検索",
 		"モックアップの登録",
 		"mockupfile",
 		"index.html",
-		"プロジェクトのお品書き",
+		"プロジェクトのおしながき",
 		"manifest.md"
 	]) {
 		assert.ok(markdown.includes(expected), `AI向けガイドに「${expected}」が無い`);

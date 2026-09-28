@@ -77,7 +77,7 @@ const SQL_MAX_DOCUMENT_SORT_ORDER_FOLDER = `SELECT MAX(sort_order) AS "maxOrder"
 const SQL_UPDATE_DOCUMENT_SORT_ORDER = `UPDATE project_documents SET sort_order = ? WHERE project_id = ? AND document_id = ?`;
 const SQL_UPDATE_DOCUMENT_NOTE = `UPDATE project_documents SET note = ? WHERE project_id = ? AND document_id = ?`;
 
-// お品書きの説明書きの上限。1件ずつがツリー取得の応答すべてに載るため、長文は持たせない
+// おしながきの説明書きの上限。1件ずつがツリー取得の応答すべてに載るため、長文は持たせない
 // (長い説明は文書そのもののメモ側に書く)
 const NOTE_MAX_CHARS = Number(process.env.PROJECT_NOTE_MAX_CHARS || 500);
 module.exports.NOTE_MAX_CHARS = NOTE_MAX_CHARS;
@@ -118,7 +118,7 @@ const toDocumentPlacementResponse = (row) => ({
 	sortOrder: row.sort_order,
 	addedBy: row.added_by,
 	addedAt: row.added_at,
-	// この資料が「このプロジェクトでは」どういう位置づけかの説明(お品書き用)。
+	// この資料が「このプロジェクトでは」どういう位置づけかの説明(おしながき用)。
 	// 1つの文書は複数のプロジェクトに登録できるため、文書側のメモとは別に持つ
 	note: row.note ?? null,
 	entryFile: row.entry_file ?? null,
@@ -221,7 +221,7 @@ module.exports.updateDocumentNote = async (projectId, documentId, note) => {
 	return true;
 };
 
-/** フォルダ(お品書きでは章の見出しになる)の説明書きを更新する */
+/** フォルダ(おしながきでは章の見出しになる)の説明書きを更新する */
 module.exports.updateFolderNote = async (projectId, folderId, note) => {
 	if ((await ds.get(SQL_GET_FOLDER, [folderId, projectId])) == null) return false;
 	await ds.run(SQL_UPDATE_FOLDER_NOTE, [normalizeNote(note), folderId, projectId]);
@@ -341,7 +341,7 @@ module.exports.removeDocument = async (projectId, documentId) => {
 /**
  * 同じ親を持つフォルダの並び順を、渡した配列の順に付け直す。
  *
- * お品書きでは**フォルダがそのまま章の順番**になるため、作成順に固定されたままだと
+ * おしながきでは**フォルダがそのまま章の順番**になるため、作成順に固定されたままだと
  * 人に渡す資料の章立てを直せない。文書の並び替えと同じ作法にしている。
  *
  * @param {?string} parentFolderId 省略・nullならプロジェクト直下のフォルダが対象

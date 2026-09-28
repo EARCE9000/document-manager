@@ -1,9 +1,9 @@
 /*!
- * project-manifest.js : プロジェクトの「お品書き」の組み立て
+ * project-manifest.js : プロジェクトの「おしながき」の組み立て
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * ツリー(フォルダ＋文書の配置)を、人が読む順番に並べ直したものを「お品書き」と呼んでいる。
+ * ツリー(フォルダ＋文書の配置)を、人が読む順番に並べ直したものを「おしながき」と呼んでいる。
  * フォルダが章の見出しになり、その下に資料が並び、それぞれに説明書きが付く。
  *
  * 画面とMarkdownの持ち出しで**同じ並び**になっている必要があるため、並べる処理はここ1か所に
@@ -14,7 +14,7 @@
  */
 
 /**
- * ツリーを、読む順に並べたお品書きに組み直す。
+ * ツリーを、読む順に並べたおしながきに組み直す。
  *
  * 並びの規則:
  *   1. プロジェクト直下の資料(フォルダに入っていないもの)
@@ -43,7 +43,7 @@ module.exports.build = (project, tree, options = {}) => {
 	for (const list of byFolder.values()) list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
 	// 親子をたどって入れ子に組む。親が見つからないフォルダ(データの壊れ)は捨てずに
-	// 直下として扱う ― 中の資料がお品書きから消えるより、位置がずれる方がまだよい
+	// 直下として扱う ― 中の資料がおしながきから消えるより、位置がずれる方がまだよい
 	const childrenOf = new Map();
 	const known = new Set(folders.map((f) => f.id));
 	for (const folder of folders) {
@@ -104,14 +104,14 @@ const documentLine = (doc) => {
 };
 
 /**
- * お品書きをMarkdownにする。議事録やメールにそのまま貼れることを狙った形。
+ * おしながきをMarkdownにする。議事録やメールにそのまま貼れることを狙った形。
  * @param {object} manifest build() の結果
  */
 module.exports.toMarkdown = (manifest) => {
 	// 章だけを切り出した場合は、どの案件のどの章かが分かる見出しにする
 	const title = manifest.folderName != null
-		? `${manifest.projectName} › ${manifest.folderName} お品書き`
-		: `${manifest.projectName} お品書き`;
+		? `${manifest.projectName} › ${manifest.folderName} おしながき`
+		: `${manifest.projectName} おしながき`;
 	const lines = [`# ${title}`, ""];
 	if (manifest.folderNote != null) lines.push(manifest.folderNote, "");
 

@@ -1,9 +1,9 @@
 /*!
- * project-manifest-xss.e2e.js : お品書きに仕込まれた文字列が実行されないことの検証
+ * project-manifest-xss.e2e.js : おしながきに仕込まれた文字列が実行されないことの検証
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * お品書きは、利用者が自由に書いた文字列(説明書き・フォルダ名・プロジェクト名・ファイル名)を
+ * おしながきは、利用者が自由に書いた文字列(説明書き・フォルダ名・プロジェクト名・ファイル名)を
  * そのまま並べて見せる画面である。ここでエスケープを1か所でも落とすと、**書いた人が
  * 見た人のブラウザで好きなことをできる**ようになる。この画面は「人に渡す」ためのもので、
  * 書いた本人以外が開く前提なので、そこが崩れると影響が大きい。
@@ -38,7 +38,7 @@ const DOC_NOTE = `説明 ${PAYLOADS.script} ${PAYLOADS.breakout}`;
 const FOLDER_NOTE = `章の説明 ${PAYLOADS.attr}`;
 const DOC_NAME = `xss-${STAMP}.txt`;
 
-test.describe.serial("お品書きに仕込まれた文字列(実ブラウザ)", () => {
+test.describe.serial("おしながきに仕込まれた文字列(実ブラウザ)", () => {
 	let projectId;
 
 	test.beforeAll(async ({request}) => {
@@ -86,7 +86,7 @@ test.describe.serial("お品書きに仕込まれた文字列(実ブラウザ)",
 		await expect(page.locator(".manifestItem", {hasText: DOC_NAME}).locator(".manifestNote")).toHaveText(DOC_NOTE);
 		await expect(page.locator(".manifestFolder > .manifestNote")).toHaveText(FOLDER_NOTE);
 		await expect(page.locator(".manifestFolderName")).toHaveText(FOLDER);
-		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} お品書き`);
+		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} おしながき`);
 	});
 
 	test("書き直しても実行されない(編集を経由した経路)", async ({page}) => {

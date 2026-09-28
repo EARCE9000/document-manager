@@ -254,7 +254,7 @@ const seed = async () => {
 	await api("PUT", `api/documents/${specV2.id}/links/${minutes.id}`);
 	await api("PUT", `api/documents/${specV2.id}/links/${drawio.id}`);
 
-	// お品書き(プロジェクトの資料一覧に付ける説明書き)
+	// おしながき(プロジェクトの資料一覧に付ける説明書き)
 	const note = (documentId, text) => api("PUT", `api/projects/${project.id}/documents/${documentId}/note`, {note: text});
 	await api("PUT", `api/projects/${project.id}/folders/${designFolder.id}/note`, {note: "実装に入る前のレビュー対象。ここが確定したら着手します。"});
 	await api("PUT", `api/projects/${project.id}/folders/${salesFolder.id}/note`, {note: "先方へ提出済みのもの。金額の変更はここに追記します。"});
@@ -327,7 +327,7 @@ const main = async () => {
 		await page.frameLocator("#previewFrame").locator("h1").waitFor();
 		await shot("projects");
 
-		// 4. お品書き(プロジェクト名を押すと、資料一覧と説明書きがプレビュー領域に出る)
+		// 4. おしながき(プロジェクト名を押すと、資料一覧と説明書きがプレビュー領域に出る)
 		await page.locator("#projectTreeTitle").click();
 		await page.locator(".manifestItem").first().waitFor();
 		await shot("project-manifest");

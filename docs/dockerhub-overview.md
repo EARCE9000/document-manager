@@ -55,7 +55,7 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 
 ![プロジェクト](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/projects.png)
 
-**「お品書き」で案件の資料を人に渡せます。** 資料を集めても、ファイル名だけでは受け取った側が
+**「おしながき」で案件の資料を人に渡せます。** 資料を集めても、ファイル名だけでは受け取った側が
 全部開くことになります。プロジェクト名をクリックすると、その案件にどんな資料が揃っていて
 **それぞれが何なのか**を1枚にした一覧が出ます。資料ごとの説明はその場で書け、フォルダは章の
 見出しになります。そのままMarkdownでコピーできるので、引き継ぎ・レビュー依頼・打ち合わせの
@@ -69,7 +69,7 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 画面だけの切り替えで、AIエージェントからの編集は止まりません。案件が仕上がって全員の編集を止めたい
 ときは、隣の南京錠で**完全ロック**します。こちらは画面からもAIからも編集できなくなります。
 
-![お品書き](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/project-manifest.png)
+![おしながき](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/project-manifest.png)
 
 **削除はありません。** 「アーカイブ」は Gmail と同じ論理削除で、実ファイルは残り、いつでも元に戻せます。
 誰が何をしたかは操作履歴に残り、他の利用者がアップロードやタグ付けをすると、画面の右下に小さな通知が出ます。
@@ -107,9 +107,9 @@ React のようにJSが画面を組み立てるものでも構いません。文
 Google Antigravity 用の Skill も画面からダウンロードでき、「この資料アップして」「前の版を置き換えて」
 「〜を探して」と話しかけるだけで操作できるようになります。
 
-**上で紹介したモックアップとお品書きも、AIから操作できます。** モックアップはもともとAIが作るものなので、
+**上で紹介したモックアップとおしながきも、AIから操作できます。** モックアップはもともとAIが作るものなので、
 「この画面案をアップして」と言えば、作ったページ一式をそのまま登録し、開くためのURLを返します
-(フォルダを渡すだけでよく、ZIPに固める必要はありません)。お品書きも「この案件の資料一覧ちょうだい」で
+(フォルダを渡すだけでよく、ZIPに固める必要はありません)。おしながきも「この案件の資料一覧ちょうだい」で
 そのまま受け取れます。
 
 ![APIキー管理とAIエージェント用Skill](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/api-keys-skill.png)
@@ -290,7 +290,7 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 | `MOCKUP_MAX_TOTAL_BYTES` | `314572800` | モックアップZIPの展開後の合計サイズの上限(300MB) |
 | `MOCKUP_STORAGE_PREFIX` | `mockups` | S3/GCS利用時に、モックアップの原本を置くキーの先頭。文書側(既定 `documents`)とは必ず別にしてください |
 | `MOCKUP_VIEW_TOKEN_MINUTES` | `60` | モックアップを開いていられる時間(分)。切れても開き直せます |
-| `PROJECT_NOTE_MAX_CHARS` | `500` | お品書きの説明書き1件の上限(文字数) |
+| `PROJECT_NOTE_MAX_CHARS` | `500` | おしながきの説明書き1件の上限(文字数) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を無効化(開発用。本番では使わない) |
 | `LOG_LEVEL` | `info` | ログレベル |
 | `TZ` | (ホスト依存) | タイムゾーン(例: `Asia/Tokyo`) |

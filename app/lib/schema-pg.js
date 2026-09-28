@@ -254,7 +254,7 @@ const MIGRATIONS = [
 		);
 		CREATE INDEX IF NOT EXISTS idx_mockups_previous_id ON mockups (previous_id);
 	`},
-	// お品書き用の説明書き。資料の説明はプロジェクトごとに違うため、文書ではなく紐づけ表に持つ
+	// おしながき用の説明書き。資料の説明はプロジェクトごとに違うため、文書ではなく紐づけ表に持つ
 	{version: 8, sql: `
 		ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS note TEXT;
 		ALTER TABLE project_folders ADD COLUMN IF NOT EXISTS note TEXT;

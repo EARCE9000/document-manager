@@ -1,9 +1,9 @@
 /*!
- * project-manifest.e2e.js : お品書きの画面を実ブラウザ(Chromium)で検証するE2E
+ * project-manifest.e2e.js : おしながきの画面を実ブラウザ(Chromium)で検証するE2E
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * プロジェクト名を押す → お品書きが出る → 資料に説明を書く → 残る、までを通す。
+ * プロジェクト名を押す → おしながきが出る → 資料に説明を書く → 残る、までを通す。
  * 説明はプレビューと同じ場所に出すため、文書を選ぶと引っ込むことも確かめる。
  *
  * 実行には Chromium が必要: `npx playwright install chromium`
@@ -16,13 +16,13 @@ const keys = loadKeys();
 const rw = {Authorization: `Bearer ${keys.readwrite}`};
 
 const STAMP = Date.now();
-const PROJECT = `お品書きE2E ${STAMP}`;
+const PROJECT = `おしながきE2E ${STAMP}`;
 const COVER = `e2e-cover-${STAMP}.txt`;
 const SPEC = `e2e-spec-${STAMP}.txt`;
 
 test.use({permissions: ["clipboard-read", "clipboard-write"]});
 
-test.describe.serial("お品書き(実ブラウザ)", () => {
+test.describe.serial("おしながき(実ブラウザ)", () => {
 	let projectId;
 
 	test.beforeAll(async ({request}) => {
@@ -50,13 +50,13 @@ test.describe.serial("お品書き(実ブラウザ)", () => {
 		await expect(page.locator("#projectTreeTitle")).toHaveText(PROJECT);
 	};
 
-	test("プロジェクト名を押すとお品書きが出る", async ({page}) => {
+	test("プロジェクト名を押すとおしながきが出る", async ({page}) => {
 		await openProject(page);
 		await expect(page.locator("#manifestPane")).toBeHidden();
 
 		await page.click("#projectTreeTitle");
 		await expect(page.locator("#manifestPane")).toBeVisible();
-		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} お品書き`);
+		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} おしながき`);
 		await expect(page.locator("#manifestSummary")).toHaveText("資料 2 件");
 
 		// 直下の資料が先、そのあとフォルダの章
@@ -123,15 +123,15 @@ test.describe.serial("お品書き(実ブラウザ)", () => {
 		await expect(page.locator("#previewTitle")).toHaveText(COVER);
 	});
 
-	// 案件が大きくなると全体のお品書きは長い。「この章だけ」を見たい/渡したいことがある
-	test("フォルダを押すと、開閉すると同時にその章のお品書きが出る", async ({page}) => {
+	// 案件が大きくなると全体のおしながきは長い。「この章だけ」を見たい/渡したいことがある
+	test("フォルダを押すと、開閉すると同時にその章のおしながきが出る", async ({page}) => {
 		await openProject(page);
 		const folderRow = page.locator(".treeFolderRow", {hasText: "要件"});
 		await expect(folderRow).toBeVisible();
 
 		await folderRow.click();
 		await expect(page.locator("#manifestPane")).toBeVisible();
-		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} › 要件 お品書き`);
+		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} › 要件 おしながき`);
 		// その章の資料だけが並ぶ(プロジェクト直下の表紙は出ない)
 		await expect(page.locator(".manifestItem")).toHaveCount(1);
 		await expect(page.locator(".manifestItem")).toContainText(SPEC);
@@ -142,7 +142,7 @@ test.describe.serial("お品書き(実ブラウザ)", () => {
 
 		// 全体へ戻れる
 		await page.click("#manifestWholeLink");
-		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} お品書き`);
+		await expect(page.locator("#manifestTitle")).toHaveText(`${PROJECT} おしながき`);
 		await expect(page.locator(".manifestItem")).toHaveCount(2);
 	});
 
@@ -157,8 +157,8 @@ test.describe.serial("お品書き(実ブラウザ)", () => {
 		await expect(page.locator("#manifestBody > .manifestNote").first()).toHaveText("この章だけ先に見てください。");
 	});
 
-	// お品書きではフォルダがそのまま章の順番になる
-	test("フォルダを上下に動かすと、お品書きの章の順番が変わる", async ({page, request}) => {
+	// おしながきではフォルダがそのまま章の順番になる
+	test("フォルダを上下に動かすと、おしながきの章の順番が変わる", async ({page, request}) => {
 		const projects = await (await request.get("api/projects", {headers: rw})).json();
 		const target = projects.find((p) => p.name === PROJECT);
 		await request.post(`api/projects/${target.id}/folders`, {headers: rw, data: {name: "参考"}});
@@ -193,7 +193,7 @@ test.describe.serial("お品書き(実ブラウザ)", () => {
 		await expect(page.locator("#manifestCopyButton")).toHaveText("コピーしました");
 
 		const copied = await page.evaluate(() => navigator.clipboard.readText());
-		expect(copied).toContain(`# ${PROJECT} お品書き`);
+		expect(copied).toContain(`# ${PROJECT} おしながき`);
 		expect(copied).toContain("## 要件");
 		expect(copied).toContain("3章が今回の変更点です。");
 	});

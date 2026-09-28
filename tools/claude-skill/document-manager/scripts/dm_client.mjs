@@ -430,7 +430,7 @@ const commands = {
 		return request("POST", mockupPath(id, "/restore"));
 	},
 
-	// ---- お品書き(プロジェクトの資料一覧＋説明書き) ----
+	// ---- おしながき(プロジェクトの資料一覧＋説明書き) ----
 	manifest: async ([project], opts) => {
 		requireArg(project, "プロジェクト");
 		const resolved = await resolveProject(project);
@@ -443,7 +443,7 @@ const commands = {
 		}
 		return request("GET", `api/projects/${encodeURIComponent(resolved.id)}/manifest`, {query});
 	},
-	// お品書きではフォルダがそのまま章の順番になるため、人に渡す前に整えるために使う
+	// おしながきではフォルダがそのまま章の順番になるため、人に渡す前に整えるために使う
 	"folder-reorder": async ([project, folders], opts) => {
 		requireArg(project, "プロジェクト");
 		requireArg(folders, "並べたい順のフォルダ(カンマ区切り)");
@@ -546,7 +546,7 @@ const commands = {
 	}
 };
 
-// お品書きのMarkdownは人に渡す文面なので、JSONで包まずそのまま流す(specと同じ扱い)
+// おしながきのMarkdownは人に渡す文面なので、JSONで包まずそのまま流す(specと同じ扱い)
 const manifestMarkdown = async (project, opts) => {
 	requireArg(project, "プロジェクト");
 	const resolved = await resolveProject(project);

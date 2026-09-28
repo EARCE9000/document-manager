@@ -1,9 +1,9 @@
 /*!
- * project-manifest.spec.js : プロジェクトのお品書きのAPIテスト
+ * project-manifest.spec.js : プロジェクトのおしながきのAPIテスト
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * お品書き＝プロジェクトの資料一覧に、資料ごとの説明書きを付けたもの。
+ * おしながき＝プロジェクトの資料一覧に、資料ごとの説明書きを付けたもの。
  * 説明書きは「この資料がこのプロジェクトではどういう位置づけか」なので、
  * **文書そのもののメモとは別に、プロジェクトごとに持つ**。同じ文書を2つのプロジェクトへ
  * 登録して、説明が混ざらないことまで確かめる。
@@ -21,7 +21,7 @@ const upload = async (request, name, body) => (await (await request.post("api/do
 	multipart: {uploadfile: {name, mimeType: "text/plain", buffer: Buffer.from(body)}}
 })).json()).id;
 
-test.describe.serial("プロジェクトのお品書き", () => {
+test.describe.serial("プロジェクトのおしながき", () => {
 	let projectId;
 	let otherProjectId;
 	let folderId;
@@ -29,7 +29,7 @@ test.describe.serial("プロジェクトのお品書き", () => {
 	let specId;
 
 	test.beforeAll(async ({request}) => {
-		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `お品書きPJ ${Date.now()}`}})).json()).id;
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `おしながきPJ ${Date.now()}`}})).json()).id;
 		otherProjectId = (await (await request.post("api/projects", {headers: rw, data: {name: `別PJ ${Date.now()}`}})).json()).id;
 
 		coverId = await upload(request, `cover-${Date.now()}.txt`, "表紙");
@@ -41,7 +41,7 @@ test.describe.serial("プロジェクトのお品書き", () => {
 		await request.put(`api/projects/${projectId}/documents/${specId}`, {headers: rw, data: {folderId}});
 	});
 
-	test("説明書きを書くと、お品書きに載る", async ({request}) => {
+	test("説明書きを書くと、おしながきに載る", async ({request}) => {
 		const res = await request.put(`api/projects/${projectId}/documents/${specId}/note`, {
 			headers: rw, data: {note: "3章が今回の変更点です。"}
 		});
@@ -62,7 +62,7 @@ test.describe.serial("プロジェクトのお品書き", () => {
 		expect(manifest.folders[0].note).toBe("この案件で合意した範囲です。");
 	});
 
-	test("お品書きは読む順(直下の資料→フォルダ)に並ぶ", async ({request}) => {
+	test("おしながきは読む順(直下の資料→フォルダ)に並ぶ", async ({request}) => {
 		const manifest = await (await request.get(`api/projects/${projectId}/manifest`, {headers: ro})).json();
 		expect(manifest.rootDocuments.map((d) => d.documentId)).toEqual([coverId]);
 		expect(manifest.folders.map((f) => f.name)).toEqual(["要件"]);
@@ -92,7 +92,7 @@ test.describe.serial("プロジェクトのお品書き", () => {
 		expect(res.headers()["content-type"]).toContain("text/markdown");
 
 		const md = await res.text();
-		expect(md).toContain("お品書き");
+		expect(md).toContain("おしながき");
 		expect(md).toContain("## 要件");
 		expect(md).toContain("この案件で合意した範囲です。");
 		expect(md).toContain("3章が今回の変更点です。");
@@ -133,16 +133,16 @@ test.describe.serial("プロジェクトのお品書き", () => {
 		expect(scoped.documentCount).toBe(2);
 
 		const md = await (await request.get(`api/projects/${projectId}/manifest.md?folderId=${folderId}`, {headers: ro})).text();
-		expect(md).toContain("› 要件 お品書き");
+		expect(md).toContain("› 要件 おしながき");
 		expect(md).not.toContain("cover-");
 
-		// 無い章を指定したら404(空のお品書きを返して「資料が無い」と誤解させない)
+		// 無い章を指定したら404(空のおしながきを返して「資料が無い」と誤解させない)
 		expect((await request.get(`api/projects/${projectId}/manifest?folderId=no-such`, {headers: ro})).status()).toBe(404);
 		expect((await request.get(`api/projects/${projectId}/manifest.md?folderId=no-such`, {headers: ro})).status()).toBe(404);
 	});
 
-	// お品書きではフォルダがそのまま章の順番になる。作成順のままだと章立てを直せない
-	test("フォルダを並び替えると、お品書きの章の順番が変わる", async ({request}) => {
+	// おしながきではフォルダがそのまま章の順番になる。作成順のままだと章立てを直せない
+	test("フォルダを並び替えると、おしながきの章の順番が変わる", async ({request}) => {
 		const names = ["あとで読む", "先に読む"];
 		const ids = [];
 		for (const name of names) {
