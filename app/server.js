@@ -3657,7 +3657,7 @@ const requireMockups = async (req, res, next) => {
 		res.status(503).json({
 			error: setting.storageSupported
 				? "モックアップ機能は無効です(管理画面の「サーバー」タブ、または MOCKUPS_ENABLED=true で有効にできます)"
-				: "モックアップ機能はローカル保存の構成でのみ使えます(STORAGE_BACKEND=local)"
+				: "この構成ではモックアップ機能を使えません"
 		});
 	} catch (err) {
 		logger.error(err, "::requireMockups");
@@ -3701,7 +3701,7 @@ app.put(BASE_URL_PATH + 'api/features/mockups', requireAuth, requireAdmin, async
 		}
 		if (req.body.enabled && !MockupStorage.isEnabled()) {
 			// 開けても使えないので、設定を書く前に断る
-			res.status(409).json({error: "モックアップ機能はローカル保存の構成でのみ使えます(STORAGE_BACKEND=local)"});
+			res.status(409).json({error: "この構成ではモックアップ機能を使えません"});
 			return;
 		}
 		await AppSettings.setBoolean(AppSettings.KEYS.MOCKUPS_ENABLED, req.body.enabled, req.authData.user_identifier);
@@ -3821,8 +3821,9 @@ app.post(BASE_URL_PATH + 'api/mockups', requireAuth, requireWrite, requireMockup
 			throw err;
 		}
 
-		MockupStorage.writeFile(mockupId, MockupStorage.ZIP_FILE, upload.data);
-		if (previewName != null) MockupStorage.writeFile(mockupId, previewName, previewUpload.data);
+		// 原本を先に確定させる。展開したものは原本から作り直せるが、逆はできない
+		await MockupStorage.writeFile(mockupId, MockupStorage.ZIP_FILE, upload.data);
+		if (previewName != null) await MockupStorage.writeFile(mockupId, previewName, previewUpload.data);
 
 		// 全文検索用のテキスト。HTMLから抜くだけで、ビルド済みのJSに埋もれた文言は拾えない
 		const contentText = extractMockupText(mockupId, extracted.files);
@@ -3848,7 +3849,8 @@ app.post(BASE_URL_PATH + 'api/mockups', requireAuth, requireWrite, requireMockup
 		logger.error(err, "::api/mockups:upload");
 		if (mockupId != null && !registered) {
 			try {
-				MockupStorage.discard(mockupId, written);
+				await MockupStorage.discard(mockupId, written,
+					[MockupStorage.ZIP_FILE, previewName].filter((name) => name != null));
 				logger.info({mockupId}, "::api/mockups:upload:discard: 登録できなかったファイルを捨てました");
 			} catch (discardErr) {
 				logger.error({err: discardErr, mockupId}, "::api/mockups:upload:discard");
@@ -3918,7 +3920,7 @@ app.get(BASE_URL_PATH + 'api/mockups/:id/preview', requireAuth, requireMockups, 
 			res.status(404).json({error: "プレビュー画像はありません"});
 			return;
 		}
-		const buffer = MockupStorage.readFile(mockup.id, mockup.previewFile);
+		const buffer = await MockupStorage.readFile(mockup.id, mockup.previewFile);
 		if (buffer == null) {
 			setHTTPHeaders(res);
 			res.status(404).json({error: "プレビュー画像はありません"});
@@ -3944,7 +3946,7 @@ app.get(BASE_URL_PATH + 'api/mockups/:id/download', requireAuth, requireMockups,
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		const buffer = MockupStorage.readFile(mockup.id, MockupStorage.ZIP_FILE);
+		const buffer = await MockupStorage.readFile(mockup.id, MockupStorage.ZIP_FILE);
 		if (buffer == null) {
 			setHTTPHeaders(res);
 			res.status(404).json({error: "原本が見つかりません"});
@@ -4008,6 +4010,14 @@ app.get(BASE_URL_PATH + 'api/mockups/:id/view/:token/*', requireMockups, async (
 		if (mockup == null) {
 			setHTTPHeaders(res);
 			res.status(404).json({error: "not found"});
+			return;
+		}
+		// 展開したものはローカルの控え。登録した台と違う台に振られた場合や、コンテナを
+		// 作り直してローカルが空になった場合に備えて、無ければ原本から作り直してから配信する
+		if (!await MockupStorage.ensureSite(mockup.id)) {
+			setHTTPHeaders(res);
+			logger.error({mockupId: mockup.id}, "::api/mockups:view: 原本から展開できませんでした");
+			res.status(500).json({error: "Internal Error"});
 			return;
 		}
 		const target = MockupStorage.resolveSiteFile(mockup.id, req.params[0]);

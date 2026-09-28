@@ -339,18 +339,27 @@ class GcsStorage {
 	}
 }
 
-const createStorage = (documentsDir) => {
+/**
+ * 置き場所を1つ作る。
+ *
+ * @param localDir localのときに使う入れ物(絶対パス)
+ * @param prefix   s3/gcsのときのキーの先頭。既定は環境変数(文書用)。
+ *                 モックアップのように別の入れ物へ分けたいものは、ここで明示する
+ *                 (同じprefixに混ぜると、文書とファイルの突き合わせが互いを異物として拾う)
+ */
+const createStorage = (documentsDir, {prefix} = {}) => {
 	if (STORAGE_BACKEND === "s3") {
 		const bucket = process.env.S3_BUCKET;
 		const region = process.env.S3_REGION;
 		if (!bucket || !region) {
 			throw new Error("STORAGE_BACKEND=s3 の場合、S3_BUCKET と S3_REGION の指定が必須です");
 		}
-		logger.info({bucket, region, prefix: process.env.S3_PREFIX || "documents", endpoint: process.env.S3_ENDPOINT || null}, "storage backend: s3");
+		const keyPrefix = prefix || process.env.S3_PREFIX || "documents";
+		logger.info({bucket, region, prefix: keyPrefix, endpoint: process.env.S3_ENDPOINT || null}, "storage backend: s3");
 		return new S3Storage({
 			bucket,
 			region,
-			prefix: process.env.S3_PREFIX || "documents",
+			prefix: keyPrefix,
 			endpoint: process.env.S3_ENDPOINT || null
 		});
 	}
@@ -359,10 +368,11 @@ const createStorage = (documentsDir) => {
 		if (!bucket) {
 			throw new Error("STORAGE_BACKEND=gcs の場合、GCS_BUCKET の指定が必須です");
 		}
-		logger.info({bucket, prefix: process.env.GCS_PREFIX || "documents"}, "storage backend: gcs");
+		const keyPrefix = prefix || process.env.GCS_PREFIX || "documents";
+		logger.info({bucket, prefix: keyPrefix}, "storage backend: gcs");
 		return new GcsStorage({
 			bucket,
-			prefix: process.env.GCS_PREFIX || "documents"
+			prefix: keyPrefix
 		});
 	}
 	if (STORAGE_BACKEND !== "local") {
