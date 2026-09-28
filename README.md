@@ -264,7 +264,7 @@ document-manager/
 | `LISTEN_PORT` | `8080` | Listenポート |
 | `BASE_URL_PATH` | `/` | Express内部のルーティングprefix(通常は変更不要。リバースプロキシがprefixを剥がして転送する前提) |
 | `BASE_PATH` | `/document_management` | 外部公開時のパスprefix。ログイン/ログアウト/ホームの遷移先の組み立てに使用 |
-| `DATA_DIR` | `/data` | `DATABASE_BACKEND=sqlite`(既定)時のSQLite DBの保存先。`STORAGE_BACKEND=local`の場合は文書ファイルもここに保存される。`DATABASE_BACKEND=postgres`かつ`STORAGE_BACKEND`がs3/gcsなら永続ボリューム不要 |
+| `DATA_DIR` | `/data` | `DATABASE_BACKEND=sqlite`(既定)時のSQLite DBの保存先。`STORAGE_BACKEND=local`の場合は文書ファイルもここに保存される。**モックアップを使う場合は、置き場所がs3/gcsでも展開した控え(`mockups/<ID>/site/`)がここに置かれる**。`DATABASE_BACKEND=postgres`かつ`STORAGE_BACKEND`がs3/gcsなら永続ボリューム不要(モックアップの控えは失われても原本から作り直される) |
 | `DATABASE_BACKEND` | `sqlite` | メタデータDBのバックエンド。`sqlite`(単一コンテナ・`DATA_DIR`上のファイル)または`postgres`(マネージドPostgreSQL)。複数インスタンスで水平スケールする場合は`postgres`が必須(SQLiteは単一インスタンス前提。セッションもこのDBで共有される)。横断SSEに`LISTEN/NOTIFY`を使うため、水平スケール時は**RDS for PostgreSQL / Cloud SQL for PostgreSQL 推奨(Aurora PostgreSQLは`LISTEN/NOTIFY`非対応)**。詳細は[マルチクラウド構成の要点](#マルチクラウド構成の要点) |
 | `DATABASE_URL` | (postgres時に使用) | Postgres接続文字列(例: `postgres://user:pass@host:5432/dbname`)。`DATABASE_BACKEND=postgres`で未設定の場合は標準の`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`が使われる。スキーマは起動時に自動適用される(`schema_migrations`テーブルで適用済みバージョンを管理し、未適用のマイグレーションだけを順に適用する。詳細は[lib/schema-pg.js](app/lib/schema-pg.js)) |
 | `DATABASE_SSL` | (未設定) | `true`でPostgres接続にTLSを使う(マネージドPGで必要な場合)。証明書検証は行わない(`rejectUnauthorized:false`) |
@@ -293,6 +293,7 @@ document-manager/
 | `MEMO_MAX_CHARS` | `4000` | 文書メモの上限(文字数)。メモは文書一覧・検索の応答すべてに載るため、1件で応答を埋め尽くせないようにする安全弁 |
 | `PROJECT_NOTE_MAX_CHARS` | `500` | お品書きの説明書き1件の上限(文字数)。説明はプロジェクトのツリー取得の応答すべてに載るため、長文を持たせないための安全弁(長い説明は文書のメモ側に書く) |
 | `MOCKUPS_ENABLED` | (未設定=無効) | モックアップ機能の**既定値**。`true`でその環境の初期状態を有効にする。管理画面の「サーバー」タブで変更するとDBの値が優先される(再起動不要) |
+| `MOCKUP_STORAGE_PREFIX` | `mockups` | `STORAGE_BACKEND`がs3/gcsのときの、モックアップの原本を置くキーの先頭。文書側(`S3_PREFIX`/`GCS_PREFIX`、既定`documents`)と**必ず別にする**(同じにすると、文書とファイルの突き合わせが互いを身元不明のファイルとして拾う) |
 | `MOCKUP_VIEW_TOKEN_MINUTES` | `60` | モックアップ表示用の引換券の有効期限(分)。短くするとURLが漏れたときの露出は縮むが、長く開いたままにしていると途中で配信が止まる(開き直せば直る) |
 | `MOCKUP_MAX_TOTAL_BYTES` | `314572800` | モックアップZIPの**展開後**の合計サイズの上限(バイト。既定300MB)。ZIP爆弾に対する実質の防波堤で、`zlib`の`maxOutputLength`で頭打ちにするためヘッダーの偽装では抜けられない |
 | `MOCKUP_MAX_FILE_BYTES` | `52428800` | モックアップZIP内の1ファイルの上限(バイト。既定50MB) |

@@ -117,6 +117,9 @@ Google Antigravity 用の Skill も画面からダウンロードでき、「こ
 **構成は後から変えられます。** 既定では1コンテナで完結し、文書のメタデータは SQLite、ファイルは
 ローカルディスクに保存します。環境変数を変えるだけで、メタデータを PostgreSQL に、ファイルを S3 や
 GCS に移せるので、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)で複数インスタンス構成にもできます。
+モックアップも同じで、原本(ZIP)は S3・GCS に置けます。ただし1ページ開くたびに多数の小さなファイルを
+取りに行くため、**展開したものだけは各インスタンスのローカルに置いて**配信します。無ければ原本から
+作り直すので、台が増えてもコンテナを作り直しても動きます(そのぶん一時的にディスクを使います)。
 
 ## 構成
 
@@ -275,7 +278,7 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 | `SESSION_SECRET` | (ランダム) | セッションの署名鍵。必ず固定値を指定する |
 | `SESSION_MAX_AGE_HOURS` | `16` | ログインセッションの寿命(時間)。ログイン時点からの絶対時間で、操作しても延びない |
 | `BASE_PATH` | `/document_management` | 公開時のパスprefix |
-| `DATA_DIR` | `/data` | SQLite とローカル保存時の文書ファイルの置き場所 |
+| `DATA_DIR` | `/data` | SQLite とローカル保存時の文書ファイルの置き場所。モックアップを使う場合は、保存先がS3でも展開した控えがここに置かれます(失われても原本から作り直されます) |
 | `DATABASE_BACKEND` | `sqlite` | `sqlite` / `postgres`(複数インスタンス構成では必須) |
 | `DATABASE_URL` | (未設定) | PostgreSQL の接続文字列(標準の `PG*` 変数でも可) |
 | `STORAGE_BACKEND` | `local` | `local` / `s3` / `gcs` |
@@ -285,6 +288,7 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 | `CONTENT_TEXT_MAX_CHARS` | `300000` | 検索用に保存する本文の上限。超過分は検索対象外(ファイル自体は全て保存される) |
 | `MOCKUPS_ENABLED` | (未設定=無効) | モックアップ機能の既定値。管理画面からも切り替えられます |
 | `MOCKUP_MAX_TOTAL_BYTES` | `314572800` | モックアップZIPの展開後の合計サイズの上限(300MB) |
+| `MOCKUP_STORAGE_PREFIX` | `mockups` | S3/GCS利用時に、モックアップの原本を置くキーの先頭。文書側(既定 `documents`)とは必ず別にしてください |
 | `MOCKUP_VIEW_TOKEN_MINUTES` | `60` | モックアップを開いていられる時間(分)。切れても開き直せます |
 | `PROJECT_NOTE_MAX_CHARS` | `500` | お品書きの説明書き1件の上限(文字数) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を無効化(開発用。本番では使わない) |
