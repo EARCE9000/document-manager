@@ -212,10 +212,28 @@
 	#uploadDropZone:hover { border-color: #1a56db; color: #1a56db; }
 	#uploadDropZone.dragging { border-color: #1a56db; background: #eef3ff; color: #1a56db; }
 	#uploadDropZone .uploadHint { pointer-events: none; }
-	#uploadDropZone .uploadExt { font-size: 0.85em; color: #999; margin-top: 2px; }
+
+	/* 対応形式のTips。閉じている間は1行しか使わない */
+	#uploadFormats { margin-top: 6px; font-size: 0.78em; color: #777; }
+	#uploadFormats > summary {
+		cursor: pointer; list-style: none; padding: 2px 4px; border-radius: 4px;
+		color: #1a56db; width: fit-content;
+	}
+	#uploadFormats > summary::-webkit-details-marker { display: none; }
+	#uploadFormats > summary::before { content: "▸ "; }
+	#uploadFormats[open] > summary::before { content: "▾ "; }
+	#uploadFormats > summary:hover { background: #eef3ff; }
+	#uploadFormatsBody {
+		margin-top: 4px; padding: 8px 10px; background: #fafafa;
+		border: 1px solid #eee; border-radius: 4px; line-height: 1.6;
+	}
+	#uploadFormatsBody p { margin: 0 0 4px; word-break: break-all; }
+	#uploadFormatsBody b { color: #555; }
+	#uploadFormatsBody .uploadNote { color: #888; margin-top: 6px; }
 
 	/* 閲覧のみ(readonly)ロールでは書き込み系のUIを非表示にする */
 	#appShell.readOnlyMode #uploadDropZone,
+	#appShell.readOnlyMode #uploadFormats,
 	#appShell.readOnlyMode .archiveButton,
 	#appShell.readOnlyMode .tagEditButton,
 	#appShell.readOnlyMode .removeTagButton,
@@ -223,13 +241,15 @@
 	#appShell.readOnlyMode #menuVectorIndexLink { display: none !important; }
 
 	/* アーカイブ表示中はアップロードできない(通常一覧に戻ってから行う) */
-	#appShell.archiveMode #uploadDropZone { display: none !important; }
+	#appShell.archiveMode #uploadDropZone,
+	#appShell.archiveMode #uploadFormats { display: none !important; }
 
 	/* タグ体系表示中は検索・日付絞り込み・アップロードを出さず、体系表示に専念させる。
 	   管理ボタン(並び順の編集)はadminロールのみ表示する */
 	#appShell.tagTreeMode #filterRow,
 	#appShell.tagTreeMode #dateRangeRow,
 	#appShell.tagTreeMode #uploadDropZone,
+	#appShell.tagTreeMode #uploadFormats,
 	#appShell.tagTreeMode #semanticSearchToggleLabel { display: none !important; }
 
 	/* アーカイブ済み文書はベクトル索引から除外されるため、アーカイブ表示中はセマンティック検索を出さない */
@@ -1534,11 +1554,27 @@
 				</div>
 				<div id="uploadDropZone">
 					<div class="uploadHint">ここにファイルをドラッグ&amp;ドロップ<br>またはクリックして選択</div>
-					<div class="uploadExt">.html / .htm / .mhtml / .mht / .md / .markdown / .pdf / .svg / .png / .jpg / .jpeg / .csv / .tsv / .txt / .log / .json / .drawio / .xlsx / .docx / .pptx<br>設定・記法・図をテキストで書いたもの(.yaml / .xml / .sql / .toml / .ini / .srt / .vtt / .rst / .adoc / .tex / .mmd / .puml / .dot / .bpmn ほか)と、手順のスクリプト(.sh / .ps1)も置けます</div>
-					<div class="uploadExt">Excel / Word / PowerPoint は内容の概要をプレビューし、全文検索の対象になります(書式・図・グラフは再現しません)</div>
-					<div class="uploadExt">.drawio はそのままプレビューできます(画像は不要。一緒に画像を選んだ場合は、表示できないときの代わりに使われます)</div>
-					<input type="file" id="uploadfile" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.drawio,.xlsx,.xlsm,.docx,.docm,.pptx,.pptm" multiple style="display:none;">
+					<input type="file" id="uploadfile" accept=".html,.htm,.mhtml,.mht,.md,.markdown,.pdf,.svg,.png,.jpg,.jpeg,.csv,.tsv,.txt,.log,.json,.yaml,.yml,.xml,.sql,.ini,.conf,.cfg,.properties,.toml,.jsonl,.ndjson,.srt,.vtt,.rst,.adoc,.asciidoc,.tex,.mmd,.mermaid,.puml,.plantuml,.pu,.dot,.gv,.bpmn,.excalidraw,.sh,.ps1,.drawio,.xlsx,.xlsm,.docx,.docm,.pptx,.pptm" multiple style="display:none;">
 				</div>
+				<!-- 対応形式の説明は、置き場所そのものから出す。ここに全部並べると、
+				     いちばん大事な「ここに落とす」が説明に埋もれる。
+				     details にしているのは、開くまで幅も高さも使わないため。
+				     **ドロップ欄の外に置くこと**(中に入れると、開閉のクリックでファイル選択が開く) -->
+				<details id="uploadFormats">
+					<summary>対応している形式</summary>
+					<div id="uploadFormatsBody">
+						<p><b>文書・画像</b> .html .htm .mhtml .mht .md .markdown .pdf .svg .png .jpg .jpeg</p>
+						<p><b>表・テキスト</b> .csv .tsv .txt .log .json</p>
+						<p><b>設定・データ</b> .yaml .yml .xml .sql .ini .conf .cfg .properties .toml .jsonl .ndjson</p>
+						<p><b>字幕・文字起こし</b> .srt .vtt</p>
+						<p><b>文書の記法</b> .rst .adoc .asciidoc .tex</p>
+						<p><b>図</b> .drawio .mmd .mermaid .puml .plantuml .pu .dot .gv .bpmn .excalidraw</p>
+						<p><b>スクリプト</b> .sh .ps1</p>
+						<p><b>Office</b> .xlsx .xlsm .docx .docm .pptx .pptm</p>
+						<p class="uploadNote">Excel / Word / PowerPoint は<b>内容の概要</b>を表示します(書式・図・グラフは再現しません)。原本はダウンロードしてください。</p>
+						<p class="uploadNote">.drawio と .mmd は<b>図として描画</b>します(画像を用意する必要はありません)。</p>
+					</div>
+				</details>
 			</div>
 			<ul id="documentList"></ul>
 		</aside>
