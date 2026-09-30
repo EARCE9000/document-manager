@@ -2689,8 +2689,21 @@ const showDrawioPreview = (doc) => {
 	previewFrame.src = `./drawio-viewer.html?id=${encodeURIComponent(doc.id)}`;
 };
 
-// プレビューできる文書か(.drawio はプレビュー画像が無くてもビューアで描画できる)
-const canPreviewDocument = (doc) => doc.previewFile != null || extOfName(doc.entryFile) === "drawio";
+const MERMAID_EXTS = ["mmd", "mermaid"];
+
+// Mermaidの図は、テキストのまま見せずに同梱のMermaidでその場で描く。
+// 図のラベルにはHTMLを書けるため、ビューアのページは script-src 'self' のCSPで
+// 配信している(server.jsのDIAGRAM_VIEWER_CSP)。図の取得にログイン状態が要るので、
+// draw.ioと同じくオリジンを保ったまま読み込む
+const showMermaidPreview = (doc) => {
+	previewFrame.style.display = "block";
+	previewFrame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups");
+	previewFrame.src = `./mermaid-viewer.html?id=${encodeURIComponent(doc.id)}`;
+};
+
+// プレビューできる文書か(.drawio / .mmd はプレビュー画像が無くてもビューアで描画できる)
+const canPreviewDocument = (doc) =>
+	doc.previewFile != null || extOfName(doc.entryFile) === "drawio" || MERMAID_EXTS.includes(extOfName(doc.entryFile));
 
 // ビューアで描画できなかったときの退避先(添付画像があればそれ、無ければプレビュー不可)
 const showDrawioFallback = (request, doc) => {
@@ -2822,6 +2835,13 @@ const showPreview = (doc) => {
 	if (extOfName(doc.entryFile) === "drawio") {
 		previewTitle.textContent = doc.entryFile;
 		showDrawioPreview(doc);
+		return;
+	}
+
+	// .mmd / .mermaid も同じ考え方で、テキストのまま見せずに図として描く
+	if (MERMAID_EXTS.includes(extOfName(doc.entryFile))) {
+		previewTitle.textContent = doc.entryFile;
+		showMermaidPreview(doc);
 		return;
 	}
 

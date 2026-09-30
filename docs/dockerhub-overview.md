@@ -26,7 +26,8 @@ Node.js (Express) 製で、このイメージを起動するだけで動きま�
 
 扱うのは「1ファイルで完結する文書」です。設定ファイル(YAML・XML・TOML・INI)、字幕・文字起こし(SRT・VTT)、
 テキストで書く図(Mermaid・PlantUML・Graphviz)、手順のスクリプト(.sh・.ps1)もそのまま置けて、中身は全文検索の
-対象になります。主なものは HTML / MHTML / Markdown / PDF / 画像(SVG・PNG・JPEG) /
+対象になります。**Mermaid(.mmd)はテキストのままではなく図として描画します**(公式のライブラリを同梱しているため、
+外部へは出ません)。主なものは HTML / MHTML / Markdown / PDF / 画像(SVG・PNG・JPEG) /
 CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint に対応していて、どれも
 ダウンロードせずにブラウザ上でそのまま閲覧できます。Markdown や MHTML はサーバー側で見やすい形に
 変換し、PDF はブラウザ標準のビューアで開きます。Markdown の表は途中で折り返さずに表示し、

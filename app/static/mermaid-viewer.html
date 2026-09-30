@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Mermaid プレビュー</title>
+<!--
+	.mmd / .mermaid を画像化せずにブラウザ上で描画するためのページ。本体(index.html)の
+	プレビュー用iframeから `mermaid-viewer.html?id=<文書ID>` として読み込む。
+
+	Mermaidの図はラベルにHTMLを書けるため、図の中身は信用できない入力として扱う。
+	このページはサーバー側で `script-src 'self'` のCSPを付けて配信しており(server.js参照)、
+	図に仕込まれたインラインのスクリプトは実行されない。そのためスクリプトは全て外部ファイルに置く。
+
+	Mermaid本体は同梱しており、外部(CDN)への通信は行わない。
+-->
+<link rel="stylesheet" href="./mermaid-viewer.css">
+</head>
+<body>
+<div id="toolbar">
+	<button type="button" id="sourceToggle">元のテキストを見る</button>
+</div>
+<div id="viewer"></div>
+<pre id="source" hidden></pre>
+<div id="status">読み込み中...</div>
+<script src="./vendor/mermaid/mermaid.min.js"></script>
+<script src="./mermaid-viewer.js"></script>
+</body>
+</html>
