@@ -24,7 +24,9 @@ token-authenticated REST API designed for AI agents. Documentation below is in J
 社内の資料を1か所に集めて、探して、そのままブラウザで読むためのドキュメント管理サービスです。
 Node.js (Express) 製で、このイメージを起動するだけで動きます。
 
-扱うのは「1ファイルで完結する文書」です。HTML / MHTML / Markdown / PDF / 画像(SVG・PNG・JPEG) /
+扱うのは「1ファイルで完結する文書」です。設定ファイル(YAML・XML・TOML・INI)、字幕・文字起こし(SRT・VTT)、
+テキストで書く図(Mermaid・PlantUML・Graphviz)、手順のスクリプト(.sh・.ps1)もそのまま置けて、中身は全文検索の
+対象になります。主なものは HTML / MHTML / Markdown / PDF / 画像(SVG・PNG・JPEG) /
 CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint に対応していて、どれも
 ダウンロードせずにブラウザ上でそのまま閲覧できます。Markdown や MHTML はサーバー側で見やすい形に
 変換し、PDF はブラウザ標準のビューアで開きます。Markdown の表は途中で折り返さずに表示し、

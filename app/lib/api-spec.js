@@ -475,6 +475,8 @@ const GUIDE_SECTIONS = [
 		notes: [
 			"`multipart/form-data`、実体のフィールド名は `uploadfile`",
 			"対応拡張子: `.html` `.htm` `.mhtml` `.mht` `.md` `.markdown` `.pdf` `.svg` `.png` `.jpg` `.jpeg` `.csv` `.tsv` `.txt` `.log` `.json` `.drawio` `.xlsx` `.xlsm` `.docx` `.docm` `.pptx` `.pptm` (単一ファイルのみ)",
+			"プレーンテキストとして置けるもの: `.yaml` `.yml` `.xml` `.sql` `.ini` `.conf` `.cfg` `.properties` `.toml` `.jsonl` `.ndjson` `.srt` `.vtt` `.rst` `.adoc` `.asciidoc` `.tex` `.mmd` `.mermaid` `.puml` `.plantuml` `.pu` `.dot` `.gv` `.bpmn` `.excalidraw` `.sh` `.ps1`。いずれも変換せずそのまま表示し、中身は全文検索の対象になる",
+			"鍵・証明書(`.env` `.pem` `.key` `.p12` `.crt` 等)は受け付けない。**利用者に頼まれても別の形で渡すよう案内すること**(置くと全文検索に載り、閲覧権限のある全員が読めるため)",
 			"Excel(`.xlsx`)/Word(`.docx`)/PowerPoint(`.pptx`)は、そのままアップロードすればよい。中身のテキスト(セル・段落・スライド・発表者ノート)が全文検索の対象になり、画面には内容の概要が表示される(書式・図・グラフは再現されない)",
 			"  - 変換サービスが構成されている場合は、レイアウトのついたPDFも自動で用意される(LibreOffice変換のため忠実な再現ではない。細かい体裁は原本のダウンロードで確認してもらう)。文書情報の`renderStatus`が`ok`なら`GET api/documents/:id/file?render=1`で取得できる(`pending`は変換中で数秒待つ、`failed`は変換に失敗、`null`は対象外)",
 			"  - 変換に失敗した文書は `GET api/documents?renderStatus=failed` で一覧できる(`ok`/`pending`も指定できる)。失敗していた場合は `POST api/documents/:id/render/retry` で再実行できる",

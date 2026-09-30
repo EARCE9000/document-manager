@@ -807,7 +807,29 @@ const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
 const IMAGE_EXTENSIONS = [".svg", ".png", ".jpg", ".jpeg"];
 const CSV_EXTENSIONS = [".csv", ".tsv"];
-const PLAIN_TEXT_EXTENSIONS = [".txt", ".log", ".json"];
+// そのまま text/plain で出すもの。変換もプレビューの組み立ても要らず、元ファイル自体が
+// プレビューになる(buildPreviewFile の最後で originalName を返す)。中身は全文検索にも載る。
+//
+// **text/plain で配信することが前提**。ここに入れたものをブラウザに解釈させてはいけない。
+// 特に .xml 系は application/xml で返すとXSLTでスクリプトが動く余地がある。
+// .html/.htm/.svg は別扱い(CSPを付けて配信する ACTIVE_CONTENT_EXTENSIONS)。
+//
+// 鍵・証明書(.env .pem .key .p12 .crt 等)は**意図的に入れていない**。置けるようにすると
+// 置かれ、全文検索に載り、閲覧権限のある全員が読めるようになるため。
+const PLAIN_TEXT_EXTENSIONS = [
+	".txt", ".log", ".json",
+	// 設定・データ記述
+	".yaml", ".yml", ".xml", ".sql", ".ini", ".conf", ".cfg", ".properties", ".toml",
+	".jsonl", ".ndjson",
+	// 字幕・文字起こし(会議録画の書き起こしがそのまま入る)
+	".srt", ".vtt",
+	// Markdown以外の文書記法
+	".rst", ".adoc", ".asciidoc", ".tex",
+	// テキストで書く図。いまは文字として置けるだけだが、draw.ioと同じ要領で描画を足せる
+	".mmd", ".mermaid", ".puml", ".plantuml", ".pu", ".dot", ".gv", ".bpmn", ".excalidraw",
+	// 手順として渡すスクリプト。**読むためのもの**で、ここから実行されることはない
+	".sh", ".ps1"
+];
 const NATIVE_PREVIEW_EXTENSIONS = [".html", ".htm", ".pdf"];
 // draw.io のネイティブ形式。ブラウザでは直接描画できないため、実体(=ダウンロード対象)は
 // .drawio のまま保持し、プレビューはアップロード時に一緒に送られた画像(svg/png等)を用いる
@@ -894,6 +916,37 @@ const CONTENT_TYPE_BY_EXTENSION = {
 	".txt": "text/plain; charset=utf-8",
 	".log": "text/plain; charset=utf-8",
 	".json": "application/json; charset=utf-8",
+	// 下記はすべて text/plain で返す。ブラウザに解釈させないための既定であって、
+	// 正しいMIMEを知らないわけではない(例: .xml は application/xml だが、それで返すと
+	// XSLTの処理命令でスクリプトが動く余地がある)
+	".yaml": "text/plain; charset=utf-8",
+	".yml": "text/plain; charset=utf-8",
+	".xml": "text/plain; charset=utf-8",
+	".sql": "text/plain; charset=utf-8",
+	".ini": "text/plain; charset=utf-8",
+	".conf": "text/plain; charset=utf-8",
+	".cfg": "text/plain; charset=utf-8",
+	".properties": "text/plain; charset=utf-8",
+	".toml": "text/plain; charset=utf-8",
+	".jsonl": "text/plain; charset=utf-8",
+	".ndjson": "text/plain; charset=utf-8",
+	".srt": "text/plain; charset=utf-8",
+	".vtt": "text/plain; charset=utf-8",
+	".rst": "text/plain; charset=utf-8",
+	".adoc": "text/plain; charset=utf-8",
+	".asciidoc": "text/plain; charset=utf-8",
+	".tex": "text/plain; charset=utf-8",
+	".mmd": "text/plain; charset=utf-8",
+	".mermaid": "text/plain; charset=utf-8",
+	".puml": "text/plain; charset=utf-8",
+	".plantuml": "text/plain; charset=utf-8",
+	".pu": "text/plain; charset=utf-8",
+	".dot": "text/plain; charset=utf-8",
+	".gv": "text/plain; charset=utf-8",
+	".bpmn": "text/plain; charset=utf-8",
+	".excalidraw": "text/plain; charset=utf-8",
+	".sh": "text/plain; charset=utf-8",
+	".ps1": "text/plain; charset=utf-8",
 	".drawio": "application/xml; charset=utf-8",
 	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
