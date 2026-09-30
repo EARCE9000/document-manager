@@ -190,7 +190,20 @@ const makePgApi = (executor) => ({
 });
 
 const createPostgresDatastore = () => {
-	const {Pool, Client} = require("pg");
+	const pg = require("pg");
+	const {Pool, Client} = pg;
+
+	// BIGINT(int8)を数値として受け取る。
+	//
+	// pg は既定で int8 を**文字列**で返す(JavaScriptの数値で表せない値があるため)。
+	// そのままだと、同じAPIが構成によって型を変えてしまう。
+	//   SQLite : {"totalBytes": 325}
+	//   Postgres: {"totalBytes": "325"}
+	// 受け取る側(画面・CLI・AI)はどちらか一方しか想定しないので、ここで揃える。
+	//
+	// 桁あふれは実質起きない。この型を使っているのはファイルのバイト数とepoch msで、
+	// 安全に扱える上限(2^53-1)は約9ペタバイト・西暦28万年にあたる。
+	pg.types.setTypeParser(pg.types.builtins.INT8, (value) => (value == null ? null : Number(value)));
 
 	// 接続情報は DATABASE_URL(接続文字列) を優先。未指定なら pg が標準の
 	// PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE 環境変数を読む。
