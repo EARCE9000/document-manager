@@ -132,6 +132,31 @@ const OPERATIONS = [
 		produces: "application/octet-stream", aiGuide: false
 	},
 	{
+		id: "getDocumentByAlias", method: "get", path: "/api/documents/alias/:alias", role: "readonly", tag: "文書",
+		summary: "Aliasから、いまの版の文書を引く",
+		description: "Aliasは**版をまたいで変わらない共有用のID**。文書は更新のたびに新しいIDになるため、人に配るリンクにはこちらを使う。新しい版を上げると自動で新版を指すようになる",
+		responses: {404: "そのAliasが無い、または指す先の文書が無い"}
+	},
+	{
+		id: "moveAlias", method: "put", path: "/api/documents/alias/:alias", role: "readwrite", tag: "文書",
+		summary: "Aliasの指す先を変える(古い版へ戻すときに使う)",
+		description: "新しい版への引き継ぎは登録時に自動で行われる。これは**古い版へ戻したい**とき(新版が間違いだった等)のための操作。移動先の文書に既に別のAliasがあると409",
+		body: {schema: {type: "object", required: ["documentId"], properties: {documentId: {type: "string"}}}},
+		responses: {404: "そのAliasが無い、または文書が無い", 409: "移動先の文書に既に別のAliasがある"}
+	},
+	{
+		id: "createAlias", method: "post", path: "/api/documents/:id/alias", role: "readwrite", tag: "文書",
+		summary: "Aliasを持っていない文書へ発行する",
+		description: "登録時に自動で付くため通常は不要。つけなおしで矢印が外れた文書に付け直すときに使う。既にあればそれを返す",
+		responses: {404: "その文書が無い"}
+	},
+	{
+		id: "viewDocumentByAlias", method: "get", path: "/api/documents/alias/:alias/viewer", role: "public", tag: "文書",
+		summary: "Aliasで開く(人へのリンク共有用)",
+		description: "常に「いまの版」へ転送されるので、配ったリンクが古くならない。**人にURLを渡すときはこれを使う**",
+		produces: "application/octet-stream", aiGuide: false
+	},
+	{
 		id: "retryRender", method: "post", path: "/api/documents/:id/render/retry", role: "readwrite", tag: "文書",
 		summary: "体裁つき表示(PDF変換)の再実行",
 		description: "変換サービスが停止していた・タイムアウトした場合に使う。対象は xlsx / docx / pptx。変換サービスが設定されていなければ503",
@@ -491,6 +516,22 @@ const GUIDE_SECTIONS = [
 		entries: [
 			{id: "getDocument", trail: "文書1件のメタ情報(アーカイブ済みも取得でき、`archived` で判別できる)"},
 			{id: "listVersions", trail: "その文書を含む一連の版を古い順に返す"}
+		]
+	},
+	{
+		title: "共有用のリンク(Alias)", roleNote: "参照は readonly 以上。指す先の変更は admin/readwrite",
+		entries: [
+			{id: "getDocumentByAlias", trail: "Aliasから、いまの版の文書を引く"},
+			{id: "moveAlias", trail: "Aliasの指す先を変える(古い版へ戻すとき)"},
+			{id: "createAlias", trail: "Aliasを持っていない文書へ発行する(通常は不要)"}
+		],
+		notes: [
+			"**人にURLを渡すときは、必ずAliasのリンクを使うこと。** 文書IDのURLはその版を指したままになり、更新すると受け取った側が古い版を見続けることになる",
+			"渡す形: `<ベースURL>/api/documents/alias/<alias>/viewer`。`alias` は文書の応答に入っている",
+			"Aliasは登録時に自動で付き、**新しい版を上げると自動でそちらを指す**。何もしなくてよい",
+			"逆に「この版を見てほしい」と明示したいときだけ、文書IDのURL(`/api/documents/<文書ID>/viewer`)を渡す",
+			"新しい版が間違いだったなど、**古い版へ戻したい**ときは `moveAlias` で指す先を変える。矢印が外れた文書のAliasは無くなるので、必要なら `createAlias` で付け直す",
+			"文書1つにつきAliasは1つ。既にAliasのある文書へ別のAliasを向けようとすると409になる"
 		]
 	},
 	{

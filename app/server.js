@@ -805,6 +805,7 @@ const MockupStorage = require("./lib/mockup-storage.js");
 const MockupZip = require("./lib/mockup-zip.js");
 const MockupToken = require("./lib/mockup-token.js");
 const AppSettings = require("./lib/app-settings.js");
+const DocumentAliases = require("./lib/document-aliases.js");
 
 const MHTML_EXTENSIONS = [".mhtml", ".mht"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
@@ -1450,6 +1451,8 @@ const toDocumentResponse = async (row) => ({
 	memo: row.memo,
 	previousId: row.previous_id ?? null,
 	nextId: (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [row.id]))?.id ?? null,
+	// 版をまたいで変わらない共有用のID。人に渡すリンクはこちらを使う
+	alias: await DocumentAliases.aliasOf(row.id),
 	contentTruncated: row.content_truncated === 1,
 	contentTextMaxChars: CONTENT_TEXT_MAX_CHARS,
 	// 体裁つき表示(PDF変換)の状態。null=対象外、pending/ok/failed
@@ -1470,6 +1473,8 @@ const toDeletedDocumentResponse = async (row) => ({
 	memo: row.memo,
 	previousId: row.previous_id ?? null,
 	nextId: (await ds.get(SQL_SELECT_NEXT_VERSION_ID, [row.id]))?.id ?? null,
+	// 版をまたいで変わらない共有用のID。人に渡すリンクはこちらを使う
+	alias: await DocumentAliases.aliasOf(row.id),
 	tags: (await ds.all(SQL_SELECT_TAGS_BY_DOCUMENT_ID, [row.id])).map((tagRow) => tagRow.tag)
 });
 
@@ -2140,6 +2145,17 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 		// ここまで来たらDBへの登録は終わっている。以降で何が起きてもファイルは捨てない
 		registered = true;
 
+		// 共有用のAlias。旧版があれば矢印をこちらへ向け直し、無ければ新しく発行する。
+		// これに失敗しても登録自体は成功させる(共有リンクが1つ無いだけで、文書は使える。
+		// 起動時のバックフィルで拾われる)
+		try {
+			await (previousId != null
+				? DocumentAliases.inherit(previousId, id)
+				: DocumentAliases.assign(id));
+		} catch (err) {
+			logger.error({err, documentId: id}, "::api/documents:upload:alias");
+		}
+
 		// ベクトル検索(Weaviate)への索引登録はベストエフォート・非同期(埋め込み計算に数秒
 		// かかるため、awaitせずバックグラウンドで実行しアップロードAPIの応答をブロックしない。
 		// WEAVIATE_URL未設定/接続失敗でもアップロード自体は成功させる。詳細はlib/vector-search.js参照)
@@ -2291,6 +2307,110 @@ app.get(BASE_URL_PATH + 'api/documents/:id/file', requireAuth, async (req, res) 
 		await serveDocumentFile(req, res);
 	} catch (err) {
 		handleServeFileError(err, req, res, "::api/documents/:id/file");
+	}
+});
+
+/**
+ * Alias(版をまたいで変わらない共有用のID)。
+ *
+ * 文書は更新のたびに新しいIDになるため、人に配ったリンクが古い版を指したままになる。
+ * Aliasは「いまの版」を指す矢印で、新しい版を上げるとそちらへ向け直される。
+ *
+ * **`api/documents/:id/...` より前に置くこと。** 後ろに置くと "alias" が文書IDとして
+ * 拾われ、ここへ到達しない。
+ */
+app.get(BASE_URL_PATH + 'api/documents/alias/:alias', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const documentId = await DocumentAliases.resolve(req.params.alias);
+		if (documentId == null) {
+			res.status(404).json({error: "そのAliasはありません"});
+			return;
+		}
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [documentId]);
+		if (document == null) {
+			// 矢印だけ残って先が無い(実質起きないが、黙って200を返さない)
+			logger.warn({alias: req.params.alias, documentId}, "::api/documents/alias: 指す先の文書がありません");
+			res.status(404).json({error: "そのAliasが指す文書がありません"});
+			return;
+		}
+		res.status(200).json(await toDocumentResponse(document));
+	} catch (err) {
+		logger.error(err, "::api/documents/alias/:alias");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * Aliasの指す先を変える(admin/readwrite)。
+ *
+ * 新しい版への引き継ぎは登録時に自動で行うが、**古い版へ戻したい**ことがある
+ * (新しい版が間違いだった、等)。そのための明示的な操作。
+ */
+app.put(BASE_URL_PATH + 'api/documents/alias/:alias', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const documentId = String(req.body?.documentId ?? "").trim();
+		if (documentId === "") {
+			res.status(400).json({error: "documentId を指定してください"});
+			return;
+		}
+		if (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [documentId]) == null) {
+			res.status(404).json({error: "その文書がありません"});
+			return;
+		}
+		const result = await DocumentAliases.moveTo(req.params.alias, documentId);
+		if (result === "not_found") {
+			res.status(404).json({error: "そのAliasはありません"});
+			return;
+		}
+		if (result === "already_has_alias") {
+			// 黙って2本目を作ると、共有リンクをコピーするときにどちらを出すか決められない
+			res.status(409).json({error: "その文書には既に別のAliasがあります。文書1つにつきAliasは1つです"});
+			return;
+		}
+		logger.info({audit: "alias_move", user: req.authData.user_identifier, alias: req.params.alias, documentId}, "audit");
+		res.status(200).json(await DocumentAliases.get(req.params.alias));
+	} catch (err) {
+		logger.error(err, "::api/documents/alias/:alias:put");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** Aliasを持っていない文書へ発行する(つけなおしで矢印が外れた文書など) */
+app.post(BASE_URL_PATH + 'api/documents/:id/alias', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]) == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const alias = await DocumentAliases.assign(req.params.id);
+		res.status(200).json(await DocumentAliases.get(alias));
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/alias:post");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * Aliasで開く(人がブラウザで開く・URLを共有する用)。
+ * 常に「いまの版」へ転送されるので、配ったリンクが古くならない。
+ */
+app.get(BASE_URL_PATH + 'api/documents/alias/:alias/viewer', async (req, res) => {
+	try {
+		const documentId = await DocumentAliases.resolve(req.params.alias);
+		if (documentId == null) {
+			// ログインの有無に関わらず、無いものは無いと答える(存在の有無は秘密ではない)
+			setHTTPHeaders(res);
+			res.status(404).json({error: "そのAliasはありません"});
+			return;
+		}
+		// 認証と表示は既存のviewerに任せる(ログイン迂回・.drawio/.mmdのビューアへの転送も同じ)
+		res.redirect(`../../${encodeURIComponent(documentId)}/viewer`);
+	} catch (err) {
+		logger.error(err, "::api/documents/alias/:alias/viewer");
+		res.status(500).json({error: "Internal Error"});
 	}
 });
 
@@ -2599,6 +2719,14 @@ app.put(BASE_URL_PATH + 'api/documents/:id/previous', requireAuth, requireWrite,
 				await tx.run(SQL_DELETE_DOCUMENT_FTS, [previousId]);
 			}
 		});
+
+		// 旧版に付いていた共有用のAliasを、新版へ向け直す。
+		// 既に配られているリンクが古い版を指したままにならないようにするため
+		try {
+			await DocumentAliases.inherit(previousId, document.id);
+		} catch (err) {
+			logger.error({err, documentId: document.id}, "::api/documents/:id/previous:alias");
+		}
 
 		if (archivedPrevious) {
 			VectorSearch.removeDocument(previousId).catch((err) => logger.error({err, documentId: previousId}, "::api/documents/:id/previous:removePreviousDocument"));
@@ -4233,6 +4361,15 @@ const main = async () => {
 	if (!AUTH_DISABLED) {
 		oidcConfig = await initOidcClient();
 	}
+	// この仕組みより前に登録された文書にはAliasが無い。画面に共有リンクのボタンを出す以上、
+	// 「古い文書だけ押せない」を作らないよう、受け付けを始める前に埋める。
+	// 失敗しても起動は続ける(共有リンクが無いだけで、文書は読める)
+	try {
+		await DocumentAliases.backfill();
+	} catch (err) {
+		logger.error({err}, "::main:aliasBackfill");
+	}
+
 	server.listen(LISTEN_PORT);
 	logger.info({LISTEN_PORT}, "server started on port");
 	// 前回の起動時に強制終了等でバックグラウンド処理中(processing)のまま残った文書があれば

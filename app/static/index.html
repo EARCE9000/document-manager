@@ -1582,8 +1582,13 @@
 			<div id="previewToolbar">
 				<span id="previewTitle">左の一覧から文書を選択してください。</span>
 				<div id="previewToolbarActions">
-					<button type="button" id="copyLinkButton" class="previewActionButton" title="リンクをコピー" aria-label="リンクをコピー" style="display:none;">
+					<button type="button" id="copyLinkButton" class="previewActionButton" title="共有リンクをコピー(常に最新版を指します)" aria-label="共有リンクをコピー" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+					</button>
+					<!-- 「いまの最新」ではなく「この版」を指したいことがある(レビュー依頼・議事録への引用)。
+					     栞のアイコンにしているのは、鎖が2つ並ぶとどちらがどちらか分からないため -->
+					<button type="button" id="copyVersionLinkButton" class="previewActionButton" title="この版のリンクをコピー(更新しても、この版を指したままになります)" aria-label="この版のリンクをコピー" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
 					</button>
 					<a id="downloadLink" href="#" class="previewActionButton" title="ダウンロード" aria-label="ダウンロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -2103,6 +2108,27 @@ const previewFrame = document.getElementById("previewFrame");
 const previewTitle = document.getElementById("previewTitle");
 const downloadLink = document.getElementById("downloadLink");
 const copyLinkButton = document.getElementById("copyLinkButton");
+const copyVersionLinkButton = document.getElementById("copyVersionLinkButton");
+
+// 人に渡すリンクは2種類ある。
+//   共有リンク(Alias) … 版をまたいで変わらない。更新すると自動で新しい版を指す
+//   この版のリンク    … その版を指したまま。更新しても動かない
+// 既定は共有リンク。Aliasを持たない文書(つけなおしで矢印が外れたもの)では出さない
+const aliasViewerUrl = (alias) =>
+	new URL(`./api/documents/alias/${encodeURIComponent(alias)}/viewer`, window.location.href).href;
+const versionViewerUrl = (documentId) =>
+	new URL(`./api/documents/${encodeURIComponent(documentId)}/viewer`, window.location.href).href;
+
+// 別ウィンドウで開くときも、Aliasがあればそちらを使う。
+// 開いた先のURLをそのまま人に渡せるようにするため(アドレスバーを見て貼る人がいる)
+const openViewerUrl = (doc) => doc && doc.alias ? aliasViewerUrl(doc.alias) : versionViewerUrl(doc.id);
+
+// 文書IDしか手元に無い場所(一覧のカード・ツリーの行)から開くとき用。
+// 一覧に無ければ版のURLへ落とす(開けないよりはよい)
+const openViewerUrlById = (documentId) => {
+	const found = allDocuments.find((item) => item.id === documentId);
+	return found ? openViewerUrl(found) : versionViewerUrl(documentId);
+};
 const previewTagEditButton = document.getElementById("previewTagEditButton");
 const previewArchiveButton = document.getElementById("previewArchiveButton");
 const previewRestoreButton = document.getElementById("previewRestoreButton");
@@ -2774,6 +2800,7 @@ const clearPreview = () => {
 	previewOpenExternalBox.style.display = "none";
 	downloadLink.style.display = "none";
 	copyLinkButton.style.display = "none";
+	copyVersionLinkButton.style.display = "none";
 	previewReviseButton.style.display = "none";
 	previewRenderButton.style.display = "none";
 	previewLinkPreviousButton.style.display = "none";
@@ -2804,13 +2831,17 @@ const showPreview = (doc) => {
 
 	downloadLink.href = `./api/documents/${encodeURIComponent(doc.id)}/file?download=1`;
 	downloadLink.style.display = "inline-flex";
-	copyLinkButton.style.display = "inline-flex";
+	// ダウンロード用リンク(api/documents/:id/file)はAPIキー連携クライアント向けで、
+	// 未ログイン状態で開くとJSONの401が出るだけで復帰できない。人にURLを共有する場合は
+	// 未ログイン時にログイン画面へ迂回できるviewerのリンクをコピーする
+	copyLinkButton.style.display = doc.alias ? "inline-flex" : "none";
 	copyLinkButton.onclick = () => {
-		// ダウンロード用リンク(api/documents/:id/file)はAPIキー連携クライアント向けで、
-		// 未ログイン状態で開くとJSONの401が出るだけで復帰できない。人にURLを共有する場合は
-		// 未ログイン時にログイン画面へ迂回できるviewerのリンクをコピーする
-		const viewerUrl = new URL(`./api/documents/${encodeURIComponent(doc.id)}/viewer`, window.location.href).href;
-		copyTextWithIconFeedback(viewerUrl, copyLinkButton);
+		if (!doc.alias) return;
+		copyTextWithIconFeedback(aliasViewerUrl(doc.alias), copyLinkButton);
+	};
+	copyVersionLinkButton.style.display = "inline-flex";
+	copyVersionLinkButton.onclick = () => {
+		copyTextWithIconFeedback(versionViewerUrl(doc.id), copyVersionLinkButton);
 	};
 
 	// タグ編集・アーカイブは通常表示の文書のみ、元に戻すはアーカイブ表示の文書のみ対象。
@@ -2900,7 +2931,7 @@ const showPreview = (doc) => {
 		previewFrame.removeAttribute("src");
 		previewOpenExternalMessage.textContent = `${doc.entryFile} は別ウィンドウで開いて確認してください。`;
 		previewOpenExternalButton.onclick = () => {
-			window.open(`./api/documents/${encodeURIComponent(doc.id)}/viewer`, "_blank");
+			window.open(openViewerUrl(doc), "_blank");
 		};
 		previewOpenExternalBox.style.display = "flex";
 		return;
@@ -3122,7 +3153,7 @@ const renderDocumentList = () => {
 	documentList.querySelectorAll(".openButton").forEach((btn) => {
 		btn.addEventListener("click", (ev) => {
 			ev.stopPropagation();
-			window.open(`./api/documents/${encodeURIComponent(btn.dataset.id)}/viewer`, "_blank");
+			window.open(openViewerUrlById(btn.dataset.id), "_blank");
 		});
 	});
 	documentList.querySelectorAll(".tagEditButton").forEach((btn) => {
@@ -3223,7 +3254,8 @@ const wireDocumentListItemButtons = (container) => {
 	container.querySelectorAll(".openButton").forEach((btn) => {
 		btn.addEventListener("click", (ev) => {
 			ev.stopPropagation();
-			window.open(`./api/documents/${encodeURIComponent(btn.dataset.id)}/viewer`, "_blank");
+			// Aliasがあればそちらで開く(開いた先のURLをそのまま人へ渡せるようにするため)
+			window.open(openViewerUrlById(btn.dataset.id), "_blank");
 		});
 	});
 	container.querySelectorAll(".tagEditButton").forEach((btn) => {
@@ -4309,7 +4341,7 @@ const renderProjectTree = () => {
 		btn.addEventListener("click", (ev) => {
 			ev.stopPropagation();
 			if (btn.disabled) return;
-			window.open(`./api/documents/${encodeURIComponent(btn.dataset.documentId)}/viewer`, "_blank");
+			window.open(openViewerUrlById(btn.dataset.documentId), "_blank");
 		});
 	});
 	projectTreeList.querySelectorAll(".removeDocButton").forEach((btn) => {

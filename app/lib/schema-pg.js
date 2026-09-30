@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 -- モックアップ(ビルド済みの静的サイト一式。docs/mockup.md 参照)。
 -- 文書とは別のコレクションとして扱う。全文検索は content_text への ILIKE で行う
+CREATE TABLE IF NOT EXISTS document_aliases (
+	alias TEXT PRIMARY KEY,
+	document_id TEXT NOT NULL UNIQUE,
+	created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mockups (
 	id TEXT PRIMARY KEY,
 	name TEXT NOT NULL,
@@ -277,6 +283,15 @@ const MIGRATIONS = [
 		ALTER TABLE mockups ADD COLUMN IF NOT EXISTS updated_at TEXT;
 		UPDATE mockups SET updated_at = uploaded_at WHERE updated_at IS NULL;
 		CREATE INDEX IF NOT EXISTS idx_mockups_updated_at ON mockups (updated_at);
+	`},
+	// 版をまたいで変わらない共有用のID(v19相当)。
+	// 既存の文書へのAlias付与は、サーバ起動時のバックフィルで行う
+	{version: 11, sql: `
+		CREATE TABLE IF NOT EXISTS document_aliases (
+			alias TEXT PRIMARY KEY,
+			document_id TEXT NOT NULL UNIQUE,
+			created_at TEXT NOT NULL
+		);
 	`}
 ];
 
