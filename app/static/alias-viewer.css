@@ -25,7 +25,7 @@ body {
 	background: #fff;
 }
 
-#updateBar {
+#updateBar, #authBar {
 	display: flex;
 	align-items: center;
 	gap: 10px;
@@ -35,10 +35,19 @@ body {
 	border-bottom: 1px solid #f0d58c;
 	color: #8a6d00;
 }
-#updateBar[hidden] { display: none; }
-#updateMessage { flex: 1; }
+#updateBar[hidden], #authBar[hidden] { display: none; }
+#updateMessage, #authMessage { flex: 1; }
 
-#updateBar button {
+/* 版の知らせ(やること有り)と取り違えないよう、色を分ける */
+#authBar {
+	background: #fdf2f2;
+	border-bottom-color: #e8b4b4;
+	color: #8a2b2b;
+}
+#authBar button { border-color: #d89a9a; color: #8a2b2b; }
+#authBar button:hover { background: #fbe4e4; }
+
+#updateBar button, #authBar button {
 	font: inherit;
 	font-size: 12px;
 	padding: 4px 10px;
@@ -58,5 +67,5 @@ body {
 
 @media print {
 	/* 印刷するのは文書であって、この帯ではない */
-	#updateBar, #status { display: none !important; }
+	#updateBar, #authBar, #status { display: none !important; }
 }

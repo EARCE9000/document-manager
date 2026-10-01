@@ -204,6 +204,38 @@ test.describe.serial("共有リンクで開いた文書(実ブラウザ)", () =>
 		await expect(page.frameLocator("#content").locator("body")).toContainText("次の本文");
 	});
 
+	// 共有リンクは「開いて、しばらく読む」使われ方をする。その間に期限は切れる。
+	// 切れたことに気づけないと、古い版を最新だと思って読み続けることになる
+	test("読んでいる途中で期限が切れたら、画面を奪わずに知らせる", async ({request, page, context}) => {
+		const v1 = await upload(request, `期限切れ${STAMP}.txt`, "読みかけの本文");
+		await openShared(page, v1.alias);
+		await expect(page.frameLocator("#content").locator("body")).toContainText("読みかけの本文");
+
+		// ログインの期限が切れた状態を作る(開いているSSEは繋がったまま、要求だけが401になる)
+		await context.clearCookies();
+		await upload(request, `期限切れ${STAMP}.txt`, "読み手には見えない新しい本文", v1.id);
+
+		await expect(page.locator("#authBar"), "期限切れに気づけない").toBeVisible({timeout: 15000});
+		// 読んでいたものはそのまま。画面も飛ばされない
+		await expectWrapped(page, v1.alias);
+		await expect(page.frameLocator("#content").locator("body")).toContainText("読みかけの本文");
+		// 確かめる手段が無い以上、版の知らせは出さない(押しても読み込めない)
+		await expect(page.locator("#updateBar"), "当てにならない知らせを出している").toBeHidden();
+	});
+
+	test("期限切れの帯を押すと、ログインへ送って共有リンクへ戻す", async ({request, page, context}) => {
+		const v1 = await upload(request, `押してログイン${STAMP}.txt`, "本文");
+		await openShared(page, v1.alias);
+		await context.clearCookies();
+		await upload(request, `押してログイン${STAMP}.txt`, "新しい本文", v1.id);
+		await expect(page.locator("#authBar")).toBeVisible({timeout: 15000});
+
+		const toLogin = page.waitForRequest((r) => r.url().includes("/login?next="), {timeout: 15000});
+		await page.click("#authLoginButton");
+		const next = new URL((await toLogin).url()).searchParams.get("next");
+		expect(next, "ログイン後の戻り先が共有リンクになっていない").toBe(`/api/documents/alias/${v1.alias}/viewer`);
+	});
+
 	test("無い共有リンクは、黙って白紙にせず案内を出す", async ({page}) => {
 		await page.goto("alias-viewer.html?alias=000000000000");
 		await expect(page.locator("#status")).toBeVisible();

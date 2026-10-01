@@ -60,6 +60,8 @@ const updateBar = document.getElementById("updateBar");
 const updateMessage = document.getElementById("updateMessage");
 const reloadButton = document.getElementById("reloadButton");
 const dismissButton = document.getElementById("dismissButton");
+const authBar = document.getElementById("authBar");
+const authLoginButton = document.getElementById("authLoginButton");
 
 // いま出している版。これと指す先が食い違ったら、新しい版が出たということ
 let shownDocumentId = null;
@@ -105,10 +107,27 @@ const announce = (document_) => {
 	updateBar.hidden = false;
 };
 
+/**
+ * 読んでいる途中でログインの期限が切れたときの知らせ。
+ *
+ * **画面は奪わない。** 文書は既に出ており、そのまま読み終えられる。いきなり
+ * ログイン画面へ飛ばすと読んでいた位置を失うので、帯で知らせて、押されたときだけ送る。
+ * 版の知らせはもう当てにならない(確かめる手段が無い)ので、出ていれば引っ込める
+ */
+const announceAuthExpired = () => {
+	if (!authBar.hidden) return;
+	updateBar.hidden = true;
+	authBar.hidden = false;
+};
+
 const checkForUpdate = async () => {
 	if (shownDocumentId == null) return;
 	// ここでの失敗は黙って見送る。読んでいる最中に通信の都合で警告を出しても何もできない
 	const result = await resolveAlias().catch(() => null);
+	if (result?.status === 401) {
+		announceAuthExpired();
+		return;
+	}
 	if (result?.document == null || result.document.id === shownDocumentId) return;
 	announce(result.document);
 };
@@ -129,6 +148,9 @@ reloadButton.addEventListener("click", async () => {
 
 // 「あとで」も選べるようにする。帯が消せないと、読んでいる間ずっと場所を取る
 dismissButton.addEventListener("click", () => { updateBar.hidden = true; });
+
+// ここは利用者が自分で押している。読んでいた位置を失う覚悟の上なので、そのまま送る
+authLoginButton.addEventListener("click", () => { goToLogin(); });
 
 const start = async () => {
 	if (alias === "") {
@@ -154,6 +176,21 @@ const start = async () => {
 	// 受け取るのは「何か変わった」だけなので、そのたびに指す先を引き直して確かめる
 	const events = new EventSource(urlOf("api/documents/events"));
 	events.addEventListener("documents-changed", () => { checkForUpdate(); });
+
+	// 繋ぎ直せないときは、期限切れかどうかを確かめる。
+	// EventSourceは繋ぎ直しのたびにerrorを投げるので、確かめるのは一度に一つだけにする
+	// (通信が落ちているだけのときは何も言わない。401を見たときだけ知らせる)
+	let probing = false;
+	events.addEventListener("error", async () => {
+		if (probing || !authBar.hidden) return;
+		probing = true;
+		try {
+			const result = await resolveAlias().catch(() => null);
+			if (result?.status === 401) announceAuthExpired();
+		} finally {
+			probing = false;
+		}
+	});
 
 	// SSEが切れたまま気づかない場合に備えて、画面に戻ってきたときにも確かめる
 	document.addEventListener("visibilitychange", () => {

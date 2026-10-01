@@ -25,6 +25,14 @@
 	<button type="button" id="reloadButton">最新を読み込む</button>
 	<button type="button" id="dismissButton" title="閉じる" aria-label="閉じる">×</button>
 </div>
+<!--
+	ログインの期限が切れたときの帯。読んでいる途中で画面を奪わず、知らせるだけにする。
+	閉じるボタンは付けない(通知ではなく、続いている状態のため)
+-->
+<div id="authBar" hidden>
+	<span id="authMessage">ログインの期限が切れました。このまま読めますが、更新の確認はできません。</span>
+	<button type="button" id="authLoginButton">ログインし直す</button>
+</div>
 <iframe id="content" sandbox="allow-same-origin" title="文書の内容"></iframe>
 <div id="status">読み込み中...</div>
 <script src="./alias-viewer.js"></script>
