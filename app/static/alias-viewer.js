@@ -16,6 +16,28 @@
  * 動かない(本体の画面が同じことをしている)。
  */
 
+/**
+ * 文書の中身を出す枠の権限。
+ *
+ * スクリプトは**動かさない**(文書の中身は信用できない入力。配信側もCSPで止めている)。
+ * ただし**リンクは辿れないといけない**。枠に入れる前は文書そのものが開いていたので、
+ * 中のリンクは普通に押せていた。枠のままだと行き先が枠の中になり、同じ出どころなら
+ * 画面が入れ子で開き(しかもスクリプトが動かないので壊れて見える)、外部ならCSPで
+ * 止まって**何も起きない**。どちらも壊れているようにしか見えない(実際にそうなった)。
+ *
+ * そこで下の promoteLinks で、行き先のあるリンクには「画面ごと移動する」印を付ける。
+ * 移動の許可はいずれも**人が押したときだけ**効く。枠の中でスクリプトが動かない以上、
+ * 勝手に飛ばされることはなく、枠に入れる前にできたことを超えてもいない
+ */
+const INERT_SANDBOX = [
+	"allow-same-origin",
+	// 元から target="_blank" のリンク。開いた先で中身が死なないよう、枠の制限は引き継がせない
+	"allow-popups",
+	"allow-popups-to-escape-sandbox",
+	// promoteLinks が付ける target="_top"。押したときだけ全体が移動する
+	"allow-top-navigation-by-user-activation"
+].join(" ");
+
 const DRAWIO_EXTS = ["drawio"];
 const MERMAID_EXTS = ["mmd", "mermaid"];
 const extOf = (name) => String(name || "").split(".").pop().toLowerCase();
@@ -51,10 +73,35 @@ const frameFor = (document_) => {
 		return {src: urlOf(`mermaid-viewer.html?id=${id}`), sandbox: "allow-scripts allow-same-origin allow-popups"};
 	}
 	// それ以外(テキスト・HTML)は中身をそのまま出す。スクリプトは動かさない
-	return {src: urlOf(`api/documents/${id}/file`), sandbox: "allow-same-origin"};
+	return {src: urlOf(`api/documents/${id}/file`), sandbox: INERT_SANDBOX};
 };
 
 const content = document.getElementById("content");
+
+/**
+ * 枠の中のリンクを、画面ごと移動するようにする(枠に入れる前と同じ辿り方に戻す)。
+ *
+ * 文書は必ず同じ出どころから出しているので、親から触れる。やるのは属性を足すだけで、
+ * 中身を読んで何かするわけではない。
+ * **ページ内の見出しへのリンク(#)は触らない。** あれは枠の中で効くのが正しく、
+ * 画面ごと移動させると長い文書の目次が全部おかしくなる
+ */
+const promoteLinks = () => {
+	let frameDocument = null;
+	try {
+		frameDocument = content.contentDocument;
+	} catch (err) {
+		return;   // 別の出どころへ移った後。触れないし、触る必要も無い
+	}
+	if (frameDocument == null) return;
+	for (const link of frameDocument.querySelectorAll("a[href]")) {
+		if (link.getAttribute("target") != null) continue;
+		if ((link.getAttribute("href") || "").startsWith("#")) continue;
+		link.setAttribute("target", "_top");
+	}
+};
+
+content.addEventListener("load", promoteLinks);
 const status = document.getElementById("status");
 const updateBar = document.getElementById("updateBar");
 const updateMessage = document.getElementById("updateMessage");

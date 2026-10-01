@@ -136,6 +136,38 @@ test.describe.serial("共有リンクで開いた文書(実ブラウザ)", () =>
 		await expect(page.frameLocator("#content").locator("#viewer svg")).toBeAttached({timeout: 20000});
 	});
 
+	// 枠に入れる前は文書そのものが開いていたので、中のリンクは普通に辿れていた。
+	// 枠に入れた途端に押しても何も起きなくなり、壊れているようにしか見えなくなった
+	test("文書の中のリンクを押すと、ちゃんと移動する", async ({request, page}) => {
+		const body = "# 案内\n\n## 目次\n\n- [この文書の中へ](#案内)\n- [一覧へ](/)\n";
+		const v1 = await upload(request, `リンク入り${STAMP}.md`, body);
+		await openShared(page, v1.alias);
+
+		// ページ内の見出しへのリンクは枠の中で効くのが正しい。画面ごと動かしてはいけない
+		const inside = page.frameLocator("#content").getByText("この文書の中へ");
+		await expect(inside).not.toHaveAttribute("target", "_top");
+
+		await page.frameLocator("#content").getByText("一覧へ").click();
+		// 枠の中だけが動くのではなく、画面ごと移動していること
+		await expect(page).toHaveURL(new URL("./", BASE_URL).href);
+		await expect(page.locator("#documentList")).toBeVisible();
+	});
+
+	test("別タブで開くリンクも生きている", async ({request, page, context}) => {
+		const html = `<!DOCTYPE html><html><body><a href="/" target="_blank">別タブの一覧へ</a></body></html>`;
+		const v1 = await upload(request, `別タブ${STAMP}.html`, html, null, "text/html");
+		await openShared(page, v1.alias);
+
+		const [opened] = await Promise.all([
+			context.waitForEvent("page"),
+			page.frameLocator("#content").locator("a").click()
+		]);
+		await opened.waitForLoadState("domcontentloaded");
+		// 開いた先が枠の制限を引きずっていないこと(引きずると画面が動かない)
+		await expect(opened.locator("#documentList")).toBeVisible();
+		await opened.close();
+	});
+
 	// 枠で包んだせいで守りが緩んでいないこと。文書の中身は信用できない入力のまま
 	test("文書に仕込まれたスクリプトは動かない", async ({request, page}) => {
 		const html = `<!DOCTYPE html><html><head><title>original</title></head>`
