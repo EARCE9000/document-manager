@@ -2739,6 +2739,36 @@ const addRelatedDocument = async (doc) => {
 	renderRelatedDocs(doc);
 };
 
+/**
+ * 文書の中身をそのまま出す枠の権限。
+ *
+ * スクリプトは**動かさない**(文書の中身は信用できない入力。配信側もCSPで止めている)。
+ * ただし**リンクは辿れないといけない**。枠のままだと行き先が枠の中になり、同じ出どころなら
+ * 画面が入れ子で開き(しかもスクリプトが動かないので壊れて見える)、外部ならCSPで止まって
+ * 何も起きない。別タブで開かせるために、窓を開く許可だけ足す
+ */
+const INERT_PREVIEW_SANDBOX = "allow-same-origin allow-popups allow-popups-to-escape-sandbox";
+
+/**
+ * プレビュー枠の中のリンクを、別タブで開くようにする。
+ *
+ * 共有リンクの表示(alias-viewer.js)では画面ごと移動させているが、こちらは一覧・絞り込み・
+ * 選択中の文書を抱えているため、リンク1つで持っていかれないようにする。
+ * **ページ内の見出しへのリンク(#)は触らない。** 枠の中で効くのが正しく、
+ * 別タブにすると長い文書の目次が全部おかしくなる
+ */
+const promotePreviewLinks = (frameDocument) => {
+	for (const link of frameDocument.querySelectorAll("a[href]")) {
+		if (link.getAttribute("target") != null) continue;
+		if ((link.getAttribute("href") || "").startsWith("#")) continue;
+		link.setAttribute("target", "_blank");
+		link.setAttribute("rel", "noopener");
+	}
+};
+
+// 次に読み込まれる中身が「文書そのもの」かどうか(図のビューアのページでは付け替えない)
+let pendingLinkPromotion = false;
+
 // .drawio のプレビュー(drawio-viewer.html)へ図のXMLを渡すための状態。
 // ビューア側はsandboxでオリジンを持たない(=APIを呼べない)ため、XMLはこちらで取得して渡す
 let drawioPreview = null;
@@ -2787,7 +2817,8 @@ const showDrawioFallback = (request, doc) => {
 		previewTitle.textContent = `${doc.entryFile} (プレビュー不可。ダウンロードして確認してください)`;
 		return;
 	}
-	previewFrame.setAttribute("sandbox", "allow-same-origin");
+	pendingLinkPromotion = true;
+	previewFrame.setAttribute("sandbox", INERT_PREVIEW_SANDBOX);
 	previewFrame.src = `./api/documents/${encodeURIComponent(doc.id)}/file`;
 };
 
@@ -2963,7 +2994,8 @@ const showPreview = (doc) => {
 	}
 
 	previewFrame.style.display = "block";
-	previewFrame.setAttribute("sandbox", "allow-same-origin");
+	pendingLinkPromotion = true;
+	previewFrame.setAttribute("sandbox", INERT_PREVIEW_SANDBOX);
 	// コードブロックが出るのはMarkdownから作ったプレビューだけ。アップロードされた生の
 	// HTMLには手を入れない(見せているものを書き換えると、原本と違うものを見ることになる)
 	const isMarkdownPreview = previewExt === "html" && ["md", "markdown"].includes(extOfName(doc.entryFile));
@@ -3060,11 +3092,16 @@ const addCodeCopyButtons = (frameDocument) => {
 };
 
 previewFrame.addEventListener("load", () => {
-	if (pendingCodeCopyTarget == null) return;
+	const codeCopyTarget = pendingCodeCopyTarget;
+	const linkPromotion = pendingLinkPromotion;
 	pendingCodeCopyTarget = null;
+	pendingLinkPromotion = false;
+	if (codeCopyTarget == null && !linkPromotion) return;
 	try {
 		const frameDocument = previewFrame.contentDocument;
-		if (frameDocument != null) addCodeCopyButtons(frameDocument);
+		if (frameDocument == null) return;
+		if (linkPromotion) promotePreviewLinks(frameDocument);
+		if (codeCopyTarget != null) addCodeCopyButtons(frameDocument);
 	} catch (err) {
 		// 別オリジンだと触れない。ボタンが出ないだけで、プレビュー自体は読める
 	}
