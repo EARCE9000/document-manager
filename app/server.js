@@ -2406,6 +2406,11 @@ app.get(BASE_URL_PATH + 'api/documents/alias/:alias/viewer', async (req, res) =>
 			res.status(404).json({error: "そのAliasはありません"});
 			return;
 		}
+		// **転送を覚えさせない。**
+		// Aliasの指す先は版が変わるたびに動く。302をブラウザに保存されると、
+		// 同じURLを開き直しても古い版へ行き続ける(配ったリンクが最新を指す、という
+		// この仕組みの目的が丸ごと壊れる)。実際にそうなることを確認して入れている
+		setHTTPHeaders(res);
 		// 認証と表示は既存のviewerに任せる(ログイン迂回・.drawio/.mmdのビューアへの転送も同じ)
 		res.redirect(`../../${encodeURIComponent(documentId)}/viewer`);
 	} catch (err) {

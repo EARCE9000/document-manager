@@ -74,6 +74,36 @@ test.describe.serial("共有用のAlias", () => {
 		expect(res.headers()["location"], "最新の版へ転送していない").toContain(v2.id);
 	});
 
+	// 転送をブラウザに覚えられると、同じURLを開き直しても古い版へ行き続ける。
+	// 配ったリンクが最新を指す、というこの仕組みの目的が丸ごと壊れる(実際にそうなった)
+	test("Aliasの転送は、ブラウザに覚えさせない", async ({request}) => {
+		const v1 = await upload(request, `覚えさせない${STAMP}.txt`, "v1");
+		const res = await request.get(`api/documents/alias/${v1.alias}/viewer`, {
+			headers: {Cookie: `${keys.sessionCookieName}=${keys.sessionCookie}`}, maxRedirects: 0
+		});
+		expect([301, 302, 307]).toContain(res.status());
+		expect(res.headers()["cache-control"], "転送が保存され、古い版を開き続ける").toContain("no-store");
+	});
+
+	// 開き直したら最新になる、が成り立っていること。
+	// 転送先そのものを見る(転送を追うと、その先の中身は版のURLの話になってしまう)
+	test("同じURLを開き直すと、転送先が新しい版に変わる", async ({request}) => {
+		const session = {Cookie: `${keys.sessionCookieName}=${keys.sessionCookie}`};
+		const v1 = await upload(request, `開き直し${STAMP}.txt`, "v1の本文");
+		const url = `api/documents/alias/${v1.alias}/viewer`;
+
+		const before = await request.get(url, {headers: session, maxRedirects: 0});
+		expect(before.headers()["location"]).toContain(v1.id);
+
+		const v2 = await upload(request, `開き直し${STAMP}.txt`, "v2の本文", v1.id);
+		const after = await request.get(url, {headers: session, maxRedirects: 0});
+		expect(after.headers()["location"], "開き直しても古い版へ送られる").toContain(v2.id);
+		expect(after.headers()["location"]).not.toContain(v1.id);
+
+		// 送られた先が、実際に新しい中身であること
+		expect(await (await request.get(`api/documents/${v2.id}/file`, {headers: ro})).text()).toBe("v2の本文");
+	});
+
 	// 「この版を見てほしい」と明示したいときのために、版のURLは従来どおり生きている
 	test("版のリンクは、更新後もその版を指したまま", async ({request}) => {
 		const v1 = await upload(request, `版指定${STAMP}.txt`, "v1の本文");
