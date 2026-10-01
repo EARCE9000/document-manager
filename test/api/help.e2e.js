@@ -31,7 +31,7 @@ test.describe("使い方(実ブラウザ)", () => {
 	test("画面の使い方が書かれている", async ({page}) => {
 		const body = page.locator("#helpBody");
 		await expect(body.locator("section")).not.toHaveCount(0);
-		for (const heading of ["探す", "おしながき", "アーカイブ(消さない削除)"]) {
+		for (const heading of ["探す", "人にリンクを渡す", "おしながき", "アーカイブ(消さない削除)"]) {
 			await expect(body.locator("h3", {hasText: heading})).toBeVisible();
 		}
 	});
@@ -44,6 +44,14 @@ test.describe("使い方(実ブラウザ)", () => {
 		}
 		// 貼り付け用のテキスト欄も無い
 		await expect(page.locator("#helpModalBox textarea")).toHaveCount(0);
+	});
+
+	// 版のリンクを渡すと、相手は更新に気づかないまま古い版を見続ける。
+	// 「どちらを渡すか」は画面を見ただけでは分からないので、ここで伝える
+	test("共有リンクと版のリンクの違いが書いてある", async ({page}) => {
+		const section = page.locator("#helpBody section", {hasText: "人にリンクを渡す"});
+		await expect(section).toContainText("常に最新版");
+		await expect(section).toContainText("この版");
 	});
 
 	test("閉じるボタンが画面に収まっている", async ({page}) => {
