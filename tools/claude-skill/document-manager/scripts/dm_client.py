@@ -22,6 +22,9 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
                                        --render で「体裁つき」のPDFを取得する(Office文書のみ)
   python dm_client.py tags <文書ID> [--add A,B | --remove A,B | --set A,B]   タグの確認・変更
   python dm_client.py memo <文書ID> <メモ本文>     メモの更新(全文置き換え)
+  python dm_client.py share-url <文書ID>           人に渡す共有リンク(版が変わっても同じURL)
+  python dm_client.py alias <文書ID>               その文書のAlias(無ければ発行する)
+  python dm_client.py alias-move <Alias> <文書ID>  Aliasの指す先を変える(古い版へ戻すとき)
   python dm_client.py archive <文書ID>             アーカイブ(論理削除。restoreで戻せる)
   python dm_client.py restore <文書ID>             アーカイブから元に戻す
   python dm_client.py links <文書ID>               関連文書の一覧
@@ -61,7 +64,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.4.0"
+CLIENT_VERSION = "1.5.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -372,6 +375,36 @@ def cmd_tags(args):
 
 def cmd_memo(args):
     return request("PUT", f"api/documents/{quote_id(args.id)}/memo", body={"memo": args.text})
+
+
+def cmd_alias(args):
+    """その文書のAlias。無ければ発行する(発行は冪等で、既にあればそれを返す)"""
+    document = request("GET", f"api/documents/{quote_id(args.id)}")
+    if document.get("alias"):
+        return {"alias": document["alias"], "documentId": document["id"], "created": False}
+    created = request("POST", f"api/documents/{quote_id(args.id)}/alias")
+    return {**created, "created": True}
+
+
+def cmd_share_url(args):
+    """
+    人に渡すURL。**版が変わっても同じURL**で、常に最新版が開く。
+
+    文書IDのURL(api/documents/<文書ID>/viewer)はその版を指したままになるため、
+    人へ渡すとあとで「古い版を見ていた」が起きる。こちらを使うこと。
+    """
+    base_url, _ = load_config()
+    result = cmd_alias(args)
+    return {
+        "shareUrl": f"{base_url}api/documents/alias/{result['alias']}/viewer",
+        "alias": result["alias"],
+        "documentId": result["documentId"],
+        "note": "版が変わっても同じURLで、常に最新版が開きます"
+    }
+
+
+def cmd_alias_move(args):
+    return request("PUT", f"api/documents/alias/{quote_id(args.alias)}", body={"documentId": args.id})
 
 
 def cmd_archive(args):
@@ -752,6 +785,16 @@ def main():
     p.add_argument("id")
     p.add_argument("text")
     p.set_defaults(func=cmd_memo)
+    p = sub.add_parser("share-url", help="人に渡す共有リンク(版が変わっても同じURL)")
+    p.add_argument("id", help="文書ID")
+    p.set_defaults(func=cmd_share_url)
+    p = sub.add_parser("alias", help="その文書のAlias(無ければ発行する)")
+    p.add_argument("id", help="文書ID")
+    p.set_defaults(func=cmd_alias)
+    p = sub.add_parser("alias-move", help="Aliasの指す先を変える(古い版へ戻すとき)")
+    p.add_argument("alias", help="Alias")
+    p.add_argument("id", help="指す先にしたい文書ID")
+    p.set_defaults(func=cmd_alias_move)
     p = sub.add_parser("archive", help="アーカイブ(論理削除。restoreで戻せる)")
     p.add_argument("id")
     p.set_defaults(func=cmd_archive)

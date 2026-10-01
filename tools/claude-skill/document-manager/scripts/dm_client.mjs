@@ -48,7 +48,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.4.0";
+const CLIENT_VERSION = "1.5.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -488,6 +488,31 @@ const commands = {
 	memo: async ([id, text]) => {
 		requireArg(id, "文書ID");
 		return request("PUT", docPath(id, "/memo"), {json: {memo: text ?? ""}});
+	},
+	// その文書のAlias。無ければ発行する(発行は冪等で、既にあればそれを返す)
+	alias: async ([id]) => {
+		requireArg(id, "文書ID");
+		const document = await request("GET", docPath(id));
+		if (document.alias) return {alias: document.alias, documentId: document.id, created: false};
+		return {...await request("POST", docPath(id, "/alias")), created: true};
+	},
+	// 人に渡すURL。**版が変わっても同じURL**で、常に最新版が開く。
+	// 文書IDのURLはその版を指したままになるため、人へ渡すとあとで「古い版を見ていた」が起きる
+	"share-url": async ([id]) => {
+		requireArg(id, "文書ID");
+		const {baseUrl} = loadConfig();
+		const result = await commands.alias([id]);
+		return {
+			shareUrl: `${baseUrl}api/documents/alias/${encodeURIComponent(result.alias)}/viewer`,
+			alias: result.alias,
+			documentId: result.documentId,
+			note: "版が変わっても同じURLで、常に最新版が開きます"
+		};
+	},
+	"alias-move": async ([alias, id]) => {
+		requireArg(alias, "Alias");
+		requireArg(id, "指す先にしたい文書ID");
+		return request("PUT", `api/documents/alias/${encodeURIComponent(alias)}`, {json: {documentId: id}});
 	},
 	archive: async ([id]) => {
 		await request("DELETE", docPath(requireArg(id, "文書ID")));

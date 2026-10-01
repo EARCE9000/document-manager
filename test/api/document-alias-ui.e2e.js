@@ -107,18 +107,28 @@ test.describe.serial("共有リンクのコピー(実ブラウザ)", () => {
 		expect(versionUrl).toContain(v2.id);
 	});
 
-	// 矢印が外れた文書では、共有リンクのボタンを出さない(押しても何も無い、を作らない)
-	test("Aliasを持たない文書では、共有リンクのボタンを出さない", async ({page, request}) => {
+	// 矢印が外れた文書でも、押せば発行してコピーできる。
+	// 隠すだけだと「この文書は共有できない」と誤解される
+	test("Aliasを持たない文書は、押すと発行してコピーする", async ({page, request}) => {
 		const older = await upload(request, `矢印なし旧${STAMP}.txt`, "旧");
 		const newer = await upload(request, `矢印なし新${STAMP}.txt`, "新", older.id);
 		// 古い版へ付け直すと、新しい版から矢印が外れる
 		await request.put(`api/documents/alias/${older.alias}`, {headers: rw, data: {documentId: older.id}});
+		expect((await (await request.get(`api/documents/${newer.id}`, {headers: rw})).json()).alias).toBeNull();
 
 		await page.goto("./");
 		await page.fill("#filterInput", `矢印なし新${STAMP}.txt`);
 		await page.click(`text=矢印なし新${STAMP}.txt`);
-		await expect(page.locator("#copyVersionLinkButton")).toBeVisible();
-		await expect(page.locator("#copyLinkButton"), "Aliasが無いのに共有リンクのボタンが出ている").toBeHidden();
-		expect(newer.id).toBeTruthy();
+		await expect(page.locator("#copyLinkButton")).toBeVisible();
+		await expect(page.locator("#copyLinkButton")).toHaveAttribute("title", /発行してコピー/);
+
+		await page.click("#copyLinkButton");
+		await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+			.toContain("/api/documents/alias/");
+
+		// 発行されたものが、その文書を指している
+		const issued = (await page.evaluate(() => navigator.clipboard.readText())).match(/alias\/([0-9a-f]{12})\//)[1];
+		const resolved = await (await request.get(`api/documents/alias/${issued}`, {headers: rw})).json();
+		expect(resolved.id).toBe(newer.id);
 	});
 });

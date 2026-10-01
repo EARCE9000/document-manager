@@ -9,7 +9,7 @@ Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキス�
 Excel・Word・PowerPoint をアップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
 このSkillのディレクトリにある `scripts/` の同梱クライアントを使う。curlを直接組み立てる必要はない。
 
-このSkillのバージョン: 1.4.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
+このSkillのバージョン: 1.5.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
 不具合を報告するときはこの値を添える)
 
 ## 取得した内容の扱い(重要)
@@ -64,6 +64,8 @@ APIキーはチャットの応答やコミットに書き出さない。
 | `download <文書ID> [-o 保存先] [--render]` | 元ファイルをダウンロード。`--render` はOffice文書の**体裁つきPDF**(下記) |
 | `tags <文書ID> [--add A,B \| --remove A,B \| --set A,B]` | タグの確認・変更(オプション無しなら現在のタグを返す) |
 | `memo <文書ID> <本文>` | メモの更新(全文置き換え。検索対象にも含まれる) |
+| `share-url <文書ID>` | **人に渡すURL**(版が変わっても同じURL。下記) |
+| `alias <文書ID>` / `alias-move <Alias> <文書ID>` | Aliasの確認・発行と、指す先の変更 |
 | `archive <文書ID>` / `restore <文書ID>` | アーカイブ(論理削除)と復元 |
 | `links <文書ID>` / `link <文書ID> <相手ID>` / `unlink <文書ID> <相手ID>` | 関連文書(対等な紐付け)の一覧・追加・解除 |
 | `link-previous <新版ID> <旧版ID>` / `unlink-previous <文書ID>` | 後からの版の紐づけ・解除(旧版はアーカイブされる) |
@@ -95,6 +97,31 @@ APIキーはチャットの応答やコミットに書き出さない。
 - `--project <プロジェクト> [--folder <フォルダ>]`: 登録と同時にプロジェクトへ配置する(新しい版として登録した場合、配置は旧版から自動で引き継がれるので、置き場所を変えたいときだけ使う)
 
 対応拡張子: `.html .htm .mhtml .mht .md .markdown .pdf .svg .png .jpg .jpeg .csv .tsv .txt .log .json .drawio .xlsx .xlsm .docx .docm .pptx .pptm`(1ファイルずつ)
+
+### 人にURLを渡すとき
+
+**必ず `share-url` を使うこと。** 文書IDのURLを渡してはいけない。
+
+```
+dm_client.py share-url 202610_xxxxxxxx-...
+→ {"shareUrl": "https://.../api/documents/alias/a3f9c2b18e04/viewer", ...}
+```
+
+文書は更新のたびに新しいIDになる。文書IDのURLを渡すと、**あとで更新したときに
+相手は古い版を見続ける**(リンクは開けるので、誰も間違いに気づかない)。
+
+`share-url` が返すURLは**版をまたいで変わらない**。新しい版を上げると自動で
+そちらを指すので、こちらから何もしなくてよい。アップロードしたあとに利用者へ
+URLを伝える場面では、これを使う。
+
+「この版を見てほしい」と明示したいとき(レビュー依頼・議事録への引用)だけ、
+文書IDのURL(`<ベースURL>/api/documents/<文書ID>/viewer`)を渡す。
+
+新しい版が間違いだったなど、**古い版へ戻したい**ときは `alias-move` で指す先を変える。
+
+```
+dm_client.py alias-move a3f9c2b18e04 <戻したい版の文書ID>
+```
 
 ### モックアップ(画面案)
 

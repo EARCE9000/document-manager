@@ -2834,10 +2834,25 @@ const showPreview = (doc) => {
 	// ダウンロード用リンク(api/documents/:id/file)はAPIキー連携クライアント向けで、
 	// 未ログイン状態で開くとJSONの401が出るだけで復帰できない。人にURLを共有する場合は
 	// 未ログイン時にログイン画面へ迂回できるviewerのリンクをコピーする
-	copyLinkButton.style.display = doc.alias ? "inline-flex" : "none";
-	copyLinkButton.onclick = () => {
-		if (!doc.alias) return;
-		copyTextWithIconFeedback(aliasViewerUrl(doc.alias), copyLinkButton);
+	// Aliasが無い文書(つけなおしで矢印が外れたもの)でも、押せば発行してコピーできる。
+	// 隠すだけだと「この文書は共有できない」と誤解される
+	copyLinkButton.style.display = "inline-flex";
+	copyLinkButton.title = doc.alias
+		? "共有リンクをコピー(常に最新版を指します)"
+		: "共有リンクを発行してコピー(常に最新版を指します)";
+	copyLinkButton.onclick = async () => {
+		let alias = doc.alias;
+		if (!alias) {
+			const res = await fetch(`./api/documents/${encodeURIComponent(doc.id)}/alias`, {method: "POST"});
+			if (res.status !== 200) {
+				alert((await res.json().catch(() => ({}))).error || "共有リンクを発行できませんでした");
+				return;
+			}
+			alias = (await res.json()).alias;
+			doc.alias = alias;
+			copyLinkButton.title = "共有リンクをコピー(常に最新版を指します)";
+		}
+		copyTextWithIconFeedback(aliasViewerUrl(alias), copyLinkButton);
 	};
 	copyVersionLinkButton.style.display = "inline-flex";
 	copyVersionLinkButton.onclick = () => {
