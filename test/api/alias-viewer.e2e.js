@@ -146,6 +146,40 @@ test.describe.serial("共有リンクで開いた文書(実ブラウザ)", () =>
 		expect(await page.locator("#content").getAttribute("sandbox")).not.toContain("allow-scripts");
 	});
 
+	// SSEは「どれかの文書が変わった」としか言わない。無関係な更新で帯が出ると、
+	// 押しても何も変わらない(押した人は壊れていると受け取る)
+	test("関係のない文書が変わっても、帯は出ない", async ({request, page}) => {
+		const v1 = await upload(request, `無関係${STAMP}.txt`, "この文書は変えない");
+		await openShared(page, v1.alias);
+		await expect(page.frameLocator("#content").locator("body")).toContainText("この文書は変えない");
+
+		// 別の文書を2回上げて、通知が確かに飛んでいる状況を作る
+		const other = await upload(request, `よその文書${STAMP}.txt`, "v1");
+		await upload(request, `よその文書${STAMP}.txt`, "v2", other.id);
+
+		// その通知で帯が出てしまわないこと。出るとすれば数秒以内なので、待って確かめる
+		await page.waitForTimeout(2000);
+		await expect(page.locator("#updateBar"), "無関係な更新で帯が出ている").toBeHidden();
+	});
+
+	// このページのURLはアドレスバーに出るので、そのまま人に渡されることがある。
+	// 渡された側が未ログインだと「見つかりません」の行き止まりになっていた
+	test("未ログインで直接開くと、ログインへ送って共有リンクへ戻す", async ({request, browser}) => {
+		const v1 = await upload(request, `未ログイン${STAMP}.txt`, "v1");
+		const context = await browser.newContext();   // セッションのcookieを入れない
+		const page = await context.newPage();
+		try {
+			const toLogin = page.waitForRequest((r) => r.url().includes("/login?next="), {timeout: 15000});
+			// ログイン画面はOIDCへ繋ぎに行くため、着地までは待たない
+			page.goto(`alias-viewer.html?alias=${v1.alias}`).catch(() => {});
+
+			const next = new URL((await toLogin).url()).searchParams.get("next");
+			expect(next, "ログイン後の戻り先が共有リンクになっていない").toBe(`/api/documents/alias/${v1.alias}/viewer`);
+		} finally {
+			await context.close();
+		}
+	});
+
 	test("無い共有リンクは、黙って白紙にせず案内を出す", async ({page}) => {
 		await page.goto("alias-viewer.html?alias=000000000000");
 		await expect(page.locator("#status")).toBeVisible();

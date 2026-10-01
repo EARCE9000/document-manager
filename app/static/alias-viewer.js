@@ -53,10 +53,24 @@ const setStatus = (text, failed) => {
 	status.hidden = text === "";
 };
 
+// 共有リンクの正規のURL。このページ自身のURLがアドレスバーに出るので、それを
+// そのまま人に渡されることがある。渡された側が未ログインでも行き止まりにならないよう、
+// ログインを挟んでここへ戻す(そこから改めてこのページへ回される)
+const CANONICAL_PATH = new URL(`./api/documents/alias/${encodeURIComponent(alias)}/viewer`, window.location.href).pathname;
+
+const goToLogin = () => {
+	window.location.replace(`./login?next=${encodeURIComponent(CANONICAL_PATH)}`);
+};
+
+/**
+ * Aliasの指す先を引く。
+ *
+ * 401(未ログイン・期限切れ)と404(無いAlias)は**別物として扱う**。
+ * まとめて「見つかりません」にすると、ログインすれば見られる人を追い返してしまう
+ */
 const resolveAlias = async () => {
 	const res = await fetch(`./api/documents/alias/${encodeURIComponent(alias)}`);
-	if (res.status !== 200) return null;
-	return res.json();
+	return {status: res.status, document: res.status === 200 ? await res.json() : null};
 };
 
 const show = (document_) => {
@@ -79,18 +93,24 @@ const announce = (document_) => {
 
 const checkForUpdate = async () => {
 	if (shownDocumentId == null) return;
-	const latest = await resolveAlias().catch(() => null);
-	if (latest == null || latest.id === shownDocumentId) return;
-	announce(latest);
+	// ここでの失敗は黙って見送る。読んでいる最中に通信の都合で警告を出しても何もできない
+	const result = await resolveAlias().catch(() => null);
+	if (result?.document == null || result.document.id === shownDocumentId) return;
+	announce(result.document);
 };
 
 reloadButton.addEventListener("click", async () => {
-	const latest = await resolveAlias().catch(() => null);
-	if (latest == null) {
+	const result = await resolveAlias().catch(() => null);
+	// 読んでいる間にログインの期限が切れることがある。そのときは読み直させる
+	if (result?.status === 401) {
+		goToLogin();
+		return;
+	}
+	if (result?.document == null) {
 		setStatus("最新を読み込めませんでした。開き直してください。", true);
 		return;
 	}
-	show(latest);
+	show(result.document);
 });
 
 // 「あとで」も選べるようにする。帯が消せないと、読んでいる間ずっと場所を取る
@@ -103,10 +123,18 @@ const start = async () => {
 	}
 	const current = await resolveAlias().catch(() => null);
 	if (current == null) {
+		setStatus("サーバーに接続できませんでした。時間をおいて開き直してください。", true);
+		return;
+	}
+	if (current.status === 401) {
+		goToLogin();
+		return;
+	}
+	if (current.document == null) {
 		setStatus("この共有リンクは見つかりませんでした。", true);
 		return;
 	}
-	show(current);
+	show(current.document);
 
 	// 他の人が新しい版を上げたら知らせる。
 	// 受け取るのは「何か変わった」だけなので、そのたびに指す先を引き直して確かめる
