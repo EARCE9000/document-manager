@@ -1,0 +1,62 @@
+/*!
+ * alias-viewer.css : 共有リンクで開いたときの枠
+ * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
+ * MIT Licensed
+ *
+ * ふだんは文書だけが見えるようにする(枠があることを感じさせない)。
+ * 新しい版が出たときだけ、上に細い帯を出す。
+ */
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+	display: flex;
+	flex-direction: column;
+	background: #fff;
+	font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", Meiryo, sans-serif;
+}
+
+#content {
+	flex: 1;
+	width: 100%;
+	border: none;
+	background: #fff;
+}
+
+#updateBar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 12px;
+	font-size: 13px;
+	background: #fff8e6;
+	border-bottom: 1px solid #f0d58c;
+	color: #8a6d00;
+}
+#updateBar[hidden] { display: none; }
+#updateMessage { flex: 1; }
+
+#updateBar button {
+	font: inherit;
+	font-size: 12px;
+	padding: 4px 10px;
+	border: 1px solid #d8b24c;
+	border-radius: 4px;
+	background: #fff;
+	color: #8a6d00;
+	cursor: pointer;
+	flex: none;
+}
+#updateBar button:hover { background: #fff3d6; }
+#dismissButton { padding: 4px 8px; border-color: transparent; background: transparent; }
+
+#status { padding: 16px; color: #666; font-size: 14px; }
+#status[hidden] { display: none; }
+#status.failed { color: #b42318; }
+
+@media print {
+	/* 印刷するのは文書であって、この帯ではない */
+	#updateBar, #status { display: none !important; }
+}

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>共有リンク - Document Manager</title>
+<!--
+	共有リンク(Alias)でテキスト系の文書を開いたときに挟むページ。
+
+	Aliasは「いまの版」を指すが、**開いたままのページは古い版のまま**になる。
+	読んでいる最中に新しい版が上がっても、本人は気づかない。
+	このページはSSEを受けて、指す先が変わったら上部に知らせる。
+
+	中身は iframe で出す。文書の中身は信用できない入力なので、スクリプトを動かさない
+	(sandbox から allow-scripts を外し、配信側もCSPで止めている)。
+	このページ自身は script-src 'self' で配信する(server.js参照)。
+
+	テキスト系だけを対象にしている。PDFや画像はブラウザの表示機能のほうが優れており、
+	枠で包むと印刷やページ送りが使いにくくなるため、従来どおり直接開く。
+-->
+<link rel="stylesheet" href="./alias-viewer.css">
+</head>
+<body>
+<div id="updateBar" hidden>
+	<span id="updateMessage">新しい版があります。</span>
+	<button type="button" id="reloadButton">最新を読み込む</button>
+	<button type="button" id="dismissButton" title="閉じる" aria-label="閉じる">×</button>
+</div>
+<iframe id="content" sandbox="allow-same-origin" title="文書の内容"></iframe>
+<div id="status">読み込み中...</div>
+<script src="./alias-viewer.js"></script>
+</body>
+</html>

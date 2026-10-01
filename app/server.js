@@ -172,9 +172,23 @@ const DIAGRAM_VIEWER_CSP = [
 	"base-uri 'none'",
 	"form-action 'none'"
 ].join("; ");
-for (const page of ['drawio-viewer.html', 'mermaid-viewer.html']) {
+/**
+ * 共有リンクで挟む「包むページ」のCSP。
+ *
+ * このページは文書の中身をiframeで出すため、frame-src が要る。
+ * default-src 'none' のままだと**枠が空のまま**になる(実際にそうなった。
+ * スクリプトもfetchも通るので、見た目は読み込み中のまま止まるだけで気づきにくい)。
+ * 図のビューアは自分で描くのでiframeを使わない。緩めるのはこのページだけに留める
+ */
+const ALIAS_VIEWER_CSP = `${DIAGRAM_VIEWER_CSP}; frame-src 'self'`;
+const VIEWER_PAGE_CSP = {
+	'drawio-viewer.html': DIAGRAM_VIEWER_CSP,
+	'mermaid-viewer.html': DIAGRAM_VIEWER_CSP,
+	'alias-viewer.html': ALIAS_VIEWER_CSP
+};
+for (const [page, csp] of Object.entries(VIEWER_PAGE_CSP)) {
 	app.get(BASE_URL_PATH + page, (req, res) => {
-		res.setHeader("Content-Security-Policy", DIAGRAM_VIEWER_CSP);
+		res.setHeader("Content-Security-Policy", csp);
 		res.setHeader("X-Content-Type-Options", "nosniff");
 		res.sendFile(path.join(__dirname, 'static', page));
 	});
@@ -2311,6 +2325,25 @@ app.get(BASE_URL_PATH + 'api/documents/:id/file', requireAuth, async (req, res) 
 });
 
 /**
+ * 共有リンクで開いたときに「包むページ」へ回すか。
+ *
+ * 包むと、開いたままでも新しい版が出たことを知らせられる(alias-viewer.html)。
+ * ただし**何でも包むわけではない**。PDFと画像はブラウザの表示機能のほうが優れており、
+ * 枠に入れると印刷・ページ送り・拡大が使いにくくなる。読む体験を落としてまで
+ * 知らせる価値は無いので、従来どおり直接開く。
+ *
+ * 対象はテキスト系(プレーンテキスト・HTML。Markdown/CSV/Officeの概要も変換後はHTML)と、
+ * 専用ビューアで描く図(.drawio / .mmd)。
+ */
+const shouldWrapAliasView = (document) => {
+	const entryExtension = path.extname(document.entry_file || "").toLowerCase();
+	if (DRAWIO_EXTENSIONS.includes(entryExtension) || MERMAID_EXTENSIONS.includes(entryExtension)) return true;
+	if (document.preview_file == null) return false;
+	const previewType = CONTENT_TYPE_BY_EXTENSION[path.extname(document.preview_file).toLowerCase()] || "";
+	return previewType.startsWith("text/") || previewType.startsWith("application/json");
+};
+
+/**
  * Alias(版をまたいで変わらない共有用のID)。
  *
  * 文書は更新のたびに新しいIDになるため、人に配ったリンクが古い版を指したままになる。
@@ -2399,9 +2432,15 @@ app.post(BASE_URL_PATH + 'api/documents/:id/alias', requireAuth, requireWrite, a
  */
 app.get(BASE_URL_PATH + 'api/documents/alias/:alias/viewer', async (req, res) => {
 	try {
+		// 共有されたリンクは未ログインで開かれる。ログイン画面へ迂回し、終わったら
+		// **このURLへ戻す**(戻り先が版のURLだと、せっかくの共有リンクが手元から消える)。
+		// 包むページ(alias-viewer.html)側には迂回の仕組みが無いため、ここで済ませる
+		if (!AUTH_DISABLED && req.session?.user == null) {
+			res.redirect(`${LOGIN_URI}?next=${encodeURIComponent(PUBLIC_BASE_PATH + req.originalUrl)}`);
+			return;
+		}
 		const documentId = await DocumentAliases.resolve(req.params.alias);
 		if (documentId == null) {
-			// ログインの有無に関わらず、無いものは無いと答える(存在の有無は秘密ではない)
 			setHTTPHeaders(res);
 			res.status(404).json({error: "そのAliasはありません"});
 			return;
@@ -2411,6 +2450,17 @@ app.get(BASE_URL_PATH + 'api/documents/alias/:alias/viewer', async (req, res) =>
 		// 同じURLを開き直しても古い版へ行き続ける(配ったリンクが最新を指す、という
 		// この仕組みの目的が丸ごと壊れる)。実際にそうなることを確認して入れている
 		setHTTPHeaders(res);
+
+		// テキスト系と図は、開いたままでも新しい版に気づけるよう包むページへ回す。
+		// ログインの確認は上で済ませてある(包むページがAPIを呼べる状態で始まる)。
+		// 相対パスで返す。このURLは api/documents/alias/<alias>/viewer なので、
+		// アプリのルートは**4つ上**(1つ足りないと /api/alias-viewer.html を指す)。
+		// リバースプロキシ配下でも、実際に開かれているURLを基準に解決される
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [documentId]);
+		if (document != null && shouldWrapAliasView(document)) {
+			res.redirect(`../../../../alias-viewer.html?alias=${encodeURIComponent(req.params.alias)}`);
+			return;
+		}
 		// 認証と表示は既存のviewerに任せる(ログイン迂回・.drawio/.mmdのビューアへの転送も同じ)
 		res.redirect(`../../${encodeURIComponent(documentId)}/viewer`);
 	} catch (err) {

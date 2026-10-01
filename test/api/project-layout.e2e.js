@@ -169,6 +169,7 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 	test.describe("行から資料を別ウィンドウで開く", () => {
 		const DRAWING = `別窓で開く図-${Date.now()}.drawio`;
 		let drawingId;
+		let drawingAlias;
 
 		test.beforeAll(async ({request}) => {
 			const xml = `<mxfile><diagram name="p1"><mxGraphModel><root>`
@@ -177,6 +178,7 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 				headers: rw, multipart: {uploadfile: {name: DRAWING, mimeType: "application/xml", buffer: Buffer.from(xml)}}
 			})).json();
 			drawingId = doc.id;
+			drawingAlias = doc.alias;
 			const projects = await (await request.get("api/projects", {headers: rw})).json();
 			const target = projects.find((p) => p.name === PROJECT);
 			await request.put(`api/projects/${target.id}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
@@ -184,7 +186,8 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 
 		const drawingRow = (page) => page.locator(".treeDocRow", {hasText: DRAWING.slice(0, 14)});
 
-		test("表示モードでも出ていて、押すとその資料が別ウィンドウで開く", async ({page, context}) => {
+
+		test("表示モードでも出ていて、押すとその資料が別ウィンドウで開く", async ({page, context, request}) => {
 			await page.goto("./");
 			await page.click("#menuProjectsLink");
 			await page.click(`.projectTab:has-text("${PROJECT}")`);
@@ -203,8 +206,12 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 				row.locator(".treeOpenWindowButton").click()
 			]);
 			await win.waitForLoadState("domcontentloaded");
-			// .drawio はビューアのページへ転送される。行き先そのものより「どの資料か」が要点
-			expect(win.url(), "別の資料が開いている").toContain(encodeURIComponent(drawingId));
+			// 開くのは**共有リンク(Alias)のURL**。開いた先のアドレスバーを見て貼る人がいるため、
+			// 版のURLではなくこちらを出す。版のIDはURLに出てこないので、どの資料かはAliasの
+			// 指す先で確かめる(.drawio は包むページ経由でビューアが描く)
+			expect(win.url(), "共有リンクで開いていない").toContain(`alias=${drawingAlias}`);
+			const pointed = await (await request.get(`api/documents/alias/${drawingAlias}`, {headers: rw})).json();
+			expect(pointed.id, "別の資料が開いている").toBe(drawingId);
 			await win.close();
 
 			// 行そのもののクリック(プレビュー切り替え)は巻き込まない
