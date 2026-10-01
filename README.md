@@ -310,6 +310,7 @@ document-manager/
 | `RECONCILE_MAX_ENTRIES` | `5000` | 「DBと実ファイルの照合」で一度に調べる件数の上限。文書数が多い環境で管理画面の操作が返らなくなるのを避ける |
 | `LOG_LEVEL` | `info` | ログレベル (pino) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を丸ごとバイパスする開発用フラグ。本番では未設定のこと |
+| `RATE_LIMIT_DISABLED` | (未設定) | `true` でレート制限をかけない開発・テスト用フラグ。本番では未設定のこと |
 | `OIDC_ISSUER` | (必須) | OIDCプロバイダのissuer URL。例: `https://login.microsoftonline.com/<TENANT_ID>/v2.0`(EntraID)、`https://cognito-idp.<REGION>.amazonaws.com/<USER_POOL_ID>`(Cognito) |
 | `OIDC_CLIENT_ID` | (必須) | クライアントID |
 | `OIDC_CLIENT_SECRET` | (空文字) | クライアントシークレット。パブリッククライアントの場合は未設定でよい |

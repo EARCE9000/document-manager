@@ -300,6 +300,7 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 | `MOCKUP_VIEW_TOKEN_MINUTES` | `60` | モックアップを開いていられる時間(分)。切れても開き直せます |
 | `PROJECT_NOTE_MAX_CHARS` | `500` | おしながきの説明書き1件の上限(文字数) |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を無効化(開発用。本番では使わない) |
+| `RATE_LIMIT_DISABLED` | (未設定) | `true` でレート制限を無効化(開発・テスト用。本番では使わない) |
 | `LOG_LEVEL` | `info` | ログレベル |
 | `TZ` | (ホスト依存) | タイムゾーン(例: `Asia/Tokyo`) |
 

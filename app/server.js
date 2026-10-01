@@ -267,9 +267,20 @@ const resolveAuth = async (req, res, next) => {
 // 認証済み側は、trust proxy配下で複数利用者が同一IPに見える環境(社内共有ネットワーク等)でも
 // 利用者ごとに正しく分離されるよう、IPではなく利用者識別子(APIキー発行者/ログインユーザー)で
 // カウントする
+//
+// RATE_LIMIT_DISABLED=true の間は上限をかけない(開発・テスト用。本番では未設定のこと)。
+// テストの通し実行は正規の利用者1人として数えられるため、本数が増えると上限に届き、
+// 無関係なテストが429で落ちる(実際にそうなった。しかも落ちるのは後ろのテストなので
+// 原因が分かりにくい)。本番の上限を緩めて誤魔化すのではなく、テスト側で切る
 const {rateLimit, ipKeyGenerator} = require('express-rate-limit');
+const RATE_LIMIT_DISABLED = /^(1|true)$/i.test(process.env.RATE_LIMIT_DISABLED || "");
+if (RATE_LIMIT_DISABLED) {
+	logger.warn("RATE_LIMIT_DISABLED=true: レート制限を無効化して起動しています(開発・テスト用途のみ)");
+}
+// 無効化時は素通しのミドルウェアに差し替える(上限ヘッダーも付かなくなる)
+const rateLimiter = (options) => (RATE_LIMIT_DISABLED ? (req, res, next) => next() : rateLimit(options));
 const RATE_LIMIT_MESSAGE = {error: "リクエストが多すぎます。しばらく待ってから再度お試しください。"};
-const apiRateLimiterAnonymous = rateLimit({
+const apiRateLimiterAnonymous = rateLimiter({
 	windowMs: 5 * 60 * 1000,
 	limit: 300,
 	standardHeaders: 'draft-7',
@@ -277,7 +288,7 @@ const apiRateLimiterAnonymous = rateLimit({
 	message: RATE_LIMIT_MESSAGE,
 	skip: (req) => req.authData != null
 });
-const apiRateLimiterAuthenticated = rateLimit({
+const apiRateLimiterAuthenticated = rateLimiter({
 	windowMs: 5 * 60 * 1000,
 	limit: 1000,
 	standardHeaders: 'draft-7',
@@ -288,7 +299,7 @@ const apiRateLimiterAuthenticated = rateLimit({
 	// (素の req.ip だと IPv6 の完全アドレス単位になり、上限を回避され得る)
 	keyGenerator: (req) => req.authData?.user_identifier || ipKeyGenerator(req.ip)
 });
-const loginRateLimiter = rateLimit({
+const loginRateLimiter = rateLimiter({
 	windowMs: 15 * 60 * 1000,
 	limit: 20,
 	standardHeaders: 'draft-7',

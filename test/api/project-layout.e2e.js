@@ -209,7 +209,8 @@ test.describe.serial("プロジェクト画面の並び(実ブラウザ)", () =>
 			// 開くのは**共有リンク(Alias)のURL**。開いた先のアドレスバーを見て貼る人がいるため、
 			// 版のURLではなくこちらを出す。版のIDはURLに出てこないので、どの資料かはAliasの
 			// 指す先で確かめる(.drawio は包むページ経由でビューアが描く)
-			expect(win.url(), "共有リンクで開いていない").toContain(`alias=${drawingAlias}`);
+			expect(win.url(), "共有リンクで開いていない").toContain(`/alias/${drawingAlias}/viewer`);
+			expect(win.url(), "包むページのURLが出たままになっている").not.toContain("alias-viewer.html");
 			const pointed = await (await request.get(`api/documents/alias/${drawingAlias}`, {headers: rw})).json();
 			expect(pointed.id, "別の資料が開いている").toBe(drawingId);
 			await win.close();

@@ -70,8 +70,7 @@ test.describe.serial("共有リンクのコピー(実ブラウザ)", () => {
 
 	// 開いた先のアドレスバーを見て貼る人がいる
 	test("別ウィンドウで開くと、AliasのURLで開きに行く", async ({page, context}) => {
-		// viewerは中身の配信へ転送されるため、開いた後のURLでは確かめられない。
-		// 「最初にどのURLへ行ったか」を要求で捕まえる
+		// 開きに行ったURLを要求で捕まえる(転送されるため、着地だけでは分からない場合がある)
 		const requested = [];
 		context.on("request", (req) => {
 			const path = new URL(req.url()).pathname;
@@ -83,10 +82,13 @@ test.describe.serial("共有リンクのコピー(実ブラウザ)", () => {
 			page.locator("#documentList li").filter({hasText: NAME}).locator(".openButton").first().click()
 		]);
 		await win.waitForLoadState("domcontentloaded");
+		// 開いた先のアドレスバーも共有リンクのまま(ここを見て貼られる)
+		const landed = win.url();
 		await win.close();
 
 		const first = requested.find((path) => path.endsWith("/viewer"));
 		expect(first, `開きに行ったURL: ${requested.join(" / ")}`).toContain(`/alias/${v1.alias}/viewer`);
+		expect(landed, "アドレスバーが共有リンクになっていない").toContain(`/alias/${v1.alias}/viewer`);
 	});
 
 	// 更新したあとも、同じ共有リンクでよいこと

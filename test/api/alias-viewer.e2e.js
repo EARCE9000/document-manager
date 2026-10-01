@@ -34,10 +34,16 @@ const upload = async (request, name, body, previousId, mimeType) => {
 	return res.json();
 };
 
-// 包むページに着いていること。**位置まで確かめる**(相対パスの階層がずれていても
-// 文字列の一部は一致してしまい、404のページを見ながら通ってしまう)
+// 包むページに着いていること。
+// アドレスバーには**共有リンクのURL**が出る(開いた先を見て貼る人がいるため)。
+// 位置まで確かめる(相対パスの階層がずれていても文字列の一部は一致してしまい、
+// 404のページを見ながら通ってしまう)
+const SHARE_URL = (alias) => new URL(`api/documents/alias/${alias}/viewer`, BASE_URL).href;
+
 const expectWrapped = async (page, alias) => {
-	await expect(page).toHaveURL(new URL(`alias-viewer.html?alias=${alias}`, BASE_URL).href);
+	await expect(page).toHaveURL(SHARE_URL(alias));
+	// 中身は包むページのもの(転送先そのものを見ているわけではないことの確認)
+	await expect(page.locator("#content")).toBeAttached();
 };
 
 const openShared = async (page, alias) => {
@@ -178,6 +184,24 @@ test.describe.serial("共有リンクで開いた文書(実ブラウザ)", () =>
 		} finally {
 			await context.close();
 		}
+	});
+
+	// アドレスバーを差し替えると、相対URLの基準も一緒に動く。
+	// 基準を取り違えると、中身もSSEも静かに取れなくなる(画面は白いまま)
+	test("アドレスバーを差し替えても、開き直せて中身も出る", async ({request, page}) => {
+		const v1 = await upload(request, `開き直し枠${STAMP}.txt`, "最初の本文");
+		await openShared(page, v1.alias);
+
+		// アドレスバーのURLをそのまま開き直せること(貼られた先で開かれるのはこの形)
+		await page.reload();
+		await expectWrapped(page, v1.alias);
+		await expect(page.frameLocator("#content").locator("body")).toContainText("最初の本文");
+
+		// 差し替えた後でも知らせが届くこと(SSEの購読先を取り違えていないこと)
+		await upload(request, `開き直し枠${STAMP}.txt`, "次の本文", v1.id);
+		await expect(page.locator("#updateBar")).toBeVisible({timeout: 15000});
+		await page.click("#reloadButton");
+		await expect(page.frameLocator("#content").locator("body")).toContainText("次の本文");
 	});
 
 	test("無い共有リンクは、黙って白紙にせず案内を出す", async ({page}) => {

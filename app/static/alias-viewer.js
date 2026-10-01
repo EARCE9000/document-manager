@@ -20,22 +20,39 @@ const DRAWIO_EXTS = ["drawio"];
 const MERMAID_EXTS = ["mmd", "mermaid"];
 const extOf = (name) => String(name || "").split(".").pop().toLowerCase();
 
+// このページのURLは、下でアドレスバーごと共有リンクのURLに差し替える。
+// そうすると相対URLの基準も一緒に動いてしまうので、**動かす前に**アプリのルートを
+// 控えておき、以後のURLはすべてここから組み立てる(リバースプロキシ配下でも、
+// 実際に開かれているURLを基準に解決される)
+const ROOT = new URL("./", window.location.href);
+const urlOf = (path) => new URL(path, ROOT).href;
+
+const params = new URLSearchParams(window.location.search);
+const alias = params.get("alias") || "";
+
+// 共有リンクの正規のURL。配布用として案内しているのはこの形
+const CANONICAL_PATH = new URL(`api/documents/alias/${encodeURIComponent(alias)}/viewer`, ROOT).pathname;
+
+// **アドレスバーに共有リンクのURLを出す。**
+// 開いた先のアドレスバーを見て、それを人に貼る人がいる。このページのURL
+// (alias-viewer.html?alias=...)を貼られても版をまたいで通じはするが、案内している形と
+// 食い違うし、このページの名前を変えたときに過去に貼られたリンクが切れる。
+// 開き直すとサーバーがまたこのページへ回してくれるので、差し替えても困らない
+if (alias !== "") window.history.replaceState(null, "", CANONICAL_PATH);
+
 /** その文書を、どのページでどう出すか */
 const frameFor = (document_) => {
 	const ext = extOf(document_.entryFile);
 	const id = encodeURIComponent(document_.id);
 	if (DRAWIO_EXTS.includes(ext)) {
-		return {src: `./drawio-viewer.html?id=${id}`, sandbox: "allow-scripts allow-same-origin allow-popups"};
+		return {src: urlOf(`drawio-viewer.html?id=${id}`), sandbox: "allow-scripts allow-same-origin allow-popups"};
 	}
 	if (MERMAID_EXTS.includes(ext)) {
-		return {src: `./mermaid-viewer.html?id=${id}`, sandbox: "allow-scripts allow-same-origin allow-popups"};
+		return {src: urlOf(`mermaid-viewer.html?id=${id}`), sandbox: "allow-scripts allow-same-origin allow-popups"};
 	}
 	// それ以外(テキスト・HTML)は中身をそのまま出す。スクリプトは動かさない
-	return {src: `./api/documents/${id}/file`, sandbox: "allow-same-origin"};
+	return {src: urlOf(`api/documents/${id}/file`), sandbox: "allow-same-origin"};
 };
-
-const params = new URLSearchParams(window.location.search);
-const alias = params.get("alias") || "";
 
 const content = document.getElementById("content");
 const status = document.getElementById("status");
@@ -53,13 +70,10 @@ const setStatus = (text, failed) => {
 	status.hidden = text === "";
 };
 
-// 共有リンクの正規のURL。このページ自身のURLがアドレスバーに出るので、それを
-// そのまま人に渡されることがある。渡された側が未ログインでも行き止まりにならないよう、
-// ログインを挟んでここへ戻す(そこから改めてこのページへ回される)
-const CANONICAL_PATH = new URL(`./api/documents/alias/${encodeURIComponent(alias)}/viewer`, window.location.href).pathname;
-
+// 未ログイン・期限切れのときは、ログインを挟んで共有リンクへ戻す
+// (そこから改めてこのページへ回される)
 const goToLogin = () => {
-	window.location.replace(`./login?next=${encodeURIComponent(CANONICAL_PATH)}`);
+	window.location.replace(urlOf(`login?next=${encodeURIComponent(CANONICAL_PATH)}`));
 };
 
 /**
@@ -69,7 +83,7 @@ const goToLogin = () => {
  * まとめて「見つかりません」にすると、ログインすれば見られる人を追い返してしまう
  */
 const resolveAlias = async () => {
-	const res = await fetch(`./api/documents/alias/${encodeURIComponent(alias)}`);
+	const res = await fetch(urlOf(`api/documents/alias/${encodeURIComponent(alias)}`));
 	return {status: res.status, document: res.status === 200 ? await res.json() : null};
 };
 
@@ -138,7 +152,7 @@ const start = async () => {
 
 	// 他の人が新しい版を上げたら知らせる。
 	// 受け取るのは「何か変わった」だけなので、そのたびに指す先を引き直して確かめる
-	const events = new EventSource("./api/documents/events");
+	const events = new EventSource(urlOf("api/documents/events"));
 	events.addEventListener("documents-changed", () => { checkForUpdate(); });
 
 	// SSEが切れたまま気づかない場合に備えて、画面に戻ってきたときにも確かめる

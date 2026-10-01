@@ -38,6 +38,10 @@ process.env.SKILL_CLIENT_VERSION = process.env.SKILL_CLIENT_VERSION || "9.9.9";
 // 「サーバーが更新された」通知を検証できるようにする(ローカルにはVERSION.jsonが無く、
 // ビルドが決まらないとこの経路を通れないため)
 process.env.SERVER_BUILD = process.env.SERVER_BUILD || "20260925_000000";
+// レート制限を切る。テスト一式は正規の利用者1人として数えられるため、本数が増えると
+// 上限に届き、**無関係なテストが429で落ちる**(実際に起きた。落ちるのは後ろのテストなので
+// 原因が分かりにくい)。本番の上限を緩めるのではなく、ここで切る
+process.env.RATE_LIMIT_DISABLED = process.env.RATE_LIMIT_DISABLED || "true";
 
 // require時にdb.jsがDATA_DIR上にSQLiteを作成する
 const ds = require("../../app/lib/datastore.js");
