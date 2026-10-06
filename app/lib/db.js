@@ -670,6 +670,11 @@ const MIGRATIONS = {
 				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
 				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
 
+				-- 機能のOn/Off(モックアップ機能など。v17で追加)。ここでコピーし忘れると、最新化(スキーマ移行)の
+				-- たびに設定が消えて既定(Off)へ戻ってしまう。移行元(v17/v18)には必ずこの表があるため直接コピーする
+				INSERT INTO app_settings (key, value, updated_by, updated_at)
+				SELECT key, value, updated_by, updated_at FROM old.app_settings;
+
 				-- updated_at は v18 で足した列。既存の行は登録時刻で埋める
 				-- (これまで触った時刻を持っていないため。並びは従来と同じになる)
 				INSERT INTO mockups (id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, updated_at, deleted_by, deleted_at, previous_id)
@@ -715,6 +720,11 @@ const MIGRATIONS = {
 
 				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
 				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
+
+				-- 機能のOn/Off(モックアップ機能など。v17で追加)。ここでコピーし忘れると、最新化(スキーマ移行)の
+				-- たびに設定が消えて既定(Off)へ戻ってしまう。移行元(v17/v18)には必ずこの表があるため直接コピーする
+				INSERT INTO app_settings (key, value, updated_by, updated_at)
+				SELECT key, value, updated_by, updated_at FROM old.app_settings;
 
 				-- updated_at は v18 で足した列。既存の行は登録時刻で埋める
 				-- (これまで触った時刻を持っていないため。並びは従来と同じになる)
