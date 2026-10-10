@@ -18,6 +18,7 @@
  *   - いつ・どこから・何でログインしたかが残る(管理者が切断を判断する材料)
  *   - 切断された後、ログインし直せば入れる(切断は締め出しではない)
  *   - アクセスログにセッションIDそのものが出ない
+ *   - アクセスログに、APIキー経由の要求でも利用者が残る
  */
 
 const assert = require("node:assert/strict");
@@ -275,6 +276,29 @@ const main = async () => {
 		}
 		assert.ok(stdout.includes('"msg":"access"'), "アクセスログ自体が取れていない(検査が空振りしている)");
 		console.log("ok 6 アクセスログにセッションIDが出ない");
+
+		// ---- 7. APIキー経由の要求でも、誰のものかがアクセスログに残る ----
+		// 以前は利用者をブラウザのログインからしか取っておらず、キーでの参照は user:null だった。
+		// 不正アクセスを疑ったときに「そのキーで何を見られたか」を追えない
+		const issued = await asJson("api/apikeys", second.after, {method: "POST", body: JSON.stringify({label: "log-check-key", role: "readonly", expiryOption: "30d"})});
+		assert.ok(issued.status < 300, `APIキーを発行できない: ${issued.status}`);
+		const viaKey = await call(`${app}/api/documents?marker=via-api-key`, {headers: {Authorization: `Bearer ${issued.body.apiKey}`}});
+		assert.equal(viaKey.status, 200);
+		await call(`${app}/api/documents?marker=no-credentials`);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		const accessLine = (marker) => JSON.parse(stdout.split("\n").find((line) => line.includes('"msg":"access"') && line.includes(marker)));
+		const keyLine = accessLine("marker=via-api-key");
+		assert.equal(keyLine.user, MEMBER, "APIキー経由の要求に利用者が残っていない");
+		assert.equal(keyLine.apiKey, "log-check-key", "どのキーかが残っていない");
+		assert.equal(stdout.includes(issued.body.apiKey), false, "ログにAPIキーの本体が出ている");
+		// 画面からの操作は、キーの欄が空になる(キー経由と見分けられる)
+		const sessionLine = accessLine("api/sessions/history");
+		assert.equal(sessionLine.user, ADMIN);
+		assert.equal(sessionLine.apiKey, null);
+		// 認証していない要求に、誰かの名前を付けない
+		assert.equal(accessLine("marker=no-credentials").user, null);
+		console.log("ok 7 APIキー経由の要求でも、利用者とキーの用途がアクセスログに残る");
 
 		// 再認証の強制(prompt=login / max_age)は入れていない。入れたらここで気づけるようにしておく
 		assert.equal(idp.state.authorizeCalls.some((query) => "prompt" in query || "max_age" in query), false);

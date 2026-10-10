@@ -138,7 +138,12 @@ app.use((req, res, next) => {
 			status: res.statusCode,
 			durationMs,
 			ip: req.ip,
-			user: (req.session && req.session.user) ? req.session.user.identifier : null,
+			// 誰の要求か。**APIキー経由でも残す**(以前はブラウザのログインからしか取っておらず、
+			// キーでの参照は誰のものか追えなかった)。認証を通った利用者を優先し、無ければ
+			// セッションに残っている名前を出す(切断された利用者が試し続けている、等が見える)
+			user: req.authData?.user_identifier ?? ((req.session && req.session.user) ? req.session.user.identifier : null),
+			// APIキー経由なら、どのキーか(発行時に付けた用途。キー本体ではない)。画面からの操作は null
+			apiKey: req.authData?.viaApiKey ?? null,
 			// どのクライアント(AIエージェント用Skillのバージョン等)からの呼び出しかを追えるようにする
 			userAgent: req.headers["user-agent"] || null,
 			// Cookie到達性の診断用(セッションが引き継がれない不具合の切り分けに使う)
