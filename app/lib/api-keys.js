@@ -111,6 +111,19 @@ const SQL_REVOKE_API_KEY = `
 	WHERE id = @id AND created_by = @created_by AND revoked_at IS NULL
 `;
 
+// 管理者が利用者を切断するときに使う(lib/sessions.js 参照)。
+// ふだんの一覧・失効は発行者本人に限っており、他人のキーに触れるのはこの経路だけ
+const SQL_SELECT_ALL_ACTIVE_API_KEYS = `
+	SELECT id, label, role, created_by, created_at, expires_at, last_used_at
+	FROM api_keys
+	WHERE revoked_at IS NULL AND expires_at > ?
+	ORDER BY created_at DESC
+`;
+const SQL_REVOKE_API_KEYS_BY_OWNER = `
+	UPDATE api_keys SET revoked_at = @revoked_at
+	WHERE created_by = @created_by AND revoked_at IS NULL
+`;
+
 module.exports.EXPIRY_OPTIONS = EXPIRY_OPTIONS;
 module.exports.API_KEY_ROLES = API_KEY_ROLES;
 module.exports.isValidApiKeyRole = isValidApiKeyRole;
@@ -170,6 +183,18 @@ module.exports.listApiKeys = async (ownerUserIdentifier) => ds.all(SQL_SELECT_AC
 /**
  * 発行者本人のAPIキーのみ失効できる
  */
+/** 有効なAPIキーを全員分(管理者向け。キー本体は元から保存していない) */
+module.exports.listAllActiveApiKeys = async () => ds.all(SQL_SELECT_ALL_ACTIVE_API_KEYS, [new Date().toISOString()]);
+
+/**
+ * その利用者が発行したAPIキーをすべて失効させる。
+ * @returns {Promise<number>} 失効させた数
+ */
+module.exports.revokeAllByOwner = async (ownerUserIdentifier) => {
+	const result = await ds.run(SQL_REVOKE_API_KEYS_BY_OWNER, {created_by: ownerUserIdentifier, revoked_at: new Date().toISOString()});
+	return result.changes;
+};
+
 module.exports.revokeApiKeyById = async (id, ownerUserIdentifier) => {
 	const result = await ds.run(SQL_REVOKE_API_KEY, {id, created_by: ownerUserIdentifier, revoked_at: new Date().toISOString()});
 	return result.changes > 0;

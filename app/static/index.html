@@ -330,6 +330,31 @@
 	.adminTabPanel { display: none; }
 	.adminTabPanel.active { display: block; }
 	.adminSectionNote { color: #666; font-size: 0.85em; line-height: 1.6; margin-bottom: 12px; }
+
+	/* セッションの切断。取り消せない操作なので、できないこと(注意書き)を一覧より先に見せる */
+	.sessionCaution { border: 1px solid #f0d58c; background: #fff8e6; color: #6b5300; border-radius: 6px; padding: 10px 14px; font-size: 0.85em; line-height: 1.6; max-width: 900px; margin-bottom: 12px; }
+	.sessionCaution ul { margin: 4px 0 0; padding-left: 1.2em; }
+	.sessionUser { border: 1px solid #e2e2e2; border-radius: 6px; padding: 12px 14px; max-width: 900px; margin-bottom: 10px; }
+	.sessionUserHead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+	.sessionUserName { font-weight: 600; overflow-wrap: anywhere; }
+	.sessionUserMeta { color: #777; font-size: 0.8em; }
+	.sessionUserHead .modalButton { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+	.sessionBadge { font-size: 0.72em; border-radius: 10px; padding: 1px 8px; background: #e7f0ff; color: #1a56db; white-space: nowrap; }
+	.sessionBadge.warn { background: #fdecec; color: #c92a2a; }
+	.sessionTableWrap { overflow-x: auto; margin-top: 8px; }
+	.sessionTable { border-collapse: collapse; font-size: 0.8em; width: 100%; }
+	.sessionTable th, .sessionTable td { text-align: left; padding: 4px 10px 4px 0; border-top: 1px solid #f0f0f0; vertical-align: top; }
+	.sessionTable th { color: #888; font-weight: normal; border-top: none; white-space: nowrap; }
+	.sessionTable td.sessionAgent { color: #666; overflow-wrap: anywhere; min-width: 160px; }
+	.sessionTable td.sessionUnknown { color: #999; }
+	.sessionKeys { color: #666; font-size: 0.8em; margin-top: 8px; overflow-wrap: anywhere; }
+	.sessionHistoryTitle { font-size: 0.95em; margin: 22px 0 8px; }
+
+	/* ログインが切れたときの帯。作業中の画面は奪わず、知らせるだけにする */
+	#sessionExpiredBar { position: fixed; top: 0; left: 0; right: 0; z-index: 3000; display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #fdf2f2; border-bottom: 1px solid #e8b4b4; color: #8a2b2b; font-size: 0.85em; }
+	#sessionExpiredBar[hidden] { display: none; }
+	#sessionExpiredBar span { flex: 1; }
+	#sessionExpiredBar button { font: inherit; padding: 4px 12px; border: 1px solid #d89a9a; border-radius: 4px; background: #fff; color: #8a2b2b; cursor: pointer; flex: none; }
 	.adminSectionNote ul { margin: 6px 0 0; padding-left: 1.2em; }
 	/* ペインは全幅なので、入力欄が横いっぱいに伸びないよう抑える(モーダル時の見た目に合わせる) */
 	#adminPane .toolbarRow input[type="text"] { max-width: 320px; }
@@ -1446,6 +1471,14 @@
 </head>
 <body>
 
+<!--
+	ログインが切れたとき(期限・管理者による切断)の帯。理由は出さない(侵入者にも同じものが
+	見えるため)。書きかけのメモ等を失わせないよう、画面は奪わず、押されたときだけ移動する
+-->
+<div id="sessionExpiredBar" hidden>
+	<span>ログインが切れました。操作を続けるにはログインし直してください。</span>
+	<button type="button" id="sessionExpiredLoginButton">ログインし直す</button>
+</div>
 <div id="loginArea">
 	<div class="messageCard">
 		<div class="loginSpinner"></div>
@@ -1786,6 +1819,29 @@
 						</table>
 					</div>
 					<div id="allowedUserEmptyMessage" class="emptyMessage" style="display:none;">未登録です(登録されるまで誰もログインできません)。</div>
+				</section>
+				<section class="adminTabPanel" data-tab="sessions">
+					<div class="adminSectionNote">
+						不正アクセスが疑われるとき、対象の利用者を<strong>まとめて切断</strong>します。切断すると次のものが一式で止まり、認証からやり直しになります。
+						<ul>
+							<li>ログイン中のセッション(すべての端末・ブラウザ)</li>
+							<li>その利用者が発行したAPIキー(<strong>元に戻せません</strong>。必要なら本人が発行し直します)</li>
+							<li>開いているモックアップの表示と、画面への通知</li>
+						</ul>
+					</div>
+					<div class="sessionCaution">
+						<strong>切断だけでは防げないこと</strong>
+						<ul>
+							<li><strong>IDとパスワードそのものが漏れている場合</strong>は、切断してもまたログインされます。認証基盤(IdP)側でパスワードを変更してください。</li>
+							<li>切断は締め出しではありません。入れなくするには「アクセス許可ユーザー」から外してください。</li>
+						</ul>
+					</div>
+					<div class="toolbarRow" style="margin-bottom: 12px;">
+						<button id="sessionReloadButton" type="button" class="modalButton">再読み込み</button>
+					</div>
+					<div id="sessionUserList"></div>
+					<h3 class="sessionHistoryTitle">切断の履歴</h3>
+					<div id="sessionHistoryList"></div>
 				</section>
 				<section class="adminTabPanel" data-tab="server">
 					<div class="adminSectionNote">
@@ -5210,8 +5266,113 @@ const loadFeatures = async () => {
 	renderFeatures(await res.json());
 };
 
+// ---- セッションの切断(管理者のみ) ----
+// 不正アクセスが疑われるときに、対象の利用者を一式で切る。取り消せない操作なので、
+// 切るかどうかを判断できる材料(いつ・どこから・何で・最後にいつ動いたか)を先に並べる
+const sessionUserList = document.getElementById("sessionUserList");
+const sessionHistoryList = document.getElementById("sessionHistoryList");
+
+// この機能を入れる前からログインしていた人は、手がかりを記録していない。空欄にせず理由を出す
+const sessionCell = (value, format = (v) => escapeHtml(v)) =>
+	(value == null || value === "" ? `<td class="sessionUnknown">不明</td>` : `<td>${format(value)}</td>`);
+
+const renderSessionUsers = (data) => {
+	if (data.users.length === 0) {
+		sessionUserList.innerHTML = `<div class="emptyMessage">ログイン中の利用者も、有効なAPIキーもありません。</div>`;
+		return;
+	}
+	sessionUserList.innerHTML = data.users.map((entry) => {
+		const sessions = entry.sessions.length === 0
+			? `<div class="sessionUserMeta" style="margin-top: 8px;">ログイン中のセッションはありません(APIキーだけが有効です)。</div>`
+			: `<div class="sessionTableWrap"><table class="sessionTable">
+				<thead><tr><th></th><th>ログイン</th><th>最終アクセス</th><th>接続元IP</th><th>ブラウザ等</th><th>期限</th></tr></thead>
+				<tbody>${entry.sessions.map((session) => `<tr>
+					<td>${session.current ? `<span class="sessionBadge" title="いま操作しているこの画面です。自分を切断しても残ります">この画面</span>` : ""}</td>
+					${sessionCell(session.loginAt, (v) => escapeHtml(formatDateTime(v)))}
+					${sessionCell(session.lastSeenAt, (v) => escapeHtml(formatDateTime(v)))}
+					${sessionCell(session.ip)}
+					${session.userAgent ? `<td class="sessionAgent">${escapeHtml(session.userAgent)}</td>` : `<td class="sessionUnknown">不明</td>`}
+					<td>${escapeHtml(formatDateTime(session.expiresAt))}</td>
+				</tr>`).join("")}</tbody>
+			</table></div>`;
+		const apiKeys = entry.apiKeys.length === 0 ? "" : `<div class="sessionKeys">APIキー ${entry.apiKeys.length}件: ${entry.apiKeys.map((key) =>
+			`${escapeHtml(key.label)}(${escapeHtml(ROLE_LABELS[key.role] || key.role)}・最終利用 ${key.lastUsedAt ? escapeHtml(formatDateTime(key.lastUsedAt)) : "なし"})`).join("、")}</div>`;
+		return `<div class="sessionUser" data-user="${escapeHtml(entry.user)}">
+			<div class="sessionUserHead">
+				<span class="sessionUserName">${escapeHtml(entry.user)}</span>
+				${entry.isSelf ? `<span class="sessionBadge">自分</span>` : ""}
+				${entry.role == null
+					? `<span class="sessionBadge warn" title="アクセス許可ユーザーから外れているため、残っていてもログインもAPIも通りません">許可から外れています</span>`
+					: `<span class="sessionUserMeta">${escapeHtml(ROLE_LABELS[entry.role] || entry.role)}</span>`}
+				<span class="sessionUserMeta">セッション ${entry.sessions.length}件 / APIキー ${entry.apiKeys.length}件</span>
+				<button type="button" class="modalButton primary sessionRevokeButton">切断する</button>
+			</div>
+			${sessions}
+			${apiKeys}
+		</div>`;
+	}).join("");
+
+	sessionUserList.querySelectorAll(".sessionUser").forEach((card) => {
+		const entry = data.users.find((item) => item.user === card.dataset.user);
+		card.querySelector(".sessionRevokeButton").addEventListener("click", () => revokeSessionUser(entry, data.mockupTokenMinutes));
+	});
+};
+
+const revokeSessionUser = async (entry) => {
+	// 自分を切るときは、操作中の画面だけ残る。押す前に分かるようにしておく
+	const kept = entry.isSelf ? entry.sessions.filter((session) => session.current).length : 0;
+	const message = `${entry.user} を切断しますか?`
+		+ ` セッション ${entry.sessions.length - kept}件・APIキー ${entry.apiKeys.length}件が無効になります。`
+		+ (entry.apiKeys.length > 0 ? "APIキーは元に戻せません。" : "")
+		+ (entry.isSelf ? "いま操作しているこの画面は残ります。" : "");
+	if (!await showConfirmDialog(message)) return;
+
+	const res = await fetch("./api/sessions/revoke", {
+		method: "POST",
+		headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({user: entry.user})
+	});
+	if (res.status !== 200) {
+		alert((await res.json().catch(() => ({}))).error || "切断できませんでした");
+		return;
+	}
+	await loadSessionsTab();
+};
+
+const renderSessionHistory = (rows) => {
+	if (rows.length === 0) {
+		sessionHistoryList.innerHTML = `<div class="emptyMessage">切断の履歴はありません。</div>`;
+		return;
+	}
+	sessionHistoryList.innerHTML = `<div class="sessionTableWrap" style="max-width: 900px;"><table class="sessionTable">
+		<thead><tr><th>日時</th><th>実行者</th><th>対象</th><th>セッション</th><th>APIキー</th><th>切ったセッションの接続元</th></tr></thead>
+		<tbody>${rows.map((row) => `<tr>
+			<td>${escapeHtml(formatDateTime(row.at))}</td>
+			<td>${escapeHtml(row.by)}</td>
+			<td>${escapeHtml(row.targetUser)}</td>
+			<td>${row.sessions == null ? "-" : `${row.sessions}件`}</td>
+			<td>${row.apiKeys == null ? "-" : `${row.apiKeys}件`}</td>
+			<td class="sessionAgent">${row.sessionDetails.length === 0 ? "-" : row.sessionDetails.map((detail) =>
+				`<span title="${escapeHtml(detail.userAgent || "ブラウザ等は不明")}">${escapeHtml(detail.ip || "不明")}</span>`).join("、")}</td>
+		</tr>`).join("")}</tbody>
+	</table></div>`;
+};
+
+const loadSessionsTab = async () => {
+	const [listRes, historyRes] = await Promise.all([fetch("./api/sessions"), fetch("./api/sessions/history")]);
+	if (listRes.status !== 200 || historyRes.status !== 200) {
+		sessionUserList.innerHTML = `<div class="emptyMessage">セッションの状態を取得できませんでした。</div>`;
+		sessionHistoryList.innerHTML = "";
+		return;
+	}
+	renderSessionUsers(await listRes.json());
+	renderSessionHistory(await historyRes.json());
+};
+document.getElementById("sessionReloadButton").addEventListener("click", () => loadSessionsTab());
+
 const ADMIN_TABS = [
 	{key: "allowedUsers", label: "アクセス許可ユーザー", load: () => loadAllowedUsers()},
+	{key: "sessions", label: "セッション", load: () => loadSessionsTab()},
 	{key: "server", label: "サーバー", load: () => Promise.all([loadServerStatus(), loadFeatures()])},
 	{key: "database", label: "データベース", load: () => loadDatabaseTab()},
 	{key: "convert", label: "変換サービス", load: () => loadConvertTab()}
@@ -6061,8 +6222,43 @@ helpOverlay.addEventListener("click", (ev) => {
 });
 // 他クライアントによるアップロード/削除・プロジェクトの施錠/解錠や構成変更をSSEで受け取り、
 // 表示中の画面を自動更新する(施錠状態は全利用者で共有されるため、他の人が変更したら反映する)
+// ---- ログインが切れたとき ----
+// 期限が来た・管理者に切断された、のどちらでも、これまでは**何も起きなかった**
+// (一覧が更新されず、操作が黙って失敗するだけ)。401を見たら帯で知らせる。
+// 画面は奪わない。書きかけのメモ等を失わせないため、押されたときだけログインへ移る。
+// 理由は出さない(切断された場合、侵入者にも同じ文言が見えるため)
+const sessionExpiredBar = document.getElementById("sessionExpiredBar");
+const announceSessionExpired = () => { sessionExpiredBar.hidden = false; };
+document.getElementById("sessionExpiredLoginButton").addEventListener("click", () => {
+	window.location.href = "./login";
+});
+
+// ログインできていることを確かめた後に呼ぶ(未ログインで開いた直後の401は、ふつうにログインへ送る)
+const watchSessionExpiry = () => {
+	const nativeFetch = window.fetch.bind(window);
+	window.fetch = async (...args) => {
+		const res = await nativeFetch(...args);
+		if (res.status === 401) announceSessionExpired();
+		return res;
+	};
+};
+
 const subscribeDocumentEvents = () => {
 	const eventSource = new EventSource("./api/documents/events");
+	// 切断されるとサーバーが接続を閉じる。繋ぎ直せないときは、切れたのかどうかを確かめる
+	// (通信が落ちているだけなら401にならないので、何も出ない)
+	let probingSession = false;
+	eventSource.addEventListener("error", async () => {
+		if (probingSession || !sessionExpiredBar.hidden) return;
+		probingSession = true;
+		try {
+			await fetch("./api/check_access_token");
+		} catch (err) {
+			// 通信できないだけ
+		} finally {
+			probingSession = false;
+		}
+	});
 	eventSource.addEventListener("documents-changed", () => {
 		loadDocuments();
 	});
@@ -6225,6 +6421,7 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 (async () => {
 	const res = await fetch("./api/check_access_token");
 	if (res.status === 200) {
+		watchSessionExpiry();
 		const authData = await res.json();
 		currentUserRole = authData.role;
 		currentUserIdentifier = authData.user_identifier;

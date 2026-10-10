@@ -58,7 +58,7 @@ const {server} = require("../../app/server.js");
 		const tables = [
 			"document_tags", "project_documents", "project_folders", "projects",
 			"audit_log", "api_keys", "allowed_users", "tag_order", "vector_search_settings",
-			"documents", "sessions"
+			"documents", "sessions", "session_revocations"
 		];
 		for (const table of tables) {
 			await ds.run(`DELETE FROM ${table}`);
@@ -99,6 +99,47 @@ const {server} = require("../../app/server.js");
 	const sessionSig = crypto.createHmac("sha256", sessionSecret).update(sid).digest("base64").replace(/=+$/, "");
 	const sessionCookie = `s:${sid}.${sessionSig}`;
 
+	// ---- セッションの切断(session-revoke.spec.js / session-revoke.e2e.js)用の利用者 ----
+	// 切断は取り消せず、対象のAPIキーも巻き込む。上の owner を切ると他のテストが全部
+	// 落ちるので、**切ってよい相手を別に用意する**。ログインの手がかり(時刻・IP・UA)も
+	// 入れておく(上の owner のセッションは、この機能を入れる前の形のまま残してある)
+	const mintSession = async (user, {ip, userAgent, minutesAgo}) => {
+		const mintedSid = crypto.randomBytes(24).toString("hex");
+		const at = new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+		const data = {
+			cookie: {originalMaxAge: sessionMaxAgeMs, expires: new Date(sessionExpiresAt).toISOString(), httpOnly: true, path: "/", sameSite: "lax"},
+			user: {identifier: user},
+			loginAt: at,
+			lastSeenAt: at,
+			ip,
+			userAgent
+		};
+		await ds.run("INSERT INTO sessions (sid, data, expires_at) VALUES (?, ?, ?)", [mintedSid, JSON.stringify(data), sessionExpiresAt]);
+		const sig = crypto.createHmac("sha256", sessionSecret).update(mintedSid).digest("base64").replace(/=+$/, "");
+		return `s:${mintedSid}.${sig}`;
+	};
+	const makeTarget = async (user, role, sessionCount) => {
+		await AllowedUsers.addAllowedUser(user, role, "serve");
+		const cookies = [];
+		for (let i = 0; i < sessionCount; i += 1) {
+			cookies.push(await mintSession(user, {ip: `203.0.113.${10 + i}`, userAgent: `TestBrowser/${i + 1}.0`, minutesAgo: 60 + i}));
+		}
+		const key = await ApiKeys.createApiKey(`key-of-${user.split("@")[0]}`, role === "admin" ? "readwrite" : role, "30d", user);
+		return {user, cookies, apiKey: key.apiKey};
+	};
+	const revokeTargets = {
+		// 一般の利用者(セッション2つ + APIキー)
+		victim: await makeTarget("victim@example.com", "readwrite", 2),
+		// 自分自身を切る管理者(セッション2つ + APIキー)
+		admin2: await makeTarget("admin2@example.com", "admin", 2),
+		// ログインはしておらず、APIキーだけを持っている利用者
+		keyOnly: await makeTarget("keyonly@example.com", "readonly", 0),
+		// 巻き添えにならないことを見るための利用者
+		bystander: await makeTarget("bystander@example.com", "readwrite", 1),
+		// 画面のテスト用
+		e2eVictim: await makeTarget("e2e-victim@example.com", "readwrite", 1)
+	};
+
 	fs.writeFileSync(KEYS_FILE, JSON.stringify({
 		owner,
 		readonly: readonly.apiKey,
@@ -106,7 +147,8 @@ const {server} = require("../../app/server.js");
 		expired: expired.apiKey,
 		invalid: "dm_thisisnotarealkey",
 		sessionCookieName: "connect.sid",
-		sessionCookie
+		sessionCookie,
+		revokeTargets
 	}, null, 2));
 
 	await converterStub.start(stubPort);

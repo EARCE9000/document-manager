@@ -143,7 +143,10 @@ app.use((req, res, next) => {
 			userAgent: req.headers["user-agent"] || null,
 			// Cookie到達性の診断用(セッションが引き継がれない不具合の切り分けに使う)
 			hasCookieHeader: req.headers.cookie != null,
-			sessionId: req.sessionID,
+			// セッションIDはそれ自体がログインの鍵なので、ログには出さない
+			// (ログを読める人が、他人になりすませてしまう)。同じセッションかどうかを
+			// 見分けられれば診断には足りるので、元へ戻せない目印に置き換えている
+			sessionId: req.sessionID == null ? null : Sessions.handleOf(req.sessionID),
 			secure: req.secure
 		}, "access");
 	});
@@ -198,6 +201,20 @@ for (const [page, csp] of Object.entries(VIEWER_PAGE_CSP)) {
 app.use(express.static(path.join(__dirname, 'static')));
 
 const ApiKeys = require("./lib/api-keys.js");
+const Sessions = require("./lib/sessions.js");
+
+/**
+ * いまのセッションでログインしている利用者(していなければ null)。
+ *
+ * **req.session.user を直接見ないこと。** 管理者に切断されたセッションは、行が残っていても
+ * 通してはいけない(消した直後に処理中だった要求が、行を書き戻すことがある)。
+ * セッションでの認証は、必ずここを通す
+ */
+const sessionUserOf = async (req) => {
+	if (req.session?.user == null) return null;
+	if (!await Sessions.isSessionAlive(req.session)) return null;
+	return req.session.user.identifier;
+};
 const AllowedUsers = require("./lib/allowed-users.js");
 
 // AUTH_DISABLED=true の間は認証を全てバイパスする(開発用。本番では未設定のこと)
@@ -246,10 +263,16 @@ const resolveAuth = async (req, res, next) => {
 			next();
 			return;
 		}
-		if (req.session?.user != null) {
-			const role = await AllowedUsers.getRole(req.session.user.identifier);
+		const sessionUser = await sessionUserOf(req);
+		if (sessionUser != null) {
+			const role = await AllowedUsers.getRole(sessionUser);
 			if (role != null) {
-				req.authData = {user_identifier: req.session.user.identifier, role};
+				req.authData = {user_identifier: sessionUser, role};
+				// 最終アクセスを残す(5分に1回だけ書く)。SSEは数えない。タブを開いたままに
+				// しているだけで繋ぎ直しが起き、「使われている」ように見えてしまうため
+				if (!req.originalUrl.split("?")[0].endsWith("/api/documents/events")) {
+					Sessions.touchLastSeen(req.session);
+				}
 			}
 		}
 		next();
@@ -608,7 +631,15 @@ app.all(BASE_URL_PATH + 'login', async (req, res) => {
 					return;
 				}
 
+				// **セッションIDを振り直す。** ログイン前から持っていたIDをそのまま使うと、
+				// 先にIDを掴ませておいた第三者が、本人のログイン後に同じIDで入れてしまう
+				// (セッション固定)。ログインが通った時点で新しいIDへ切り替える
+				await new Promise((resolve, reject) => {
+					req.session.regenerate((err) => (err ? reject(err) : resolve()));
+				});
 				req.session.user = {identifier: user_identifier};
+				// 管理者が「切るべきか」を判断するための手がかり(いつ・どこから・何で)
+				Object.assign(req.session, Sessions.describeLogin(req));
 				// セッションに入っているのは正規化済みの値だが、ここでも再検査する
 				// (検査を1箇所の記憶だけに頼らない)
 				res.redirect(safeNextPath(transaction?.next) || APP_ROOT_URI);
@@ -672,11 +703,12 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 			return;
 		}
 
-		if (req.session?.user != null) {
-			const role = await AllowedUsers.getRole(req.session.user.identifier);
+		const sessionUser = await sessionUserOf(req);
+		if (sessionUser != null) {
+			const role = await AllowedUsers.getRole(sessionUser);
 			if (role != null) {
 				res.status(200).json({
-					user_identifier: req.session.user.identifier,
+					user_identifier: sessionUser,
 					isAdmin: role === AllowedUsers.ROLES.ADMIN,
 					role,
 					vectorSearchEnabled: VectorSearch.isEnabled(),
@@ -1571,8 +1603,32 @@ const broadcastActivity = (req, {action, documentId, entryFile, tags, relatedEnt
 	ds.notify("document_activity", payload).catch((err) => logger.error({err}, "::notify:document_activity"));
 };
 
+// 切断された利用者のSSEを閉じる。
+// SSEは**繋いだ時にしか認証しない**ので、セッションやAPIキーを無効にしただけでは、
+// 開いたままの接続に通知が流れ続ける(誰が何を上げたかが見え続ける)。
+// keep は、管理者が自分自身を切ったときに操作していたセッションの目印
+const closeRevokedSseClients = (payload) => {
+	let info;
+	try {
+		info = JSON.parse(payload);
+	} catch (err) {
+		return;
+	}
+	for (const client of [...sseClients]) {
+		const owner = client.sseOwner;
+		if (owner == null || owner.user !== info.user) continue;
+		if (owner.session != null && owner.session === info.keep) continue;
+		client.sseCleanup();
+		client.end();
+	}
+};
+
 // 通知チャンネルを購読し、受信したら対応するローカル配信を行う
-ds.subscribe(["documents_changed", "projects_changed", "mockups_changed", "document_activity"], (channel, payload) => {
+ds.subscribe(["documents_changed", "projects_changed", "mockups_changed", "document_activity", "sessions_revoked"], (channel, payload) => {
+	if (channel === "sessions_revoked") {
+		if (payload) closeRevokedSseClients(payload);
+		return;
+	}
 	if (channel === "documents_changed") {
 		deliverDocumentsChanged();
 	} else if (channel === "projects_changed") {
@@ -1606,13 +1662,20 @@ app.get(BASE_URL_PATH + 'api/documents/events', requireAuth, (req, res) => {
 	res.flushHeaders();
 	res.write(":connected\n\n");
 
+	// 誰の接続か(利用者が切断されたときに閉じるため)。セッション経由なら、その目印も持つ
+	res.sseOwner = {
+		user: req.authData.user_identifier,
+		session: req.authData.viaApiKey == null && req.sessionID != null ? Sessions.handleOf(req.sessionID) : null
+	};
 	sseClients.add(res);
 	const heartbeat = setInterval(() => res.write(":heartbeat\n\n"), 30000);
-
-	req.on("close", () => {
+	// 閉じた後に書き込むと例外になるので、止めるものを1か所にまとめておく
+	res.sseCleanup = () => {
 		clearInterval(heartbeat);
 		sseClients.delete(res);
-	});
+	};
+
+	req.on("close", res.sseCleanup);
 });
 
 /**
@@ -2446,7 +2509,7 @@ app.get(BASE_URL_PATH + 'api/documents/alias/:alias/viewer', async (req, res) =>
 		// 共有されたリンクは未ログインで開かれる。ログイン画面へ迂回し、終わったら
 		// **このURLへ戻す**(戻り先が版のURLだと、せっかくの共有リンクが手元から消える)。
 		// 包むページ(alias-viewer.html)側には迂回の仕組みが無いため、ここで済ませる
-		if (!AUTH_DISABLED && req.session?.user == null) {
+		if (!AUTH_DISABLED && await sessionUserOf(req) == null) {
 			res.redirect(`${LOGIN_URI}?next=${encodeURIComponent(PUBLIC_BASE_PATH + req.originalUrl)}`);
 			return;
 		}
@@ -2493,12 +2556,13 @@ app.get(BASE_URL_PATH + 'api/documents/:id/viewer', async (req, res) => {
 		if (AUTH_DISABLED) {
 			req.authData = DEV_AUTH_DATA;
 		} else {
-			const role = req.session?.user != null ? await AllowedUsers.getRole(req.session.user.identifier) : null;
+			const sessionUser = await sessionUserOf(req);
+			const role = sessionUser != null ? await AllowedUsers.getRole(sessionUser) : null;
 			if (role == null) {
 				res.redirect(`${LOGIN_URI}?next=${encodeURIComponent(PUBLIC_BASE_PATH + req.originalUrl)}`);
 				return;
 			}
-			req.authData = {user_identifier: req.session.user.identifier, role};
+			req.authData = {user_identifier: sessionUser, role};
 		}
 		// .drawio / .mmd は画像化していないため、ブラウザ上で描画するビューアのページへ送る
 		// (ログインの確認はここで済ませてある。ビューア側が図の中身を取りに来る)
@@ -3175,6 +3239,140 @@ app.delete(BASE_URL_PATH + 'api/apikeys/:id', requireAuth, requireSession, async
 		res.status(204).end();
 	} catch (err) {
 		logger.error(err, "::api/apikeys/:id:revoke");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+
+/* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+/*
+	セッションの一覧と、利用者単位の切断(管理者のみ)
+
+	不正アクセスが疑われるときに、対象の利用者を**まとめて切る**。切るのは一式:
+	  - ログイン中のセッション(操作している管理者自身のものだけは残す)
+	  - その利用者が発行したAPIキー
+	  - 発行済みのモックアップ引換券(切断より前のものを通さなくなる)
+	  - 開いたままのSSE
+
+	**できないこと**(画面にも書いてある):
+	  - 入れなくすること。切断しても、認証が通ればまたログインできる。
+	    入れなくするには、アクセス許可ユーザーから外す
+	  - IDとパスワードが漏れている場合の対処。認証基盤(IdP)側でパスワードを変える必要がある
+
+	画面のログインからしか呼べない(requireSession)。APIキーで他人を切れるようにはしない。
+	セッションIDは応答にも履歴にも出さない(lib/sessions.js 参照)。
+*/
+/* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+
+// 利用者の識別子(メールアドレス)として受け付ける長さの上限
+const SESSION_TARGET_MAX_LENGTH = 320;
+
+/**
+ * 利用者ごとの、ログイン中のセッションと有効なAPIキー
+ */
+app.get(BASE_URL_PATH + 'api/sessions', requireAuth, requireAdmin, requireSession, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const sessionsByUser = await Sessions.listByUser(req.sessionID);
+		const keysByUser = new Map();
+		for (const row of await ApiKeys.listAllActiveApiKeys()) {
+			if (!keysByUser.has(row.created_by)) keysByUser.set(row.created_by, []);
+			keysByUser.get(row.created_by).push({
+				label: row.label,
+				role: row.role,
+				createdAt: row.created_at,
+				expiresAt: row.expires_at,
+				lastUsedAt: row.last_used_at
+			});
+		}
+		const roles = new Map((await AllowedUsers.listAllowedUsers()).map((row) => [row.email, row.role]));
+
+		// セッションかAPIキーのどちらかを持っている人を並べる(キーだけで入られている場合もある)
+		const users = [...new Set([...sessionsByUser.keys(), ...keysByUser.keys()])].sort().map((user) => ({
+			user,
+			// アクセス許可から外れている人は null(セッションもキーも既に通らないが、残っていることは見せる)
+			role: roles.get(user) ?? null,
+			isSelf: !AUTH_DISABLED && user === req.authData.user_identifier,
+			sessions: sessionsByUser.get(user) ?? [],
+			apiKeys: keysByUser.get(user) ?? []
+		}));
+		res.status(200).json({users, mockupTokenMinutes: MockupToken.TTL_MINUTES});
+	} catch (err) {
+		logger.error(err, "::api/sessions:list");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 切断の履歴(新しい順)
+ */
+app.get(BASE_URL_PATH + 'api/sessions/history', requireAuth, requireAdmin, requireSession, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(await AuditLog.listSessionRevokes());
+	} catch (err) {
+		logger.error(err, "::api/sessions/history");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 利用者を切断する(セッション・APIキー・引換券・SSEの一式)
+ */
+app.post(BASE_URL_PATH + 'api/sessions/revoke', requireAuth, requireAdmin, requireSession, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const target = typeof req.body?.user === "string" ? req.body.user.trim() : "";
+		if (target === "" || target.length > SESSION_TARGET_MAX_LENGTH) {
+			res.status(400).json({error: "user を指定してください"});
+			return;
+		}
+		// 知らない相手は断る。打ち間違いで「切断した」という記録だけが残るのを防ぐ
+		const known = (await Sessions.listByUser(null)).has(target)
+			|| (await ApiKeys.listAllActiveApiKeys()).some((row) => row.created_by === target)
+			|| await AllowedUsers.isAllowed(target);
+		if (!known) {
+			res.status(404).json({error: "その利用者は見つかりません"});
+			return;
+		}
+
+		// 自分自身を切るときは、いま操作しているセッションだけ残す
+		// (押した直後に自分の画面が落ちると、結果を確かめられない)
+		const isSelf = !AUTH_DISABLED && target === req.authData.user_identifier;
+		const actor = req.authData.user_identifier;
+		const result = await Sessions.revokeUser(target, {revokedBy: actor, exceptSid: isSelf ? req.sessionID : null});
+		if (isSelf) req.session.survivedRevocationAt = result.revokedAt;
+		const apiKeys = await ApiKeys.revokeAllByOwner(target);
+
+		// 開いたままのSSEを閉じる(複数台構成では、全台へ伝える)
+		ds.notify("sessions_revoked", JSON.stringify({user: target, keep: isSelf ? Sessions.handleOf(req.sessionID) : null}))
+			.catch((err) => logger.error({err}, "::notify:sessions_revoked"));
+
+		logger.info({
+			audit: "session_revoke",
+			user: actor,
+			targetUser: target,
+			sessions: result.sessions.length,
+			apiKeys
+		}, "audit");
+		// 切ったセッションのIP等も残す。セッションと一緒に消えてしまうと、
+		// 後から「どこから入られていたか」を追えなくなる
+		await AuditLog.record({
+			userIdentifier: actor,
+			action: AuditLog.ACTION_SESSION_REVOKE,
+			targetUser: target,
+			detail: {sessions: result.sessions.length, apiKeys, sessionDetails: result.sessions}
+		});
+
+		res.status(200).json({
+			user: target,
+			sessions: result.sessions.length,
+			apiKeys,
+			revokedAt: result.revokedAt,
+			keptCurrentSession: isSelf
+		});
+	} catch (err) {
+		logger.error(err, "::api/sessions/revoke");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
@@ -4270,7 +4468,13 @@ app.get(BASE_URL_PATH + 'api/mockups/:id/view', requireAuth, requireMockups, asy
 // 券は「そのモックアップ1件・短時間だけ」有効で、偽造できない
 app.get(BASE_URL_PATH + 'api/mockups/:id/view/:token/*', requireMockups, async (req, res) => {
 	try {
-		if (!MockupToken.verify(req.params.token, req.params.id)) {
+		// 券はログインとは別に効くため、発行先の利用者が切断された・許可から外されたときは
+		// ここで止める(そうしないと、切ったはずの相手が有効期限いっぱい見続けられる)
+		const ticket = MockupToken.read(req.params.token, req.params.id);
+		const ticketAlive = ticket != null
+			&& (AUTH_DISABLED || await AllowedUsers.isAllowed(ticket.user))
+			&& await Sessions.isIssuedAfterRevocation(ticket.user, ticket.issuedAt);
+		if (!ticketAlive) {
 			setHTTPHeaders(res);
 			logger.warn({mockupId: req.params.id}, "::api/mockups/:id/view: 引換券が無効な要求を拒否しました");
 			res.status(401).json({error: "表示の有効期限が切れています。もう一度開き直してください"});

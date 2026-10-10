@@ -116,3 +116,38 @@ test("発行のたびに違う値になる(期限が秒未満で変わるため)
 	}
 	assert.equal(seen.size, 20, "同じ券が出回ると、履歴やログからの使い回しが効きやすくなる");
 });
+
+// ---- 発行先と発行時刻 ----
+// 券はログインとは別に効く。利用者を切断しても券が生き残ると、切ったはずの相手が
+// 有効期限いっぱい見続けられる。誰に・いつ渡したかを券から読めることが、止めるための前提
+
+test("誰に・いつ発行したかを券から読める", () => {
+	const before = Date.now();
+	const ticket = MockupToken.read(MockupToken.issue(ID, "holder@example.com"), ID);
+	assert.equal(ticket.user, "holder@example.com");
+	assert.ok(ticket.issuedAt >= before && ticket.issuedAt <= Date.now(), "発行時刻がおかしい");
+});
+
+test("偽造・別のモックアップ宛ての券からは何も読めない", () => {
+	const token = MockupToken.issue(ID, "holder@example.com");
+	assert.equal(MockupToken.read(token, OTHER), null);
+	assert.equal(MockupToken.read(`${token.split(".")[0]}.AAAA`, ID), null);
+	assert.equal(MockupToken.read("", ID), null);
+});
+
+// 発行先を書き換えられると、切断されていない人の券に化けられる
+test("発行先を書き換えた券は通らない", () => {
+	const token = MockupToken.issue(ID, "cut@example.com");
+	const [payload, signature] = token.split(".");
+	const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
+	const forged = Buffer.from(JSON.stringify({...claims, u: "innocent@example.com"})).toString("base64url");
+	assert.equal(MockupToken.read(`${forged}.${signature}`, ID), null);
+});
+
+// この仕組みを入れる前の券。切断されたかどうかを判定できないので、通さない
+test("発行先を持たない古い形の券は通らない", () => {
+	const key = crypto.createHash("sha256").update(`mockup-view:${process.env.SESSION_SECRET}`).digest();
+	const payload = Buffer.from(JSON.stringify({m: ID, e: Date.now() + 60000})).toString("base64url");
+	const signature = crypto.createHmac("sha256", key).update(payload).digest().toString("base64url");
+	assert.equal(MockupToken.verify(`${payload}.${signature}`, ID), false, "正しく署名された古い券が通っている");
+});

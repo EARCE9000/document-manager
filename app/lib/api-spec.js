@@ -438,6 +438,13 @@ const OPERATIONS = [
 		body: {schema: {type: "object", required: ["role"], properties: {role: {enum: ["admin", "readwrite", "readonly"]}}}}
 	},
 	{id: "deleteAllowedUser", method: "delete", path: "/api/allowed_users/:email", role: "admin", tag: "利用者管理", summary: "アクセス許可ユーザーの削除", aiGuide: false},
+	// 不正アクセスが疑われるときの切断。画面のログインからのみ(APIキーで他人を切れるようにはしない)
+	{id: "listSessions", method: "get", path: "/api/sessions", role: "admin", tag: "利用者管理", summary: "利用者ごとの、ログイン中のセッションと有効なAPIキー", aiGuide: false, sessionOnly: true},
+	{id: "listSessionRevokes", method: "get", path: "/api/sessions/history", role: "admin", tag: "利用者管理", summary: "切断の履歴", aiGuide: false, sessionOnly: true},
+	{
+		id: "revokeUserSessions", method: "post", path: "/api/sessions/revoke", role: "admin", tag: "利用者管理", summary: "利用者を切断する(セッション・APIキー・モックアップ引換券の一式)", aiGuide: false, sessionOnly: true,
+		body: {schema: {type: "object", required: ["user"], properties: {user: {type: "string"}}}}
+	},
 	{id: "getVectorSettings", method: "get", path: "/api/vector-index/settings", role: "readwrite", tag: "ベクトル索引", summary: "チャンク分割設定の取得", aiGuide: false},
 	{
 		id: "updateVectorSettings", method: "put", path: "/api/vector-index/settings", role: "admin", tag: "ベクトル索引", summary: "チャンク分割設定の上書き", aiGuide: false,

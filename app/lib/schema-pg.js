@@ -164,7 +164,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
 	entry_file TEXT,
 	project_id TEXT,
 	project_name TEXT,
-	created_at TEXT NOT NULL
+	created_at TEXT NOT NULL,
+	target_user TEXT,
+	detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_user_created ON audit_log (user_identifier, created_at);
 
@@ -291,6 +293,19 @@ const MIGRATIONS = [
 			alias TEXT PRIMARY KEY,
 			document_id TEXT NOT NULL UNIQUE,
 			created_at TEXT NOT NULL
+		);
+	`},
+	// 利用者単位のセッション切断(v20相当)。
+	// audit_log に「人」が対象の操作を残せるようにし、切断した時刻を覚える表を足す
+	// (これより前にログインしたセッション・発行した引換券を通さない。lib/sessions.js 参照)
+	{version: 12, sql: `
+		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS target_user TEXT;
+		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS detail TEXT;
+		CREATE INDEX IF NOT EXISTS idx_audit_log_action_created ON audit_log (action, created_at);
+		CREATE TABLE IF NOT EXISTS session_revocations (
+			user_identifier TEXT PRIMARY KEY,
+			revoked_at TEXT NOT NULL,
+			revoked_by TEXT
 		);
 	`}
 ];

@@ -78,7 +78,7 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 		await page.click("#allowedUsersManageLink");
 
 		const tabs = page.locator(".adminTab");
-		await expect(tabs).toHaveText(["アクセス許可ユーザー", "サーバー", "データベース", "変換サービス"]);
+		await expect(tabs).toHaveText(["アクセス許可ユーザー", "セッション", "サーバー", "データベース", "変換サービス"]);
 		await expect(tabs.first()).toHaveClass(/active/);
 
 		// 選択中のパネルだけが見える

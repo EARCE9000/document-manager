@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -238,11 +238,29 @@ const createSchema = (targetDb) => {
 			entry_file TEXT,
 			project_id TEXT,
 			project_name TEXT,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			-- 文書やプロジェクトではなく「人」が対象の操作(セッションの切断など。v20で追加)。
+			-- detail は操作ごとの付帯情報(JSON)。切断なら件数と、切ったセッションのIP等
+			target_user TEXT,
+			detail TEXT
 		)
 	`);
 	targetDb.exec(`
 		CREATE INDEX IF NOT EXISTS idx_audit_log_user_created ON audit_log (user_identifier, created_at)
+	`);
+	targetDb.exec(`
+		CREATE INDEX IF NOT EXISTS idx_audit_log_action_created ON audit_log (action, created_at)
+	`);
+
+	// 利用者を切断した時刻(v20で追加)。これより前にログインしたセッション・発行した
+	// モックアップ引換券は、行や署名が残っていても通さない(lib/sessions.js 参照)。
+	// 利用者1人につき最後の1回だけを持つ(いつ誰が切ったかの履歴は audit_log に残る)
+	targetDb.exec(`
+		CREATE TABLE IF NOT EXISTS session_revocations (
+			user_identifier TEXT PRIMARY KEY,
+			revoked_at TEXT NOT NULL,
+			revoked_by TEXT
+		)
 	`);
 
 	// 全文検索用のFTS5仮想テーブル (trigramトークナイザ: 日本語等CJKでも単語分割不要で
@@ -633,6 +651,60 @@ const MIGRATIONS = {
 	// v16: おしながき用の説明書き(project_documents.note / project_folders.note)を足した。
 	// どちらも新しい列のため、引き継ぐものは無い(空で始まる)
 	// v17: 機能のOn/Offを保存する app_settings を足した。新しい表のため引き継ぐものは無い
+	20: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at, notified_build)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at, notified_build FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at, locked)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at, locked FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at, note)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at, note FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at, note)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at, note FROM old.project_documents;
+
+				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
+				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at FROM old.audit_log;
+
+				INSERT INTO document_links (document_id_a, document_id_b, created_by, created_at)
+				SELECT document_id_a, document_id_b, created_by, created_at FROM old.document_links;
+
+				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
+				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
+
+				-- 機能のOn/Off(モックアップ機能など。v17で追加)。ここでコピーし忘れると、最新化(スキーマ移行)の
+				-- たびに設定が消えて既定(Off)へ戻ってしまう。移行元(v17/v18)には必ずこの表があるため直接コピーする
+				INSERT INTO app_settings (key, value, updated_by, updated_at)
+				SELECT key, value, updated_by, updated_at FROM old.app_settings;
+
+				INSERT INTO mockups (id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, updated_at, deleted_by, deleted_at, previous_id)
+				SELECT id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, updated_at, deleted_by, deleted_at, previous_id FROM old.mockups;
+
+				-- 共有用のID(v19で追加)。ここでコピーし忘れると、配ってあるリンクが全部切れる
+				-- (起動時のバックフィルは「無いものに新しく振る」だけで、元の値は戻らない)
+				INSERT INTO document_aliases (alias, document_id, created_at)
+				SELECT alias, document_id, created_at FROM old.document_aliases;
+			`);
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
+	},
 	19: (newDb, oldDbPath) => {
 		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
 		try {

@@ -18,17 +18,30 @@ const HISTORY_RETENTION_DAYS = 30;
 const HISTORY_MAX_ROWS = 500;
 
 const INSERT_AUDIT_LOG = `
-	INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at)
-	VALUES (@id, @user_identifier, @action, @document_id, @entry_file, @project_id, @project_name, @created_at)
+	INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at, target_user, detail)
+	VALUES (@id, @user_identifier, @action, @document_id, @entry_file, @project_id, @project_name, @created_at, @target_user, @detail)
 `;
+
+// 「人」が対象の操作(セッションの切断)。本人向けの履歴には混ぜず、管理画面で別に見せる
+// (本人向けの画面は文書・プロジェクトの操作を並べる前提で作ってある)
+const ACTION_SESSION_REVOKE = "session_revoke";
 
 const SELECT_MY_AUDIT_LOG = `
 	SELECT id, action, document_id, entry_file, project_id, project_name, created_at
 	FROM audit_log
-	WHERE user_identifier = ? AND created_at >= ?
+	WHERE user_identifier = ? AND created_at >= ? AND action <> '${ACTION_SESSION_REVOKE}'
 	ORDER BY created_at DESC
 	LIMIT ?
 `;
+
+const SELECT_SESSION_REVOKES = `
+	SELECT id, user_identifier, target_user, detail, created_at
+	FROM audit_log
+	WHERE action = '${ACTION_SESSION_REVOKE}'
+	ORDER BY created_at DESC
+	LIMIT ?
+`;
+const SESSION_REVOKE_MAX_ROWS = 200;
 
 /**
  * 操作履歴を1件記録する。呼び出し元(server.js)は標準出力への監査ログ出力と
@@ -37,7 +50,7 @@ const SELECT_MY_AUDIT_LOG = `
  * 記録失敗で本処理を失敗させたくないため内部でエラーを握りつぶす(=呼び出し側は
  * await 不要のfire-and-forgetでよい。rejectしないためunhandled rejectionにもならない)
  */
-module.exports.record = async ({userIdentifier, action, documentId = null, entryFile = null, projectId = null, projectName = null}) => {
+module.exports.record = async ({userIdentifier, action, documentId = null, entryFile = null, projectId = null, projectName = null, targetUser = null, detail = null}) => {
 	try {
 		await ds.run(INSERT_AUDIT_LOG, {
 			id: crypto.randomUUID(),
@@ -47,11 +60,40 @@ module.exports.record = async ({userIdentifier, action, documentId = null, entry
 			entry_file: entryFile,
 			project_id: projectId,
 			project_name: projectName,
-			created_at: new Date().toISOString()
+			created_at: new Date().toISOString(),
+			target_user: targetUser,
+			detail: detail == null ? null : JSON.stringify(detail)
 		});
 	} catch (err) {
 		logger.error(err, "::record");
 	}
+};
+
+module.exports.ACTION_SESSION_REVOKE = ACTION_SESSION_REVOKE;
+
+/**
+ * セッションの切断の履歴(管理者向け。新しい順)。
+ * 行は消していないので、古いものも残っている。画面に出すのは直近の分だけ
+ */
+module.exports.listSessionRevokes = async () => {
+	const rows = await ds.all(SELECT_SESSION_REVOKES, [SESSION_REVOKE_MAX_ROWS]);
+	return rows.map((row) => {
+		let detail = {};
+		try {
+			detail = JSON.parse(row.detail || "{}");
+		} catch (err) {
+			// 読めなくても、誰がいつ誰を切ったかは出せる
+		}
+		return {
+			id: row.id,
+			at: row.created_at,
+			by: row.user_identifier,
+			targetUser: row.target_user,
+			sessions: detail.sessions ?? null,
+			apiKeys: detail.apiKeys ?? null,
+			sessionDetails: Array.isArray(detail.sessionDetails) ? detail.sessionDetails : []
+		};
+	});
 };
 
 /**
