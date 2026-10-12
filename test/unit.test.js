@@ -322,3 +322,26 @@ test.after(() => {
 		fs.rmSync(process.env.DATA_DIR, {recursive: true, force: true});
 	} catch {}
 });
+
+// ---- 版の表記 ----
+// 画面に日付だけを出していた頃は、同じ日に何度も出すと全部同じ表記になり、
+// いま動いているのがどれなのか分からなかった
+const {displayVersion} = require("../app/lib/version.js");
+
+test("版は YYYYMMDD.HHMM で出す(同じ日の別のビルドを見分けられる)", () => {
+	assert.equal(displayVersion("20261013.0930"), "20261013.0930");
+	assert.notEqual(displayVersion("20261013.0930"), displayVersion("20261013.1745"));
+});
+
+test("以前の形(YYYYMMDD_HHMMSS)で作られたイメージも、同じ表記に読み替える", () => {
+	assert.equal(displayVersion("20260923_143012"), "20260923.1430");
+});
+
+test("版が無いときは null(CIを通さずに作ったイメージ・開発環境)", () => {
+	for (const empty of [null, undefined, "", "0", "  "]) assert.equal(displayVersion(empty), null);
+});
+
+test("読めない値は隠さず、そのまま出す", () => {
+	assert.equal(displayVersion("custom-build"), "custom-build");
+	assert.equal(displayVersion("2026-10-13"), "2026-10-13");
+});

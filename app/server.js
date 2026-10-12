@@ -207,6 +207,7 @@ app.use(express.static(path.join(__dirname, 'static')));
 
 const ApiKeys = require("./lib/api-keys.js");
 const Sessions = require("./lib/sessions.js");
+const {displayVersion} = require("./lib/version.js");
 
 /**
  * いまのセッションでログインしている利用者(していなければ null)。
@@ -531,13 +532,12 @@ app.all(BASE_URL_PATH + '_ping', async (req, res) => {
 
 // バージョン情報(画面右下に小さく表示する用)。VERSION.jsonはDockerイメージのビルド時に
 // 生成される(Dockerfile参照)ため、ローカル開発環境には無くversionInfoがnullのままになる。
-// versionはビルド日付(8桁)、buildは同日に複数回ビルドしたときの区別用に時刻まで含む
+// versionは画面に出す表記(YYYYMMDD.HHMM。Dockerイメージのタグと同じ)、buildは焼き込まれた値そのもの
 app.get(BASE_URL_PATH + 'api/version', async (req, res) => {
 	setHTTPHeaders(res);
 	const build = versionInfo != null ? String(versionInfo.VERSION || "") : "";
-	const match = build.match(/(\d{8})/);
 	res.json({
-		version: match ? match[1] : null,
+		version: displayVersion(build),
 		build: build || null,
 		revision: versionInfo != null && versionInfo.REVISION ? String(versionInfo.REVISION) : null,
 		builtAt: versionInfo != null && versionInfo.BUILT_AT ? String(versionInfo.BUILT_AT) : null
@@ -1960,7 +1960,7 @@ app.get(BASE_URL_PATH + 'api/server-status', requireAuth, requireAdmin, async (r
 			database = {backend: ds.backend, files};
 		}
 		res.status(200).json({
-			version: versionInfo != null ? (build.match(/(\d{8})/)?.[1] ?? null) : null,
+			version: displayVersion(build),
 			build: build || null,
 			revision: versionInfo != null && versionInfo.REVISION ? String(versionInfo.REVISION) : null,
 			builtAt: versionInfo != null && versionInfo.BUILT_AT ? String(versionInfo.BUILT_AT) : null,

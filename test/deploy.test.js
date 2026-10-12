@@ -99,3 +99,30 @@ test("既定のセッション寿命が、コードとcomposeとひな形で一�
 	assert.equal(inCompose, inCode, `compose.yml ${inCompose}h / server.js ${inCode}h`);
 	assert.equal(inExample, inCode, `compose.env.example ${inExample}h / server.js ${inCode}h`);
 });
+
+// ---- 版の表記(YYYYMMDD.HHMM) ----
+// 版を決めているのはCI。ここが画面の表記とずれると、Ver. 表示を見てもどのイメージか分からなくなる
+const {displayVersion: shownVersion} = require("../app/lib/version.js");
+const read = (...p) => fs.readFileSync(path.join(__dirname, "..", ...p), "utf-8");
+
+for (const workflow of ["docker-publish.yml", "converter-publish.yml"]) {
+	test(`${workflow}: 版を YYYYMMDD.HHMM(JST)で決めている`, () => {
+		const text = read(".github", "workflows", workflow);
+		assert.match(text, /TZ=Asia\/Tokyo date \+%Y%m%d\.%H%M\)/, "版の決め方が変わっている");
+		// CIが作る値を、画面はそのまま出す(読み替えが要る形になっていない)
+		assert.equal(shownVersion("20261013.0930"), "20261013.0930");
+	});
+
+	// 以前の形を対象から外すと、古いタグが消されずに永久に残る
+	test(`${workflow}: 古いタグの整理が、いまの形と以前の形の両方を数える`, () => {
+		const text = read(".github", "workflows", workflow);
+		const matched = text.match(/grep -E '([^']+)'/);
+		assert.ok(matched, "タグを選ぶ条件が見つからない");
+		const pattern = new RegExp(matched[1]);
+		assert.ok(pattern.test("20261013.0930"), "いまの形のタグが整理の対象になっていない");
+		assert.ok(pattern.test("20260923_143012"), "以前の形のタグが整理の対象から外れている");
+		for (const keep of ["latest", "20261013", "20261013.09301", "v1.2.3"]) {
+			assert.equal(pattern.test(keep), false, `日時タグではない ${keep} まで消してしまう`);
+		}
+	});
+}

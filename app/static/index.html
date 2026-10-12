@@ -6403,8 +6403,8 @@ const showActivityToast = (activity) => {
 };
 
 // 画面右下に小さく表示するバージョン(認証不要のエンドポイントなので、ログイン状態を待たずに取得する)。
-// 表示はビルド日付だけにし、同じ日に複数回ビルドしたときに区別できるよう、
-// ビルド時刻とコミットはツールチップに出す
+// 表示は YYYYMMDD.HHMM(ビルドした日時。Dockerイメージのタグと同じ)。日付だけだと、
+// 同じ日に何度も出したときにどれが動いているのか分からない。コミットはツールチップに出す
 fetch("./api/version").then((res) => res.json()).then(({version, build, revision, builtAt}) => {
 	if (!version) return;
 	const footer = document.getElementById("footerVersion");

@@ -567,7 +567,7 @@ podman rm -f document_manager
 - **サイト固有の値(ドメイン・内部IP・データの場所・シークレット)はリポジトリに置かない**。`deploy/compose.env.example` をコピーしてサーバ上のGit管理外の場所(既定は `/etc/application-auth/document-manager.env`、権限は600)に置き、そこに書く。置き場所は `DOCUMENT_MANAGER_ENV` で変更できる
 - 既に `/etc/application-auth/*.sh` 等で `OIDC_*` を `export` している場合は、それを `source` してから `./deploy/compose.sh up` を呼んでもよい(環境変数が優先される)
 - 必須の値(`OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_REDIRECT_URI` / `SESSION_SECRET` / `DOCUMENT_MANAGER_IP`)が欠けている場合は起動せずにエラーを出す
-- 切り戻したい場合はイメージのタグを指定する: `DOCUMENT_MANAGER_TAG=<日時タグ> ./deploy/compose.sh up`
+- 切り戻したい場合はイメージのタグを指定する: `DOCUMENT_MANAGER_TAG=<日時タグ> ./deploy/compose.sh up`(日時タグは `20260923.1430` の形で、画面右下の Ver. 表示と同じ値。以前に作られたイメージは `20260923_143000` の形のまま残っている)
 - SELinuxが有効(`getenforce` が `Enforcing`)なホストでは、ボリュームの `:z` が必要(compose.ymlには付けてある)
 - 外部ネットワーク(`application_network`)はcomposeでは作成しない(`external: true`)。既存のものをそのまま使うため、Apacheのリバースプロキシ設定は変更不要
 - **更新は `./deploy/compose.sh up` を実行するだけ**(`pull` → `up -d` → 入れ替わったかの確認、まで行う)。`podman-compose`の版によっては、タグが同じ(`latest`)だと新しいイメージを取得しても`up -d`がコンテナを作り直さず、**古いイメージのまま成功したように見える**。そのため`up`の最後に、動いているコンテナのイメージIDと取得したイメージのIDを突き合わせ、食い違っていればそのコンテナだけ作り直す(関係ないサービスは止めないので、Weaviate等は動いたまま)。それでも入れ替わらなければ終了コード1で終わる
@@ -639,7 +639,7 @@ Docker Desktop(Windows 11、GPU無し)の実機で、SQLite単体・ベクトル
 
 ## DockerHubから利用する
 
-ビルド済みイメージは [earce9000/document-manager](https://hub.docker.com/r/earce9000/document-manager) として公開している(`linux/amd64`/`linux/arm64`対応)。`main`ブランチへのpushのたびに、`latest`と`YYYYMMDD_HHmmss`(JST、ビルド日時)タグが自動的にビルド・公開される([.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml))。特定時点のビルドに固定したい場合は日時タグでpullする。
+ビルド済みイメージは [earce9000/document-manager](https://hub.docker.com/r/earce9000/document-manager) として公開している(`linux/amd64`/`linux/arm64`対応)。`main`ブランチへのpushのたびに、`latest`と`YYYYMMDD.HHMM`(JST、ビルド日時。画面右下の Ver. 表示と同じ値)タグが自動的にビルド・公開される([.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml))。特定時点のビルドに固定したい場合は日時タグでpullする。
 
 ```bash
 docker pull earce9000/document-manager:latest
@@ -664,7 +664,7 @@ docker run -d \
 
 | ワークフロー | きっかけ | 内容 |
 |---|---|---|
-| [docker-publish.yml](.github/workflows/docker-publish.yml) | `main`へのpush | Dockerイメージ(`linux/amd64`/`linux/arm64`)をビルドし、Docker Hubへ`latest`と`YYYYMMDD_HHmmss`タグで公開 |
+| [docker-publish.yml](.github/workflows/docker-publish.yml) | `main`へのpush | Dockerイメージ(`linux/amd64`/`linux/arm64`)をビルドし、Docker Hubへ`latest`と`YYYYMMDD.HHMM`タグで公開 |
 | [skill-package.yml](.github/workflows/skill-package.yml) | Skill関連ファイルを変更したpush/PR、手動実行 | Skillのクライアントの結合テスト・ZIP作成を行い、アーティファクト`document-manager-skill`として保存 |
 | 同上 | タグ`skill-v*`のpush | 上記に加えて、ZIPを添付したGitHub Releaseを作成 |
 

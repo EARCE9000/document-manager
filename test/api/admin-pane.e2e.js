@@ -90,6 +90,20 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 		await expect(page.locator("#allowedUserTable")).toBeHidden();
 	});
 
+	// 日付だけの表記だと、同じ日に何度も出したときにどれが動いているのか分からない
+	test("画面右下の版は YYYYMMDD.HHMM で出る", async ({page}) => {
+		// テストサーバーにはビルド情報が無いので、応答だけ差し替える
+		await page.route("**/api/version", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({version: "20261013.0930", build: "20261013.0930", revision: "0123456789abcdef", builtAt: "2026-10-13T00:30:00Z"})
+			});
+		});
+		await page.reload();
+		await expect(page.locator("#footerVersion")).toHaveText("Ver.20261013.0930");
+	});
+
 	test("サーバータブに版と起動時刻が出る", async ({page}) => {
 		await page.click("#allowedUsersManageLink");
 		await page.click('.adminTab[data-tab="server"]');
