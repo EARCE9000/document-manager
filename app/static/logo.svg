@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Document Manager">
+	<rect width="64" height="64" rx="14" fill="#6f9b16"/>
+	<g fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 42V12h20"/><path d="M26 20h20v32H26z"/><path d="M32 32h8M32 40h8"/></g>
+</svg>

@@ -487,6 +487,7 @@ const renderMessagePage = (res, {statusCode, icon, iconColor, title, message, re
 <head>
 <meta charset="UTF-8">
 <title>${title} - Document Manager</title>
+<link rel="icon" type="image/svg+xml" href="./logo.svg">
 <style>
 	* { box-sizing: border-box; }
 	html, body { height: 100%; margin: 0; font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; background: #f4f5f7; color: #24292f; }

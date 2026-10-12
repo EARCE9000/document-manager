@@ -8,6 +8,7 @@
 <head>
 <meta charset="UTF-8">
 <title>Document Manager</title>
+<link rel="icon" type="image/svg+xml" href="./logo.svg">
 <style>
 	* { box-sizing: border-box; }
 	/* 左に立つ列(文書一覧・プロジェクトのツリー)の幅。片方だけ変えると見出しの
@@ -62,7 +63,8 @@
 		font-size: 0.85em;
 	}
 	#topBar a { text-decoration: none; }
-	.topBarTitle { font-weight: 700; font-size: 1.05em; letter-spacing: 0.02em; color: #fff; }
+	.topBarTitle { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.05em; letter-spacing: 0.02em; color: #fff; }
+	.topBarLogo { width: 22px; height: 22px; flex: none; }
 	#topBarActions { display: flex; align-items: center; gap: 6px; }
 	#userIdentifier { margin-right: 4px; color: #cccccc; }
 	.topBarIconButton {
@@ -1489,7 +1491,7 @@
 
 <div id="appShell">
 	<header id="topBar">
-		<div class="topBarTitle">Document Manager</div>
+		<div class="topBarTitle"><img class="topBarLogo" src="./logo.svg" alt="">Document Manager</div>
 		<div id="topBarActions">
 			<span id="userIdentifier"></span>
 			<button type="button" id="activityNotifyToggle" class="topBarIconButton" title="他の人の操作をポップアップで通知: オン" aria-label="操作通知のオン/オフ" aria-pressed="true">
