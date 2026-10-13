@@ -130,6 +130,7 @@ def smoke_clients(env, workdir):
         smoke_mockup_commands(kind, env, workdir)
         smoke_update_notice(kind, env)
         smoke_render(kind, env, workdir)
+        smoke_pdf(kind, env, workdir)
         smoke_spec(kind, env)
         smoke_watch(kind, env, workdir)
 
@@ -306,6 +307,60 @@ def smoke_render(kind, env, workdir):
     plain = json.loads(run_client(kind, ["upload", os.path.join(workdir, f"smoke-{kind}.md")], env).stdout)
     denied = run_client(kind, ["download", plain["id"], "--render"], env, expect_ok=False)
     check(denied.returncode == 1 and "体裁つき" in denied.stderr, "download --render: 対象外の文書ははっきり断る")
+
+
+# HTML→PDFの変換サービスのスタブ(test/api/serve.js が、Office用のスタブの10番あとで起動している)
+PDF_STUB_URL = f"http://127.0.0.1:{int(os.environ.get('CONVERTER_STUB_PORT', '18096')) + 10}"
+
+
+def control_pdf_stub(**control):
+    req = urllib.request.Request(
+        PDF_STUB_URL + "/__control", data=json.dumps(control).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    urllib.request.urlopen(req).read()
+
+
+def smoke_pdf(kind, env, workdir):
+    """HTML・Markdown・MHTMLをPDFにして取得する(人に渡すための形)。変換サービスにはスタブが繋がっている"""
+    control_pdf_stub(mode="ok", blocked=0, reset=True)
+    markdown = json.loads(run_client(kind, ["upload", os.path.join(workdir, f"smoke-{kind}.md")], env).stdout)
+
+    # 保存先にディレクトリを渡すと、元の名前の拡張子を .pdf に替えた名前で保存される
+    out_dir = os.path.join(workdir, f"pdf-{kind}")
+    os.makedirs(out_dir, exist_ok=True)
+    result = json.loads(run_client(kind, ["download", markdown["id"], "--pdf", "-o", out_dir], env).stdout)
+    check(result.get("pdf") is True and result.get("rendered") is False, "download --pdf: PDFにしたことが結果で分かる")
+    check(os.path.basename(result["savedTo"]) == f"smoke-{kind}.pdf", f"download --pdf: 保存名は拡張子を .pdf に替えたもの ({os.path.basename(result['savedTo'])})")
+    with open(result["savedTo"], "rb") as f:
+        check(f.read(5) == b"%PDF-", "download --pdf: PDFとして保存される")
+    check(result.get("blockedRequests") == 0 and "warning" not in result, "download --pdf: 外部の部品が無ければ警告は出ない")
+
+    # 変換サービスへ渡っているのは、整えたプレビュー(原本のMarkdownではない)
+    sent = json.loads(urllib.request.urlopen(PDF_STUB_URL + "/__requests").read())
+    check(len(sent) == 1 and sent[0]["path"] == "/convert" and "<h1" in sent[0]["bodyHead"], "download --pdf: 整えたプレビューがPDFになる")
+
+    # 外部の画像が入らなかったときは、エージェントが利用者に伝えられるよう結果に出す
+    control_pdf_stub(blocked=2)
+    warned = json.loads(run_client(kind, ["download", markdown["id"], "--pdf", "-o", out_dir], env).stdout)
+    check(warned.get("blockedRequests") == 2 and "2 件" in warned.get("warning", ""), "download --pdf: 外部の画像が入らなかった件数と警告を返す")
+    control_pdf_stub(blocked=0)
+
+    # 取り違えたときは、正しいほうを案内する
+    office = json.loads(run_client(kind, ["upload", os.path.join(REPO, "test", "fixtures", "office", "sample.docx")], env).stdout)
+    denied = run_client(kind, ["download", office["id"], "--pdf"], env, expect_ok=False)
+    check(denied.returncode == 1 and "--render" in denied.stderr, "download --pdf: Office文書には --render を案内する")
+    swapped = run_client(kind, ["download", markdown["id"], "--render"], env, expect_ok=False)
+    check(swapped.returncode == 1 and "--pdf" in swapped.stderr, "download --render: HTML・Markdownには --pdf を案内する")
+    both = run_client(kind, ["download", markdown["id"], "--render", "--pdf"], env, expect_ok=False)
+    check(both.returncode == 1 and "同時に指定できません" in both.stderr, "download: --render と --pdf は同時に指定できない")
+
+    # 変換サービスが不調のときは、理由が分かるエラーにする(黙って原本を保存しない)
+    control_pdf_stub(mode="fail", status=500)
+    before = set(os.listdir(out_dir))
+    failed = run_client(kind, ["download", markdown["id"], "--pdf", "-o", os.path.join(out_dir, "failed.pdf")], env, expect_ok=False)
+    check(failed.returncode == 1 and "502" in failed.stderr and "変換サービス" in failed.stderr, "download --pdf: 変換に失敗したら理由を返す(502)")
+    check(set(os.listdir(out_dir)) == before, "download --pdf: 失敗したときは何も保存しない")
+    control_pdf_stub(mode="ok", status=500, reset=True)
 
 
 def smoke_spec(kind, env):

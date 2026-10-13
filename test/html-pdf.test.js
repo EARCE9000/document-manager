@@ -92,6 +92,17 @@ test("対象の形式が、サーバと画面で一致している", () => {
 	assert.deepEqual(JSON.parse(matched[1]), [...HtmlPdf.SOURCE_EXTENSIONS]);
 });
 
+// AIエージェント用のクライアント(download --pdf)も、同じ一覧を持って先に断っている。
+// ずれると、サーバでは変換できる文書を、クライアントが「できません」と断ってしまう
+test("対象の形式が、同梱クライアント(Python版・Node.js版)とも一致している", () => {
+	const HtmlPdf = load("http://127.0.0.1:19918");
+	const python = read("tools", "claude-skill", "document-manager", "scripts", "dm_client.py").match(/^PDF_SOURCE_EXTENSIONS = \(([^)]+)\)/m);
+	const node = read("tools", "claude-skill", "document-manager", "scripts", "dm_client.mjs").match(/^const PDF_SOURCE_EXTENSIONS = (\[[^\]]+\]);/m);
+	assert.ok(python && node, "クライアント側の一覧が見つからない");
+	assert.deepEqual(JSON.parse(`[${python[1]}]`), [...HtmlPdf.SOURCE_EXTENSIONS], "Python版");
+	assert.deepEqual(JSON.parse(node[1]), [...HtmlPdf.SOURCE_EXTENSIONS], "Node.js版");
+});
+
 // スクリプトを止める指定は、アプリの配信と変換サービスの両方にある。変換サービス側だけ
 // 緩むと、プレビューでは動かないスクリプトがPDFを作るときだけ動く
 test("変換サービスは、アプリが文書を配信するときと同じ指定でスクリプトを止める", () => {

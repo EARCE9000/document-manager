@@ -19,8 +19,9 @@
  *   node dm_client.mjs upload <ファイル> [--previous-id ID | --replace-same-name] [--tags タグ1,タグ2]
  *                                        [--preview 画像(.drawioの代替表示用。通常は不要)]
  *                                        [--project プロジェクト] [--folder フォルダ]
- *   node dm_client.mjs download <文書ID> [-o 保存先] [--render]
+ *   node dm_client.mjs download <文書ID> [-o 保存先] [--render | --pdf]
  *       --render で「体裁つき」のPDFを取得する(Office文書のみ)
+ *       --pdf で、プレビューの見た目のまま1枚の長いPDFにする(HTML・Markdown・MHTMLのみ)
  *   node dm_client.mjs tags <文書ID> [--add A,B | --remove A,B | --set A,B]
  *   node dm_client.mjs memo <文書ID> <メモ本文>
  *   node dm_client.mjs archive <文書ID> / restore <文書ID>
@@ -48,7 +49,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.5.0";
+const CLIENT_VERSION = "1.6.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -128,7 +129,8 @@ const loadConfig = () => {
 	return {baseUrl: baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`, apiKey};
 };
 
-const request = async (method, apiPath, {query, json, formData, raw = false} = {}) => {
+// withHeaders: true を付けると、raw の本体に加えて応答ヘッダーも返す({payload, headers})
+const request = async (method, apiPath, {query, json, formData, raw = false, withHeaders = false} = {}) => {
 	const {baseUrl, apiKey} = loadConfig();
 	const url = new URL(apiPath, baseUrl);
 	for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, v);
@@ -158,10 +160,16 @@ const request = async (method, apiPath, {query, json, formData, raw = false} = {
 		}
 		throw new DmError(JSON.stringify({status: res.status, ...detail}));
 	}
+	if (raw && withHeaders) return {payload: Buffer.from(await res.arrayBuffer()), headers: res.headers};
 	if (raw) return Buffer.from(await res.arrayBuffer());
 	const text = await res.text();
 	return text ? JSON.parse(text) : null;
 };
+
+// download --pdf でPDFにできる文書(元ファイルの拡張子)。サーバー側(lib/html-pdf.js)と揃える
+const PDF_SOURCE_EXTENSIONS = [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht"];
+// download --render の対象(Office文書)。取り違えたときに、正しいほうを案内するために持つ
+const OFFICE_EXTENSIONS = [".xlsx", ".docx", ".pptx", ".xlsm", ".docm", ".pptm"];
 
 const fileBlob = (filePath) => new Blob([fs.readFileSync(filePath)], {type: MIME_BY_EXT[path.extname(filePath).toLowerCase()] || "application/octet-stream"});
 
@@ -347,24 +355,56 @@ const commands = {
 	download: async ([id], opts) => {
 		requireArg(id, "文書ID");
 		const doc = await request("GET", docPath(id));
+		const extension = path.extname(doc.entryFile || "").toLowerCase();
+		if (opts.render && opts.pdf) {
+			throw new DmError("--render と --pdf は同時に指定できません(--render はOffice文書、--pdf はHTML・Markdown・MHTML)");
+		}
 		// --render はOffice文書を元の体裁のまま見るためのPDF(サーバー側で変換済みのもの)
 		if (opts.render && doc.renderStatus !== "ok") {
 			throw new DmError(JSON.stringify({
 				error: "体裁つきのPDFは用意されていません",
 				renderStatus: doc.renderStatus ?? null,
-				hint: "対象はExcel/Word/PowerPoint。変換中(pending)なら少し待つ。failedなら管理者に再実行を依頼する"
+				hint: PDF_SOURCE_EXTENSIONS.includes(extension)
+					? "HTML・Markdown・MHTMLの文書は --render ではなく --pdf でPDFにできる"
+					: "対象はExcel/Word/PowerPoint。変換中(pending)なら少し待つ。failedなら管理者に再実行を依頼する"
 			}));
 		}
-		const payload = await request("GET", docPath(id, "/file"), {
-			query: opts.render ? {render: "1"} : {download: "1"},
-			raw: true
-		});
+		// --pdf はHTML・Markdown・MHTMLを、プレビューの見た目のまま1枚の長いPDFにする(その場で変換する)。
+		// メール添付など、人に渡すための形
+		if (opts.pdf && !PDF_SOURCE_EXTENSIONS.includes(extension)) {
+			let hint = "PDFにできるのはHTML・Markdown・MHTMLの文書だけ。それ以外は download で原本を取得する";
+			if (OFFICE_EXTENSIONS.includes(extension)) hint = "Office文書は --pdf ではなく --render で体裁つきのPDFを取得できる(get の renderStatus が ok のとき)";
+			else if (extension === ".pdf") hint = "この文書は元からPDF。download でそのまま取得する";
+			throw new DmError(JSON.stringify({error: `この形式はPDFにできません: ${extension || "(拡張子なし)"}`, hint}));
+		}
+		let payload;
+		let blocked = null;
+		if (opts.pdf) {
+			const res = await request("GET", docPath(id, "/pdf"), {raw: true, withHeaders: true});
+			payload = res.payload;
+			blocked = Number(res.headers.get("x-blocked-requests") || 0);
+		} else {
+			payload = await request("GET", docPath(id, "/file"), {
+				query: opts.render ? {render: "1"} : {download: "1"},
+				raw: true
+			});
+		}
 		const entryFile = safeLocalFilename(doc.entryFile);
-		const name = opts.render ? `${path.basename(entryFile, path.extname(entryFile))}.pdf` : entryFile;
+		const name = opts.render || opts.pdf ? `${path.basename(entryFile, path.extname(entryFile))}.pdf` : entryFile;
 		let out = opts.output || name;
 		if (fs.existsSync(out) && fs.statSync(out).isDirectory()) out = path.join(out, name);
 		fs.writeFileSync(out, payload);
-		return {id: doc.id, entryFile: doc.entryFile, savedTo: path.resolve(out), size: payload.length, rendered: Boolean(opts.render)};
+		const result = {id: doc.id, entryFile: doc.entryFile, savedTo: path.resolve(out), size: payload.length, rendered: Boolean(opts.render)};
+		if (opts.pdf) {
+			result.pdf = true;
+			// 外部に置かれた画像などは読み込まないため、PDFでは抜ける。渡す前に利用者へ伝えられるようにする
+			result.blockedRequests = blocked;
+			if (blocked > 0) {
+				result.warning = `この文書は外部に置かれた画像やスタイルを ${blocked} 件参照しているが、PDFには入っていない`
+					+ "(変換時に外部へ接続しないため)。人に渡す前に、PDFを開いて見た目を確かめるようユーザーに伝えること";
+			}
+		}
+		return result;
 	},
 	// ---- モックアップ(ビルド済みのWebページ一式。文書とは別のコレクション) ----
 	mockups: async (_args, opts) => request("GET", opts.archived ? "api/mockups/archived" : "api/mockups",
@@ -732,6 +772,7 @@ const main = async () => {
 			id: {type: "string"},
 			markdown: {type: "boolean"},
 			render: {type: "boolean"},
+			pdf: {type: "boolean"},
 			version: {type: "boolean", short: "V"},
 			"no-reconnect": {type: "boolean"}
 		}

@@ -129,7 +129,7 @@ const OPERATIONS = [
 		id: "getDocumentPdf", method: "get", path: "/api/documents/:id/pdf", role: "readonly", tag: "文書",
 		summary: "HTML・Markdown・MHTMLの文書をPDFでダウンロード",
 		description: "プレビューとして見えているもの(Markdownは見出しや表を整えたもの、MHTMLは画像ごと1つにまとめたもの)を、**1枚の長いPDF**にして添付ファイルとして返す。メール添付など、人に渡すための形。A4には区切らない(長さが200インチを超える分だけ次のページへ続く)。文書のスクリプトは動かさず、外部に置かれた画像・スタイルは読み込まない(読み込まなかった件数を応答ヘッダー`X-Blocked-Requests`で返す)。変換サービス(pdf-converter)が構成されていない環境では404、対象外の形式では400。変換結果は保存せず、呼ばれるたびに作る。ダウンロードとして監査ログに残る",
-		produces: "application/pdf", aiGuide: false
+		produces: "application/pdf"
 	},
 	{
 		id: "viewDocument", method: "get", path: "/api/documents/:id/viewer", role: "public", tag: "文書",
@@ -592,6 +592,16 @@ const GUIDE_SECTIONS = [
 		title: "文書のプレビュー/ダウンロード",
 		entries: [{id: "getDocumentFile"}],
 		notes: ["`?download=1`を付けると添付ファイルとしてダウンロードされる(付けない場合はプレビュー用ファイルを返す)"]
+	},
+	{
+		title: "HTML・Markdown・MHTMLをPDFにして渡す",
+		entries: [{id: "getDocumentPdf", trail: "プレビューの見た目のまま、1枚の長いPDFにして返す"}],
+		notes: [
+			"**「PDFにして」「メールで送れる形にして」と言われたときに使う**(HTMLをそのまま添付すると、相手の環境では文字の羅列として出てしまうことがある)。中身を知りたいだけなら使わない",
+			"対象はHTML・Markdown・MHTMLだけ(それ以外は400)。Office文書は`?render=1`、元からPDFの文書は`?download=1`で取得する",
+			"応答ヘッダー`X-Blocked-Requests`が1以上なら、**外部に置かれた画像やスタイルがPDFに入っていない**。渡す前に見た目を確かめるよう、必ずユーザーに伝えること",
+			"404で「この環境では使えません」と返る場合は、PDF変換サービスが構成されていない(原本のダウンロードはできる)"
+		]
 	},
 	{
 		title: "文書のアーカイブ・復元", roleNote: ROLE_NOTES.readwrite,
