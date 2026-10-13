@@ -9,7 +9,13 @@ Self-hosted document manager: versioning, tagging, full-text/semantic search, AP
 
 画像はGitHub(raw.githubusercontent.com)の公開URLを参照している。スクリーンショットを
 撮り直した場合(npm run screenshots)は、pushすればDocker Hub側の表示も自動的に新しくなる。
+
+ロゴは docs/logo-128.png(Docker HubはSVGを画像として出さないため、app/static/logo.svg から
+書き出したPNG。角の外は透過)。大きさを指定できないので、表示したい大きさ(128px)で作ってある。
+docs/logo.png は同じ絵の512px版(紹介ページ以外で使う用)。ロゴを変えたら両方作り直す。
 -->
+
+![Document Manager](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/logo-128.png)
 
 # Document Manager
 
