@@ -32,6 +32,13 @@ fs.mkdirSync(DATA_DIR, {recursive: true});
 const converterStub = require("./converter-stub.js");
 const stubPort = Number(process.env.CONVERTER_STUB_PORT || 18096);
 process.env.OFFICE_RENDER_URL = process.env.OFFICE_RENDER_URL || `http://127.0.0.1:${stubPort}`;
+// 「PDFでダウンロード」(HTML→PDF)の変換サービスも同じ作りのスタブで代える。Office用とは
+// 別の口にしてある(片方の失敗・遅延の設定が、もう片方のテストへ漏れないように)。
+// PDF_STUB_DISABLED=1 で立てると、変換サービスが無い環境の振る舞いを確かめられる
+const pdfStubPort = Number(process.env.PDF_STUB_PORT || stubPort + 10);
+if (process.env.PDF_STUB_DISABLED !== "1") {
+	process.env.HTML_PDF_URL = process.env.HTML_PDF_URL || `http://127.0.0.1:${pdfStubPort}`;
+}
 // 「サーバーに新しいクライアントがある」状態を作り、更新のお知らせを検証できるようにする
 // (同梱のクライアントと同じ版のままでは、お知らせが出る経路を通れないため)
 process.env.SKILL_CLIENT_VERSION = process.env.SKILL_CLIENT_VERSION || "9.9.9";
@@ -153,6 +160,9 @@ const {server} = require("../../app/server.js");
 
 	await converterStub.start(stubPort);
 	console.log(`converter stub listening on ${stubPort}`);
+	// 本物へ繋ぐ結合テスト(HTML_PDF_URLを外から渡す)では、スタブは立てるだけで使われない
+	await converterStub.start(pdfStubPort);
+	console.log(`pdf-converter stub listening on ${pdfStubPort}`);
 
 	server.listen(port, () => {
 		console.log(`api test server listening on ${port}`);

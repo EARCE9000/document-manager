@@ -48,6 +48,14 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 「だいたいの体裁と、どこに何があるか」を掴む用途で、細かいところは原本をダウンロードして
 確認してください。変換サービスは任意で、無くても文書の登録・検索・概要表示には影響しません。
 
+HTML や Markdown で作った資料を**メールなどで人に渡す**ときは、**PDF変換サービス**(別イメージ
+`earce9000/document-manager-pdf-converter`)を併せて起動すると、プレビュー上部のボタンから
+**プレビューの見た目のまま1枚の長いPDF**にして保存できます(HTML をそのまま添付すると、相手の環境では
+文字の羅列として出てしまうことがあるためです)。A4 には区切らないので、表や図が途中で切れません。
+横に長い表は、切れないようにページを右へ広げます。フォントは BIZ UDゴシックで描くため、行の折り返し
+位置が画面と少しずれることがあります。外部のサイトに置かれた画像は入りません(変換時に外部へは
+接続しません)。こちらも任意で、無ければボタンが出ないだけです。
+
 ![文書一覧とプレビュー](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/document-list.png)
 
 資料は**タグ**と**プロジェクト**で整理します。タグは自由入力で、よく使うタグだけを並べた
@@ -301,6 +309,7 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 | `DATABASE_BACKEND` | `sqlite` | `sqlite` / `postgres`(複数インスタンス構成では必須) |
 | `DATABASE_URL` | (未設定) | PostgreSQL の接続文字列(標準の `PG*` 変数でも可) |
 | `STORAGE_BACKEND` | `local` | `local` / `s3` / `gcs` |
+| `HTML_PDF_URL` | (未設定) | PDFでダウンロード(HTML・Markdown・MHTML→PDF)の変換サービスのURL。未設定ならこの機能は無効(画面にボタンが出ないだけ) |
 | `OFFICE_RENDER_URL` | (未設定) | 体裁つき表示(Office→PDF)の変換サービスのURL。未設定ならこの機能は無効(概要表示だけになります) |
 | `WEAVIATE_URL` | (未設定) | 設定すると意味検索が有効になる |
 | `UPLOAD_MAX_BYTES` | `268435456` | 1ファイルのアップロード上限(256MB)。超過時は413 |

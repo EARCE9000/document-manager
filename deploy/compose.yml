@@ -48,6 +48,9 @@ services:
       # Office文書(Excel/Word/PowerPoint)を体裁つきで見るための変換サービス。
       # 未設定なら変換は行わず、アプリ内蔵の概要プレビューだけになる
       OFFICE_RENDER_URL: http://converter:3000
+      # HTML・Markdown・MHTMLの文書をPDFにして持ち出すための変換サービス。
+      # 未設定なら「PDFでダウンロード」が画面に出ないだけで、他には影響しない
+      HTML_PDF_URL: http://pdf-converter:3000
     networks:
       # Apacheのリバースプロキシが向いている既存ネットワーク(固定IPを維持する)
       application_network:
@@ -56,6 +59,8 @@ services:
       document_manager_internal:
       # converterとの通信用(converterはこのネットワークにしか居ない)
       document_manager_convert:
+      # pdf-converterとの通信用(同じく、pdf-converterはこのネットワークにしか居ない)
+      document_manager_pdf:
     # converterは依存に入れない。変換は無くても成立する機能(概要プレビューに退避する)であり、
     # converterのイメージ取得や起動に失敗したときに、アプリまで起動しなくなるのを避けるため
     depends_on:
@@ -92,6 +97,33 @@ services:
       # 任意のURLを叩かせない(SSRF)ことと、Weaviate等の他サービスに触れさせないことを、
       # ネットワークの構成で担保する
       - document_manager_convert
+
+  # HTML・Markdown・MHTMLの文書をPDFへ変換するサービス(Chromium同梱)。
+  # 他人が作ったHTMLをブラウザのエンジンで開くため、converterと同じ条件で隔離する。
+  # さらに、converterとは**別のネットワーク**に置く(片方が破られても、もう片方へ届かせない)。
+  # 停止・削除してもアプリは動き続ける(「PDFでダウンロード」が失敗するだけ)
+  pdf-converter:
+    image: ${DOCUMENT_MANAGER_PDF_CONVERTER_IMAGE:-docker.io/earce9000/document-manager-pdf-converter}:${DOCUMENT_MANAGER_PDF_CONVERTER_TAG:-latest}
+    container_name: ${DOCUMENT_MANAGER_CONTAINER:-document_manager}_pdf_converter
+    restart: always
+    logging:
+      driver: journald
+    environment:
+      TZ: ${TZ:-Asia/Tokyo}
+      CONVERT_MAX_BYTES: ${PDF_CONVERT_MAX_BYTES:-52428800}
+      CONVERT_TIMEOUT_SECONDS: ${PDF_CONVERT_TIMEOUT_SECONDS:-60}
+    read_only: true
+    tmpfs:
+      # Chromiumの作業場所(プロファイル・共有メモリの代わり)。1件ごとに消す
+      - /tmp:rw,size=${PDF_CONVERT_TMPFS_SIZE:-512m}
+    security_opt:
+      - no-new-privileges:true
+    # podman-composeのバージョンによっては未対応。その場合は podman update で後から設定する
+    mem_limit: ${PDF_CONVERT_MEM_LIMIT:-1g}
+    networks:
+      # 専用ネットワークにだけ参加する。文書に書かれた外部の画像・内部の宛先へ
+      # 取りに行かせない(SSRF)ことを、サービス側の遮断に加えてネットワークの構成でも担保する
+      - document_manager_pdf
 
   # ベクトルDB本体。ホストにポートを公開せず、内部ネットワークからのみ使う
   # (公開すると匿名アクセス有効のまま外部から触れてしまうため)
@@ -147,4 +179,7 @@ networks:
   # (podman-composeが internal に未対応の版では効かないため、下記コマンドで確認すること:
   #   podman network inspect <プレフィックス>_document_manager_convert | grep -i internal )
   document_manager_convert:
+    internal: true
+  # PDF変換サービス専用。考え方は上と同じ(app と pdf-converter だけが居て、外へ出られない)
+  document_manager_pdf:
     internal: true

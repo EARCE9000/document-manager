@@ -62,6 +62,14 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - converterは信用できない文書をLibreOfficeで開くため、**専用の内部ネットワークに閉じ込める**(インターネットにも他サービスにも到達できない。読み取り専用・作業場所はtmpfs・非root・メモリ上限)。設定を書いただけでは効いている保証にならないので、実機で確かめる手順を[deploy/check-converter-isolation.sh](deploy/check-converter-isolation.sh)に用意している。詳細は[converter/README.md](converter/README.md)
   - 変換に失敗した文書は`GET api/documents?renderStatus=failed`で一覧でき、`POST api/documents/:id/render/retry`で再実行できる(管理画面からも操作できる)
   - プレビュー用iframe(html/mhtml/md変換結果)は `sandbox` 属性でスクリプト実行を制限する
+- **PDFでダウンロード(HTML・Markdown・MHTML → PDF。任意機能)**: `HTML_PDF_URL`を設定すると、プレビュー上部に「PDFでダウンロード」が出て、**プレビューで見えているものを1枚の長いPDF**にして持ち出せる(`GET api/documents/:id/pdf`)。HTMLをメールに添付すると相手の環境ではテキストとして出てしまうことがあるため、人に渡すための形として用意している。変換はChromiumを同梱した別イメージ([pdf-converter/](pdf-converter/)、`earce9000/document-manager-pdf-converter`)が行う
+  - **未設定でも動く**。その場合はボタンも使い方の説明も出ず、他の機能には影響しない。変換サービスが落ちていても同じ(押したときに理由を出して失敗するだけ。アプリ側は`depends_on`にも入れていない)
+  - **渡すのは元ファイルではなく、プレビューとして配信しているHTML**。Markdownなら見出しや表を整えたもの、MHTMLなら画像ごと1つにまとめたものになる(Markdownの記号がそのまま見えるPDFにはならない)。対象はHTML・Markdown・MHTMLだけで、CSVやOfficeは対象外(原本を渡すほうが相手の役に立つ)
+  - **1枚の長いページにする**(A4には区切らない)。区切ると表や図がページの途中で切れ、右へはみ出した分が欠けるため。横に長い表・1行が長いコードはページを右へ広げて入れ、スクロールする枠は開いて中身を全部出す。PDFの1ページは200インチ(A4でおよそ17枚分)までなので、それより長い文書だけ次のページへ続く
+  - **変換結果は保存しない**(Office用と違う点)。1件0.1〜0.4秒で、押されたときに作れば足りる。保存すると、版を上げたときやプレビューの作りを変えたときに古いPDFが出る事故の元になる
+  - **画面と完全に同じにはならない**。文書が指定するフォント(游ゴシック・メイリオ等)は再配布できないためコンテナに無く、日本語はBIZ UDPゴシックで描く。字幅が少し違うので行の折り返し位置がずれることがある(配置は変わらない。実際の文書52件での高さの差は中央値+1%前後)。**外部に置かれた画像・CSSは入らない**(変換時に外部へ接続しないため。該当するときは保存時に画面が知らせる)
+  - **スクリプトは動かさない**。プレビューと同じ条件で描くので「画面で見えているもの = PDFに写るもの」になる。pdf-converterは他人が作ったHTMLをブラウザのエンジンで開くため、文書以外の読み込みを全て断ったうえで、**Office用とも別の専用ネットワークに閉じ込める**(詳細と、弱くなっている点=Chromium自身のサンドボックスを切っていることは[pdf-converter/README.md](pdf-converter/README.md))
+  - 文書の持ち出しなので、元ファイルのダウンロードと同じく監査ログ(`audit: "download"`、`format: "pdf"`)に残す
   - プレビュー右上のアイコンボタンから、ファイルへの直接リンクのコピー・ダウンロードができる
   - リンクのコピー・「別ウィンドウで開く」・一覧の別ウィンドウアイコンは、いずれも `api/documents/:id/viewer` を指す。`api/documents/:id/file`(APIキー連携クライアント向け。未認証時はJSONの401のみを返す)とは別系統で、未ログイン状態でこのURLを開くとログイン画面へ自動的に迂回し、ログイン完了後に元のURLへ戻ってから文書を表示する。他の人にリンクを共有する場合はこちらが使われる
   - プレビュー上部に、ファイル名が似ている他の文書(現在表示中の一覧内、文字3-gramのDice係数で判定)をチップ表示し、クリックでそちらのプレビューに切り替えられる(バージョン違い等の関連文書を見つけやすくする)
@@ -166,7 +174,7 @@ LLMなどで作ったWebページのモックアップ(ビルド済みの一式)
   - SQLiteの破損は「書き込みは通るのに一部だけ読めない」形で進むことがあり、画面上は正常に見える。**起動のたびに自動で簡易確認**し、結果をログと画面に残す(`GET api/db-integrity`)
   - 照合は、実ファイルだけある文書(孤立ファイル)と、DBだけある文書(実ファイルが無い)を報告する。前者は**アーカイブ済みとして登録し直せる**(元がアーカイブ済みだったか知る手段が無いため。必要なら既存の「復元」で戻す)。後者は**報告のみで削除しない**——ボリュームが未マウントのときは全件が欠損に見えるため、消すと「復旧可能な障害」を「恒久的なデータ消失」に変えてしまう(`GET api/storage-reconcile`)
   - **ストレージに到達できていない疑いがあるときは、何も報告せず照合を中止する**
-- **変換サービス**: 到達性・LibreOfficeの版・上限・タイムアウトと、**変換に失敗した文書の一覧・再実行**。「未設定」(異常ではない)と「落ちている」を区別して表示する(`GET api/office-render/health`)
+- **変換サービス**: 到達性・LibreOfficeの版・上限・タイムアウトと、**変換に失敗した文書の一覧・再実行**。同じタブに、**PDFでダウンロード用の変換サービス(pdf-converter)の状態**も別に出す(`GET api/html-pdf/health`。Chromiumの版・上限・タイムアウト)。「未設定」(異常ではない)と「落ちている」を区別して表示する(`GET api/office-render/health`)
 - 動作の原則: **画面を開いただけでは重い処理を走らせない**(整合性確認と照合はボタン。開いた時点では起動時の結果を出す)、**重い操作は正体を明かす**(厳密な整合性確認は同期的に走りサーバーの他の処理が止まるため、確認ダイアログで明示する)、**破壊的な操作は置かない**(復旧・再構築・DBの直接編集は画面に入れない)
 - APIはすべて`requireAdmin`。画面でボタンを隠すのは見た目の話で、**本当の境界はサーバー側**
 
@@ -212,6 +220,7 @@ document-manager/
 ├── .github/workflows/
 │   ├── docker-publish.yml    # mainへのpushでDockerイメージ(amd64/arm64)をビルドしDocker Hubへ公開
 │   ├── converter-publish.yml # converter/の変更と週次で、変換サービスのイメージ(amd64)を公開
+│   ├── pdf-converter-publish.yml # pdf-converter/の変更と週次で、HTML→PDF変換サービスのイメージ(amd64)を公開
 │   │                           # 公開前に実ファイルでの変換と、本体と繋いだ結合テストを通す
 │   └── skill-package.yml     # Skillの結合テスト・ZIP作成(アーティファクト保存)、タグskill-v*でGitHub Release公開
 ├── app/                     # アプリケーション本体 (Dockerイメージにコピーされる)
@@ -239,6 +248,7 @@ document-manager/
 │   │   ├── drawio.js          # .drawio(XML/圧縮diagram)からのテキスト抽出(全文検索用)
 │   │   ├── office.js          # Excel/Word/PowerPoint(OOXML)→概要プレビューHTML+全文検索用テキスト
 │   │   ├── office-render.js   # 体裁つき表示(Office→PDF)。変換サービスへの依頼(OFFICE_RENDER_URLで有効化)
+│   │   ├── html-pdf.js        # PDFでダウンロード(HTML・Markdown・MHTML→PDF)。変換サービスへの依頼(HTML_PDF_URLで有効化)
 │   │   ├── db-integrity.js    # SQLiteの破損検知(起動時の自動確認・管理画面からの再確認)
 │   │   ├── storage-reconcile.js # DBと実ファイルの照合(読み取りのみ。孤立ファイル/欠損の報告)
 │   │   ├── claude-skill.js    # AIエージェント用SkillのZIP生成(api/claude-skill.zip。Node標準のzlibのみ使用)
@@ -255,6 +265,7 @@ document-manager/
 │   ├── compose.env.example   # サイト固有の値のひな形(実ファイルはGit管理外)
 │   └── check-converter-isolation.sh # 変換サービスの隔離が実際に効いているかを実機で確認する
 ├── converter/               # Office→PDF 変換サービス(別イメージ。LibreOffice同梱)
+├── pdf-converter/           # HTML→PDF 変換サービス(別イメージ。Chromium同梱)。fonts.conf はPDFに描くときの既定のフォント
 │   ├── Dockerfile            # Debian 13 + LibreOffice 25.2 + 日本語フォント(amd64のみ)
 │   ├── server.js             # HTTPの受け口(依存なし。直列実行・タイムアウト・マクロ拒否)
 │   ├── README.md             # 実測値・API・隔離の考え方
@@ -312,6 +323,9 @@ document-manager/
 | `VECTOR_INSERT_BATCH_SIZE` | `50` | ベクトル索引付けで、1リクエストにまとめて送るチャンク数。Weaviateはリクエスト単位でタイムアウトするため、大きな文書でも1回あたりの埋め込み計算量が上限内に収まるよう小分けにする |
 | `VECTOR_INSERT_TIMEOUT_SECONDS` | `180` | Weaviateへの登録リクエストのタイムアウト(秒)。CPUでの埋め込み計算は遅いため既定より長めに取る |
 | `OFFICE_RENDER_URL` | (未設定) | 体裁つき表示(Office→PDF)の変換サービスのURL(例: `http://converter:3000`)。未設定の間はこの機能が無効になり、Office文書は概要プレビューだけで扱う(登録・検索・ダウンロードには影響しない) |
+| `HTML_PDF_URL` | (未設定) | PDFでダウンロード(HTML・Markdown・MHTML→PDF)の変換サービスのURL(例: `http://pdf-converter:3000`)。未設定の間はこの機能が無効になり、画面にボタンが出ない(他の機能には影響しない) |
+| `HTML_PDF_MAX_BYTES` | `52428800` (50MB) | PDFにする文書(プレビューのHTML)の上限。変換サービス側の上限(`CONVERT_MAX_BYTES`)と揃える |
+| `HTML_PDF_TIMEOUT_SECONDS` | `90` | 変換サービスの応答を待つ上限(秒)。変換サービス側の打ち切り(既定60秒)より少し長く取る |
 | `MEMO_MAX_CHARS` | `4000` | 文書メモの上限(文字数)。メモは文書一覧・検索の応答すべてに載るため、1件で応答を埋め尽くせないようにする安全弁 |
 | `PROJECT_NOTE_MAX_CHARS` | `500` | おしながきの説明書き1件の上限(文字数)。説明はプロジェクトのツリー取得の応答すべてに載るため、長文を持たせないための安全弁(長い説明は文書のメモ側に書く) |
 | `MOCKUPS_ENABLED` | (未設定=無効) | モックアップ機能の**既定値**。`true`でその環境の初期状態を有効にする。管理画面の「サーバー」タブで変更するとDBの値が優先される(再起動不要) |
@@ -388,6 +402,7 @@ npm run test:api   # 層3(API)。Playwrightが認証有効のテストサーバ�
 npm run test:e2e   # 層4(ブラウザE2E)。実Chromiumで主要UIフローを操作。要 `npx playwright install chromium`
 npm run test:pg    # Postgres固有(LISTEN/NOTIFY等)。要 DATABASE_BACKEND=postgres + DATABASE_URL(未設定ならスキップ)
 npm run test:converter  # 本体と変換サービスを実物同士で繋ぐ。要 converterの起動(未起動ならスキップ)
+npm run test:pdf        # 本体とHTML→PDF変換サービスを実物同士で繋ぐ。要 pdf-converterの起動(未起動ならスキップ)
 npm run test:reconcile  # DBと実ファイルの照合。実サーバを起動し、食い違いを実際に作って確認する
 npm run test:discard    # アップロード失敗時の後始末。実サーバを起動し、登録を失敗させて確認する
 npm run test:login      # 実際にログインさせる。模擬の認証サーバ(OIDC)を立てて確認する。要 openssl(無ければスキップ)
@@ -400,6 +415,7 @@ python tools/claude-skill/ci_smoke_test.py  # AIエージェント用Skillのク
 - **`test/storage-discard.test.js`**: 実ファイルを捨てる唯一の経路の検証。渡した名前だけが消えること・置き場所の外に触れないこと・**汎用の削除APIが生えていないこと**・ソースに再帰削除が無いことまで固定する
 - **`test/db-integrity.test.js`**: 意図的に壊したDBを渡して、破損を本当に検知できるか(正常系だけでは意味がないため)
 - **`test/office-render.test.js`**: 変換サービスへ到達できないときに例外を投げないこと(落ちていてもアプリは動き続ける、という設計の根幹)
+- **`test/html-pdf.test.js`**: PDFでダウンロードのアプリ側の部品。未設定なら機能ごと無効になること、到達できなくても例外にならず502で失敗すること、対象の形式がサーバと画面で一致していること、スクリプトを止める指定がアプリの配信と変換サービスで同じであること。あわせて**pdf-converterの隔離**(専用ネットワーク・`internal`・Office用と互いに届かない・読み取り専用)とイメージの前提(tini・フォントの設定)を固定する。APIの振る舞いは`test/api/html-pdf.spec.js`、画面は`test/api/html-pdf.e2e.js`、変換そのもの(崩れない・欠けない・動かさない)は実物のコンテナに対する[pdf-converter/test/smoke.js](pdf-converter/test/smoke.js)が見る
 - **`test/mockup-zip.test.js`**: モックアップZIPの展開の検証。展開先の外を指すエントリ・シンボリックリンク・階層や件数の上限に加え、**展開後サイズを小さく偽ったZIP爆弾**でも膨らまないこと(ヘッダーの値を信じず`zlib`の`maxOutputLength`で頭打ちにする)
 - **`test/mockup-token.test.js`**: モックアップ配信の引換券の検証。これは配信時に**認証の代わりになる**ため、偽造・対象の差し替え・期限の延長・使い回しを念入りに確かめる
 - **`test/project-manifest.test.js`**: おしながきの組み立ての検証。並び順・入れ子・Markdown化に加え、**データが壊れていても資料を落とさないこと**(親が見つからないフォルダ・見つからない文書でも行を残す)
@@ -562,6 +578,8 @@ podman rm -f document_manager
 # 5. 変換サービスを使う場合は、隔離が実際に効いているか確かめる
 #    (podman-composeの版によっては internal: true が反映されないため、設定だけでは保証にならない)
 ./deploy/check-converter-isolation.sh
+# PDFでダウンロード用の変換サービスも同じように確かめる
+CONVERTER=document_manager_pdf_converter ./deploy/check-converter-isolation.sh
 ```
 
 - **サイト固有の値(ドメイン・内部IP・データの場所・シークレット)はリポジトリに置かない**。`deploy/compose.env.example` をコピーしてサーバ上のGit管理外の場所(既定は `/etc/application-auth/document-manager.env`、権限は600)に置き、そこに書く。置き場所は `DOCUMENT_MANAGER_ENV` で変更できる
@@ -574,6 +592,7 @@ podman rm -f document_manager
 - 変更せずに確認だけしたい場合は `./deploy/compose.sh verify`。動作中のアプリの版・リビジョン(イメージに焼き込んだ`/app/VERSION.json`)も表示する
 - 展開できたかどうかは、画面右上の歯車(管理)→「サーバー」タブの**ビルド時刻**、または認証不要の `GET /api/version` でも分かる。更新したはずなのに変わっていなければ入れ替わっていない
 - 変換サービス(converter)は`depends_on`に入れていない。イメージの取得や起動に失敗しても、アプリまで起動しなくなることは無い(体裁つき表示だけが使えなくなる)
+- PDFでダウンロード用の変換サービス(pdf-converter)も同じ扱い。**この構成に更新すると、`compose.sh up`で新しいイメージ(取得 約410MB)が追加で取得される**。使わない場合は`deploy/compose.yml`の`pdf-converter`サービスと`HTML_PDF_URL`の行を外す(外すと画面にボタンが出なくなるだけ)。Chromiumのセキュリティ修正を取り込むため、イメージは毎週作り直している(定期的に`compose.sh pull`すること)
 
 導入後、**既存の文書がバックグラウンドで順次索引付けされる**(1件あたり数秒。実測で約5.5秒/件)。進行状況は画面の「ベクトル索引」から確認できる。索引付け中はCPUを複数コア使い切るため、同居サービスがある場合は業務時間外に始めるか、`compose.yml` の `cpus`/`mem_limit` で上限を設けるとよい。
 

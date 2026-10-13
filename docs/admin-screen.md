@@ -60,6 +60,7 @@
 |---|---|
 | `GET api/server-status` | 版・リビジョン・ビルド時刻・起動時刻・稼働秒・DBバックエンド・DBファイル名とサイズ |
 | `GET api/office-render/health` | 変換サービスの到達性(既存の `checkHealth()` を画面から見えるようにする) |
+| `GET api/html-pdf/health` | PDFでダウンロード用の変換サービス(pdf-converter)の到達性。Office用とは別のコンテナなので、同じタブに別々に出す |
 | `GET api/storage-reconcile` | DBと実ファイルの照合(下記) |
 | `POST api/storage-reconcile/restore` | 実ファイルだけある文書をDBへ登録し直す |
 

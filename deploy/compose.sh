@@ -64,6 +64,7 @@ APP_CONTAINER="${DOCUMENT_MANAGER_CONTAINER:-document_manager}"
 SERVICES=(
 	"app|${APP_CONTAINER}|${DOCUMENT_MANAGER_IMAGE:-docker.io/earce9000/document-manager}:${DOCUMENT_MANAGER_TAG:-latest}"
 	"converter|${APP_CONTAINER}_converter|${DOCUMENT_MANAGER_CONVERTER_IMAGE:-docker.io/earce9000/document-manager-converter}:${DOCUMENT_MANAGER_CONVERTER_TAG:-latest}"
+	"pdf-converter|${APP_CONTAINER}_pdf_converter|${DOCUMENT_MANAGER_PDF_CONVERTER_IMAGE:-docker.io/earce9000/document-manager-pdf-converter}:${DOCUMENT_MANAGER_PDF_CONVERTER_TAG:-latest}"
 	"weaviate|${APP_CONTAINER}_weaviate|docker.io/semitechnologies/weaviate:${WEAVIATE_VERSION:-latest}"
 	"t2v-transformers|${APP_CONTAINER}_t2v|docker.io/semitechnologies/transformers-inference:${T2V_MODEL_TAG:-sentence-transformers-paraphrase-multilingual-mpnet-base-v2}"
 )

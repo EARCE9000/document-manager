@@ -126,6 +126,12 @@ const OPERATIONS = [
 		produces: "application/octet-stream"
 	},
 	{
+		id: "getDocumentPdf", method: "get", path: "/api/documents/:id/pdf", role: "readonly", tag: "文書",
+		summary: "HTML・Markdown・MHTMLの文書をPDFでダウンロード",
+		description: "プレビューとして見えているもの(Markdownは見出しや表を整えたもの、MHTMLは画像ごと1つにまとめたもの)を、**1枚の長いPDF**にして添付ファイルとして返す。メール添付など、人に渡すための形。A4には区切らない(長さが200インチを超える分だけ次のページへ続く)。文書のスクリプトは動かさず、外部に置かれた画像・スタイルは読み込まない(読み込まなかった件数を応答ヘッダー`X-Blocked-Requests`で返す)。変換サービス(pdf-converter)が構成されていない環境では404、対象外の形式では400。変換結果は保存せず、呼ばれるたびに作る。ダウンロードとして監査ログに残る",
+		produces: "application/pdf", aiGuide: false
+	},
+	{
 		id: "viewDocument", method: "get", path: "/api/documents/:id/viewer", role: "public", tag: "文書",
 		summary: "文書のプレビュー(人へのリンク共有用)",
 		description: "未ログインで開くとログイン画面へ迂回し、ログイン後に元のURLへ戻る。人にURLを共有する場合はこちら(`/file`はAPIクライアント向けで、未認証時はJSONの401を返すだけ)。`.drawio`は同梱のdraw.ioビューアのページへリダイレクトする",
@@ -394,6 +400,12 @@ const OPERATIONS = [
 		id: "getOfficeRenderHealth", method: "get", path: "/api/office-render/health", role: "admin", tag: "その他",
 		summary: "変換サービスの状態",
 		description: "体裁つき表示(PDF)の変換サービスへ到達できるかを確かめる。`enabled:false`は未設定(異常ではない)。到達できた場合はLibreOfficeの版・受け付ける上限・タイムアウトも返す",
+		aiGuide: false
+	},
+	{
+		id: "getHtmlPdfHealth", method: "get", path: "/api/html-pdf/health", role: "admin", tag: "その他",
+		summary: "PDF変換サービス(HTML→PDF)の状態",
+		description: "「PDFでダウンロード」の変換サービスへ到達できるかを確かめる。`enabled:false`は未設定(異常ではない)。到達できた場合はChromiumの版・受け付ける上限・タイムアウトも返す",
 		aiGuide: false
 	},
 	{

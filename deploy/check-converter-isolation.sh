@@ -14,6 +14,11 @@
 #
 #   ./deploy/check-converter-isolation.sh
 #
+# HTML→PDFの変換サービス(pdf-converter)も同じ考え方で隔離している(専用ネットワークは
+# document_manager_pdf)。そちらを確かめるときは、対象のコンテナ名を指定する:
+#
+#   CONVERTER=document_manager_pdf_converter ./deploy/check-converter-isolation.sh
+#
 # 環境変数:
 #   CONTAINER_CLI  既定 podman (docker でも動く)
 #   CONVERTER      converterのコンテナ名 (既定 document_manager_converter)

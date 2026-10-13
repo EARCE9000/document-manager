@@ -8,8 +8,14 @@
  * 「PDFを返すHTTPサービス」があれば足りるため、ここで最小限のものを用意する。
  * 本物との整合は converter/test/smoke.js(実物のLibreOfficeに対する結合テスト)が担保する。
  *
+ * HTML→PDFの変換サービス(pdf-converter)のスタブとしても使う(別のポートでもう1つ立てる)。
+ * どちらも「本体を受け取ってPDFを返す」だけなので、受け口は共通でよい。
+ *
  * テストから振る舞いを変えられる(失敗・遅延の検証用):
  *   POST /__control {"mode":"ok"|"fail"|"slow","delayMs":3000}  次回以降の応答を変える
+ *   POST /__control {"blocked":2}                               応答に X-Blocked-Requests を付ける
+ *                                                               (外部の画像が抜けたときの知らせの検証用)
+ *   POST /__control {"status":504}                              mode:"fail" のときに返すステータス
  *   GET  /__requests                                            受け取ったリクエストの記録を返す
  *                                                               (ファイル名を渡していないことの確認に使う)
  */
@@ -30,6 +36,8 @@ module.exports.start = (port) => new Promise((resolve) => {
 	const requests = [];
 	let mode = "ok";
 	let delayMs = 3000;
+	let blocked = 0;
+	let failStatus = 500;
 
 	const server = http.createServer((req, res) => {
 		if (req.method === "POST" && req.url === "/__control") {
@@ -42,6 +50,8 @@ module.exports.start = (port) => new Promise((resolve) => {
 					const control = JSON.parse(body || "{}");
 					if (control.mode != null) mode = control.mode;
 					if (control.delayMs != null) delayMs = Number(control.delayMs);
+					if (control.blocked != null) blocked = Number(control.blocked);
+					if (control.status != null) failStatus = Number(control.status);
 					if (control.reset) requests.length = 0;
 				} catch {}
 				res.writeHead(200, {"Content-Type": "application/json"});
@@ -56,25 +66,32 @@ module.exports.start = (port) => new Promise((resolve) => {
 		}
 		if (req.url === "/health") {
 			res.writeHead(200, {"Content-Type": "application/json"});
-			res.end(JSON.stringify({status: "ok", apiVersion: "stub", libreOffice: "stub", maxBytes: 50 * 1024 * 1024, timeoutSeconds: 120}));
+			res.end(JSON.stringify({status: "ok", apiVersion: "stub", libreOffice: "stub", chromium: "stub", maxBytes: 50 * 1024 * 1024, timeoutSeconds: 120}));
 			return;
 		}
 		const documentId = String(req.headers["x-document-id"] || "");
 		const extension = String(req.headers["x-extension"] || "");
 		let size = 0;
+		const head = [];
 		req.on("data", (chunk) => {
+			// 何を渡したかの確認用に、先頭だけ覚えておく(原本かプレビューか、を見分ける)
+			if (size < 4096) head.push(chunk);
 			size += chunk.length;
 		});
 		req.on("end", () => {
 			// 受け取った内容を記録しておく(ファイル名が渡っていないことの確認にも使う)
-			requests.push({documentId, extension, size, headerNames: Object.keys(req.headers).sort()});
+			requests.push({
+				documentId, extension, size, path: req.url,
+				bodyHead: Buffer.concat(head).subarray(0, 4096).toString("utf-8"),
+				headerNames: Object.keys(req.headers).sort()
+			});
 			if (mode === "fail") {
-				res.writeHead(500, {"Content-Type": "application/json"});
+				res.writeHead(failStatus, {"Content-Type": "application/json"});
 				res.end(JSON.stringify({error: "スタブが意図的に失敗しました"}));
 				return;
 			}
 			const respond = () => {
-				res.writeHead(200, {"Content-Type": "application/pdf", "Content-Length": MINIMAL_PDF.length});
+				res.writeHead(200, {"Content-Type": "application/pdf", "Content-Length": MINIMAL_PDF.length, "X-Blocked-Requests": String(blocked)});
 				res.end(MINIMAL_PDF);
 			};
 			if (mode === "slow") setTimeout(respond, delayMs);

@@ -705,7 +705,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 		setHTTPHeaders(res);
 
 		if (AUTH_DISABLED) {
-			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled()});
+			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled(), htmlPdfEnabled: HtmlPdf.isEnabled()});
 			return;
 		}
 
@@ -719,7 +719,9 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 					role,
 					vectorSearchEnabled: VectorSearch.isEnabled(),
 					// 画面側はこれを見てモックアップの入口を出すか決める
-					mockupsEnabled: await mockupsEnabled()
+					mockupsEnabled: await mockupsEnabled(),
+					// 同じく、「PDFでダウンロード」を出すか
+					htmlPdfEnabled: HtmlPdf.isEnabled()
 				});
 				return;
 			}
@@ -861,6 +863,7 @@ const VectorSearch = require("./lib/vector-search.js");
 const {extractDrawioText} = require("./lib/drawio.js");
 const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 const OfficeRender = require("./lib/office-render.js");
+const HtmlPdf = require("./lib/html-pdf.js");
 const DbIntegrity = require("./lib/db-integrity.js");
 const StorageReconcile = require("./lib/storage-reconcile.js");
 const Mockups = require("./lib/mockups.js");
@@ -1929,6 +1932,36 @@ app.get(BASE_URL_PATH + 'api/office-render/health', requireAuth, requireAdmin, a
 });
 
 /**
+ * HTML→PDFの変換サービス(pdf-converter)の状態(要 admin ロール)。
+ * Office用(上)とは別のコンテナなので、状態も別々に見る。
+ */
+app.get(BASE_URL_PATH + 'api/html-pdf/health', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!HtmlPdf.isEnabled()) {
+			// 未設定は異常ではない。「PDFでダウンロード」が出ないだけ
+			res.status(200).json({enabled: false, reachable: false, checkedAt: new Date().toISOString()});
+			return;
+		}
+		const health = await HtmlPdf.checkHealth();
+		res.status(200).json({
+			enabled: true,
+			reachable: health != null,
+			checkedAt: new Date().toISOString(),
+			...(health != null ? {
+				chromium: health.chromium ?? null,
+				apiVersion: health.apiVersion ?? null,
+				maxBytes: health.maxBytes ?? null,
+				timeoutSeconds: health.timeoutSeconds ?? null
+			} : {})
+		});
+	} catch (err) {
+		logger.error(err, "::api/html-pdf/health");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * サーバーの状態(要 admin ロール)。
  *
  * 版・起動時刻・DBの状態を1箇所で返す。SSHできない状況でも「展開できたのか」
@@ -2401,6 +2434,69 @@ app.get(BASE_URL_PATH + 'api/documents/:id/file', requireAuth, async (req, res) 
 		await serveDocumentFile(req, res);
 	} catch (err) {
 		handleServeFileError(err, req, res, "::api/documents/:id/file");
+	}
+});
+
+/**
+ * HTML・Markdown・MHTMLの文書を、PDFにしてダウンロードする。
+ *
+ * HTMLをメールに添付すると、相手の環境ではテキストとして出てしまうことがある。人に渡すための
+ * 形として、**プレビューで見えているものを、そのまま1枚の長いPDFにする**(lib/html-pdf.js)。
+ * 渡すのは元ファイルではなく、プレビューとして配信しているHTML。Markdownなら見出しや表を
+ * 整えたもの、MHTMLなら画像ごと1つにまとめたものになる。
+ *
+ * 文書の持ち出しなので、元ファイルのダウンロードと同じく監査ログに残す。
+ * アーカイブ済みの文書も対象(プレビュー・ダウンロードと揃える)。
+ */
+app.get(BASE_URL_PATH + 'api/documents/:id/pdf', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!HtmlPdf.isEnabled()) {
+			res.status(404).json({error: "PDFでのダウンロードは、この環境では使えません"});
+			return;
+		}
+		const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
+		if (document == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const extension = path.extname(document.entry_file || "").toLowerCase();
+		if (!HtmlPdf.isConvertible(extension)) {
+			res.status(400).json({error: `PDFにできるのは HTML・Markdown・MHTML の文書だけです(${extension || "拡張子なし"})`});
+			return;
+		}
+		// 画面で見えているものと同じにするため、プレビューが古ければ先に作り直す
+		await rebuildPreviewIfOutdated(document);
+		const targetFile = document.preview_file;
+		if (targetFile == null || !(await storage.exists(document.id, targetFile))) {
+			res.status(404).json({error: "preview not available"});
+			return;
+		}
+		const html = await storage.readFile(document.id, targetFile);
+		const {pdf, blocked} = await HtmlPdf.convertToPdf(html, document.id);
+		logger.info({
+			audit: "download",
+			format: "pdf",
+			user: req.authData.user_identifier,
+			documentId: document.id,
+			entryFile: document.entry_file,
+			// 外部の画像などは読み込ませないため、PDFでは抜ける。「画像が出ない」という
+			// 問い合わせを、ここで切り分けられるようにしておく
+			blockedRequests: blocked
+		}, "audit");
+		res.setHeader("Content-Type", "application/pdf");
+		res.setHeader("Content-Length", pdf.length);
+		res.setHeader("Content-Disposition", contentDisposition("attachment", HtmlPdf.pdfFileName(document.entry_file)));
+		// 画面側が「外部の画像が抜けた」ことを知らせるために使う
+		res.setHeader("X-Blocked-Requests", String(blocked));
+		res.end(pdf);
+	} catch (err) {
+		if (err.status != null && !res.headersSent) {
+			logger.warn({documentId: req.params.id, error: err.message}, "::api/documents/:id/pdf");
+			res.status(err.status).json({error: err.message});
+			return;
+		}
+		handleServeFileError(err, req, res, "::api/documents/:id/pdf");
 	}
 });
 
@@ -4671,6 +4767,12 @@ const main = async () => {
 		// 未処理のPromise拒否になりプロセスが終了するため、ここで必ず受け止める
 		OfficeRender.checkHealth().then((health) => {
 			if (health != null) logger.info({libreOffice: health.libreOffice, maxBytes: health.maxBytes}, "体裁つき表示: 変換サービスに接続できました");
+		}).catch((err) => logger.error(err, "::checkHealth"));
+	}
+	// PDFでの持ち出し(HTML→PDF)の接続確認。こちらも繋がらなくてもアプリは動く
+	if (HtmlPdf.isEnabled()) {
+		HtmlPdf.checkHealth().then((health) => {
+			if (health != null) logger.info({chromium: health.chromium, maxBytes: health.maxBytes}, "PDFでの持ち出し: 変換サービスに接続できました");
 		}).catch((err) => logger.error(err, "::checkHealth"));
 	}
 };

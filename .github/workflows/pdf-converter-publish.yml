@@ -1,0 +1,170 @@
+name: PDF Converter Publish
+
+# HTML→PDF変換サービス(pdf-converter/)のイメージをビルドして Docker Hub へ公開する。
+# アプリ本体(docker-publish.yml)・Office用の変換サービス(converter-publish.yml)とは
+# 別のイメージ・別のタイミングで出す:
+#   - pdf-converter/ を変更した push
+#   - 毎週の定期ビルド(コードが変わらなくても、Chromium・Debian側のセキュリティ修正を取り込むため。
+#     ブラウザのエンジンで他人が作ったHTMLを開くので、ここを止めないことが特に大事)
+#   - 手動実行
+#
+# amd64のみをビルドする(converter と同じ。運用サーバはx86_64)。
+#
+# 公開前に、実際のHTML(pdf-converter/test/fixtures/)をPDFにする結合テストを必ず通す。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pdf-converter/**"
+      - "app/lib/html-pdf.js"
+      - "test/integration-pdf.js"
+      - ".github/workflows/pdf-converter-publish.yml"
+  pull_request:
+    paths:
+      - "pdf-converter/**"
+      - "app/lib/html-pdf.js"
+      - "test/integration-pdf.js"
+      - ".github/workflows/pdf-converter-publish.yml"
+  schedule:
+    # 毎週月曜 03:30 JST (日曜 18:30 UTC)。Office用(03:00)と重ならないようにずらす
+    - cron: "30 18 * * 0"
+  workflow_dispatch:
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ビルド前にログインしておく(ベースイメージの取得を認証済みの枠で行う。
+      # 匿名pullはGitHubランナーの共有IPでレート制限に当たりやすい)
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 先にローカルへ読み込んで、変換が実際に通ることを確かめてから公開する
+      - name: Build (load for test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: pdf-converter/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: document-manager-pdf-converter:test
+          cache-from: type=gha,scope=pdf-converter
+          cache-to: type=gha,mode=max,scope=pdf-converter
+
+      # 運用と同じ絞り方(読み取り専用・権限なし)で立てる。ここで動かないものは運用でも動かない。
+      # 既定値のインスタンスと、上限・タイムアウトを小さくしたインスタンスの2つを立てる
+      - name: Start pdf-converter
+        run: |
+          docker run -d --name pdf-converter -p 3012:3000 \
+            --tmpfs /tmp:rw,size=512m --read-only --memory 1g \
+            --security-opt no-new-privileges:true --cap-drop ALL \
+            document-manager-pdf-converter:test
+          docker run -d --name pdf-converter-limits -p 3013:3000 \
+            --tmpfs /tmp:rw,size=512m --read-only --memory 1g \
+            --security-opt no-new-privileges:true --cap-drop ALL \
+            -e CONVERT_MAX_BYTES=1048576 -e CONVERT_TIMEOUT_SECONDS=1 \
+            document-manager-pdf-converter:test
+          for i in $(seq 1 60); do
+            curl -sf -m 2 http://127.0.0.1:3012/health > /dev/null \
+              && curl -sf -m 2 http://127.0.0.1:3013/health > /dev/null && break
+            sleep 1
+          done
+          curl -s http://127.0.0.1:3012/health
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 実際のHTMLをPDFにして、1枚に収まること・日本語が文字として入ること・スクリプトが動かないこと・
+      # 外部や内部へ読みに行かないこと・変換後にプロセスが残らないことを確かめる
+      - name: Smoke test
+        env:
+          PDF_CONVERTER_LIMITS_URL: http://127.0.0.1:3013
+          PDF_CONVERTER_CONTAINER: pdf-converter
+        run: node pdf-converter/test/smoke.js
+
+      # ロックファイルはコミットしていない(app/.gitignore 参照)。npm ci は使えない
+      - name: Install app dependencies
+        run: npm install --omit=dev --no-audit --no-fund
+        working-directory: app
+
+      # Document Manager本体と繋いだ結合テスト。スタブではなく本物を相手に、
+      # アップロード → 「PDFでダウンロード」 → PDFの中身、まで確かめる
+      - name: Integration test (app + pdf-converter)
+        env:
+          PDF_CONVERTER_URL: http://127.0.0.1:3012
+        run: npm run test:pdf
+
+      - name: PDF converter logs
+        if: always()
+        run: |
+          docker logs pdf-converter || true
+          docker logs pdf-converter-limits || true
+
+      - name: Compute build version
+        id: version
+        # 版は YYYYMMDD.HHMM(JST)。他のイメージと同じ決め方
+        run: echo "value=$(TZ=Asia/Tokyo date +%Y%m%d.%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: pdf-converter/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            earce9000/document-manager-pdf-converter:latest
+            earce9000/document-manager-pdf-converter:${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=pdf-converter
+
+      # 日時タグは直近3世代だけ残す(latestは常に残る)。
+      # 失敗してもワークフロー自体は成功扱いにする(公開そのものは終わっているため)
+      - name: Prune old tags
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="earce9000/document-manager-pdf-converter"
+          # 応答は秘密情報を含むため、本文は出さずに状態だけを出す
+          login=$(curl -s -o /tmp/login.json -w "%{http_code}" -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login/)
+          jwt=$(jq -r '.token // empty' /tmp/login.json)
+          echo "ログイン: HTTP ${login} / トークン取得: $([ -n "$jwt" ] && echo あり || echo なし)"
+          if [ -z "$jwt" ]; then
+            echo "ログインできなかったため、タグの整理は行いません(トークンの権限・2要素認証の設定を確認してください)"
+            exit 0
+          fi
+          # 日時タグ(YYYYMMDD.HHMM)だけを対象にし、新しい3件を残して削除する。
+          # APIの並び順には依存せず、タグ名(日時)で降順に並べてから判断する
+          curl -s -H "Authorization: JWT ${jwt}" \
+            "https://hub.docker.com/v2/repositories/${repo}/tags/?page_size=100&ordering=last_updated" \
+            | jq -r '.results[].name' \
+            | grep -E '^[0-9]{8}(\.[0-9]{4}|_[0-9]{6})$' \
+            | sort -r \
+            | tail -n +4 \
+            | while read -r tag; do
+                code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                  -H "Authorization: JWT ${jwt}" \
+                  "https://hub.docker.com/v2/repositories/${repo}/tags/${tag}/" || echo "000")
+                echo "削除: ${tag} -> HTTP ${code}"
+              done

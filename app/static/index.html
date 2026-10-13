@@ -749,6 +749,10 @@
 	.previewActionButton:hover { background: #eaf2ff; border-color: #1a56db; }
 	.previewActionButton svg { width: 18px; height: 18px; display: block; }
 	.previewActionButton:disabled { cursor: not-allowed; opacity: 0.5; }
+	/* 変換を待っている間(1秒前後)。押せたのかどうかが分かるようにする */
+	.previewActionButton.busy { cursor: progress; }
+	.previewActionButton.busy svg { animation: previewBusyPulse 0.9s ease-in-out infinite; }
+	@keyframes previewBusyPulse { 50% { opacity: 0.25; } }
 	/* アーカイブは確認ダイアログを挟むが、他の操作との押し間違い自体を減らすため、間隔と区切り線を空けて配置する */
 	.previewArchiveAction { margin-left: 10px; position: relative; border-color: #e8b74d; color: #b8860b; }
 	.previewArchiveAction::before {
@@ -1628,6 +1632,12 @@
 					<a id="downloadLink" href="#" class="previewActionButton" title="ダウンロード" aria-label="ダウンロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
 					</a>
+					<!-- HTMLをメールに添付すると、相手の環境ではテキストとして出てしまうことがある。
+					     人に渡す用に、プレビューで見えているものを1枚の長いPDFにして落とす。
+					     変換サービス(pdf-converter)がある環境の、HTML・Markdown・MHTMLの文書でだけ出す -->
+					<button type="button" id="previewPdfButton" class="previewActionButton" title="PDFでダウンロード(メール添付など、人に渡す用。プレビューの見た目のまま1枚の長いPDFにします)" aria-label="PDFでダウンロード" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="17"/><polyline points="9 14.5 12 17.5 15 14.5"/></svg>
+					</button>
 					<button type="button" id="previewRenderButton" class="previewActionButton" title="体裁つきで開く(元のレイアウトをPDFで表示。別ウィンドウ)" aria-label="体裁つきで開く" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
 					</button>
@@ -1899,6 +1909,12 @@
 					<h3>変換に失敗した文書</h3>
 					<div class="adminSectionNote">変換サービスが停止していた間に登録された文書は、ここに残ります。再実行すると、その場で変換し直します。</div>
 					<div id="convertFailedWrap"></div>
+					<h3>PDFでダウンロード(HTML・Markdown・MHTML)</h3>
+					<div class="adminSectionNote">
+						HTML・Markdown・MHTML の文書を、<strong>プレビューの見た目のまま1枚の長いPDF</strong>にして持ち出すための変換サービスの状態です(上のOffice用とは別のコンテナです)。
+						動いていなくても、プレビューの上の「PDFでダウンロード」が使えなくなるだけで、他には影響しません。
+					</div>
+					<div id="pdfHealthResult"></div>
 				</section>
 			</div>
 		</main>
@@ -2126,6 +2142,13 @@
 				<p class="helpNote">開いたままログインの期限が切れた場合も、上に知らせが出ます。そのまま読み続けられますが、更新の確認はできなくなります。</p>
 			</section>
 
+			<section id="helpPdfSection">
+				<h3>メールなどで渡す — PDFでダウンロード</h3>
+				<p>HTML・Markdown の資料を、プレビュー上部の<strong>書類に下向き矢印のアイコン</strong>で PDF にして保存できます。HTML をそのままメールに添付すると、相手の環境では文字の羅列として出てしまうことがあるため、渡すときはこちらを使ってください。</p>
+				<p><strong>画面で見たままの1枚の長いページ</strong>になります(A4 には区切りません。区切ると表や図が途中で切れるためです)。横に長い表は、切れないようにページを右へ広げます。</p>
+				<p class="helpNote">文字の形(フォント)は画面と少し違い、行の折り返し位置がずれることがあります。<strong>外部のサイトに置かれた画像は入りません</strong>(該当するときは保存時に知らせます)。渡す前に、PDF を開いて確かめてください。</p>
+			</section>
+
 			<section>
 				<h3>整理する — タグとプロジェクト</h3>
 				<p><strong>タグ</strong>は資料の性格を表す目印です。自由に付けられ、「タグ体系」の画面でよく使うものだけを並べて見られます。</p>
@@ -2207,6 +2230,50 @@ const similarFilesRow = document.getElementById("similarFilesRow");
 const versionHistoryRow = document.getElementById("versionHistoryRow");
 const previewReviseButton = document.getElementById("previewReviseButton");
 const previewRenderButton = document.getElementById("previewRenderButton");
+const previewPdfButton = document.getElementById("previewPdfButton");
+// PDFにできる文書(元ファイルの拡張子)。サーバ側(lib/html-pdf.js の SOURCE_EXTENSIONS)と揃える
+const PDF_SOURCE_EXTENSIONS = [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht"];
+// 変換サービス(pdf-converter)がある環境か。ログイン時の応答で決まる
+let htmlPdfEnabled = false;
+
+/**
+ * 文書をPDFにしてダウンロードする。
+ *
+ * ただのリンクにしていないのは、失敗したとき(変換サービスが落ちている等)に、画面がJSONの
+ * エラー表示へ切り替わってしまうため。こちらで受け取ってから保存に回す。
+ */
+const downloadAsPdf = async (doc) => {
+	if (previewPdfButton.disabled) return;
+	previewPdfButton.disabled = true;
+	previewPdfButton.classList.add("busy");
+	try {
+		const res = await fetch(`./api/documents/${encodeURIComponent(doc.id)}/pdf`);
+		if (!res.ok) {
+			alert((await res.json().catch(() => ({}))).error || "PDFを作れませんでした");
+			return;
+		}
+		const blob = await res.blob();
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = String(doc.entryFile || "document").replace(/\.[^.]+$/, "") + ".pdf";
+		document.body.appendChild(anchor);
+		anchor.click();
+		anchor.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 60000);
+		// 外部に置かれた画像などは読み込まないため、PDFでは抜ける。黙って渡すと
+		// 「相手に送ったら画像が無かった」となるので、その場で知らせる
+		const blocked = Number(res.headers.get("X-Blocked-Requests") || 0);
+		if (blocked > 0) {
+			alert(`PDFを保存しました。\n\nこの文書は外部に置かれた画像やスタイルを ${blocked} 件参照していますが、PDFには入っていません(変換時に外部へは接続しないため)。人に渡す前に、PDFを開いて見た目を確認してください。`);
+		}
+	} catch {
+		alert("PDFを作れませんでした(通信エラー)");
+	} finally {
+		previewPdfButton.disabled = false;
+		previewPdfButton.classList.remove("busy");
+	}
+};
 const reviseFileInput = document.getElementById("reviseFileInput");
 const memoArea = document.getElementById("memoArea");
 const memoTextarea = document.getElementById("memoTextarea");
@@ -2902,6 +2969,7 @@ const clearPreview = () => {
 	copyVersionLinkButton.style.display = "none";
 	previewReviseButton.style.display = "none";
 	previewRenderButton.style.display = "none";
+	previewPdfButton.style.display = "none";
 	previewLinkPreviousButton.style.display = "none";
 	previewTagEditButton.style.display = "none";
 	previewArchiveButton.style.display = "none";
@@ -2971,6 +3039,10 @@ const showPreview = (doc) => {
 	previewRenderButton.onclick = () => {
 		window.open(`./api/documents/${encodeURIComponent(doc.id)}/file?render=1`, "_blank");
 	};
+	// PDFでダウンロード。HTML・Markdown・MHTMLの文書で、変換サービスがある環境のときだけ出す
+	const pdfSourceExtension = (String(doc.entryFile || "").match(/\.[^.]+$/) || [""])[0].toLowerCase();
+	previewPdfButton.style.display = htmlPdfEnabled && PDF_SOURCE_EXTENSIONS.includes(pdfSourceExtension) ? "inline-flex" : "none";
+	previewPdfButton.onclick = () => downloadAsPdf(doc);
 	// 旧版の紐づけ(まだ旧版が無い文書)/紐付けの解除(既に旧版がある文書)
 	previewLinkPreviousButton.style.display = isArchived ? "none" : "inline-flex";
 	previewLinkPreviousButton.title = doc.previousId == null ? "旧版を紐づける" : "旧版の紐付けを解除";
@@ -5678,7 +5750,45 @@ const loadConvertFailed = async () => {
 	});
 };
 
+// HTML→PDFの変換サービス(pdf-converter)の状態。Office用とは別のコンテナなので、別々に出す
+const pdfHealthResult = document.getElementById("pdfHealthResult");
+const renderPdfHealth = (health) => {
+	if (health == null) {
+		pdfHealthResult.innerHTML = `<div class="adminSectionNote">取得できませんでした。</div>`;
+		return;
+	}
+	if (!health.enabled) {
+		pdfHealthResult.innerHTML = `<span class="adminStatus unknown">未設定</span>
+			<div class="adminSectionNote" style="margin-top:8px;">変換サービスを使わない構成です(HTML_PDF_URL が未設定)。「PDFでダウンロード」は画面に出ません。</div>`;
+		return;
+	}
+	if (!health.reachable) {
+		pdfHealthResult.innerHTML = `<span class="adminStatus bad">到達できません</span>
+			<div class="adminSectionNote" style="margin-top:8px;">設定はされていますが応答がありません。変換サービス(pdf-converter)のコンテナが動いているか確認してください。この間は「PDFでダウンロード」が失敗します。</div>`;
+		return;
+	}
+	pdfHealthResult.innerHTML = `
+		<span class="adminStatus ok">正常</span>
+		<dl class="adminDefList" style="margin-top:12px;">
+			<dt>Chromium</dt><dd>${escapeHtml(health.chromium || "-")}</dd>
+			<dt>受け付ける上限</dt><dd>${escapeHtml(formatBytes(health.maxBytes))}</dd>
+			<dt>変換の打ち切り</dt><dd>${escapeHtml(String(health.timeoutSeconds ?? "-"))} 秒</dd>
+			<dt>確認日時</dt><dd>${escapeHtml(formatDateTime(health.checkedAt))}</dd>
+		</dl>`;
+};
+
+const loadPdfHealth = async () => {
+	pdfHealthResult.innerHTML = `<div class="adminSectionNote">確認中...</div>`;
+	try {
+		const res = await fetch("./api/html-pdf/health");
+		renderPdfHealth(res.status === 200 ? await res.json() : null);
+	} catch {
+		renderPdfHealth(null);
+	}
+};
+
 const loadConvertTab = async () => {
+	loadPdfHealth();
 	convertHealthResult.innerHTML = `<div class="adminSectionNote">確認中...</div>`;
 	try {
 		const res = await fetch("./api/office-render/health");
@@ -6437,6 +6547,9 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 		appShell.classList.toggle("adminMode", !!authData.isAdmin);
 		// モックアップはローカル保存の構成でのみ使える。使えない構成では入口を出さない
 		appShell.classList.toggle("mockupsEnabled", !!authData.mockupsEnabled);
+		htmlPdfEnabled = !!authData.htmlPdfEnabled;
+		// 使えない環境では、使い方の説明も出さない
+		document.getElementById("helpPdfSection").style.display = htmlPdfEnabled ? "" : "none";
 		appShell.classList.add("visible");
 		loadDocuments();
 		subscribeDocumentEvents();
