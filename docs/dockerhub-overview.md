@@ -48,13 +48,21 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 「だいたいの体裁と、どこに何があるか」を掴む用途で、細かいところは原本をダウンロードして
 確認してください。変換サービスは任意で、無くても文書の登録・検索・概要表示には影響しません。
 
-HTML や Markdown で作った資料を**メールなどで人に渡す**ときは、**PDF変換サービス**(別イメージ
-`earce9000/document-manager-pdf-converter`)を併せて起動すると、プレビュー上部のボタンから
-**プレビューの見た目のまま1枚の長いPDF**にして保存できます(HTML をそのまま添付すると、相手の環境では
-文字の羅列として出てしまうことがあるためです)。A4 には区切らないので、表や図が途中で切れません。
-横に長い表は、切れないようにページを右へ広げます。フォントは BIZ UDゴシックで描くため、行の折り返し
-位置が画面と少しずれることがあります。外部のサイトに置かれた画像は入りません(変換時に外部へは
-接続しません)。こちらも任意で、無ければボタンが出ないだけです。
+HTML や Markdown で作った資料を**メールなどで人に渡す**ための **「PDFでダウンロード」** もあります。
+HTML をそのまま添付すると、相手の環境では文字の羅列として出てしまうことがあるためです。
+**PDF変換サービス**(別イメージ `earce9000/document-manager-pdf-converter`)を併せて起動すると、
+プレビュー上部のボタンから、**プレビューの見た目のまま1枚の長いPDF**にして保存できます。
+
+- 対象は HTML・Markdown・MHTML です。Markdown は記号のままではなく、**見出しや表を整えた見た目**で出ます
+- **A4 には区切りません。** 区切ると表や図がページの途中で切れるためです。横に長い表や1行が長い
+  コマンドは、切れないようにページを右へ広げます(とても長い文書だけ、複数ページに分かれます)
+- 文字は文字として入るので、PDF の中を検索・コピーできます
+- 描画は Chromium(ブラウザと同じエンジン)で行い、1件あたり1秒かかりません
+
+**画面と完全に同じにはなりません。** フォントは BIZ UDゴシックで描くため、行の折り返し位置が少しずれる
+ことがあります(配置は変わりません)。**外部のサイトに置かれた画像は入りません**(変換時に外部へは接続
+しないため。該当するときは保存時に画面が知らせます)。渡す前に、PDF を開いて確かめてください。
+このサービスも任意で、無ければボタンが出ないだけです。
 
 ![文書一覧とプレビュー](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/document-list.png)
 
@@ -147,12 +155,15 @@ GCS に移せるので、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)で複数イン
 
 ![システム構成](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/architecture.png)
 
-**変換サービス(converter)と Weaviate / 推論サーバーはどちらも任意**です。無くてもアプリは動き、
-体裁つき表示と意味検索だけが使えなくなります。単一コンテナだけで動かすこともできます。
+**2つの変換サービス(converter / pdf-converter)と Weaviate / 推論サーバーは、どれも任意**です。
+無くてもアプリは動き、Office の体裁つき表示・PDFでダウンロード・意味検索のうち、該当する機能だけが
+使えなくなります。単一コンテナだけで動かすこともできます。
 
-変換サービスは、信用できない文書を LibreOffice で開くという性質上、**インターネットにも他の
-サービスにも出られない専用ネットワークに閉じ込めています**(読み取り専用・作業場所はメモリ上の
-一時領域・非root・メモリ上限)。細工された文書に任意のURLを叩かせないためです。
+変換サービスは、信用できない文書を開くという性質上(converter は LibreOffice、pdf-converter は
+Chromium)、**インターネットにも他のサービスにも出られない専用ネットワークに、別々に閉じ込めています**
+(読み取り専用・作業場所はメモリ上の一時領域・非root・メモリ上限)。細工された文書に任意のURLを
+叩かせないためです。pdf-converter はさらに、**文書のスクリプトを動かさず、文書そのもの以外は何も
+読み込みません**。
 
 ## 管理画面(管理者のみ)
 
@@ -164,7 +175,8 @@ GCS に移せるので、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)で複数イン
 - **データベース**: 破損の検知(起動のたびに自動で確認)と、**DBと実ファイルの照合**。
   ファイルだけ残っている文書は登録し直せます。逆に**ファイルが見つからない文書の記録は消しません**
   (ストレージが一時的に見えていないだけの可能性があり、消すとタグ・メモ・版の紐付けまで失うため)
-- **変換サービス**: 動いているか、変換に失敗した文書はあるか(その場で再実行できます)
+- **変換サービス**: 動いているか、変換に失敗した文書はあるか(その場で再実行できます)。
+  PDFでダウンロード用の変換サービスの状態も、ここに別に出ます
 - **アクセス許可ユーザー**: ログインできる人とその権限の管理
 - **セッション**: 不正アクセスが疑われるときに、利用者を**まとめて切断**できます
   (ログイン中のセッション・その人が発行したAPIキー・開いているモックアップの表示を一式で止め、
@@ -293,7 +305,65 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 にあります。podman では、イメージ名を `docker.io/` から完全に指定してください(短い名前は
 `registries.conf` の検索順で解決されるため、RHEL系ホストでは失敗します)。
 
-### 6. 主な環境変数
+### 6. PDFでダウンロードを使う場合
+
+アプリに加えて、PDF変換サービスを起動します。**PDF変換サービスはポートを公開しないでください。**
+認証を持たないため、アプリからだけ届くネットワークに置きます。
+
+```yaml
+services:
+  app:
+    image: earce9000/document-manager:latest
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      BASE_PATH: "/"
+      OIDC_ISSUER: "https://accounts.example.com"
+      OIDC_CLIENT_ID: "<クライアントID>"
+      OIDC_CLIENT_SECRET: "<クライアントシークレット>"
+      OIDC_REDIRECT_URI: "https://docs.example.com/login"
+      ADMIN_EMAIL: "admin@example.com"
+      SESSION_SECRET: "<openssl rand -hex 32 の値>"
+      HTML_PDF_URL: "http://pdf-converter:3000"
+    networks:
+      - default
+      - pdf
+
+  pdf-converter:
+    image: earce9000/document-manager-pdf-converter:latest
+    restart: always
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=512m
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    networks:
+      - pdf
+
+networks:
+  # internal: true で、インターネットへ出られないネットワークにする
+  pdf:
+    internal: true
+```
+
+起動すると、HTML・Markdown・MHTML の文書を開いたときに、プレビュー上部へ「PDFでダウンロード」が
+出ます。動いているかは、管理画面の「変換サービス」タブで確かめられます。
+
+- `app` の `depends_on` には入れないでください。PDF変換サービスの取得や起動に失敗したときに、
+  アプリまで起動しなくなるのを避けるためです(無くてもボタンが失敗するだけです)
+- イメージは**毎週作り直しています**(Chromium のセキュリティ修正を取り込むため)。定期的に
+  取得し直してください
+- Chromium 自身のサンドボックスは、権限を絞ったコンテナの中では立ち上げられないため切っています。
+  代わりに、スクリプトを動かさない・文書以外を読み込まない・外へ出られないネットワークに置く、で
+  閉じています。詳しくは
+  [`pdf-converter/README.md`](https://github.com/EARCE9000/document-manager/blob/main/pdf-converter/README.md)
+  にあります
+
+### 7. 主な環境変数
 
 | 変数 | 既定値 | 説明 |
 | --- | --- | --- |
@@ -327,7 +397,7 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 S3 の認証情報は AWS SDK の標準の取得順(IAMロール優先)、GCS は Application Default Credentials に従います。
 全変数の一覧は GitHub の README にあります。
 
-### 7. データの扱いと更新・切り戻し
+### 8. データの扱いと更新・切り戻し
 
 `/data` をマウントしておけば、文書・モックアップと SQLite のデータベースはそこに残ります。
 

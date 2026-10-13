@@ -283,6 +283,7 @@ document-manager/
 │   ├── mockup.md             # モックアップ管理の定義(隔離のしかたと、実測で確かめた結果)
 │   ├── project-manifest.md   # おしながきの定義(説明書きをプロジェクトごとに持つ理由)
 │   ├── dockerhub-overview.md # Docker Hubの説明文(機能を足したらここも更新する)
+│   ├── dockerhub-pdf-converter-overview.md # 同じく、pdf-converterのリポジトリ用の説明文
 │   └── screenshots/          # READMEのスクリーンショットと撮影スクリプト(capture.js)
 └── data/                     # 実行時にマウントされる永続化ボリューム (Dockerイメージには含めない)
     ├── documents/<年月>_<UUID>/  # 文書本体 (元ファイル + 変換後preview.html。STORAGE_BACKEND=local時のみ)
