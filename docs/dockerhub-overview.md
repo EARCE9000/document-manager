@@ -10,6 +10,10 @@ Self-hosted document manager: versioning, tagging, full-text/semantic search, AP
 画像はGitHub(raw.githubusercontent.com)の公開URLを参照している。スクリーンショットを
 撮り直した場合(npm run screenshots)は、pushすればDocker Hub側の表示も自動的に新しくなる。
 
+**本文(このコメントより下)は 25,000 バイトまで。** 超えると Docker Hub が受け付けない
+("Exceeded max number of bytes 25000")。足すときは同じだけ削ること。大きさは test/html-pdf.test.js が見張っている。
+細かい説明は GitHub の README や、変換サービス側のページ(docs/dockerhub-pdf-converter-overview.md)へ回す。
+
 ロゴは docs/logo-128.png(Docker HubはSVGを画像として出さないため、app/static/logo.svg から
 書き出したPNG。角の外は透過)。大きさを指定できないので、表示したい大きさ(128px)で作ってある。
 docs/logo.png は同じ絵の512px版(紹介ページ以外で使う用)。ロゴを変えたら両方作り直す。
@@ -48,21 +52,13 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 「だいたいの体裁と、どこに何があるか」を掴む用途で、細かいところは原本をダウンロードして
 確認してください。変換サービスは任意で、無くても文書の登録・検索・概要表示には影響しません。
 
-HTML や Markdown で作った資料を**メールなどで人に渡す**ための **「PDFでダウンロード」** もあります。
-HTML をそのまま添付すると、相手の環境では文字の羅列として出てしまうことがあるためです。
+HTML や Markdown の資料を**メールなどで人に渡す**ための **「PDFでダウンロード」** もあります
+(HTML をそのまま添付すると、相手の環境では文字の羅列として出てしまうことがあるため)。
 **PDF変換サービス**(別イメージ `earce9000/document-manager-pdf-converter`)を併せて起動すると、
-プレビュー上部のボタンから、**プレビューの見た目のまま1枚の長いPDF**にして保存できます。
-
-- 対象は HTML・Markdown・MHTML です。Markdown は記号のままではなく、**見出しや表を整えた見た目**で出ます
-- **A4 には区切りません。** 区切ると表や図がページの途中で切れるためです。横に長い表や1行が長い
-  コマンドは、切れないようにページを右へ広げます(とても長い文書だけ、複数ページに分かれます)
-- 文字は文字として入るので、PDF の中を検索・コピーできます
-- 描画は Chromium(ブラウザと同じエンジン)で行い、1件あたり1秒かかりません
-
-**画面と完全に同じにはなりません。** フォントは BIZ UDゴシックで描くため、行の折り返し位置が少しずれる
-ことがあります(配置は変わりません)。**外部のサイトに置かれた画像は入りません**(変換時に外部へは接続
-しないため。該当するときは保存時に画面が知らせます)。渡す前に、PDF を開いて確かめてください。
-このサービスも任意で、無ければボタンが出ないだけです。
+HTML・Markdown・MHTML の文書を、**プレビューの見た目のまま1枚の長いPDF**にして保存できます。
+A4 には区切らないので表や図が途中で切れず、横に長い表はページを右へ広げて入れます。
+フォントは BIZ UDゴシックで描くため行の折り返しが少しずれることがあり、**外部のサイトに置かれた
+画像は入りません**(該当するときは保存時に知らせます)。
 
 ![文書一覧とプレビュー](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/document-list.png)
 
@@ -156,14 +152,11 @@ GCS に移せるので、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)で複数イン
 ![システム構成](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/architecture.png)
 
 **2つの変換サービス(converter / pdf-converter)と Weaviate / 推論サーバーは、どれも任意**です。
-無くてもアプリは動き、Office の体裁つき表示・PDFでダウンロード・意味検索のうち、該当する機能だけが
-使えなくなります。単一コンテナだけで動かすこともできます。
+無くてもアプリは動き、該当する機能だけが使えなくなります。単一コンテナだけで動かすこともできます。
 
-変換サービスは、信用できない文書を開くという性質上(converter は LibreOffice、pdf-converter は
-Chromium)、**インターネットにも他のサービスにも出られない専用ネットワークに、別々に閉じ込めています**
-(読み取り専用・作業場所はメモリ上の一時領域・非root・メモリ上限)。細工された文書に任意のURLを
-叩かせないためです。pdf-converter はさらに、**文書のスクリプトを動かさず、文書そのもの以外は何も
-読み込みません**。
+変換サービスは信用できない文書を開くため(LibreOffice / Chromium)、**インターネットにも他の
+サービスにも出られない専用ネットワークに、別々に閉じ込めています**(読み取り専用・作業場所はメモリ上の
+一時領域・非root・メモリ上限)。細工された文書に任意のURLを叩かせないためです。
 
 ## 管理画面(管理者のみ)
 
@@ -175,8 +168,7 @@ Chromium)、**インターネットにも他のサービスにも出られない
 - **データベース**: 破損の検知(起動のたびに自動で確認)と、**DBと実ファイルの照合**。
   ファイルだけ残っている文書は登録し直せます。逆に**ファイルが見つからない文書の記録は消しません**
   (ストレージが一時的に見えていないだけの可能性があり、消すとタグ・メモ・版の紐付けまで失うため)
-- **変換サービス**: 動いているか、変換に失敗した文書はあるか(その場で再実行できます)。
-  PDFでダウンロード用の変換サービスの状態も、ここに別に出ます
+- **変換サービス**: 2つの変換サービスが動いているか、変換に失敗した文書はあるか(その場で再実行できます)
 - **アクセス許可ユーザー**: ログインできる人とその権限の管理
 - **セッション**: 不正アクセスが疑われるときに、利用者を**まとめて切断**できます
   (ログイン中のセッション・その人が発行したAPIキー・開いているモックアップの表示を一式で止め、
@@ -307,61 +299,10 @@ podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート�
 
 ### 6. PDFでダウンロードを使う場合
 
-アプリに加えて、PDF変換サービスを起動します。**PDF変換サービスはポートを公開しないでください。**
-認証を持たないため、アプリからだけ届くネットワークに置きます。
-
-```yaml
-services:
-  app:
-    image: earce9000/document-manager:latest
-    restart: always
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./data:/data
-    environment:
-      BASE_PATH: "/"
-      OIDC_ISSUER: "https://accounts.example.com"
-      OIDC_CLIENT_ID: "<クライアントID>"
-      OIDC_CLIENT_SECRET: "<クライアントシークレット>"
-      OIDC_REDIRECT_URI: "https://docs.example.com/login"
-      ADMIN_EMAIL: "admin@example.com"
-      SESSION_SECRET: "<openssl rand -hex 32 の値>"
-      HTML_PDF_URL: "http://pdf-converter:3000"
-    networks:
-      - default
-      - pdf
-
-  pdf-converter:
-    image: earce9000/document-manager-pdf-converter:latest
-    restart: always
-    read_only: true
-    tmpfs:
-      - /tmp:rw,size=512m
-    security_opt:
-      - no-new-privileges:true
-    mem_limit: 1g
-    networks:
-      - pdf
-
-networks:
-  # internal: true で、インターネットへ出られないネットワークにする
-  pdf:
-    internal: true
-```
-
-起動すると、HTML・Markdown・MHTML の文書を開いたときに、プレビュー上部へ「PDFでダウンロード」が
-出ます。動いているかは、管理画面の「変換サービス」タブで確かめられます。
-
-- `app` の `depends_on` には入れないでください。PDF変換サービスの取得や起動に失敗したときに、
-  アプリまで起動しなくなるのを避けるためです(無くてもボタンが失敗するだけです)
-- イメージは**毎週作り直しています**(Chromium のセキュリティ修正を取り込むため)。定期的に
-  取得し直してください
-- Chromium 自身のサンドボックスは、権限を絞ったコンテナの中では立ち上げられないため切っています。
-  代わりに、スクリプトを動かさない・文書以外を読み込まない・外へ出られないネットワークに置く、で
-  閉じています。詳しくは
-  [`pdf-converter/README.md`](https://github.com/EARCE9000/document-manager/blob/main/pdf-converter/README.md)
-  にあります
+PDF変換サービス(`earce9000/document-manager-pdf-converter`)を**外へ出られないネットワーク**に起動し、
+アプリに `HTML_PDF_URL`(例: `http://pdf-converter:3000`)を渡します。**ポートは公開しないでください**
+(認証を持ちません)。compose の例・安全面の考え方・更新の仕方は
+[変換サービスのページ](https://hub.docker.com/r/earce9000/document-manager-pdf-converter)にあります。
 
 ### 7. 主な環境変数
 

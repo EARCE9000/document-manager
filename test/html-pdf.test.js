@@ -196,3 +196,29 @@ test("pdf-converter-publish.yml: 版の決め方と古いタグの整理が、�
 	assert.ok(text.indexOf("pdf-converter/test/smoke.js") < text.indexOf("push: true"), "テストより先に公開している");
 	assert.match(text, /schedule:/, "コードが変わらなくても、Chromiumのセキュリティ修正を取り込む定期ビルドがある");
 });
+
+// ---- Docker Hubの説明文 ----
+// Docker Hubは説明文を 25,000 バイトまでしか受け付けない。書き足して超えると、貼り付けたときに
+// 初めて分かる(実際に、PDFの説明を足して 27,631 バイトになり、反映できなかった)
+const DOCKERHUB_OVERVIEW_MAX_BYTES = 25000;
+const DOCKERHUB_DESCRIPTION_MAX_CHARS = 100;
+
+for (const file of ["dockerhub-overview.md", "dockerhub-pdf-converter-overview.md"]) {
+	test(`${file}: Docker Hubの上限に収まっている`, () => {
+		const text = read("docs", file);
+		const end = text.indexOf("-->");
+		assert.ok(end > 0, "冒頭の注意書き(コメント)が見つからない");
+		// 貼り付けるのはコメントより下。改行がCRLFになっていても収まること
+		const body = text.slice(end + 3).trim().split(/\r?\n/).join("\r\n");
+		const bytes = Buffer.byteLength(body, "utf-8");
+		assert.ok(bytes <= DOCKERHUB_OVERVIEW_MAX_BYTES,
+			`本文が ${bytes} バイトある(上限 ${DOCKERHUB_OVERVIEW_MAX_BYTES})。足した分だけ削ること`);
+
+		// 短い説明(Description)欄は100文字まで。コメントの中の、英字で始まりピリオドで終わる1行がそれ
+		const descriptions = text.slice(0, end).split(/\r?\n/).map((line) => line.trim())
+			.filter((line) => /^[A-Z][A-Za-z]/.test(line) && line.endsWith("."));
+		assert.equal(descriptions.length, 1, `短い説明の行が1つに決まらない(${descriptions.length}件)`);
+		assert.ok(descriptions[0].length <= DOCKERHUB_DESCRIPTION_MAX_CHARS,
+			`短い説明が ${descriptions[0].length} 文字ある(上限 ${DOCKERHUB_DESCRIPTION_MAX_CHARS})`);
+	});
+}
