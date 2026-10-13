@@ -34,6 +34,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py link-previous <新版ID> <旧版ID>   後から旧版として紐づける(旧版はアーカイブされる)
   python dm_client.py unlink-previous <文書ID>     版の紐付けを解除する
   python dm_client.py projects [--archived]        プロジェクト一覧
+  python dm_client.py project-url <プロジェクト>   人に渡す、プロジェクトを開くリンク
   python dm_client.py project-create <名前>        プロジェクトの作成
   python dm_client.py folder-create <プロジェクト> <名前> [--parent 親フォルダ]
   python dm_client.py tree <プロジェクト>          フォルダ階層と文書の配置
@@ -65,7 +66,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.6.0"
+CLIENT_VERSION = "1.7.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -630,6 +631,21 @@ def cmd_mockup_restore(args):
 
 # ---- おしながき(プロジェクトの資料一覧＋説明書き) ----
 
+def cmd_project_url(args):
+    """
+    人に渡す、プロジェクトを開くURL。開くとログイン後にそのプロジェクトのおしながきが表示される。
+    資料1件を渡すなら share-url、資料の一覧を文面にして渡すなら manifest --markdown を使う。
+    """
+    base_url, _ = load_config()
+    project = resolve_project(args.project)
+    return {
+        "projectUrl": f"{base_url}?project={urllib.parse.quote(project['id'], safe='')}",
+        "projectId": project["id"],
+        "name": project.get("name"),
+        "note": "開くにはログインが必要です。開くと、このプロジェクトの資料一覧と説明書き(おしながき)が表示されます"
+    }
+
+
 def cmd_manifest(args):
     project_id = resolve_project(args.project)["id"]
     # 章だけを切り出す(案件全体ではなく「この章だけ渡したい」ことがある)
@@ -640,6 +656,9 @@ def cmd_manifest(args):
             raise DmError(f"フォルダが見つかりません: {args.folder}")
         query = {"folderId": folder_id}
     if args.markdown:
+        # 各資料には開けるリンクが付く。URLを載せたくない文面では --no-links で外す
+        if getattr(args, "no_links", False):
+            query = {**(query or {}), "links": "0"}
         # 人に渡す文面なので、JSONで包まずそのまま出す(spec と同じ扱い)
         payload, _headers = request("GET", f"api/projects/{quote_id(project_id)}/manifest.md", query=query, raw=True)
         sys.stdout.write(payload.decode("utf-8", "replace"))
@@ -927,7 +946,11 @@ def main():
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("--markdown", action="store_true", help="人に渡せるMarkdownで出す(JSONで包まずそのまま出力)")
     p.add_argument("--folder", help="この章から下だけを出す(フォルダIDまたは名前)")
+    p.add_argument("--no-links", action="store_true", help="--markdown のとき、各資料を開くリンクを付けない(名前と説明書きだけにする)")
     p.set_defaults(func=cmd_manifest, streaming_if="markdown")
+    p = sub.add_parser("project-url", help="人に渡す、プロジェクトを開くリンク")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.set_defaults(func=cmd_project_url)
     p = sub.add_parser("folder-reorder", help="フォルダの並び替え(おしながきの章の順番になる)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("folders", help="並べたい順のフォルダ(カンマ区切り。IDでも名前でも可)")

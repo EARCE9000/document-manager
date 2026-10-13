@@ -28,6 +28,8 @@
  *   node dm_client.mjs links <文書ID> / link <文書ID> <相手の文書ID> / unlink <文書ID> <相手の文書ID>
  *   node dm_client.mjs link-previous <新版ID> <旧版ID> / unlink-previous <文書ID>
  *   node dm_client.mjs projects [--archived] / project-create <名前> / tree <プロジェクト>
+ *   node dm_client.mjs project-url <プロジェクト>
+ *       人に渡す、プロジェクトを開くリンク
  *   node dm_client.mjs folder-create <プロジェクト> <名前> [--parent 親フォルダ]
  *   node dm_client.mjs place <プロジェクト> <文書ID> [--folder フォルダ] / unplace <プロジェクト> <文書ID>
  *   node dm_client.mjs watch [--count N] [--timeout 秒] [--action upload,revise,...] [--all]
@@ -49,7 +51,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.6.0";
+const CLIENT_VERSION = "1.7.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -549,6 +551,18 @@ const commands = {
 			note: "版が変わっても同じURLで、常に最新版が開きます"
 		};
 	},
+	// 人に渡す、プロジェクトを開くURL。開くとログイン後にそのプロジェクトのおしながきが表示される。
+	// 資料1件を渡すなら share-url、資料の一覧を文面にして渡すなら manifest --markdown を使う
+	"project-url": async ([project]) => {
+		const {baseUrl} = loadConfig();
+		const resolved = await resolveProject(project);
+		return {
+			projectUrl: `${baseUrl}?project=${encodeURIComponent(resolved.id)}`,
+			projectId: resolved.id,
+			name: resolved.name ?? null,
+			note: "開くにはログインが必要です。開くと、このプロジェクトの資料一覧と説明書き(おしながき)が表示されます"
+		};
+	},
 	"alias-move": async ([alias, id]) => {
 		requireArg(alias, "Alias");
 		requireArg(id, "指す先にしたい文書ID");
@@ -621,6 +635,8 @@ const manifestMarkdown = async (project, opts) => {
 		if (!folderId) throw new DmError(`フォルダが見つかりません: ${opts.folder}`);
 		query.folderId = folderId;
 	}
+	// 各資料には開けるリンクが付く。URLを載せたくない文面では --no-links で外す
+	if (opts["no-links"]) query.links = "0";
 	const payload = await request("GET", `api/projects/${encodeURIComponent(resolved.id)}/manifest.md`, {query, raw: true});
 	process.stdout.write(payload.toString("utf8"));
 };
@@ -771,6 +787,7 @@ const main = async () => {
 			name: {type: "string"},
 			id: {type: "string"},
 			markdown: {type: "boolean"},
+			"no-links": {type: "boolean"},
 			render: {type: "boolean"},
 			pdf: {type: "boolean"},
 			version: {type: "boolean", short: "V"},

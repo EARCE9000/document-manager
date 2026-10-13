@@ -779,10 +779,23 @@ app.all(BASE_URL_PATH + 'logout', async (req, res) => {
  * いるが、ここで同じことをすると「攻撃者が渡した任意のURLを、ガイドの場所としてAIに読ませる」
  * ことができてしまう。必ずリクエスト自身から組み立てる
  */
+/**
+ * 人に渡すURLの土台(末尾のスラッシュなし)。公開しているホストが設定されていればそれを使い、
+ * 無ければリクエスト自身から組み立てる。`?baseUrl=` のような呼び出し側の言い分は参照しない
+ * (人に渡すURLの宛先を、呼び出し側が好きに差し替えられてしまうため)
+ */
+const publicBaseUrl = (req) => (PUBLIC_ORIGIN != null
+	? `${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH}`
+	: `${req.protocol}://${req.get("host") || ""}${BASE_URL_PATH}`.replace(/\/+$/, ""));
+
+/**
+ * プロジェクトを開くURL。画面(index.html)が `?project=` を見て、そのプロジェクトを開く。
+ * 未ログインで開かれた場合は、画面側がログイン画面へ迂回し、終わったらこのURLへ戻る
+ */
+const projectUrlOf = (req, projectId) => `${publicBaseUrl(req)}/?project=${encodeURIComponent(projectId)}`;
+
 const apiGuideHint = (req) => {
-	const base = PUBLIC_ORIGIN != null
-		? `${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH}`
-		: `${req.protocol}://${req.get("host") || ""}${BASE_URL_PATH}`.replace(/\/+$/, "");
+	const base = publicBaseUrl(req);
 	return `APIの使い方(AI向け利用ガイド)は GET ${base}/api/usage.md で取得できます(APIキーが必要)`;
 };
 
@@ -3827,7 +3840,15 @@ app.get(BASE_URL_PATH + 'api/projects/:id/manifest', requireAuth, async (req, re
 	}
 });
 
-/** おしながきのMarkdown。議事録・メールにそのまま貼れる形で返す */
+/**
+ * おしながきのMarkdown。議事録・メールにそのまま貼れる形で返す。
+ *
+ * 各資料には**開けるリンク**を付ける(名前だけ渡すと、受け取った人が自分で探し直すことになるため)。
+ * リンクは共有リンク(Alias。版が変わっても同じURLで最新版が開く)にする。おしながきは渡したあとも
+ * 読まれ続けるので、その時点の版を指すURLにすると、資料を更新したとたんに古い版へ案内してしまう。
+ * Aliasがまだ無い文書だけ、その版を指すURLにする(ここでAliasを発行はしない。読むだけの操作にしておく)。
+ * `?links=0` でリンクを省ける(印刷物や、URLを載せたくない文面向け)。
+ */
 app.get(BASE_URL_PATH + 'api/projects/:id/manifest.md', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
@@ -3842,7 +3863,24 @@ app.get(BASE_URL_PATH + 'api/projects/:id/manifest.md', requireAuth, async (req,
 			res.status(404).json({error: "そのフォルダはこのプロジェクトにありません"});
 			return;
 		}
-		const markdown = ProjectManifest.toMarkdown(manifest);
+		let links = {};
+		if (req.query.links !== "0") {
+			const base = publicBaseUrl(req);
+			const everyDocument = (folders) => folders.flatMap((folder) => [...folder.documents, ...everyDocument(folder.folders)]);
+			const urls = new Map();
+			for (const doc of [...manifest.rootDocuments, ...everyDocument(manifest.folders)]) {
+				if (doc.entryFile == null || urls.has(doc.documentId)) continue;
+				const alias = await DocumentAliases.aliasOf(doc.documentId);
+				urls.set(doc.documentId, alias != null
+					? `${base}/api/documents/alias/${encodeURIComponent(alias)}/viewer`
+					: `${base}/api/documents/${encodeURIComponent(doc.documentId)}/viewer`);
+			}
+			links = {
+				projectUrl: projectUrlOf(req, req.params.id),
+				documentUrl: (doc) => urls.get(doc.documentId) ?? null
+			};
+		}
+		const markdown = ProjectManifest.toMarkdown(manifest, links);
 		res.setHeader("Content-Type", "text/markdown; charset=utf-8");
 		res.status(200).end(markdown);
 	} catch (err) {

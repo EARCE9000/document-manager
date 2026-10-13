@@ -203,3 +203,50 @@ test("空のツリー・欠けた入力でも落ちない", () => {
 		assert.ok(typeof Manifest.toMarkdown(manifest) === "string");
 	}
 });
+
+// ---- 資料を開くリンク ----
+// 名前だけ渡すと、受け取った人が自分で探し直すことになる
+const linkedTree = {
+	folders: [folder("f1", "要件")],
+	documents: [
+		doc("d1", "表紙.md", {note: "最初に読むもの"}),
+		doc("d2", "要件定義.docx", {folderId: "f1", archived: true})
+	]
+};
+const urlOf = (d) => `https://docs.example.com/api/documents/alias/${d.documentId}/viewer`;
+
+test("リンクを渡すと、資料の名前がリンクになる(説明書き・印はその後ろに残る)", () => {
+	const markdown = Manifest.toMarkdown(Manifest.build(project, linkedTree), {documentUrl: urlOf});
+	assert.ok(markdown.includes("- **[表紙.md](https://docs.example.com/api/documents/alias/d1/viewer)** — 最初に読むもの"), markdown);
+	assert.ok(markdown.includes("- **[要件定義.docx](https://docs.example.com/api/documents/alias/d2/viewer)**(アーカイブ済み)"), markdown);
+});
+
+test("リンクを渡さなければ、これまでどおりの文面になる", () => {
+	const manifest = Manifest.build(project, linkedTree);
+	const plain = Manifest.toMarkdown(manifest);
+	assert.ok(plain.includes("- **表紙.md** — 最初に読むもの"));
+	assert.ok(!plain.includes("]("));
+	assert.equal(Manifest.toMarkdown(manifest, {}), plain);
+});
+
+test("プロジェクトを開くURLは、見出しのすぐ下に1行で入る", () => {
+	const markdown = Manifest.toMarkdown(Manifest.build(project, linkedTree), {projectUrl: "https://docs.example.com/?project=p1"});
+	const lines = markdown.split("\n");
+	assert.equal(lines[0], "# 受注管理の再構築 おしながき");
+	assert.equal(lines[2], "プロジェクトを開く: <https://docs.example.com/?project=p1>");
+});
+
+// 何もしないと `[仕様[第1版].md](…)` となり、リンクが途中で切れたり別の場所に付いたりする
+test("名前に [ ] や \\ が入っていても、リンクの範囲が壊れない", () => {
+	const tree = {folders: [], documents: [doc("d1", "仕様[第1版]\\控え.md")]};
+	const markdown = Manifest.toMarkdown(Manifest.build(project, tree), {documentUrl: urlOf});
+	assert.ok(markdown.includes("- **[仕様\\[第1版\\]\\\\控え.md](https://docs.example.com/api/documents/alias/d1/viewer)**"), markdown);
+});
+
+test("文書が見つからない行と、URLが決まらない資料には、開けないリンクを付けない", () => {
+	const tree = {folders: [], documents: [doc("gone", null), doc("d1", "ある.md"), doc("d2", "URLなし.md")]};
+	const markdown = Manifest.toMarkdown(Manifest.build(project, tree), {documentUrl: (d) => (d.documentId === "d1" ? urlOf(d) : null)});
+	assert.ok(markdown.includes("- **(この資料は見つかりません)**"), markdown);
+	assert.ok(markdown.includes("- **[ある.md]("), markdown);
+	assert.ok(markdown.includes("- **URLなし.md**"), markdown);
+});

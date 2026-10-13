@@ -94,28 +94,44 @@ module.exports.build = (project, tree, options = {}) => {
 /** 資料1件の表示名。文書が見つからない場合でも行は消さず、そうと分かるようにする */
 const displayName = (doc) => doc.entryFile ?? "(この資料は見つかりません)";
 
-const documentLine = (doc) => {
+/** Markdownのリンクの文字として安全にする(名前に [ や ] が入っていても、リンクが途中で切れないように) */
+const escapeLinkText = (text) => String(text).replace(/[\\\[\]]/g, "\\$&");
+
+const documentLine = (doc, documentUrl) => {
 	const name = displayName(doc);
 	const marks = [];
 	if (doc.archived) marks.push("アーカイブ済み");
 	const suffix = marks.length > 0 ? `(${marks.join("・")})` : "";
 	const note = doc.note != null ? ` — ${doc.note}` : "";
-	return `- **${name}**${suffix}${note}`;
+	// 文書が見つからない行(entryFile が無い)には、開けないリンクを付けない
+	const url = documentUrl != null && doc.entryFile != null ? documentUrl(doc) : null;
+	return url != null
+		? `- **[${escapeLinkText(name)}](${url})**${suffix}${note}`
+		: `- **${name}**${suffix}${note}`;
 };
 
 /**
  * おしながきをMarkdownにする。議事録やメールにそのまま貼れることを狙った形。
+ *
+ * リンクを渡すと、受け取った人が**名前を頼りに探し直さなくても、そこから開ける**ようになる。
+ * URLの組み立て(どのホストで公開しているか、どのAliasか)はここでは知らないので、呼び出し側から受け取る。
+ *
  * @param {object} manifest build() の結果
+ * @param {object} [links]
+ * @param {string} [links.projectUrl] このプロジェクトを開くURL(見出しの下に1行で出す)
+ * @param {function(object): (string|null)} [links.documentUrl] 資料1件のURLを返す関数
  */
-module.exports.toMarkdown = (manifest) => {
+module.exports.toMarkdown = (manifest, links = {}) => {
+	const documentUrl = typeof links.documentUrl === "function" ? links.documentUrl : null;
 	// 章だけを切り出した場合は、どの案件のどの章かが分かる見出しにする
 	const title = manifest.folderName != null
 		? `${manifest.projectName} › ${manifest.folderName} おしながき`
 		: `${manifest.projectName} おしながき`;
 	const lines = [`# ${title}`, ""];
+	if (links.projectUrl != null) lines.push(`プロジェクトを開く: <${links.projectUrl}>`, "");
 	if (manifest.folderNote != null) lines.push(manifest.folderNote, "");
 
-	for (const doc of manifest.rootDocuments) lines.push(documentLine(doc));
+	for (const doc of manifest.rootDocuments) lines.push(documentLine(doc, documentUrl));
 	if (manifest.rootDocuments.length > 0) lines.push("");
 
 	const walk = (folders) => {
@@ -123,7 +139,7 @@ module.exports.toMarkdown = (manifest) => {
 			// 見出しの深さは入れ子に合わせる。深すぎる場合はMarkdownの最下位(######)で止める
 			lines.push(`${"#".repeat(Math.min(folder.depth + 1, 6))} ${folder.name}`, "");
 			if (folder.note != null) lines.push(folder.note, "");
-			for (const doc of folder.documents) lines.push(documentLine(doc));
+			for (const doc of folder.documents) lines.push(documentLine(doc, documentUrl));
 			if (folder.documents.length > 0) lines.push("");
 			walk(folder.folders);
 		}

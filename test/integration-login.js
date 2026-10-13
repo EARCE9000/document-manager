@@ -300,6 +300,29 @@ const main = async () => {
 		assert.equal(accessLine("marker=no-credentials").user, null);
 		console.log("ok 7 APIキー経由の要求でも、利用者とキーの用途がアクセスログに残る");
 
+		// ---- 8. プロジェクトのリンクで来た人は、ログインのあと同じリンクへ戻る ----
+		// 画面は未ログインのとき `login?next=<開こうとしたURL>` へ回す(index.html)。戻り先が落ちると、
+		// せっかくのリンクがログインで消えて、ただのトップ画面に着く
+		const loginVia = async (nextPath) => {
+			idp.state.email = ADMIN;
+			const start = await call(`${app}/login?next=${encodeURIComponent(nextPath)}`);
+			assert.equal(start.status, 302);
+			const authorized = await call(start.headers.location);
+			const callback = await call(authorized.headers.location, {headers: {Cookie: cookieOf(start)}});
+			assert.equal(callback.status, 302);
+			return callback.headers.location;
+		};
+		// このテストの構成では、アプリは外から /document_management/ として見えている(BASE_PATH の既定)。
+		// 画面が渡してくる戻り先も、その見えているパスになる
+		const PUBLIC_ROOT = "/document_management/";
+		assert.equal(await loginVia(`${PUBLIC_ROOT}?project=202610_abc`), `${PUBLIC_ROOT}?project=202610_abc`,
+			"ログインのあと、プロジェクトのリンクへ戻っていない");
+		// 戻り先に他所のURLや、このアプリの外のパスを渡されても、そこへは飛ばさない(トップへ戻す)
+		for (const hostile of ["https://evil.example.com/?project=x", "//evil.example.com/?project=x", "/other-app/?project=x"]) {
+			assert.equal(await loginVia(hostile), PUBLIC_ROOT, `他所へ飛ばしている: ${hostile}`);
+		}
+		console.log("ok 8 プロジェクトのリンクで来た人は、ログイン後に同じリンクへ戻る(他所へは飛ばない)");
+
 		// 再認証の強制(prompt=login / max_age)は入れていない。入れたらここで気づけるようにしておく
 		assert.equal(idp.state.authorizeCalls.some((query) => "prompt" in query || "max_age" in query), false);
 

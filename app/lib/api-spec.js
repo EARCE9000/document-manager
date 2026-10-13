@@ -232,8 +232,11 @@ const OPERATIONS = [
 	{
 		id: "getProjectManifestMarkdown", method: "get", path: "/api/projects/:id/manifest.md", role: "readonly", tag: "プロジェクト",
 		summary: "おしながきのMarkdown",
-		description: "議事録・メールにそのまま貼れる形。案件にどんな資料が揃っているかを人に伝えるときに使う。`folderId`でその章だけを切り出せる",
-		params: [{name: "folderId", in: "query", description: "この章から下だけを返す(省略時はプロジェクト全体)"}],
+		description: "議事録・メールにそのまま貼れる形。案件にどんな資料が揃っているかを人に伝えるときに使う。`folderId`でその章だけを切り出せる。**各資料には開けるリンクが付く**(共有リンク。版が変わっても同じURLで最新版が開く)。見出しの下には、プロジェクトを開くURL(`<baseUrl>/?project=<プロジェクトID>`)が入る。どちらも開くにはログインが必要",
+		params: [
+			{name: "folderId", in: "query", description: "この章から下だけを返す(省略時はプロジェクト全体)"},
+			{name: "links", in: "query", description: "0を指定するとリンクを付けない(名前と説明書きだけにする)"}
+		],
 		responses: {404: "プロジェクト、または指定したフォルダが無い"},
 		produces: "text/markdown"
 	},
@@ -688,7 +691,8 @@ const GUIDE_SECTIONS = [
 		],
 		notes: [
 			"「この案件にはどんな資料があるか」を1回で答えられる。資料ごとに `note`(この案件での位置づけ)が付く",
-			"人に渡す一覧を求められた場合は `manifest.md` をそのまま使うとよい"
+			"人に渡す一覧を求められた場合は `manifest.md` をそのまま使うとよい。各資料に開けるリンクが付いているので、受け取った人は名前で探し直さなくて済む(URLを載せたくない場合は `?links=0`)",
+			"**プロジェクトそのものを見てもらうURL**は `<baseUrl>/?project=<プロジェクトID>`。開くとログイン後にそのプロジェクトのおしながきが表示される(専用のAPIは無く、このURLを組み立てて渡す)"
 		]
 	},
 	{

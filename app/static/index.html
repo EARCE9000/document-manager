@@ -1542,6 +1542,11 @@
 					<span id="projectTreeTitle"></span>
 					<span id="projectEditingBadge" hidden>編集中</span>
 					<div id="projectTreeHeaderActions">
+						<!-- 文書には共有リンクがあるのに、プロジェクトには「ここを見て」と渡せるURLが無かった。
+						     開くとログイン後にこのプロジェクトのおしながきが出る。閲覧だけの権限でも使える -->
+						<button type="button" id="projectCopyLinkButton" class="iconButton" title="このプロジェクトのリンクをコピー(開くと、ログイン後にこのプロジェクトが表示されます)" aria-label="このプロジェクトのリンクをコピー" disabled>
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+						</button>
 						<button type="button" id="projectExpandAllButton" class="iconButton" title="すべて展開" aria-label="すべて展開">
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
 						</button>
@@ -2140,6 +2145,8 @@
 				<p class="helpNote">資料は更新のたびに別のものとして保存されます。版のリンクを渡すと、相手は<strong>更新に気づかないまま古い版を見続けます</strong>(リンク自体は開けるため)。迷ったら鎖のほうです。</p>
 				<p>共有リンクで開いている文書に新しい版が上がると、<strong>上に「新しい版があります」と出ます</strong>。押すまで表示は変わらないので、読んでいる途中で中身が入れ替わることはありません(テキスト・HTML・Markdown・図が対象。PDFと画像はそのまま開きます)。</p>
 				<p class="helpNote">開いたままログインの期限が切れた場合も、上に知らせが出ます。そのまま読み続けられますが、更新の確認はできなくなります。</p>
+				<p><strong>プロジェクトごと渡す</strong>ときは、プロジェクトの画面でプロジェクト名の右にある<strong>鎖のアイコン</strong>を押すと、そのプロジェクトを開くリンクをコピーできます。開いた人には、資料の一覧と説明書き(おしながき)が表示されます。</p>
+				<p class="helpNote">おしながきの「Markdownをコピー」で取れる一覧には、<strong>各資料を開くリンク</strong>が入ります。メールや議事録に貼れば、そこから資料を開けます。どのリンクも、開くにはログインが必要です。</p>
 			</section>
 
 			<section id="helpPdfSection">
@@ -2304,6 +2311,9 @@ const projectTabsEl = document.getElementById("projectTabs");
 const projectAddButton = document.getElementById("projectAddButton");
 const projectTreePane = document.getElementById("projectTreePane");
 const projectTreeTitle = document.getElementById("projectTreeTitle");
+const projectCopyLinkButton = document.getElementById("projectCopyLinkButton");
+// プロジェクトを開くURLの目印。サーバ側(server.js の projectUrlOf)・同梱クライアントと揃える
+const PROJECT_LINK_PARAM = "project";
 const projectExpandAllButton = document.getElementById("projectExpandAllButton");
 const projectCollapseAllButton = document.getElementById("projectCollapseAllButton");
 const manifestPane = document.getElementById("manifestPane");
@@ -2366,6 +2376,7 @@ const applyProjectModeState = () => {
 		? "完全ロック中は編集できません"
 		: (projectsEditMode ? "編集モードをやめる" : "編集モードにする"));
 	projectEditToggleButton.disabled = currentProjectId == null || projectFullyLocked;
+	projectCopyLinkButton.disabled = currentProjectId == null;
 
 	projectFullLockButton.innerHTML = projectFullyLocked ? PROJECT_LOCK_ICON : PROJECT_UNLOCK_ICON;
 	projectFullLockButton.classList.toggle("fullLockOn", projectFullyLocked);
@@ -4199,6 +4210,55 @@ manifestCopyButton.addEventListener("click", async () => {
 });
 
 manifestPrintButton.addEventListener("click", () => window.print());
+
+// ==== プロジェクトを開くリンク ====
+// 文書には共有リンクがあるが、プロジェクトは「この案件の資料はここ」と渡せるURLが無かった。
+// `?project=<ID>` で開くと、そのプロジェクトへ切り替えて、おしながき(資料一覧と説明書き)を出す。
+/** このプロジェクトを開くURL(いま開いている画面のURLを土台にする) */
+const projectLinkOf = (projectId) => {
+	const url = new URL(window.location.href);
+	url.search = "";
+	url.hash = "";
+	url.searchParams.set(PROJECT_LINK_PARAM, projectId);
+	return url.href;
+};
+
+projectCopyLinkButton.addEventListener("click", () => {
+	if (currentProjectId == null) return;
+	copyTextWithIconFeedback(projectLinkOf(currentProjectId), projectCopyLinkButton);
+});
+
+/**
+ * リンクで指定されたプロジェクトを開く。
+ *
+ * アーカイブ済みのプロジェクトも開く(渡したあとでアーカイブされても、行き止まりにしない)。
+ * 見つからない場合は黙って別のプロジェクトを出さず、そうと伝える
+ * (別の案件の資料を「これが渡された資料だ」と取り違えるのが一番困る)。
+ */
+const openLinkedProject = async (projectId) => {
+	// URLからは外す。残すと、別のプロジェクトへ移ったあとの再読み込みで元のプロジェクトへ戻されてしまう
+	window.history.replaceState(null, "", window.location.pathname);
+	const listed = async (path) => {
+		const res = await fetch(path);
+		return res.status === 200 ? (await res.json()).some((p) => p.id === projectId) : false;
+	};
+	const isActive = await listed("./api/projects");
+	const isArchived = !isActive && await listed("./api/projects/archived");
+	if (!isActive && !isArchived) {
+		alert("リンク先のプロジェクトが見つかりません。削除されたか、URLが途中で切れている可能性があります。");
+		return;
+	}
+	setView("projects");
+	if (isArchived) {
+		projectsArchiveMode = true;
+		appShell.classList.add("projectsArchiveMode");
+		projectArchiveToggleButton.textContent = "戻る";
+	}
+	currentProjectId = projectId;
+	await loadProjects();
+	// 読み込みの間に利用者が別のプロジェクトへ移っていたら、おしながきは出さない
+	if (currentProjectId === projectId) await showManifest(null);
+};
 
 // ==== プロジェクト機能 ====
 // プロジェクト一覧を取得し、スイッチャー(ピルタブ)を描画したうえで、
@@ -6553,9 +6613,16 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 		appShell.classList.add("visible");
 		loadDocuments();
 		subscribeDocumentEvents();
+		const linkedProjectId = new URLSearchParams(window.location.search).get(PROJECT_LINK_PARAM);
+		if (linkedProjectId) openLinkedProject(linkedProjectId);
 	} else {
 		loginArea.classList.add("visible");
-		window.location.href = "./login";
+		// プロジェクトのリンクで来た人は、ログインのあと同じリンクへ戻す(戻り先を渡さないと、
+		// せっかくのリンクがログインで消えて、ただのトップ画面に着いてしまう)
+		const linked = new URLSearchParams(window.location.search).has(PROJECT_LINK_PARAM);
+		window.location.href = linked
+			? `./login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`
+			: "./login";
 	}
 })();
 </script>

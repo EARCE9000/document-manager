@@ -210,6 +210,23 @@ def smoke_manifest_commands(kind, env, doc_id):
     check(markdown.startswith(f"# {project_name} おしながき"), "manifest --markdown: 見出しから始まるMarkdownをそのまま出す")
     check("この案件では前提資料です。" in markdown, "manifest --markdown: 説明書きが含まれる")
 
+    # 人に渡す文面なので、各資料を「そこから開けるリンク」にして出す(名前だけだと、受け取った人が探し直すことになる)
+    alias = json.loads(run_client(kind, ["alias", doc_id], env).stdout)["alias"]
+    check(f"]({BASE_URL}api/documents/alias/{alias}/viewer)" in markdown, "manifest --markdown: 各資料に共有リンクが付く")
+    plain = run_client(kind, ["manifest", project_name, "--markdown", "--no-links"], env).stdout
+    check("](" not in plain and "http" not in plain and "この案件では前提資料です。" in plain, "manifest --markdown --no-links: リンクなしにできる")
+
+    # プロジェクトそのものを渡すURL。おしながきの見出しの下に入るものと同じであること
+    project_id = next(p["id"] for p in json.loads(run_client(kind, ["projects"], env).stdout) if p["name"] == project_name)
+    linked = json.loads(run_client(kind, ["project-url", project_name], env).stdout)
+    check(linked["projectUrl"] == f"{BASE_URL}?project={project_id}" and linked["projectId"] == project_id,
+          f"project-url: プロジェクトを開くURLを返す ({linked['projectUrl']})")
+    check(f"プロジェクトを開く: <{linked['projectUrl']}>" in markdown, "project-url: おしながきに入るURLと同じ")
+    by_id = json.loads(run_client(kind, ["project-url", project_id], env).stdout)
+    check(by_id["projectUrl"] == linked["projectUrl"], "project-url: IDでも名前でも指定できる")
+    missing = run_client(kind, ["project-url", "そんなプロジェクトは無い"], env, expect_ok=False)
+    check(missing.returncode == 1, "project-url: 無いプロジェクトはエラーにする(URLを作らない)")
+
     # 章だけを切り出せること(案件全体ではなく「この章だけ渡したい」ことがある)
     folder = json.loads(run_client(kind, ["folder-create", project_name, "要件"], env).stdout)
     run_client(kind, ["place", project_name, doc_id, "--folder", "要件"], env)
