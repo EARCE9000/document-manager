@@ -592,7 +592,7 @@ CONVERTER=document_manager_pdf_converter ./deploy/check-converter-isolation.sh
 - 変更せずに確認だけしたい場合は `./deploy/compose.sh verify`。動作中のアプリの版・リビジョン(イメージに焼き込んだ`/app/VERSION.json`)も表示する
 - 展開できたかどうかは、画面右上の歯車(管理)→「サーバー」タブの**ビルド時刻**、または認証不要の `GET /api/version` でも分かる。更新したはずなのに変わっていなければ入れ替わっていない
 - 変換サービス(converter)は`depends_on`に入れていない。イメージの取得や起動に失敗しても、アプリまで起動しなくなることは無い(体裁つき表示だけが使えなくなる)
-- PDFでダウンロード用の変換サービス(pdf-converter)も同じ扱い。**この構成に更新すると、`compose.sh up`で新しいイメージ(取得 約410MB)が追加で取得される**。使わない場合は`deploy/compose.yml`の`pdf-converter`サービスと`HTML_PDF_URL`の行を外す(外すと画面にボタンが出なくなるだけ)。Chromiumのセキュリティ修正を取り込むため、イメージは毎週作り直している(定期的に`compose.sh pull`すること)
+- PDFでダウンロード用の変換サービス(pdf-converter)も同じ扱い。**この構成に更新すると、`compose.sh up`で新しいイメージ(取得 約410MB)が追加で取得される**。使わない場合は`deploy/compose.yml`の`pdf-converter`サービスと`HTML_PDF_URL`の行を外す(外すと画面にボタンが出なくなるだけ)。Chromiumのセキュリティ修正を取り込むため、イメージは毎週作り直している(定期的に`compose.sh up`を実行して取り直すこと。`up`はイメージの取得から入れ替えの確認までを行う)
 
 導入後、**既存の文書がバックグラウンドで順次索引付けされる**(1件あたり数秒。実測で約5.5秒/件)。進行状況は画面の「ベクトル索引」から確認できる。索引付け中はCPUを複数コア使い切るため、同居サービスがある場合は業務時間外に始めるか、`compose.yml` の `cpus`/`mem_limit` で上限を設けるとよい。
 
