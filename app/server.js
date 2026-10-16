@@ -881,6 +881,7 @@ const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 const OfficeRender = require("./lib/office-render.js");
 const HtmlPdf = require("./lib/html-pdf.js");
 const MiroConnection = require("./lib/miro-connection.js");
+const MiroSync = require("./lib/miro-sync.js");
 const DbIntegrity = require("./lib/db-integrity.js");
 const StorageReconcile = require("./lib/storage-reconcile.js");
 const Mockups = require("./lib/mockups.js");
@@ -1598,11 +1599,15 @@ const deliverDocumentActivity = (payload) => {
 // 即座にローカル配信され、Postgres(複数インスタンス)ではLISTEN/NOTIFYで全インスタンスへ伝播し、
 // 各インスタンスが自分に繋がるSSEクライアントへ配信する(発行元インスタンスにも届く)。
 // 呼び出し側の使い勝手は従来と同じ(broadcast*()を呼ぶだけ)。
+// 文書・プロジェクトが変わったら、Miro に連動しているプロジェクトも反映する(少しまとめてから。
+// 変更した台だけが動く。複数台でも、同じプロジェクトは1台だけが同期する: lib/miro-sync.js)
 const broadcastDocumentsChanged = () => {
 	ds.notify("documents_changed").catch((err) => logger.error({err}, "::notify:documents_changed"));
+	MiroSync.scheduleAll();
 };
 const broadcastProjectsChanged = () => {
 	ds.notify("projects_changed").catch((err) => logger.error({err}, "::notify:projects_changed"));
+	MiroSync.scheduleAll();
 };
 const broadcastMockupsChanged = () => {
 	ds.notify("mockups_changed").catch((err) => logger.error({err}, "::notify:mockups_changed"));
@@ -2040,7 +2045,7 @@ app.get(BASE_URL_PATH + 'api/miro/callback', requireAuth, requireAdmin, requireM
 			back({miro: "error", reason: "code"});
 			return;
 		}
-		await MiroConnection.connect({code: req.query.code, redirectUri: MiroConnection.redirectUri(publicBaseUrl(req)), user});
+		await MiroConnection.connect({code: req.query.code, redirectUri: MiroConnection.redirectUri(publicBaseUrl(req)), user, publicBaseUrl: publicBaseUrl(req)});
 		back({miro: "connected"});
 	} catch (err) {
 		logger.warn({error: err.message, status: err.status}, "::api/miro/callback: 連携できませんでした");
@@ -4088,6 +4093,140 @@ app.get(BASE_URL_PATH + 'api/projects/:id/tree', requireAuth, async (req, res) =
  * ツリーと同じ中身だが、読む順に並べ直し、フォルダを章立てとして扱ったもの。
  * 画面とMarkdownで並びが食い違わないよう、組み立ては lib/project-manifest.js に寄せている。
  */
+/**
+ * ---- Miro に資料を出す(プロジェクト単位) ----
+ * 連携で選んだボードに、プロジェクトごとの枠を作って資料を並べ、連動しているあいだ変更を反映する
+ * (lib/miro-sync.js)。Miro に出すのは写しで、正本は Document Manager のまま。
+ *
+ * 資料ごとに Miro へ出す中身を用意する。Miro に置けるのは PDF(資料)と画像。
+ *   .pdf                        元ファイルのまま
+ *   .png / .jpg / .jpeg         画像として
+ *   HTML・Markdown・MHTML・draw.io  「PDFでダウンロード」と同じ変換で PDF にする(変換サービスが要る)
+ *   Excel・Word・PowerPoint     体裁つき表示の PDF(変換が済んでいるもの)
+ * それ以外(テキスト・CSVなど)は出さず、理由を状態に残す。
+ */
+const MIRO_IMAGE_TYPES = Object.freeze({".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"});
+const prepareMiroPayload = async (doc) => {
+	const document = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [doc.id]);
+	if (document == null) return {skip: "文書が見つかりません"};
+	const extension = path.extname(document.entry_file || "").toLowerCase();
+	if (extension === ".pdf") {
+		return {kind: "documents", file: await storage.readFile(document.id, document.entry_file), fileName: "document.pdf", contentType: "application/pdf"};
+	}
+	if (MIRO_IMAGE_TYPES[extension] != null) {
+		return {kind: "images", file: await storage.readFile(document.id, document.entry_file), fileName: "image" + extension, contentType: MIRO_IMAGE_TYPES[extension]};
+	}
+	if (HtmlPdf.SOURCE_EXTENSIONS.includes(extension)) {
+		if (!HtmlPdf.isEnabled()) return {skip: "PDF変換サービスが無い環境のため、HTML・Markdown・MHTML・draw.io は出せません"};
+		const drawio = HtmlPdf.isDrawio(extension);
+		if (!drawio) await rebuildPreviewIfOutdated(document);
+		const sourceFile = drawio ? document.entry_file : document.preview_file;
+		if (sourceFile == null) return {skip: "プレビューがありません"};
+		try {
+			const {pdf} = await HtmlPdf.convertToPdf(await storage.readFile(document.id, sourceFile), document.id, {format: drawio ? "drawio" : "html"});
+			return {kind: "documents", file: pdf, fileName: "document.pdf", contentType: "application/pdf"};
+		} catch (err) {
+			return {skip: `PDFにできませんでした: ${err.message}`};
+		}
+	}
+	if (OFFICE_FILE_EXTENSIONS.includes(extension)) {
+		if (document.render_status !== "ok" || document.render_file == null) {
+			return {skip: "体裁つき表示のPDFがまだ無いため出せません(Office の変換サービスで変換されると出せます)"};
+		}
+		return {kind: "documents", file: await storage.readFile(document.id, document.render_file), fileName: "document.pdf", contentType: "application/pdf"};
+	}
+	return {skip: `Miro に出せない形式です(${extension || "拡張子なし"})。PDF・画像・HTML・Markdown・draw.io・Office が出せます`};
+};
+MiroSync.init({preparePayload: prepareMiroPayload});
+
+/** 連動の状態(誰でも見られる。資料ごとに、出ているか・出せない理由) */
+app.get(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (await Projects.getProject(req.params.id) == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		res.status(200).json(await MiroSync.status(req.params.id));
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/miro");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 連動を始める(または止めていたものを再開する)。並べるのは裏で行い、すぐ返す(202) */
+app.post(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		await MiroSync.link(req.params.id, req.authData.user_identifier);
+		res.status(202).json(await MiroSync.status(req.params.id));
+	} catch (err) {
+		if (err.status === 404 || err.status === 409) {
+			res.status(err.status).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/projects/:id/miro");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 今すぐ反映する(普段は自動。Miro 側で消された・動かされたかも見に行く) */
+app.post(BASE_URL_PATH + 'api/projects/:id/miro/sync', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const status = await MiroSync.status(req.params.id);
+		if (!status.linked) {
+			res.status(409).json({error: "このプロジェクトは Miro と連動していません"});
+			return;
+		}
+		MiroSync.runProject(req.params.id, {checkMiro: true, user: req.authData.user_identifier});
+		res.status(202).json(await MiroSync.status(req.params.id));
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/miro/sync");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 連動をやめる。?removeDocuments=1 で、ボードに出した資料も消す(付箋・枠は残す)。
+ * 付けなければボードはそのまま残し、更新だけ止める(最終版の記録になる)
+ */
+app.delete(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, requireWrite, async (req, res) => {
+	try {
+		const removeDocuments = ["1", "true"].includes(String(req.query.removeDocuments ?? ""));
+		await MiroSync.unlink(req.params.id, req.authData.user_identifier, {removeDocuments});
+		res.status(204).end();
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/miro");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 資料ごとに、Miro に出す・出さないを決める。本体: {publish: boolean}。出さないにすると、ボードからも消す */
+app.put(BASE_URL_PATH + 'api/projects/:id/miro/documents/:documentId', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (typeof req.body?.publish !== "boolean") {
+			res.status(400).json({error: "publish(true / false)を指定してください"});
+			return;
+		}
+		const tree = await Projects.getProjectTree(req.params.id);
+		if (!tree.documents.some((placement) => placement.documentId === req.params.documentId)) {
+			res.status(404).json({error: "この文書はこのプロジェクトにありません"});
+			return;
+		}
+		await MiroSync.setPublish(req.params.id, req.params.documentId, req.body.publish, req.authData.user_identifier);
+		res.status(200).json(await MiroSync.status(req.params.id));
+	} catch (err) {
+		if (err.needsReconnect) {
+			res.status(409).json({error: err.message, needsReconnect: true});
+			return;
+		}
+		logger.error(err, "::api/projects/:id/miro/documents/:documentId");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 app.get(BASE_URL_PATH + 'api/projects/:id/manifest', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
@@ -5076,6 +5215,8 @@ const main = async () => {
 			if (health != null) logger.info({libreOffice: health.libreOffice, maxBytes: health.maxBytes}, "体裁つき表示: 変換サービスに接続できました");
 		}).catch((err) => logger.error(err, "::checkHealth"));
 	}
+	// Miro に連動しているプロジェクトの定期の反映(Miro 側で消された・動かされたことを見に行く)
+	MiroSync.startPeriodic();
 	// PDFでの持ち出し(HTML→PDF)の接続確認。こちらも繋がらなくてもアプリは動く
 	if (HtmlPdf.isEnabled()) {
 		HtmlPdf.checkHealth().then((health) => {

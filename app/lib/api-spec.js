@@ -464,6 +464,41 @@ const OPERATIONS = [
 		description: "Miro 側のトークンも取り消す。ボードに出してある資料は Miro に残る",
 		aiGuide: false
 	},
+	// ---- Miro に資料を出す(プロジェクト単位) ----
+	{
+		id: "getProjectMiro", method: "get", path: "/api/projects/:id/miro", role: "readonly", tag: "プロジェクト",
+		summary: "プロジェクトの Miro 連動の状態",
+		description: "連動しているか、Miro の枠を開くURL(`frameUrl`)、最後に反映した時刻と失敗、資料ごとの状態(`placed` 出ている / `skipped` 出せない形式など / `failed` Miroが断った / `excluded` 出さない設定 / `removed` Miroで消された / `detached` プロジェクトから外れた・アーカイブ)と理由を返す。`available:false`は Miro との連携が無いか、貼り先のボードが決まっていない",
+		aiGuide: false
+	},
+	{
+		id: "linkProjectMiro", method: "post", path: "/api/projects/:id/miro", role: "readwrite", tag: "プロジェクト",
+		summary: "プロジェクトを Miro と連動する(資料をボードに並べる)",
+		description: "連携で選んだボードにプロジェクトの枠を作り、資料をフォルダごとに並べる。並べるのは裏で行い、すぐ202を返す(`GET`の`syncing`で進み具合が分かる)。連動しているあいだ、新しい版は同じ場所のまま差し替え、増えた資料は下に足す。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.ioはPDFにして、Officeは体裁つきPDFで出す(1件6MBまで)",
+		responses: {409: "Miro と連携していないか、貼り先のボードが決まっていない"},
+		aiGuide: false
+	},
+	{
+		id: "syncProjectMiro", method: "post", path: "/api/projects/:id/miro/sync", role: "readwrite", tag: "プロジェクト",
+		summary: "Miro へ今すぐ反映する",
+		description: "普段は自動で反映する。Miro 側で消された・動かされたことも見に行く。202を返す",
+		responses: {409: "連動していない"},
+		aiGuide: false
+	},
+	{
+		id: "unlinkProjectMiro", method: "delete", path: "/api/projects/:id/miro", role: "readwrite", tag: "プロジェクト",
+		summary: "Miro との連動をやめる",
+		description: "既定ではボードはそのまま残し、更新だけ止める。`?removeDocuments=1`でボードに出した資料(と見出し)も消す(付箋・枠は残す)",
+		aiGuide: false
+	},
+	{
+		id: "setProjectMiroDocument", method: "put", path: "/api/projects/:id/miro/documents/:documentId", role: "readwrite", tag: "プロジェクト",
+		summary: "資料ごとに、Miro に出す・出さないを決める",
+		description: "`publish:false`にするとボードからも消し、以後出さない。Miro で消された資料をもう一度出すときは`publish:true`",
+		body: {schema: {type: "object", required: ["publish"], properties: {publish: {type: "boolean"}}}},
+		responses: {404: "この文書はこのプロジェクトにない"},
+		aiGuide: false
+	},
 	{
 		id: "getServerStatus", method: "get", path: "/api/server-status", role: "admin", tag: "その他",
 		summary: "サーバーの状態(版・起動時刻・DB)",

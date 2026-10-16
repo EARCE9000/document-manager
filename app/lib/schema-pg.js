@@ -332,7 +332,9 @@ const MIGRATIONS = [
 			last_error_at TEXT,
 			-- トークンを更新している台と、その期限(複数台で同時に更新しないための順番取り)
 			refresh_lock_owner TEXT,
-			refresh_lock_until TEXT
+			refresh_lock_until TEXT,
+			-- 資料の見出しに付ける、Document Manager を開くリンクの元(連携した画面の公開URL)
+			public_base_url TEXT
 		);
 		-- プロジェクトごとの連動(ボード上の枠)
 		CREATE TABLE IF NOT EXISTS miro_projects (
@@ -345,7 +347,15 @@ const MIGRATIONS = [
 			stopped_by TEXT,
 			stopped_at TEXT,
 			last_synced_at TEXT,
-			last_error TEXT
+			last_error TEXT,
+			-- 枠の位置と大きさ(新しいプロジェクトの枠を、空いている場所に置くため)
+			frame_x DOUBLE PRECISION,
+			frame_y DOUBLE PRECISION,
+			frame_width DOUBLE PRECISION,
+			frame_height DOUBLE PRECISION,
+			-- 同期している台と、その期限(複数台で同じプロジェクトを同時に同期しないための順番取り)
+			sync_lock_owner TEXT,
+			sync_lock_until TEXT
 		);
 		-- 資料ごとに、ボードのどの項目に出したか。版をまたいで追いかけるため、資料は
 		-- 共有用のID(document_aliases.alias)で覚える
@@ -357,6 +367,8 @@ const MIGRATIONS = [
 			item_id TEXT,
 			item_kind TEXT,
 			caption_id TEXT,
+			group_id TEXT,
+			title TEXT,
 			state TEXT NOT NULL,
 			reason TEXT,
 			x DOUBLE PRECISION,

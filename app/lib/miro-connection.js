@@ -208,15 +208,16 @@ module.exports.authorizeUrl = async ({redirectUri, state}) => {
 const SQL_SELECT = `SELECT * FROM miro_connection WHERE id = 1`;
 const SQL_UPSERT = `
 	INSERT INTO miro_connection (id, team_id, team_name, miro_user_id, miro_user_name, access_token, refresh_token,
-		access_expires_at, refresh_expires_at, scopes, board_id, board_name, board_url, connected_by, connected_at, updated_at, last_error, last_error_at)
+		access_expires_at, refresh_expires_at, scopes, board_id, board_name, board_url, connected_by, connected_at, updated_at, last_error, last_error_at, public_base_url)
 	VALUES (1, @team_id, @team_name, @miro_user_id, @miro_user_name, @access_token, @refresh_token,
-		@access_expires_at, @refresh_expires_at, @scopes, @board_id, @board_name, @board_url, @connected_by, @connected_at, @updated_at, NULL, NULL)
+		@access_expires_at, @refresh_expires_at, @scopes, @board_id, @board_name, @board_url, @connected_by, @connected_at, @updated_at, NULL, NULL, @public_base_url)
 	ON CONFLICT(id) DO UPDATE SET team_id = excluded.team_id, team_name = excluded.team_name, miro_user_id = excluded.miro_user_id,
 		miro_user_name = excluded.miro_user_name, access_token = excluded.access_token, refresh_token = excluded.refresh_token,
 		access_expires_at = excluded.access_expires_at, refresh_expires_at = excluded.refresh_expires_at, scopes = excluded.scopes,
 		board_id = excluded.board_id, board_name = excluded.board_name, board_url = excluded.board_url,
 		connected_by = excluded.connected_by, connected_at = excluded.connected_at, updated_at = excluded.updated_at,
-		last_error = NULL, last_error_at = NULL, refresh_lock_owner = NULL, refresh_lock_until = NULL
+		last_error = NULL, last_error_at = NULL, refresh_lock_owner = NULL, refresh_lock_until = NULL,
+		public_base_url = excluded.public_base_url
 `;
 // 更新の結果を書く。順番を持っている台だけが書ける(順番を失った台の古い結果で上書きしない)
 const SQL_UPDATE_TOKENS = `
@@ -277,7 +278,7 @@ module.exports.status = async () => {
  * 許可の画面から戻ってきたコードでトークンを受け取り、連携として保存する。
  * 連携し直した場合も、選んであったボードは同じチームなら引き継ぐ。
  */
-module.exports.connect = async ({code, redirectUri, user}) => {
+module.exports.connect = async ({code, redirectUri, user, publicBaseUrl = null}) => {
 	const creds = await credentials();
 	if (creds == null) throw miroError("Miro のアプリの値が設定されていません", 404);
 	const token = await Miro.exchangeCode({clientId: creds.clientId, clientSecret: creds.clientSecret, code, redirectUri});
@@ -301,7 +302,8 @@ module.exports.connect = async ({code, redirectUri, user}) => {
 		board_url: sameTeam ? previous.board_url : null,
 		connected_by: user,
 		connected_at: now,
-		updated_at: now
+		updated_at: now,
+		public_base_url: publicBaseUrl
 	});
 	logger.info({audit: "miro_connected", user, team: context?.team?.id, miroUser: context?.user?.id}, "audit");
 	return module.exports.status();
@@ -439,6 +441,17 @@ module.exports.withToken = async (fn) => {
 		}
 		return fn(await getAccessToken());
 	}
+};
+
+/**
+ * 資料を出す先(同期の処理が使う)。連携していない・ボードが未選択・切れているときは null
+ * @returns {Promise<{boardId: string, boardUrl: ?string, teamId: string, publicBaseUrl: ?string}|null>}
+ */
+module.exports.target = async () => {
+	if (!(await isConfigured())) return null;
+	const row = await ds.get(SQL_SELECT);
+	if (row == null || row.board_id == null || row.last_error != null) return null;
+	return {boardId: row.board_id, boardUrl: row.board_url ?? null, teamId: row.team_id, publicBaseUrl: row.public_base_url ?? null};
 };
 
 /** 貼り先のボードを決める(連携しているチームのボードであることを Miro に問い合わせて確かめる) */
