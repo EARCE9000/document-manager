@@ -7,7 +7,7 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
   Twenty Seventeen の「フロントページセクション」(カスタマイザー → テーマオプション)は本文の**下**に
   出るため、上部に置きたいこの用途には使わない。
 - (B) は紹介ページ本体。固定ページ「Document Manager」として作り、親ページはフロントページにする
-  (既存の [Tool] ページと同じ並び)。作成後に付く page_id で、(A) のリンク先 `?page_id=XXXX` を差し替える。
+  (既存の [Tool] ページと同じ並び)。スラッグは `document-manager`(既存ページと同じく `/?pagename=スラッグ` でリンクする)。
 - どちらもブロックエディタの「コードエディター」(右上の︙ → コードエディター)に貼る。
   色や文字の大きさは指定せず、テーマのダーク配色をそのまま使う。
 
@@ -30,7 +30,7 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
 <!-- /wp:paragraph -->
 
 <!-- wp:image {"sizeSlug":"large","linkDestination":"custom"} -->
-<figure class="wp-block-image size-large"><a href="https://www.earce.biz/?page_id=XXXX"><img src="https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/document-list.png" alt="Document Manager の文書一覧とプレビュー"/></a></figure>
+<figure class="wp-block-image size-large"><a href="/?pagename=document-manager"><img src="https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/document-list.png" alt="Document Manager の文書一覧とプレビュー"/></a></figure>
 <!-- /wp:image -->
 
 <!-- wp:list -->
@@ -44,7 +44,7 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
 <!-- wp:buttons -->
 <div class="wp-block-buttons">
 <!-- wp:button -->
-<div class="wp-block-button"><a class="wp-block-button__link wp-element-button" href="https://www.earce.biz/?page_id=XXXX">詳しく見る</a></div>
+<div class="wp-block-button"><a class="wp-block-button__link wp-element-button" href="/?pagename=document-manager">詳しく見る</a></div>
 <!-- /wp:button -->
 
 <!-- wp:button {"className":"is-style-outline"} -->
