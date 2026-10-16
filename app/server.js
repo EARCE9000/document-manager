@@ -3281,6 +3281,31 @@ app.get(BASE_URL_PATH + 'api/claude-skill.zip', requireAuth, async (req, res) =>
 });
 
 /**
+ * 関連するSkill(Document Manager とは別のサービスを操作するもの。いまは Backlog)のZIP。
+ * 社内の人が、Document Manager のSkillと同じ場所から取れるようにするため。
+ * 中身は接続情報を含まないクライアント・手順書のみ(接続先とキーは、そのサービスのものを利用者が用意する)。
+ * 配る対象は lib/claude-skill.js の RELATED_SKILLS に決め打ちしてあり、それ以外の名前は404
+ */
+app.get(BASE_URL_PATH + 'api/related-skills/:name.zip', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const name = String(req.params.name || "");
+		const zip = ClaudeSkill.RELATED_SKILLS.includes(name) ? ClaudeSkill.getSkillZip(name) : null;
+		if (zip == null) {
+			res.status(404).json({error: "そのSkillはこのサーバーから配布していません"});
+			return;
+		}
+		res.setHeader("Content-Type", "application/zip");
+		res.setHeader("Content-Disposition", `attachment; filename="${ClaudeSkill.skillZipFilename(name)}"`);
+		res.setHeader("Content-Length", zip.length);
+		res.status(200).end(zip);
+	} catch (err) {
+		logger.error(err, "::api/related-skills/:name.zip");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * APIキー一覧 (自分が発行したものだけ。平文キーは含まない)
  */
 app.get(BASE_URL_PATH + 'api/apikeys', requireAuth, requireSession, async (req, res) => {

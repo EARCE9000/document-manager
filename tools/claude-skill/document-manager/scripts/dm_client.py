@@ -10,6 +10,9 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
      (環境変数 DM_CONFIG で別パスを指定可)
 
 使い方:
+  python dm_client.py setup --edit [--base-url URL]   設定ファイルをメモ帳などで開く(無ければひな形を作る)
+  python dm_client.py setup [--base-url URL]           利用者が自分の端末で、接続先とAPIキーを入力して保存する
+                                       (どちらも、APIキーをAIエージェントとのチャットに貼らずに済ませるためのもの)
   python dm_client.py config                       接続先の確認(キーは伏せて表示)
   python dm_client.py search [検索語] [--archived] 一覧・全文検索(--archivedでアーカイブ済みを対象にする)
   python dm_client.py search <検索語> --semantic [--limit N]   意味検索(言い換え・表記ゆれを含む)
@@ -53,7 +56,9 @@ import json
 import mimetypes
 import os
 import re
+import shlex
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -66,7 +71,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.7.0"
+CLIENT_VERSION = "1.8.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -142,20 +147,287 @@ def safe_local_filename(name):
 def load_config():
     base_url = os.environ.get("DM_BASE_URL")
     api_key = os.environ.get("DM_API_KEY")
-    if (not base_url or not api_key) and os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            data = json.load(f)
+    if not base_url or not api_key:
+        data = read_config_file()
         base_url = base_url or data.get("baseUrl")
         api_key = api_key or data.get("apiKey")
-    if not base_url or not api_key:
+    if is_placeholder(base_url) or is_placeholder(api_key):
         raise DmError(
-            "接続情報がありません。環境変数 DM_BASE_URL / DM_API_KEY を設定するか、"
-            f"{CONFIG_PATH} に {{\"baseUrl\": \"...\", \"apiKey\": \"dm_...\"}} を作成してください"
+            "接続情報がまだ設定されていません。setup --edit で設定ファイルを開き、利用者に接続先URLとAPIキーを"
+            f"書き込んで保存してもらってください({CONFIG_PATH})。APIキーをチャットで受け取ってはいけません"
         )
     # BASE_PATH配下(例: https://host/docs/)でも相対パスで正しく結合できるよう末尾を / に揃える
     if not base_url.endswith("/"):
         base_url += "/"
     return base_url, api_key
+
+
+# ---------------------------------------------------------------- 接続情報の登録(setup)
+# **APIキーはAIエージェントとのチャットに貼らない。** チャットに貼ると、会話の記録やログなど、
+# 利用者の手を離れた場所に残る。キーは利用者が自分で、次のどちらかで保存する。
+#   setup --edit : 設定ファイル(無ければひな形を作る)をメモ帳などで開く。貼り付けて保存するだけ。
+#                  開くところまでをコマンドが行うので、AIエージェントが実行してよい(キーはAIを通らない)
+#   setup        : 利用者が自分の端末で実行し、表示されない入力欄に貼り付ける。接続を確かめてから保存する
+# 「設定ファイルの場所を探して開く」のが面倒、という声から、開くところまでをコマンドに持たせている。
+
+API_KEY_PLACEHOLDER = "ここにAPIキーを貼り付けてください"
+
+
+def is_placeholder(value):
+    """未設定(空、またはひな形のまま)か"""
+    return not value or API_KEY_PLACEHOLDER in str(value) or "ここに" in str(value)
+
+
+def read_config_file():
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+    try:
+        with open(CONFIG_PATH, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except ValueError:
+        raise DmError(
+            f"{CONFIG_PATH} の書き方が正しくありません(JSONとして読めません)。"
+            "setup --edit で開いて直してください。引用符(\")やカンマが消えていないかを確かめること"
+        ) from None
+    return data if isinstance(data, dict) else {}
+
+
+def write_config_file(data):
+    """設定ファイルを書く。キーを含むので、本人以外が読めないようにする(Windowsでは何もしない)"""
+    directory = os.path.dirname(os.path.abspath(CONFIG_PATH))
+    os.makedirs(directory, exist_ok=True)
+    temp_path = CONFIG_PATH + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    try:
+        os.chmod(temp_path, 0o600)
+    except OSError:
+        pass
+    os.replace(temp_path, CONFIG_PATH)
+
+
+def open_in_editor(path):
+    """
+    ファイルをエディタで開く。既定は、Windowsはメモ帳、macOSはテキストエディット、Linuxは既定のアプリ。
+    開いたら待たずに戻る(AIエージェントから実行しても止まらないように)。
+    環境変数 DM_EDITOR を指定した場合はそのコマンドで開き、閉じるまで待つ。
+    """
+    custom = os.environ.get("DM_EDITOR")
+    try:
+        if custom:
+            completed = subprocess.run(shlex.split(custom, posix=os.name != "nt") + [path], check=False)
+            return custom if completed.returncode == 0 else None
+        if sys.platform.startswith("win"):
+            command = ["notepad.exe", path]
+        elif sys.platform == "darwin":
+            command = ["open", "-t", path]
+        else:
+            command = ["xdg-open", path]
+        subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return command[0]
+    except OSError:
+        return None
+
+
+def is_interactive():
+    """
+    利用者が端末の前にいて、キーを打てるか。AIエージェントから実行されたときは入力待ちで止まらないよう、
+    ここで見分けて断る。Windowsでは入力が「何もない(NUL)」場合も isatty() が真になるため、
+    本物のコンソールかどうかまで確かめる
+    """
+    if not (sys.stdin.isatty() and sys.stderr.isatty()):
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            import msvcrt
+            mode = ctypes.c_uint32()
+            return ctypes.windll.kernel32.GetConsoleMode(msvcrt.get_osfhandle(sys.stdin.fileno()), ctypes.byref(mode)) != 0
+        except (OSError, AttributeError, ValueError):
+            return False
+    return True
+
+
+def ask_visible(question, default=None):
+    suffix = f" [{default}]" if default else ""
+    sys.stderr.write(f"{question}{suffix}: ")
+    sys.stderr.flush()
+    answer = sys.stdin.readline().strip()
+    return answer or default
+
+
+def ask_secret(question):
+    """
+    APIキーを入力してもらう。打った・貼り付けた文字は出さず、1文字ごとに * を出す
+    (後ろから覗かれる・画面共有に映る、を避けつつ、貼り付けが入ったことは分かるようにする)。
+    標準の getpass は何も出さないため、貼り付けたのかどうかが分からないという声があった
+    """
+    sys.stderr.write(f"{question}: ")
+    sys.stderr.flush()
+    chars = []
+
+    def echo(text):
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+    def handle(ch):
+        """1文字ぶんを処理する。入力が終わったら True"""
+        if ch in ("\r", "\n", ""):
+            return True
+        if ch == "\x03":  # Ctrl+C
+            echo("\n")
+            raise KeyboardInterrupt
+        if ch in ("\x08", "\x7f"):  # BackSpace
+            if chars:
+                chars.pop()
+                echo("\b \b")
+            return False
+        if ch.isprintable():
+            chars.append(ch)
+            echo("*")
+        return False
+
+    if os.name == "nt":
+        import msvcrt
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\x00", "\xe0"):  # 矢印キーなどは2文字で届く。どちらも捨てる
+                msvcrt.getwch()
+                continue
+            if handle(ch):
+                break
+    else:
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        saved = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            while not handle(sys.stdin.read(1)):
+                pass
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    echo("\n")
+    return "".join(chars).strip()
+
+
+BASE_URL_PLACEHOLDER = "ここに接続先のURLを書いてください(例: https://docs.example.com/)"
+
+
+def setup_command(option, value):
+    """
+    利用者が実行して、APIキーを登録し直すためのコマンド。AIエージェントはこれをそのままコードブロックで示す。
+    いま動いているPythonとこのファイルを絶対パスで指すので、どこで実行しても同じものが動く
+    (Windowsでは python が Microsoft Store の案内に結び付いていることがあるため、名前では呼ばない)。
+    Windowsは PowerShell の書き方にする(Claude Code のデスクトップアプリの端末は PowerShell)
+    """
+    script = os.path.abspath(__file__)
+    if os.name == "nt":
+        return f'& "{sys.executable}" "{script}" setup {option} {value}'
+    return f'"{sys.executable}" "{script}" setup {option} {value}'
+
+
+def clean_pasted_key(value):
+    """
+    貼り付けたキーの前後に付いてきがちなもの(空白・引用符・末尾のカンマ)を取り除く。
+    設定ファイルやメモから行ごとコピーすると付いてくる
+    """
+    value = value.strip().rstrip(",").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    return value
+
+
+# Document Manager のキーは dm_ と、32バイトを base64url にした43文字(合わせて46文字)
+API_KEY_PATTERN = re.compile(r"^dm_[A-Za-z0-9_-]{43}$")
+
+
+def describe_key_shape(api_key):
+    """キーの形が違うとき、キーそのものは出さずに、何が違うかだけを説明する"""
+    if API_KEY_PATTERN.match(api_key):
+        return None
+    return (f"入力されたものが、Document Manager のAPIキーの形になっていません(保存していません)。"
+            f"APIキーは dm_ で始まる46文字ですが、入力は {len(api_key)} 文字で、先頭が dm_ で"
+            f"{'始まっています' if api_key.startswith('dm_') else '始まっていません'}。"
+            "キー以外の文字まで一緒にコピーしていないかを確かめて、キーだけを貼り付け直してください")
+
+
+def unauthorized_detail(base_url):
+    """401(キーが期限切れ・失効・違う)のときに、エラーに添える次の手順"""
+    return {
+        "hint": ("APIキーが期限切れか、無効です。利用者に Document Manager の「APIキー管理」で新しいキーを発行してもらい、"
+                 "setupCommand のコマンドを利用者が実行して登録し直してもらってください(コマンドをコードブロックで示す。"
+                 "自分では実行しない。APIキーをチャットで受け取らない)。登録し直したら、同じ操作をやり直す"),
+        "setupCommand": setup_command("--base-url", base_url)
+    }
+
+
+def cmd_setup(args):
+    data = read_config_file()
+    base_url = args.base_url or (None if is_placeholder(data.get("baseUrl")) else data.get("baseUrl")) or os.environ.get("DM_BASE_URL")
+
+    if args.edit:
+        created = not os.path.exists(CONFIG_PATH)
+        changed = created
+        if created:
+            data = {}
+        if base_url and data.get("baseUrl") != base_url:
+            data["baseUrl"] = base_url
+            changed = True
+        if not data.get("baseUrl"):
+            data["baseUrl"] = BASE_URL_PLACEHOLDER
+            changed = True
+        if not data.get("apiKey"):
+            data["apiKey"] = API_KEY_PLACEHOLDER
+            changed = True
+        if changed:
+            write_config_file(data)
+        editor = open_in_editor(CONFIG_PATH)
+        result = {"configPath": os.path.abspath(CONFIG_PATH), "created": created, "opened": editor is not None, "editor": editor}
+        if editor is None:
+            result["next"] = (f"エディタを自動で開けませんでした。{os.path.abspath(CONFIG_PATH)} をメモ帳などで開き、"
+                              "apiKey の値を発行したAPIキーに書き換えて保存してもらってください")
+        else:
+            result["next"] = ("開いたファイルの apiKey の値(\"\" の中)を、発行したAPIキーに書き換えて保存してもらってください。"
+                              "保存したら config と search で接続を確かめます。APIキーをチャットで受け取らないこと")
+        return result
+
+    # ここから先は、利用者が自分の端末で入力する。AIエージェントが実行すると入力待ちで止まるため、断る
+    if not is_interactive():
+        raise DmError(
+            "setup は、利用者が自分の端末で実行するコマンドです(APIキーの入力欄が出ます)。AIエージェントは実行せず、"
+            "利用者が実行できるよう、このコマンドをコードブロックで示してください(Claude Code のデスクトップアプリなら、"
+            "実行ボタンから右側の端末で実行できます)。メモ帳で書き込んでもらう場合は setup --edit を使ってください。"
+            "APIキーをチャットで受け取ってはいけません"
+        )
+    current_key = None if is_placeholder(data.get("apiKey")) else data.get("apiKey")
+    if current_key:
+        # 期限切れなどで発行し直したキーに入れ替える使い方。何が起きるかを先に見せる
+        sys.stderr.write(f"いま登録されているキー({current_key[:6]}...)を、これから入力するキーに置き換えます。"
+                         "接続を確かめてから保存し、繋がらなければ置き換えません(Enter だけなら中止)\n")
+    base_url = ask_visible("接続先のURL", base_url)
+    if not base_url:
+        raise DmError("接続先のURLが入力されていません")
+    api_key = clean_pasted_key(ask_secret("APIキー(貼り付けた文字は * で表示されます)"))
+    if not api_key:
+        raise DmError("APIキーが入力されていないため、中止しました(設定は変えていません)")
+    shape_problem = describe_key_shape(api_key)
+    if shape_problem:
+        raise DmError(shape_problem)
+    if not base_url.endswith("/"):
+        base_url += "/"
+    if not args.no_verify:
+        # 入力した内容で実際に繋いでみる。繋がらないキーは保存しない(あとで分かりにくい失敗になるため)
+        os.environ["DM_BASE_URL"] = base_url
+        os.environ["DM_API_KEY"] = api_key
+        try:
+            request("GET", "api/projects")
+        except DmError as err:
+            raise DmError(f"この内容では接続できませんでした(保存していません): {err}") from None
+    data.update({"baseUrl": base_url, "apiKey": api_key})
+    write_config_file(data)
+    return {"configPath": os.path.abspath(CONFIG_PATH), "baseUrl": base_url, "apiKey": api_key[:6] + "...", "verified": not args.no_verify}
 
 
 def request(method, path, *, query=None, body=None, content_type=None, raw=False):
@@ -189,6 +461,8 @@ def request(method, path, *, query=None, body=None, content_type=None, raw=False
             detail = json.loads(text)
         except ValueError:
             detail = {"error": text}
+        if err.code == 401:
+            detail.update(unauthorized_detail(base_url))
         raise DmError(json.dumps({"status": err.code, **detail}, ensure_ascii=False)) from None
     except urllib.error.URLError as err:
         raise DmError(f"接続できません: {url} ({err.reason})") from None
@@ -779,7 +1053,10 @@ def cmd_watch(args):
                         return None
         except urllib.error.HTTPError as err:
             if err.code in (401, 403):
-                raise DmError(json.dumps({"status": err.code, "error": err.read().decode("utf-8", "replace")}, ensure_ascii=False)) from None
+                detail = {"status": err.code, "error": err.read().decode("utf-8", "replace")}
+                if err.code == 401:
+                    detail.update(unauthorized_detail(load_config()[0]))
+                raise DmError(json.dumps(detail, ensure_ascii=False)) from None
             print(f"接続エラー(HTTP {err.code})。再接続します", file=sys.stderr)
         except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError, ValueError, AttributeError) as err:
             if deadline is not None and time.monotonic() >= deadline:
@@ -805,6 +1082,11 @@ def main():
     parser = argparse.ArgumentParser(description="Document Manager API client")
     parser.add_argument("-V", "--version", action="version", version=f"dm_client.py {CLIENT_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("setup", help="接続情報の登録(APIキーをチャットに貼らずに済ませる)")
+    p.add_argument("--edit", action="store_true", help="設定ファイルをメモ帳などで開く(無ければひな形を作る)。AIエージェントから実行してよい")
+    p.add_argument("--base-url", help="接続先のURL(ひな形に書き込む・入力の初期値にする)")
+    p.add_argument("--no-verify", action="store_true", help="保存する前に接続を確かめない")
+    p.set_defaults(func=cmd_setup)
     sub.add_parser("config", help="接続先の確認").set_defaults(func=cmd_config)
     p = sub.add_parser("search", help="一覧・検索")
     p.add_argument("query", nargs="?")

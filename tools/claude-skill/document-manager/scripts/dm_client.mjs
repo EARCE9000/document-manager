@@ -11,6 +11,9 @@
  *      (環境変数 DM_CONFIG で別パスを指定可)
  *
  * 使い方:
+ *   node dm_client.mjs setup --edit [--base-url URL]   設定ファイルをメモ帳などで開く(無ければひな形を作る)
+ *   node dm_client.mjs setup [--base-url URL]           利用者が自分の端末で、接続先とAPIキーを入力して保存する
+ *       (どちらも、APIキーをAIエージェントとのチャットに貼らずに済ませるためのもの)
  *   node dm_client.mjs config
  *   node dm_client.mjs search [検索語] [--archived]
  *   node dm_client.mjs search <検索語> --semantic [--limit N]
@@ -42,16 +45,18 @@
  */
 
 import fs from "node:fs";
+import {spawn, spawnSync} from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import {parseArgs} from "node:util";
+import {fileURLToPath} from "node:url";
 
 const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-manager.json");
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.7.0";
+const CLIENT_VERSION = "1.8.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -116,16 +121,225 @@ const MIME_BY_EXT = {
 	".pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.12"
 };
 
+// ---- 接続情報の登録(setup) ----
+// **APIキーはAIエージェントとのチャットに貼らない。** チャットに貼ると、会話の記録やログなど、
+// 利用者の手を離れた場所に残る。キーは利用者が自分で、次のどちらかで保存する(dm_client.py と同じ)。
+//   setup --edit : 設定ファイル(無ければひな形を作る)をメモ帳などで開く。貼り付けて保存するだけ。
+//                  開くところまでをコマンドが行うので、AIエージェントが実行してよい(キーはAIを通らない)
+//   setup        : 利用者が自分の端末で実行し、表示されない入力欄に貼り付ける。接続を確かめてから保存する
+const API_KEY_PLACEHOLDER = "ここにAPIキーを貼り付けてください";
+const BASE_URL_PLACEHOLDER = "ここに接続先のURLを書いてください(例: https://docs.example.com/)";
+
+/** 未設定(空、またはひな形のまま)か */
+const isPlaceholder = (value) => !value || String(value).includes(API_KEY_PLACEHOLDER) || String(value).includes("ここに");
+
+const readConfigFile = () => {
+	if (!fs.existsSync(CONFIG_PATH)) return {};
+	try {
+		// メモ帳で保存すると先頭にBOMが付くことがある
+		const data = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8").replace(/^\uFEFF/, ""));
+		return data != null && typeof data === "object" && !Array.isArray(data) ? data : {};
+	} catch {
+		throw new DmError(`${CONFIG_PATH} の書き方が正しくありません(JSONとして読めません)。setup --edit で開いて直してください。引用符(")やカンマが消えていないかを確かめること`);
+	}
+};
+
+/** 設定ファイルを書く。キーを含むので、本人以外が読めないようにする(Windowsでは効かない) */
+const writeConfigFile = (data) => {
+	fs.mkdirSync(path.dirname(path.resolve(CONFIG_PATH)), {recursive: true});
+	const tempPath = `${CONFIG_PATH}.tmp`;
+	fs.writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, {encoding: "utf8", mode: 0o600});
+	fs.renameSync(tempPath, CONFIG_PATH);
+};
+
+/**
+ * ファイルをエディタで開く。既定は、Windowsはメモ帳、macOSはテキストエディット、Linuxは既定のアプリ。
+ * 開いたら待たずに戻る(AIエージェントから実行しても止まらないように)。
+ * 環境変数 DM_EDITOR を指定した場合はそのコマンドで開き、閉じるまで待つ
+ */
+const openInEditor = (filePath) => {
+	const custom = process.env.DM_EDITOR;
+	if (custom) {
+		const [command, ...args] = custom.split(" ").filter(Boolean);
+		const result = spawnSync(command, [...args, filePath], {stdio: "inherit"});
+		return result.status === 0 ? custom : null;
+	}
+	const command = process.platform === "win32" ? ["notepad.exe", filePath]
+		: process.platform === "darwin" ? ["open", "-t", filePath]
+			: ["xdg-open", filePath];
+	try {
+		const child = spawn(command[0], command.slice(1), {detached: true, stdio: "ignore"});
+		child.on("error", () => {});
+		child.unref();
+		return command[0];
+	} catch {
+		return null;
+	}
+};
+
+/** 利用者が端末の前にいて、キーを打てるか。AIエージェントから実行されたときは入力待ちで止まらないよう断る */
+const isInteractive = () => Boolean(process.stdin.isTTY && process.stderr.isTTY && typeof process.stdin.setRawMode === "function");
+
+const askVisible = (question, defaultValue) => new Promise((resolve) => {
+	process.stderr.write(`${question}${defaultValue ? ` [${defaultValue}]` : ""}: `);
+	process.stdin.setEncoding("utf8");
+	process.stdin.resume();
+	process.stdin.once("data", (chunk) => {
+		process.stdin.pause();
+		resolve(String(chunk).trim() || defaultValue || "");
+	});
+});
+
+// 打った・貼り付けた文字は出さず、1文字ごとに * を出す(後ろから覗かれる・画面共有に映る、を避けつつ、
+// 貼り付けが入ったことは分かるようにする。dm_client.py と同じ)
+const askSecret = (question) => new Promise((resolve, reject) => {
+	process.stderr.write(`${question}: `);
+	const stdin = process.stdin;
+	stdin.setRawMode(true);
+	stdin.setEncoding("utf8");
+	stdin.resume();
+	let value = "";
+	const finish = (callback) => {
+		stdin.setRawMode(false);
+		stdin.pause();
+		stdin.removeListener("data", onData);
+		process.stderr.write("\n");
+		callback();
+	};
+	const onData = (chunk) => {
+		for (const ch of chunk) {
+			if (ch === "\r" || ch === "\n") {
+				finish(() => resolve(value.trim()));
+				return;
+			}
+			if (ch === "\u0003") {
+				finish(() => reject(new DmError("中止しました")));
+				return;
+			}
+			if (ch === "\u007f" || ch === "\b") {
+				if (value.length > 0) {
+					value = value.slice(0, -1);
+					process.stderr.write("\b \b");
+				}
+			} else if (ch >= " ") {
+				value += ch;
+				process.stderr.write("*");
+			}
+		}
+	};
+	stdin.on("data", onData);
+});
+
+// 貼り付けたキーの前後に付いてきがちなもの(空白・引用符・末尾のカンマ)を取り除く
+const cleanPastedKey = (value) => {
+	let cleaned = value.trim().replace(/,$/, "").trim();
+	if (cleaned.length >= 2 && cleaned[0] === cleaned.at(-1) && `"'`.includes(cleaned[0])) cleaned = cleaned.slice(1, -1).trim();
+	return cleaned;
+};
+
+// Document Manager のキーは dm_ と、32バイトを base64url にした43文字(合わせて46文字)
+const API_KEY_PATTERN = /^dm_[A-Za-z0-9_-]{43}$/;
+
+/** キーの形が違うとき、キーそのものは出さずに、何が違うかだけを説明する */
+const describeKeyShape = (apiKey) => (API_KEY_PATTERN.test(apiKey) ? null
+	: "入力されたものが、Document Manager のAPIキーの形になっていません(保存していません)。"
+		+ `APIキーは dm_ で始まる46文字ですが、入力は ${apiKey.length} 文字で、先頭が dm_ で${apiKey.startsWith("dm_") ? "始まっています" : "始まっていません"}。`
+		+ "キー以外の文字まで一緒にコピーしていないかを確かめて、キーだけを貼り付け直してください");
+
+const setup = async (opts) => {
+	let data = readConfigFile();
+	let baseUrl = opts["base-url"] || (isPlaceholder(data.baseUrl) ? null : data.baseUrl) || process.env.DM_BASE_URL || null;
+
+	if (opts.edit) {
+		const created = !fs.existsSync(CONFIG_PATH);
+		let changed = created;
+		if (created) data = {};
+		if (baseUrl && data.baseUrl !== baseUrl) {
+			data.baseUrl = baseUrl;
+			changed = true;
+		}
+		if (!data.baseUrl) {
+			data.baseUrl = BASE_URL_PLACEHOLDER;
+			changed = true;
+		}
+		if (!data.apiKey) {
+			data.apiKey = API_KEY_PLACEHOLDER;
+			changed = true;
+		}
+		if (changed) writeConfigFile(data);
+		const editor = openInEditor(CONFIG_PATH);
+		const configPath = path.resolve(CONFIG_PATH);
+		return {
+			configPath, created, opened: editor != null, editor,
+			next: editor == null
+				? `エディタを自動で開けませんでした。${configPath} をメモ帳などで開き、apiKey の値を発行したAPIキーに書き換えて保存してもらってください`
+				: "開いたファイルの apiKey の値(\"\" の中)を、発行したAPIキーに書き換えて保存してもらってください。保存したら config と search で接続を確かめます。APIキーをチャットで受け取らないこと"
+		};
+	}
+
+	// ここから先は、利用者が自分の端末で入力する。AIエージェントが実行すると入力待ちで止まるため、断る
+	if (!isInteractive()) {
+		throw new DmError("setup は、利用者が自分の端末で実行するコマンドです(APIキーの入力欄が出ます)。AIエージェントは実行せず、"
+			+ "利用者が実行できるよう、このコマンドをコードブロックで示してください(Claude Code のデスクトップアプリなら、"
+			+ "実行ボタンから右側の端末で実行できます)。メモ帳で書き込んでもらう場合は setup --edit を使ってください。"
+			+ "APIキーをチャットで受け取ってはいけません");
+	}
+	const currentKey = isPlaceholder(data.apiKey) ? null : data.apiKey;
+	if (currentKey) {
+		// 期限切れなどで発行し直したキーに入れ替える使い方。何が起きるかを先に見せる
+		process.stderr.write(`いま登録されているキー(${currentKey.slice(0, 6)}...)を、これから入力するキーに置き換えます。`
+			+ "接続を確かめてから保存し、繋がらなければ置き換えません(Enter だけなら中止)\n");
+	}
+	baseUrl = await askVisible("接続先のURL", baseUrl);
+	if (!baseUrl) throw new DmError("接続先のURLが入力されていません");
+	const apiKey = cleanPastedKey(await askSecret("APIキー(貼り付けた文字は * で表示されます)"));
+	if (!apiKey) throw new DmError("APIキーが入力されていないため、中止しました(設定は変えていません)");
+	const shapeProblem = describeKeyShape(apiKey);
+	if (shapeProblem) throw new DmError(shapeProblem);
+	if (!baseUrl.endsWith("/")) baseUrl += "/";
+	if (!opts["no-verify"]) {
+		// 入力した内容で実際に繋いでみる。繋がらないキーは保存しない(あとで分かりにくい失敗になるため)
+		process.env.DM_BASE_URL = baseUrl;
+		process.env.DM_API_KEY = apiKey;
+		try {
+			await request("GET", "api/projects");
+		} catch (err) {
+			if (!(err instanceof DmError)) throw err;
+			throw new DmError(`この内容では接続できませんでした(保存していません): ${err.message}`);
+		}
+	}
+	writeConfigFile({...data, baseUrl, apiKey});
+	return {configPath: path.resolve(CONFIG_PATH), baseUrl, apiKey: `${apiKey.slice(0, 6)}...`, verified: !opts["no-verify"]};
+};
+
+/**
+ * 利用者が実行して、APIキーを登録し直すためのコマンド。AIエージェントはこれをそのままコードブロックで示す。
+ * いま動いているNode.jsとこのファイルを絶対パスで指す。Windowsは PowerShell の書き方にする(dm_client.py と同じ)
+ */
+const setupCommand = (baseUrl) => {
+	const script = fileURLToPath(import.meta.url);
+	const command = `"${process.execPath}" "${script}" setup --base-url ${baseUrl}`;
+	return process.platform === "win32" ? `& ${command}` : command;
+};
+
+/** 401(キーが期限切れ・失効・違う)のときに、エラーに添える次の手順 */
+const unauthorizedDetail = (baseUrl) => ({
+	hint: "APIキーが期限切れか、無効です。利用者に Document Manager の「APIキー管理」で新しいキーを発行してもらい、"
+		+ "setupCommand のコマンドを利用者が実行して登録し直してもらってください(コマンドをコードブロックで示す。"
+		+ "自分では実行しない。APIキーをチャットで受け取らない)。登録し直したら、同じ操作をやり直す",
+	setupCommand: setupCommand(baseUrl)
+});
+
 const loadConfig = () => {
 	let baseUrl = process.env.DM_BASE_URL;
 	let apiKey = process.env.DM_API_KEY;
-	if ((!baseUrl || !apiKey) && fs.existsSync(CONFIG_PATH)) {
-		const data = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+	if (!baseUrl || !apiKey) {
+		const data = readConfigFile();
 		baseUrl = baseUrl || data.baseUrl;
 		apiKey = apiKey || data.apiKey;
 	}
-	if (!baseUrl || !apiKey) {
-		throw new DmError(`接続情報がありません。環境変数 DM_BASE_URL / DM_API_KEY を設定するか、${CONFIG_PATH} に {"baseUrl": "...", "apiKey": "dm_..."} を作成してください`);
+	if (isPlaceholder(baseUrl) || isPlaceholder(apiKey)) {
+		throw new DmError(`接続情報がまだ設定されていません。setup --edit で設定ファイルを開き、利用者に接続先URLとAPIキーを書き込んで保存してもらってください(${CONFIG_PATH})。APIキーをチャットで受け取ってはいけません`);
 	}
 	// BASE_PATH配下(例: https://host/docs/)でも相対パスで正しく結合できるよう末尾を / に揃える
 	return {baseUrl: baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`, apiKey};
@@ -160,7 +374,7 @@ const request = async (method, apiPath, {query, json, formData, raw = false, wit
 		} catch {
 			detail = {error: text};
 		}
-		throw new DmError(JSON.stringify({status: res.status, ...detail}));
+		throw new DmError(JSON.stringify({status: res.status, ...detail, ...(res.status === 401 ? unauthorizedDetail(baseUrl) : {})}));
 	}
 	if (raw && withHeaders) return {payload: Buffer.from(await res.arrayBuffer()), headers: res.headers};
 	if (raw) return Buffer.from(await res.arrayBuffer());
@@ -314,6 +528,7 @@ const mockupPath = (id, suffix = "") => `api/mockups/${encodeURIComponent(id)}${
 const mockupViewUrl = (id) => new URL(mockupPath(id, "/view"), loadConfig().baseUrl).toString();
 
 const commands = {
+	setup: async (_rest, opts) => setup(opts),
 	config: async () => {
 		const {baseUrl, apiKey} = loadConfig();
 		return {clientVersion: CLIENT_VERSION, baseUrl, apiKey: `${apiKey.slice(0, 6)}...`, configPath: CONFIG_PATH};
@@ -711,7 +926,7 @@ const watch = async (opts) => {
 				signal: controller.signal
 			});
 			if (res.status === 401 || res.status === 403) {
-				throw new DmError(JSON.stringify({status: res.status, error: await res.text()}));
+				throw new DmError(JSON.stringify({status: res.status, error: await res.text(), ...(res.status === 401 ? unauthorizedDetail(baseUrl) : {})}));
 			}
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			backoffMs = 1000;
@@ -788,6 +1003,9 @@ const main = async () => {
 			id: {type: "string"},
 			markdown: {type: "boolean"},
 			"no-links": {type: "boolean"},
+			edit: {type: "boolean"},
+			"base-url": {type: "string"},
+			"no-verify": {type: "boolean"},
 			render: {type: "boolean"},
 			pdf: {type: "boolean"},
 			version: {type: "boolean", short: "V"},

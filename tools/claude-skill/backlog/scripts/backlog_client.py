@@ -17,6 +17,9 @@ Backlog には MCP もあるが、**ファイル(画像・資料)の添付がで
   .backlog.com / .backlogtool.com も同じ。APIキーは Backlog の「個人設定 > API」で発行する。
 
 使い方:
+  python backlog_client.py setup --edit [--space ホスト名]   設定ファイルをメモ帳などで開く(無ければひな形を作る)
+  python backlog_client.py setup [--space ホスト名]          利用者が自分の端末で、スペースとAPIキーを入力して保存する
+                                  (どちらも、APIキーをAIエージェントとのチャットに貼らずに済ませるためのもの)
   python backlog_client.py config                          接続先の確認(キーは伏せて表示)
   python backlog_client.py myself                          自分の情報(疎通確認にも使える)
   python backlog_client.py projects [--all]                参加しているプロジェクト(--allで全件)
@@ -58,6 +61,8 @@ import json
 import mimetypes
 import os
 import re
+import shlex
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -67,7 +72,7 @@ import uuid
 CONFIG_PATH = os.environ.get("BACKLOG_CONFIG") or os.path.join(os.path.expanduser("~"), ".backlog.json")
 
 # このクライアント(Skill)のバージョン。backlog_client.mjs と必ず揃える(結合テストで検証している)
-CLIENT_VERSION = "1.0.0"
+CLIENT_VERSION = "1.1.0"
 USER_AGENT = f"backlog-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 # Backlogのスペースとして受け付けるホスト。ここを緩めると、APIキーを別のサーバーへ送れてしまう
@@ -103,18 +108,263 @@ def normalize_space(value):
 def load_config():
     space = os.environ.get("BACKLOG_SPACE")
     api_key = os.environ.get("BACKLOG_API_KEY")
-    if (not space or not api_key) and os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            data = json.load(f)
+    if not space or not api_key:
+        data = read_config_file()
         space = space or data.get("space")
         api_key = api_key or data.get("apiKey")
-    if not space or not api_key:
+    if is_placeholder(space) or is_placeholder(api_key):
         raise BacklogError(
-            "接続情報がありません。環境変数 BACKLOG_SPACE / BACKLOG_API_KEY を設定するか、"
-            f"{CONFIG_PATH} に {{\"space\": \"example.backlog.jp\", \"apiKey\": \"...\"}} を作成してください\n"
-            "  APIキーは Backlog の「個人設定 > API」で発行できます"
+            "接続情報がまだ設定されていません。setup --edit で設定ファイルを開き、利用者にスペースのホスト名と"
+            f"APIキーを書き込んで保存してもらってください({CONFIG_PATH})。APIキーは Backlog の「個人設定 > API」で発行できます。"
+            "APIキーをチャットで受け取ってはいけません"
         )
     return normalize_space(space), api_key
+
+
+# ---------------------------------------------------------------- 接続情報の登録(setup)
+# **APIキーはAIエージェントとのチャットに貼らない。** チャットに貼ると、会話の記録やログなど、
+# 利用者の手を離れた場所に残る。キーは利用者が自分で、次のどちらかで保存する。
+#   setup --edit : 設定ファイル(無ければひな形を作る)をメモ帳などで開く。貼り付けて保存するだけ。
+#                  開くところまでをコマンドが行うので、AIエージェントが実行してよい(キーはAIを通らない)
+#   setup        : 利用者が自分の端末で実行し、表示されない入力欄に貼り付ける。接続を確かめてから保存する
+# 「設定ファイルの場所を探して開く」のが面倒、という声から、開くところまでをコマンドに持たせている。
+
+API_KEY_PLACEHOLDER = "ここにAPIキーを貼り付けてください"
+
+
+def is_placeholder(value):
+    """未設定(空、またはひな形のまま)か"""
+    return not value or API_KEY_PLACEHOLDER in str(value) or "ここに" in str(value)
+
+
+def read_config_file():
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+    try:
+        with open(CONFIG_PATH, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except ValueError:
+        raise BacklogError(
+            f"{CONFIG_PATH} の書き方が正しくありません(JSONとして読めません)。"
+            "setup --edit で開いて直してください。引用符(\")やカンマが消えていないかを確かめること"
+        ) from None
+    return data if isinstance(data, dict) else {}
+
+
+def write_config_file(data):
+    """設定ファイルを書く。キーを含むので、本人以外が読めないようにする(Windowsでは何もしない)"""
+    directory = os.path.dirname(os.path.abspath(CONFIG_PATH))
+    os.makedirs(directory, exist_ok=True)
+    temp_path = CONFIG_PATH + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    try:
+        os.chmod(temp_path, 0o600)
+    except OSError:
+        pass
+    os.replace(temp_path, CONFIG_PATH)
+
+
+def open_in_editor(path):
+    """
+    ファイルをエディタで開く。既定は、Windowsはメモ帳、macOSはテキストエディット、Linuxは既定のアプリ。
+    開いたら待たずに戻る(AIエージェントから実行しても止まらないように)。
+    環境変数 BACKLOG_EDITOR を指定した場合はそのコマンドで開き、閉じるまで待つ。
+    """
+    custom = os.environ.get("BACKLOG_EDITOR")
+    try:
+        if custom:
+            completed = subprocess.run(shlex.split(custom, posix=os.name != "nt") + [path], check=False)
+            return custom if completed.returncode == 0 else None
+        if sys.platform.startswith("win"):
+            command = ["notepad.exe", path]
+        elif sys.platform == "darwin":
+            command = ["open", "-t", path]
+        else:
+            command = ["xdg-open", path]
+        subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return command[0]
+    except OSError:
+        return None
+
+
+def is_interactive():
+    """
+    利用者が端末の前にいて、キーを打てるか。AIエージェントから実行されたときは入力待ちで止まらないよう、
+    ここで見分けて断る。Windowsでは入力が「何もない(NUL)」場合も isatty() が真になるため、
+    本物のコンソールかどうかまで確かめる
+    """
+    if not (sys.stdin.isatty() and sys.stderr.isatty()):
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            import msvcrt
+            mode = ctypes.c_uint32()
+            return ctypes.windll.kernel32.GetConsoleMode(msvcrt.get_osfhandle(sys.stdin.fileno()), ctypes.byref(mode)) != 0
+        except (OSError, AttributeError, ValueError):
+            return False
+    return True
+
+
+def ask_visible(question, default=None):
+    suffix = f" [{default}]" if default else ""
+    sys.stderr.write(f"{question}{suffix}: ")
+    sys.stderr.flush()
+    answer = sys.stdin.readline().strip()
+    return answer or default
+
+
+def ask_secret(question):
+    """
+    APIキーを入力してもらう。打った・貼り付けた文字は出さず、1文字ごとに * を出す
+    (後ろから覗かれる・画面共有に映る、を避けつつ、貼り付けが入ったことは分かるようにする)。
+    標準の getpass は何も出さないため、貼り付けたのかどうかが分からないという声があった
+    """
+    sys.stderr.write(f"{question}: ")
+    sys.stderr.flush()
+    chars = []
+
+    def echo(text):
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+    def handle(ch):
+        """1文字ぶんを処理する。入力が終わったら True"""
+        if ch in ("\r", "\n", ""):
+            return True
+        if ch == "\x03":  # Ctrl+C
+            echo("\n")
+            raise KeyboardInterrupt
+        if ch in ("\x08", "\x7f"):  # BackSpace
+            if chars:
+                chars.pop()
+                echo("\b \b")
+            return False
+        if ch.isprintable():
+            chars.append(ch)
+            echo("*")
+        return False
+
+    if os.name == "nt":
+        import msvcrt
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\x00", "\xe0"):  # 矢印キーなどは2文字で届く。どちらも捨てる
+                msvcrt.getwch()
+                continue
+            if handle(ch):
+                break
+    else:
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        saved = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            while not handle(sys.stdin.read(1)):
+                pass
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    echo("\n")
+    return "".join(chars).strip()
+
+
+SPACE_PLACEHOLDER = "ここにスペースのホスト名を書いてください(例: example.backlog.jp)"
+
+
+def clean_pasted_key(value):
+    """
+    貼り付けたキーの前後に付いてきがちなもの(空白・引用符・末尾のカンマ)を取り除く。
+    設定ファイルやメモから行ごとコピーすると付いてくる
+    """
+    value = value.strip().rstrip(",").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    return value
+
+
+def setup_command(option, value):
+    """
+    利用者が実行して、APIキーを登録し直すためのコマンド。AIエージェントはこれをそのままコードブロックで示す。
+    いま動いているPythonとこのファイルを絶対パスで指すので、どこで実行しても同じものが動く
+    (Windowsでは python が Microsoft Store の案内に結び付いていることがあるため、名前では呼ばない)。
+    Windowsは PowerShell の書き方にする(Claude Code のデスクトップアプリの端末は PowerShell)
+    """
+    script = os.path.abspath(__file__)
+    if os.name == "nt":
+        return f'& "{sys.executable}" "{script}" setup {option} {value}'
+    return f'"{sys.executable}" "{script}" setup {option} {value}'
+
+
+def cmd_setup(args):
+    data = read_config_file()
+    space = args.space or (None if is_placeholder(data.get("space")) else data.get("space")) or os.environ.get("BACKLOG_SPACE")
+
+    if args.edit:
+        created = not os.path.exists(CONFIG_PATH)
+        changed = created
+        if created:
+            data = {}
+        if space and data.get("space") != space:
+            data["space"] = normalize_space(space)
+            changed = True
+        if not data.get("space"):
+            data["space"] = SPACE_PLACEHOLDER
+            changed = True
+        if not data.get("apiKey"):
+            data["apiKey"] = API_KEY_PLACEHOLDER
+            changed = True
+        if changed:
+            write_config_file(data)
+        editor = open_in_editor(CONFIG_PATH)
+        result = {"configPath": os.path.abspath(CONFIG_PATH), "created": created, "opened": editor is not None, "editor": editor}
+        if editor is None:
+            result["next"] = (f"エディタを自動で開けませんでした。{os.path.abspath(CONFIG_PATH)} をメモ帳などで開き、"
+                              "apiKey の値を Backlog の「個人設定 > API」で発行したキーに書き換えて保存してもらってください")
+        else:
+            result["next"] = ("開いたファイルの apiKey の値(\"\" の中)を、Backlog の「個人設定 > API」で発行したキーに"
+                              "書き換えて保存してもらってください。保存したら config と myself で接続を確かめます。"
+                              "APIキーをチャットで受け取らないこと")
+        return result
+
+    # ここから先は、利用者が自分の端末で入力する。AIエージェントが実行すると入力待ちで止まるため、断る
+    if not is_interactive():
+        raise BacklogError(
+            "setup は、利用者が自分の端末で実行するコマンドです(APIキーの入力欄が出ます)。AIエージェントは実行せず、"
+            "利用者が実行できるよう、このコマンドをコードブロックで示してください(Claude Code のデスクトップアプリなら、"
+            "実行ボタンから右側の端末で実行できます)。メモ帳で書き込んでもらう場合は setup --edit を使ってください。"
+            "APIキーをチャットで受け取ってはいけません"
+        )
+    current_key = None if is_placeholder(data.get("apiKey")) else data.get("apiKey")
+    if current_key:
+        # 発行し直したキーに入れ替える使い方。何が起きるかを先に見せる
+        sys.stderr.write(f"いま登録されているキー({current_key[:4]}…)を、これから入力するキーに置き換えます。"
+                         "接続を確かめてから保存し、繋がらなければ置き換えません(Enter だけなら中止)\n")
+    space = ask_visible("スペースのホスト名(例: example.backlog.jp)", space)
+    if not space:
+        raise BacklogError("スペースのホスト名が入力されていません")
+    space = normalize_space(space)
+    api_key = clean_pasted_key(ask_secret("APIキー(Backlogの「個人設定 > API」で発行したもの。貼り付けた文字は * で表示されます)"))
+    if not api_key:
+        raise BacklogError("APIキーが入力されていないため、中止しました(設定は変えていません)")
+    user = None
+    if not args.no_verify:
+        # 入力した内容で実際に繋いでみる。繋がらないキーは保存しない(あとで分かりにくい失敗になるため)
+        os.environ["BACKLOG_SPACE"] = space
+        os.environ["BACKLOG_API_KEY"] = api_key
+        try:
+            user = request("GET", "/api/v2/users/myself")
+        except BacklogError as err:
+            # キーそのものは出さず、手がかりになる長さだけを添える
+            raise BacklogError(f"この内容では接続できませんでした(保存していません。入力したキーは {len(api_key)} 文字): {err}") from None
+    data.update({"space": space, "apiKey": api_key})
+    write_config_file(data)
+    return {
+        "configPath": os.path.abspath(CONFIG_PATH), "space": space, "apiKey": f"{api_key[:4]}…{api_key[-2:]}",
+        "verified": not args.no_verify, "user": (user or {}).get("name")
+    }
 
 
 # ---------------------------------------------------------------- 通信
@@ -174,7 +424,13 @@ def describe_http_error(err, method, path):
     elif detail:
         summary["detail"] = detail
     if err.code == 401:
-        summary["hint"] = "APIキーが違うか失効しています。Backlogの「個人設定 > API」で確認してください"
+        summary["hint"] = ("APIキーが違うか、削除されています。利用者に Backlog の「個人設定 > API」で新しいキーを発行してもらい、"
+                           "setupCommand のコマンドを利用者が実行して登録し直してもらってください(コマンドをコードブロックで示す。"
+                           "自分では実行しない。APIキーをチャットで受け取らない)。登録し直したら、同じ操作をやり直す")
+        try:
+            summary["setupCommand"] = setup_command("--space", load_config()[0])
+        except BacklogError:
+            summary["setupCommand"] = setup_command("--space", "<ホスト名>")
     elif err.code == 403:
         summary["hint"] = "このAPIキーの権限では行えない操作です"
     elif err.code == 404:
@@ -507,6 +763,11 @@ def main():
     parser.add_argument("-V", "--version", action="version", version=f"backlog_client.py {CLIENT_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("setup", help="接続情報の登録(APIキーをチャットに貼らずに済ませる)")
+    p.add_argument("--edit", action="store_true", help="設定ファイルをメモ帳などで開く(無ければひな形を作る)。AIエージェントから実行してよい")
+    p.add_argument("--space", help="スペースのホスト名(ひな形に書き込む・入力の初期値にする)")
+    p.add_argument("--no-verify", action="store_true", help="保存する前に接続を確かめない")
+    p.set_defaults(func=cmd_setup)
     sub.add_parser("config", help="接続先の確認(キーは伏せて表示)").set_defaults(func=cmd_config)
     sub.add_parser("myself", help="自分の情報(疎通確認にも使える)").set_defaults(func=cmd_myself)
 

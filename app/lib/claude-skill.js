@@ -9,6 +9,11 @@
  * `document-manager/` フォルダ1つ(~/.claude/skills/ にそのまま展開できる形)で、scripts/ 配下には
  * 実行ビットを付ける。外部依存を増やさないよう、ZIPはNode標準のzlib(deflateRaw/crc32)で組み立てる。
  * 内容はプロセス起動中は変わらないため、初回生成時の結果をメモリにキャッシュする。
+ *
+ * document-manager のほかに、**関連するSkill**(Document Manager とは別のサービスを操作するもの。
+ * いまは Backlog)も同じ形で配る。社内の人が、いつもの場所から取れるようにするため。
+ * 関連Skillは接続先も認証も別(そのサービスのAPIキーを使う)で、Document Manager の
+ * 版の知らせ(X-Skill-Latest-Version)の対象にもしない。
  */
 
 const fs = require("fs");
@@ -17,14 +22,20 @@ const zlib = require("zlib");
 
 const SKILL_NAME = "document-manager";
 
+// 一緒に配る関連Skill。ここに無い名前はZIPにしない(配るつもりの無いフォルダを、
+// 名前を当てるだけで取り出せないようにする)
+const RELATED_SKILLS = Object.freeze(["backlog"]);
+const DISTRIBUTED_SKILLS = Object.freeze([SKILL_NAME, ...RELATED_SKILLS]);
+
 // Docker(app/ = /app 直下にコピー)とリポジトリからの直接起動(app/server.js)の両方に対応する
-const SKILL_DIR_CANDIDATES = [
-	process.env.CLAUDE_SKILL_DIR,
-	path.join(__dirname, "..", "claude-skill", SKILL_NAME),
-	path.join(__dirname, "..", "..", "tools", "claude-skill", SKILL_NAME)
+const skillDirCandidates = (name) => [
+	name === SKILL_NAME ? process.env.CLAUDE_SKILL_DIR : null,
+	path.join(__dirname, "..", "claude-skill", name),
+	path.join(__dirname, "..", "..", "tools", "claude-skill", name)
 ].filter(Boolean);
 
-const findSkillDir = () => SKILL_DIR_CANDIDATES.find((dir) => fs.existsSync(path.join(dir, "SKILL.md"))) ?? null;
+const findSkillDir = (name = SKILL_NAME) =>
+	skillDirCandidates(name).find((dir) => fs.existsSync(path.join(dir, "SKILL.md"))) ?? null;
 
 const EXCLUDE_DIRS = new Set(["__pycache__", "node_modules", ".git"]);
 
@@ -101,23 +112,33 @@ const buildZip = (entries, mtime = new Date()) => {
 	return Buffer.concat([...localParts, ...centralParts, end]);
 };
 
-let cachedZip = null;
+const cachedZips = new Map();
 
 /**
- * Skill のZIP(Buffer)を返す。Skillのソースが見つからない場合は null
+ * Skill のZIP(Buffer)を返す。配る対象でない名前や、Skillのソースが見つからない場合は null
+ * @param {string} [name] Skillの名前(省略時は document-manager)
  */
-module.exports.getSkillZip = () => {
-	if (cachedZip != null) return cachedZip;
-	const skillDir = findSkillDir();
+module.exports.getSkillZip = (name = SKILL_NAME) => {
+	if (!DISTRIBUTED_SKILLS.includes(name)) return null;
+	if (cachedZips.has(name)) return cachedZips.get(name);
+	const skillDir = findSkillDir(name);
 	if (skillDir == null) return null;
 	const entries = listFiles(skillDir).map((relative) => ({
-		name: `${SKILL_NAME}/${relative}`,
+		name: `${name}/${relative}`,
 		data: fs.readFileSync(path.join(skillDir, relative)),
 		mode: relative.startsWith("scripts/") ? 0o755 : 0o644
 	}));
-	cachedZip = buildZip(entries);
-	return cachedZip;
+	const zip = buildZip(entries);
+	cachedZips.set(name, zip);
+	return zip;
 };
+
+/** 関連Skillの一覧(画面に出すかどうかの判断用。このサーバーに入っているものだけ) */
+module.exports.listRelatedSkills = () => RELATED_SKILLS.filter((name) => findSkillDir(name) != null);
+
+/** SkillのZIPを保存するときの名前 */
+module.exports.skillZipFilename = (name = SKILL_NAME) => `${name}-skill.zip`;
+module.exports.RELATED_SKILLS = RELATED_SKILLS;
 
 /**
  * 同梱しているクライアント(dm_client.py)のバージョンを読む。

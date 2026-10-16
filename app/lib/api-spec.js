@@ -427,6 +427,12 @@ const OPERATIONS = [
 	{id: "checkAccessToken", method: "get", path: "/api/check_access_token", role: "readonly", tag: "その他", summary: "ログイン状態・ロールの確認(画面用)", aiGuide: false},
 	{id: "getHistory", method: "get", path: "/api/history", role: "readonly", tag: "その他", summary: "自分の操作履歴(直近30日)", aiGuide: false},
 	{id: "getSkillZip", method: "get", path: "/api/claude-skill.zip", role: "readonly", tag: "その他", summary: "AIエージェント用SkillのZIP取得", produces: "application/zip"},
+	{
+		id: "getRelatedSkillZip", method: "get", path: "/api/related-skills/:name.zip", role: "readonly", tag: "その他",
+		summary: "関連するSkill(Backlog等)のZIP取得",
+		description: "Document Manager とは別のサービスを操作するSkillを、同じ場所から配る。いまは `backlog` だけ(それ以外の名前は404)。接続先とキーはそのサービスのものを利用者が用意する",
+		produces: "application/zip", aiGuide: false
+	},
 	{id: "getOpenApi", method: "get", path: "/api/openapi.json", role: "readonly", tag: "その他", summary: "このAPIの仕様(OpenAPI 3.1)", aiGuide: false},
 	{id: "getUsageMarkdown", method: "get", path: "/api/usage.md", role: "readonly", tag: "その他", summary: "AI向け利用ガイド(Markdown)", produces: "text/markdown", aiGuide: false},
 	// APIキー管理は画面(ログイン)からのみ。APIキーでAPIキーを発行できると、期限が切れる前に

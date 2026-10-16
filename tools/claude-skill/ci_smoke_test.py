@@ -25,6 +25,8 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 SKILL_DIR = os.path.join(HERE, "document-manager")
+BACKLOG_DIR = os.path.join(HERE, "backlog")
+BACKLOG_CLIENT = os.path.join(BACKLOG_DIR, "scripts", "backlog_client.py")
 PY_CLIENT = os.path.join(SKILL_DIR, "scripts", "dm_client.py")
 NODE_CLIENT = os.path.join(SKILL_DIR, "scripts", "dm_client.mjs")
 KEYS_FILE = os.path.join(REPO, "test", "api", ".auth-keys.json")
@@ -60,23 +62,107 @@ def check_skill_md():
     check(0 < len(description) <= 1024, f"description が1〜1024文字 ({len(description)}文字)")
 
 
-def check_zip(data, label):
+def check_zip(data, label, skill="document-manager", required=("SKILL.md", "README.md", "scripts/dm_client.py", "scripts/dm_client.mjs")):
     print(f"[ZIP: {label}]")
+    skill_dir = os.path.join(HERE, skill)
     zf = zipfile.ZipFile(io.BytesIO(data))
     check(zf.testzip() is None, "CRCエラーが無い")
     names = zf.namelist()
-    check(all(n.startswith("document-manager/") for n in names), "中身が document-manager/ フォルダ1つにまとまっている")
-    for required in ("SKILL.md", "README.md", "scripts/dm_client.py", "scripts/dm_client.mjs"):
-        check(f"document-manager/{required}" in names, f"{required} を含む")
+    check(all(n.startswith(f"{skill}/") for n in names), f"中身が {skill}/ フォルダ1つにまとまっている")
+    for name in required:
+        check(f"{skill}/{name}" in names, f"{name} を含む")
+    check(not any("__pycache__" in n for n in names), "Pythonの一時ファイル(__pycache__)を含まない")
     for info in zf.infolist():
         mode = (info.external_attr >> 16) & 0o777
-        expected = 0o755 if info.filename.startswith("document-manager/scripts/") else 0o644
+        expected = 0o755 if info.filename.startswith(f"{skill}/scripts/") else 0o644
         check(mode == expected, f"{info.filename} のパーミッションが {oct(expected)} ({oct(mode)})")
     # 配布物がリポジトリの内容と一致すること(古いファイルや余計なファイルが混ざっていない)
     for name in names:
-        src = os.path.join(SKILL_DIR, *name.split("/")[1:])
+        src = os.path.join(skill_dir, *name.split("/")[1:])
         check(os.path.isfile(src) and open(src, "rb").read() == zf.read(name), f"{name} がリポジトリと同一")
     return {n: zf.read(n) for n in names}
+
+
+def check_referenced_scripts(skill_dir):
+    """
+    説明書(SKILL.md)が案内しているクライアントが、実際に入っていること。
+    Backlog の説明書が、入っていない Node.js 版を案内していたことがある(AIが探して失敗する)
+    """
+    text = open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8").read()
+    for script in sorted(set(re.findall(r"scripts/([A-Za-z0-9_]+\.(?:py|mjs))", text))):
+        check(os.path.isfile(os.path.join(skill_dir, "scripts", script)), f"SKILL.md が案内する scripts/{script} が入っている")
+
+
+# ---- 接続情報の登録(setup) ----
+# APIキーをチャットに貼らずに済ませるためのもの。エディタの代わりに、キーを書き込んで保存する
+# 小さなスクリプトを使う(利用者がメモ帳で貼り付けて保存するのと同じことが起きる)
+FAKE_EDITOR = """
+import json, os, sys
+path = sys.argv[-1]
+data = json.load(open(path, encoding="utf-8-sig"))
+assert "apiKey" in data, "ひな形に apiKey の欄が無い"
+if os.environ.get("FAKE_PASTED_KEY"):
+    data["apiKey"] = os.environ["FAKE_PASTED_KEY"]
+json.dump(data, open(path, "w", encoding="utf-8"))
+"""
+
+
+def smoke_setup(name, command, env_prefix, workdir, real_key, extra):
+    """
+    name: 表示名 / command: クライアントの起動コマンド / env_prefix: DM か BACKLOG
+    real_key: 利用者が貼り付けるキー / extra: setup --edit に付ける引数(接続先)
+    """
+    print(f"[setup: {name}]")
+    config_path = os.path.join(workdir, f"setup-{name}.json")
+    editor_script = os.path.join(workdir, "fake_editor.py")
+    open(editor_script, "w", encoding="utf-8").write(FAKE_EDITOR)
+    # 環境変数の接続情報は外し、設定ファイルだけで動かす
+    base = {k: v for k, v in os.environ.items() if not k.startswith(env_prefix + "_")}
+    base[f"{env_prefix}_CONFIG"] = config_path
+    run = lambda args, env, **kw: subprocess.run(command + args, env=env, capture_output=True, text=True, encoding="utf-8", **kw)
+
+    not_yet = run(["config"], base)
+    check(not_yet.returncode == 1 and "setup" in not_yet.stderr, "未設定なら、setup で設定するよう案内する")
+
+    # エディタは「キーを貼り付けて保存する」利用者の代わり。開いたファイルにひな形があること自体も確かめる
+    # (パスに空白が無い前提で、空白区切りで渡す。テスト用の一時ディレクトリなので問題ない)
+    editor = f"{sys.executable} {editor_script}"
+    with_editor = {**base, f"{env_prefix}_EDITOR": editor, "FAKE_PASTED_KEY": real_key}
+    opened = run(["setup", "--edit"] + extra, with_editor)
+    result = json.loads(opened.stdout or "{}")
+    check(opened.returncode == 0 and result.get("created") is True and result.get("opened") is True, f"setup --edit: ひな形を作ってエディタで開く ({opened.stderr.strip()[:120]})")
+    check(real_key not in opened.stdout + opened.stderr, "setup --edit: キーを画面(AIが読む出力)に出さない")
+    saved = json.load(open(config_path, encoding="utf-8-sig"))
+    check(saved.get("apiKey") == real_key, "setup --edit: 利用者が書き込んだキーで保存されている")
+    if os.name != "nt":
+        check(os.stat(config_path).st_mode & 0o077 == 0, "設定ファイルは本人以外が読めない(600)")
+
+    shown = run(["config"], base)
+    check(shown.returncode == 0 and real_key not in shown.stdout, "config: 保存した設定で動き、キーは伏せて表示する")
+
+    # 既にある設定を開き直しても、書き込んだキーを消さない
+    reopened = run(["setup", "--edit"], {**base, f"{env_prefix}_EDITOR": f"{editor}"})
+    check(json.loads(reopened.stdout or "{}").get("created") is False, "setup --edit: 既存の設定を開き直せる")
+    check(json.load(open(config_path, encoding="utf-8-sig")).get("apiKey") == real_key, "setup --edit: 開き直してもキーを消さない")
+
+    # AIエージェントが setup を実行しても、入力待ちで止まらずに断る(利用者に実行してもらうよう伝える)
+    started = time.monotonic()
+    refused = run(["setup"] + extra[:0], base, stdin=subprocess.DEVNULL, timeout=30)
+    check(refused.returncode == 1 and "コードブロック" in refused.stderr and time.monotonic() - started < 20,
+          "setup: AIエージェントから実行すると、止まらずに断り、利用者に実行してもらうよう伝える")
+    piped = run(["setup"], base, input="dm_should_not_be_read\n", timeout=30)
+    check(piped.returncode == 1 and json.load(open(config_path, encoding="utf-8-sig")).get("apiKey") == real_key,
+          "setup: パイプで渡されたキーは読まない(チャット経由のキーを受け付けない)")
+
+    # エディタが開けなかったときは、そうと伝えて場所を示す
+    os.remove(config_path)
+    failed = run(["setup", "--edit"], {**base, f"{env_prefix}_EDITOR": f"{editor}-no-such-editor"})
+    failed_result = json.loads(failed.stdout or "{}")
+    check(failed_result.get("opened") is False and config_path.replace("/", os.sep) in failed_result.get("next", "").replace("/", os.sep),
+          "setup --edit: エディタを開けなければ、そうと伝えてファイルの場所を示す")
+    broken = open(config_path, "w", encoding="utf-8").write('{"apiKey": "x", ')
+    bad = run(["config"], base)
+    check(bad.returncode == 1 and "JSON" in bad.stderr, "壊れた設定ファイルは、直し方を案内する(落ちない)")
 
 
 def smoke_clients(env, workdir):
@@ -123,6 +209,11 @@ def smoke_clients(env, workdir):
 
         bad = run_client(kind, ["search"], {**env, "DM_API_KEY": "dm_invalid"}, expect_ok=False)
         check(bad.returncode == 1 and "401" in bad.stderr, "不正なキーはエラー(401)")
+        # 期限切れ・無効なキーでは、利用者が実行して登録し直すコマンドを添える(AIはそれを示すだけでよい)
+        detail = json.loads(bad.stderr.strip().splitlines()[-1])
+        check(detail.get("status") == 401 and "setup --base-url" in detail.get("setupCommand", "")
+              and BASE_URL in detail.get("setupCommand", "") and "チャットで受け取らない" in detail.get("hint", ""),
+              "401: 登録し直すためのコマンド(setupCommand)と、進め方(hint)を返す")
 
         smoke_edit_commands(kind, env, v2["id"], v1["id"])
         smoke_project_commands(kind, env, workdir, v2["id"])
@@ -455,7 +546,12 @@ def main():
         env = {**os.environ, "DM_BASE_URL": BASE_URL, "DM_API_KEY": keys["readwrite"], "DM_CONFIG": os.path.join(workdir, "none.json")}
 
         check_skill_md()
+        for skill_dir in (SKILL_DIR, BACKLOG_DIR):
+            check_referenced_scripts(skill_dir)
         smoke_clients(env, workdir)
+        smoke_setup("python", [sys.executable, PY_CLIENT], "DM", workdir, keys["readwrite"], ["--base-url", BASE_URL])
+        smoke_setup("node", ["node", NODE_CLIENT], "DM", workdir, keys["readwrite"], ["--base-url", BASE_URL])
+        smoke_setup("backlog", [sys.executable, BACKLOG_CLIENT], "BACKLOG", workdir, "backlogkey1234567890", ["--space", "example.backlog.jp"])
 
         built = subprocess.run([sys.executable, os.path.join(HERE, "build_skill_zip.py")], capture_output=True, text=True, encoding="utf-8")
         check(built.returncode == 0, "build_skill_zip.py でZIPを作成できる")
@@ -464,6 +560,13 @@ def main():
         req = urllib.request.Request(BASE_URL + "api/claude-skill.zip", headers={"Authorization": f"Bearer {keys['readonly']}"})
         served_files = check_zip(urllib.request.urlopen(req).read(), "api/claude-skill.zip")
         check(built_files == served_files, "CIで作ったZIPとサーバーが配信するZIPの中身が一致する")
+
+        # 関連するSkill(Backlog)も、同じ画面から配る
+        backlog_required = ("SKILL.md", "scripts/backlog_client.py")
+        built_backlog = check_zip(open(os.path.join(HERE, "dist", "backlog-skill.zip"), "rb").read(), "build_skill_zip.py(backlog)", "backlog", backlog_required)
+        req = urllib.request.Request(BASE_URL + "api/related-skills/backlog.zip", headers={"Authorization": f"Bearer {keys['readonly']}"})
+        served_backlog = check_zip(urllib.request.urlopen(req).read(), "api/related-skills/backlog.zip", "backlog", backlog_required)
+        check(built_backlog == served_backlog, "CIで作ったBacklogのZIPと、サーバーが配信するZIPの中身が一致する")
     finally:
         server.terminate()
         server.wait(timeout=10)

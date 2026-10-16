@@ -37,6 +37,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY app/ ./
 # Claude Code 用 Skill(APIキー管理画面からZIPでダウンロードさせる。lib/claude-skill.js参照)
 COPY tools/claude-skill/document-manager/ ./claude-skill/document-manager/
+# 関連するSkill(Document Manager とは別のサービス用)も、同じ画面から配る(lib/claude-skill.js の RELATED_SKILLS)
+COPY tools/claude-skill/backlog/ ./claude-skill/backlog/
 
 # バージョン情報(画面右下の Ver. 表示・OpenAPIのversion)。CIから渡される値で必ず生成する。
 # COPYの後に置いているのは、ローカルに残っている古い VERSION.json を必ず上書きするため
