@@ -48,6 +48,10 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 	test("手順には、入力欄にキーを貼ることと、チャットに貼らないことが書いてある", async ({page}) => {
 		const steps = page.locator("#claudeSkillSteps");
 		await expect(steps).toContainText("入力欄が出たら");
+		// 依頼文を貼るのが先。キーは入力欄が出てから発行し、そのまま貼る(手元に控えておく時間を作らない)
+		const items = await steps.locator("li").allTextContents();
+		expect(items[0]).toContain("登録依頼文をコピー");
+		expect(items[1]).toContain("APIキーを発行");
 		await expect(steps).toContainText("APIキーはチャットに貼らないでください");
 		// 自分で登録したい人向けのコマンドも出る(展開先に合わせたパス)
 		await expect(page.locator("#claudeSkillManual")).toContainText("~/.claude/skills/document-manager/scripts/dm_client.py setup --base-url");
@@ -55,6 +59,7 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 
 	test("関連するSkillとして、BacklogのSkillをダウンロードできる", async ({page}) => {
 		await expect(page.locator("#toolCardBacklog")).toContainText("Backlog");
+		await page.locator("#toolCardBacklog .toolSteps summary").click();
 		const downloadPromise = page.waitForEvent("download");
 		await page.locator("#backlogSkillDownloadLink").click();
 		const download = await downloadPromise;
@@ -102,11 +107,29 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 		expect(urlOf(second)).not.toBe(urlOf(first));
 	});
 
-	test("URLを発行できないときは、ZIPを添付してもらう依頼文に戻す", async ({page}) => {
+	test("URLを発行できないときは、ZIPを添付してもらう依頼文に戻し、ZIPの保存場所へ案内する", async ({page}) => {
 		await page.route("**/api/skills/*/download-link", (route) => route.fulfill({status: 500, json: {error: "x"}}));
-		const prompt = await copiedPrompt(page, "#claudeSkillCopyPromptButton");
-		expect(prompt).toContain("添付した document-manager-skill.zip を");
+		const dialogMessage = new Promise((resolve) => {
+			page.once("dialog", async (dialog) => {
+				resolve(dialog.message());
+				await dialog.accept();
+			});
+		});
+		const prompt = await copiedPrompt(page, "#backlogSkillCopyPromptButton");
+		expect(prompt).toContain("添付した backlog-skill.zip を");
 		expect(prompt).not.toContain("skill-downloads");
+		expect(await dialogMessage).toContain("SkillのZIPをダウンロード");
+		// 行き止まりにしない: ZIPの保存場所が開いて見えている
+		await expect(page.locator("#backlogSkillDownloadLink")).toBeVisible();
+	});
+
+	// ふだんの手順は「依頼文をコピーして貼る」だけ。ZIPの保存は手順の中の逃げ道として置く
+	test("カードの前面にはZIPのダウンロードを置かず、手順の中の「自分で渡す場合」に置く", async ({page}) => {
+		for (const card of ["#toolCardDocumentManager", "#toolCardBacklog"]) {
+			await expect(page.locator(`${card} .claudeSkillActions a[download]`)).toHaveCount(0);
+			await expect(page.locator(`${card} .toolSteps a[download]`)).toHaveCount(1);
+			await expect(page.locator(`${card} .toolSteps`)).toContainText("ZIPを自分で渡す場合");
+		}
 	});
 
 	// どのエージェント向けかは、上のSkill案内のタブで選ぶ(2か所で選ばせない)

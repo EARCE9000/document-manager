@@ -332,6 +332,10 @@
 	.toolCard .claudeSkillActions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
 	.toolCard .claudeSkillActions .modalButton { font-size: 0.95em; padding: 5px 12px; text-decoration: none; }
 	.toolSteps { margin-top: 8px; }
+	/* ふだんの手順(依頼文を貼るだけ)と、手動のやり方の境目。読み飛ばしてよい部分だと一目で分かるように線で区切る */
+	.toolManualRule { border: none; border-top: 1px solid #9aa4b2; margin: 14px 0 10px; }
+	.toolManualLead { line-height: 1.6; }
+	.toolDownloadLink { display: inline-block; margin: 4px 0 8px; color: #1a56db; }
 	.toolSteps summary { cursor: pointer; font-weight: 600; }
 	.toolCard ol { margin: 8px 0 4px; padding-left: 1.4em; line-height: 1.7; }
 	.toolCard code { background: #fff; border: 1px solid #ddd; border-radius: 3px; padding: 0 4px; word-break: break-all; }
@@ -1726,8 +1730,7 @@
 					<div class="toolCardHeader"><h3>Document Manager</h3><span class="toolVersion"></span></div>
 					<div class="toolCardIntro">「この資料アップして」「前の版を置き換えて」「〜を探して」「PDFにして」「この案件の資料一覧ちょうだい」と話しかけるだけで、この Document Manager を操作できます(Python / Node.js のクライアント同梱)。</div>
 					<div class="claudeSkillActions">
-						<a id="claudeSkillDownloadLink" class="modalButton save" href="./api/claude-skill.zip" download>SkillのZIPをダウンロード</a>
-						<button type="button" id="claudeSkillCopyPromptButton" class="modalButton">登録依頼文をコピー</button>
+						<button type="button" id="claudeSkillCopyPromptButton" class="modalButton save">登録依頼文をコピー</button>
 						<button type="button" id="toolsOpenApiKeyButton" class="modalButton">APIキーを発行</button>
 					</div>
 					<details class="toolSteps" open>
@@ -1740,8 +1743,7 @@
 					<div class="toolCardHeader"><h3>Backlog</h3><span class="toolVersion"></span></div>
 					<div class="toolCardIntro">「Backlogにチケットを作って」「このスクショを課題に貼って」「PROJ-123 を完了にして」と話しかけるだけで、Backlog の課題を操作できます。BacklogのMCPではできない<strong>ファイルの添付</strong>ができるのが特長です(Python 3.8 以上が必要)。接続先とAPIキーは Backlog のものを使います。</div>
 					<div class="claudeSkillActions">
-						<a id="backlogSkillDownloadLink" class="modalButton save" href="./api/related-skills/backlog.zip" download>SkillのZIPをダウンロード</a>
-						<button type="button" id="backlogSkillCopyPromptButton" class="modalButton">登録依頼文をコピー</button>
+						<button type="button" id="backlogSkillCopyPromptButton" class="modalButton save">登録依頼文をコピー</button>
 					</div>
 					<details class="toolSteps">
 						<summary>登録の手順</summary>
@@ -5296,12 +5298,14 @@ const renderSkillAgentGuide = () => {
 		tab.setAttribute("aria-selected", String(selected));
 	});
 	document.getElementById("claudeSkillSteps").innerHTML = `
-		<li>上の「APIキーを発行」で、ロール <code>readwrite</code>・有効期限「1年」のAPIキーを発行し、「APIキーをコピー」で手元に控えます(継続して使うため。既に他のエージェント用に発行・設定済みなら不要)。期限が切れたら発行し直します。</li>
-		<li>「登録依頼文をコピー」を押し、${escapeHtml(agent.label)} のチャットに貼り付けて送ります。<strong>ZIPの保存や添付は要りません</strong>(依頼文に入っている取得用のURLから、エージェントが取ってきて <code>${escapeHtml(agent.dir)}/document-manager/</code> に展開します。URLはコピーしてから30分で使えなくなるので、それを過ぎたらコピーし直します)。ZIPを自分で渡したい場合は「SkillのZIPをダウンロード」で保存し、チャットに添付します。</li>
-		<li>接続先URLは <code id="claudeSkillBaseUrl">${escapeHtml(claudeSkillBaseUrl)}</code> です(依頼文に含まれています)。エージェントがAPIキーを登録するコマンドを示すので、実行します(Claude Code のデスクトップアプリなら、実行ボタンから右側の端末で実行できます)。<strong>「APIキー」の入力欄が出たら、手順2のキーを貼り付けて Enter</strong> を押し、「保存した」と伝えます。貼り付けた文字は <code>*</code> で表示されます。<strong>APIキーはチャットに貼らないでください</strong>(会話の記録に残ります)。設定は <code>~/.document-manager.json</code> に保存され、他のエージェントとも共有されます。</li>
+		<li>「登録依頼文をコピー」を押し、${escapeHtml(agent.label)} のチャットに貼り付けて送ります。<strong>ZIPの保存や添付は要りません</strong>(依頼文に入っている取得用のURLから、エージェントが取ってきて <code>${escapeHtml(agent.dir)}/document-manager/</code> に展開します。URLはコピーしてから30分で使えなくなるので、それを過ぎたらコピーし直します)。接続先URL <code id="claudeSkillBaseUrl">${escapeHtml(claudeSkillBaseUrl)}</code> も依頼文に入っています。</li>
+		<li>エージェントがAPIキーを登録するコマンドを示すので、実行します(Claude Code のデスクトップアプリなら、実行ボタンから右側の端末で実行できます)。<strong>「APIキー」の入力欄が出たら</strong>、上の「APIキーを発行」でキーを発行し(ロール <code>readwrite</code>、継続して使うなら有効期限「1年」)、「APIキーをコピー」して<strong>入力欄に貼り付けて Enter</strong> を押し、「保存した」と伝えます。貼り付けた文字は <code>*</code> で表示されます。<strong>APIキーはチャットに貼らないでください</strong>(会話の記録に残ります)。既に他のエージェント用に設定済みなら、この手順は要りません(設定は <code>~/.document-manager.json</code> に保存され、エージェント同士で共有されます)。期限が切れたら、同じコマンドで新しいキーに置き換えます。</li>
 		<li>${agent.check}</li>
 	`;
 	document.getElementById("claudeSkillManual").innerHTML = `
+		<hr class="toolManualRule">
+		<div class="toolManualLead"><strong>ZIPを自分で渡す場合</strong>(AIが Document Manager に接続できない環境、AIの通信が制限されている場合、claude.ai にアップロードする場合など)は、ここから保存してチャットに添付するか、手で登録します。</div>
+		<a id="claudeSkillDownloadLink" class="toolDownloadLink" href="./api/claude-skill.zip" download>SkillのZIPをダウンロード(document-manager-skill.zip)</a>
 		<div>手動で登録する場合は、ZIPを次の場所に展開します(自分の全プロジェクトで有効)。特定のプロジェクトだけで使う場合は <code>&lt;プロジェクト&gt;/${escapeHtml(agent.projectDir)}/</code> に展開します。</div>
 		<pre>unzip document-manager-skill.zip -d ${escapeHtml(agent.dir)}/</pre>
 		<pre>Expand-Archive document-manager-skill.zip -DestinationPath "$env:USERPROFILE\\${escapeHtml(agent.winDir)}"</pre>
@@ -5328,11 +5332,13 @@ const buildBacklogSkillInstallPrompt = (link) => {
 const renderRelatedSkillGuide = () => {
 	const agent = SKILL_AGENTS[selectedSkillAgent];
 	document.getElementById("backlogSkillSteps").innerHTML = `
-		<li>Backlog の「個人設定 &gt; API」でAPIキーを発行し、手元に控えます(<strong>Document Manager のAPIキーとは別のもの</strong>です)。</li>
 		<li>「登録依頼文をコピー」を押し、${escapeHtml(agent.label)} のチャットに貼り付けて送ります。<strong>ZIPの保存や添付は要りません</strong>(エージェントが取得用のURLから取ってきて <code>${escapeHtml(agent.dir)}/backlog/</code> に展開します。URLはコピーしてから30分で使えなくなります)。</li>
-		<li>スペースのホスト名(例: <code>example.backlog.jp</code>)を聞かれたら答えます。エージェントがAPIキーを登録するコマンドを示すので、実行します。<strong>「APIキー」の入力欄が出たら、手順2のキーを貼り付けて Enter</strong> を押し、「保存した」と伝えます。<strong>APIキーはチャットに貼らないでください。</strong></li>
+		<li>スペースのホスト名(例: <code>example.backlog.jp</code>)を聞かれたら答えます。エージェントがAPIキーを登録するコマンドを示すので、実行します。<strong>「APIキー」の入力欄が出たら</strong>、Backlog の「個人設定 &gt; API」でキーを発行してコピーし(<strong>Document Manager のAPIキーとは別のもの</strong>です)、<strong>入力欄に貼り付けて Enter</strong> を押し、「保存した」と伝えます。<strong>APIキーはチャットに貼らないでください。</strong></li>
 	`;
 	document.getElementById("backlogSkillManual").innerHTML = `
+		<hr class="toolManualRule">
+		<div class="toolManualLead"><strong>ZIPを自分で渡す場合</strong>(AIが Document Manager に接続できない環境、AIの通信が制限されている場合、claude.ai にアップロードする場合など)は、ここから保存してチャットに添付するか、手で登録します。</div>
+		<a id="backlogSkillDownloadLink" class="toolDownloadLink" href="./api/related-skills/backlog.zip" download>SkillのZIPをダウンロード(backlog-skill.zip)</a>
 		<div>手動で登録する場合は、ZIPを次の場所に展開します。</div>
 		<pre>unzip backlog-skill.zip -d ${escapeHtml(agent.dir)}/</pre>
 		<pre>Expand-Archive backlog-skill.zip -DestinationPath "$env:USERPROFILE\\${escapeHtml(agent.winDir)}"</pre>
@@ -5364,13 +5370,20 @@ const issueSkillDownloadLink = async (skill) => {
 };
 
 // コピーするたびに新しいURLを発行する(押した時点から有効期限が始まる)
-document.getElementById("claudeSkillCopyPromptButton").addEventListener("click", async (ev) => {
-	const button = ev.currentTarget;
-	copyTextWithFeedback(buildClaudeSkillInstallPrompt(await issueSkillDownloadLink("document-manager")), button);
+const copySkillPrompt = async (button, skill, buildPrompt, stepsBox) => {
+	const link = await issueSkillDownloadLink(skill);
+	await copyTextWithFeedback(buildPrompt(link), button);
+	if (link == null) {
+		stepsBox.open = true;
+		alert("ZIPの取得用URLを発行できなかったため、ZIPを添付してもらう依頼文をコピーしました。"
+			+ "「登録の手順」の「SkillのZIPをダウンロード」から保存し、依頼文と一緒にチャットへ添付してください。");
+	}
+};
+document.getElementById("claudeSkillCopyPromptButton").addEventListener("click", (ev) => {
+	copySkillPrompt(ev.currentTarget, "document-manager", buildClaudeSkillInstallPrompt, document.querySelector("#toolCardDocumentManager .toolSteps"));
 });
-document.getElementById("backlogSkillCopyPromptButton").addEventListener("click", async (ev) => {
-	const button = ev.currentTarget;
-	copyTextWithFeedback(buildBacklogSkillInstallPrompt(await issueSkillDownloadLink("backlog")), button);
+document.getElementById("backlogSkillCopyPromptButton").addEventListener("click", (ev) => {
+	copySkillPrompt(ev.currentTarget, "backlog", buildBacklogSkillInstallPrompt, document.querySelector("#toolCardBacklog .toolSteps"));
 });
 
 // 配っているSkillの版を、カードの見出しの横に出す(手元のものが古くないかを見比べられるように)
