@@ -36,6 +36,7 @@
  *   node dm_client.mjs miro <プロジェクト> / miro-link <プロジェクト> [--no-wait] / miro-sync <プロジェクト>
  *   node dm_client.mjs miro-unlink <プロジェクト> [--remove-documents] / miro-publish <プロジェクト> <文書ID> [--off]
  *   node dm_client.mjs miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
+ *   node dm_client.mjs miro-layout <プロジェクト> <JSONファイル|->  (位置・色・見出し・図形をまとめて当てる)
  *   node dm_client.mjs miro-arrange <プロジェクト>
  *       プロジェクトの資料を Miro のボードへ並べる(連携とボードの設定は管理者が画面で行う)
  *   node dm_client.mjs folder-create <プロジェクト> <名前> [--parent 親フォルダ]
@@ -840,6 +841,18 @@ const commands = {
 		else throw new DmError("--next-to(と --side)・--to-project・--x と --y のどれかを指定してください");
 		if (body.side != null && !["right", "left", "above", "below"].includes(body.side)) throw new DmError("--side は right / left / above / below のどれかです");
 		return request("PATCH", miroPath(id, `/items/${encodeURIComponent(requireArg(documentId, "文書ID"))}`), {json: body});
+	},
+	// レイアウト(資料の位置と色・見出しの文字・図形・枠の大きさ)をまとめて当てる。並べ方は呼ぶ側が決める。
+	// JSON の形は spec の applyProjectMiroLayout を参照。正しくないところがあれば何も動かさず、理由の一覧(details)が返る
+	"miro-layout": async ([project, file]) => {
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		let layout;
+		try {
+			layout = JSON.parse(fs.readFileSync(requireArg(file, "レイアウトの JSON ファイル(- で標準入力)") === "-" ? 0 : file, "utf8"));
+		} catch (err) {
+			throw new DmError(`レイアウトの JSON を読めません: ${err.message}`);
+		}
+		return request("POST", miroPath(id, "/layout"), {json: layout});
 	},
 	"miro-arrange": async ([project]) => request("POST", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id, "/arrange")),
 	"alias-move": async ([alias, id]) => {

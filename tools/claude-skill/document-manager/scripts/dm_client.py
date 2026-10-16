@@ -44,6 +44,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py miro-unlink <プロジェクト> [--remove-documents]   連動をやめる(既定ではボードに残す)
   python dm_client.py miro-publish <プロジェクト> <文書ID> [--off]      資料ごとに出す・出さない
   python dm_client.py miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
+  python dm_client.py miro-layout <プロジェクト> <JSONファイル|->   レイアウト(位置・色・見出し・図形)をまとめて当てる
   python dm_client.py miro-arrange <プロジェクト>  Miro の枠の中をフォルダの順に並べ直す
   python dm_client.py project-create <名前>        プロジェクトの作成
   python dm_client.py folder-create <プロジェクト> <名前> [--parent 親フォルダ]
@@ -1024,6 +1025,23 @@ def cmd_miro_move(args):
     return request("PATCH", f"api/projects/{quote_id(project_id)}/miro/items/{quote_id(args.id)}", body=body)
 
 
+def cmd_miro_layout(args):
+    """
+    レイアウト(資料の位置と色・見出しの文字・図形・枠の大きさ)をまとめて当てる。並べ方は呼ぶ側が決める。
+    JSON の形は spec の applyProjectMiroLayout を参照。正しくないところがあれば何も動かさず、理由の一覧(details)が返る
+    """
+    project_id = resolve_project(args.project)["id"]
+    try:
+        if args.file == "-":
+            layout = json.load(sys.stdin)
+        else:
+            with open(args.file, encoding="utf-8") as f:
+                layout = json.load(f)
+    except (OSError, ValueError) as err:
+        raise DmError(f"レイアウトの JSON を読めません: {err}") from None
+    return request("POST", f"api/projects/{quote_id(project_id)}/miro/layout", body=layout)
+
+
 def cmd_miro_arrange(args):
     project_id = resolve_project(args.project)["id"]
     return request("POST", f"api/projects/{quote_id(project_id)}/miro/arrange")
@@ -1364,6 +1382,10 @@ def main():
     p.add_argument("--x", type=float, help="枠の左上からの位置(資料の中心)")
     p.add_argument("--y", type=float, help="枠の左上からの位置(資料の中心)")
     p.set_defaults(func=cmd_miro_move)
+    p = sub.add_parser("miro-layout", help="Miro の枠にレイアウト(資料の位置と色・見出し・図形)をまとめて当てる")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("file", help="レイアウトの JSON ファイル(- で標準入力)")
+    p.set_defaults(func=cmd_miro_layout)
     p = sub.add_parser("miro-arrange", help="Miro の枠の中をフォルダの順に並べ直す(人が並べた配置は上書きされる)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.set_defaults(func=cmd_miro_arrange)

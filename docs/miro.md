@@ -99,6 +99,37 @@ Compose で動かす場合は、`deploy/compose.env` に `MIRO_CLIENT_ID` / `MIR
 `PATCH /api/projects/:id/miro/items/:documentId`。見出しも一緒に動き、動かした位置は新しい版でも保たれます。
 Document Manager の Skill からは `miro-move`・`miro-arrange` で、AI に「〇〇を△△の右に置いて」と頼めます。
 
+### レイアウトをまとめて当てる(並べ方は指示する側が決める)
+
+十字型・フォルダ列型・時系列型([miro-layouts/](miro-layouts/))のような並べ方は、Document Manager には作り込みません。
+並べ方を決めるのは指示する側(人や AI)で、Document Manager は決まったレイアウトをそのままボードへ置きます。
+
+`POST /api/projects/:id/miro/layout`(Skill からは `miro-layout <プロジェクト> <JSONファイル>`):
+
+```json
+{
+  "items":  [{"documentId": "…", "x": 300, "y": 500, "color": "#fde68a"}],
+  "labels": [{"text": "左上: 要件定義〜設計", "x": 600, "y": 120, "width": 1000, "fontSize": 48, "color": "#1e3a8a"}],
+  "shapes": [{"x": 1200, "y": 600, "width": 8, "height": 1000, "fillColor": "#333333"},
+             {"x": 1700, "y": 600, "width": 800, "height": 900, "fillColor": "#e0f2fe", "fillOpacity": 0.25,
+              "borderColor": "#0284c7", "borderWidth": 2, "borderStyle": "dashed"}],
+  "frame":  {"width": 4000, "height": 3000}
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| 位置 | すべて**枠の左上からの中心の位置**。資料の大きさは `GET .../miro` の `items[].position`、枠の大きさは `frame` |
+| `items` | 資料を動かす(見出しも一緒に)。`color` で見出しの背景を塗る(タグによる色分け用。`null` で外す) |
+| `labels` | 区画・列・月などの見出しの文字 |
+| `shapes` | 区切りの線(細い長方形)・区画の背景。**Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なる**ので、背景は `fillOpacity` を小さくする |
+| `frame` | 枠の大きさ。省略すると中身に合わせて広げる(左上は動かさず、縮めはしない) |
+| 当て直し | 前に置いた見出しの文字と図形を片付けてから置く(`keepDecorations: true` で残す)。初めて並べたときのフォルダの見出しも片付く |
+| 失敗 | 正しくないところが1つでもあれば、何も動かさずに理由の一覧(`details`)を返す |
+
+実物の Miro で、見出しの背景色・文字の大きさと色・図形の透明度と点線の枠が、指定どおりに置かれることを確かめています。
+1件ずつ `{x, y}` で動かすときも、はみ出す位置なら枠を広げます。
+
 ### 見る人
 
 ボードは Miro の共有のしかた(チームのメンバー・招待)で見せます。見る人に Document Manager 側の作業は要りません。

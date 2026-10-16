@@ -215,15 +215,31 @@ module.exports.replaceFile = (token, boardId, kind, itemId, {title, width, file,
 		file, fileName, contentType
 	});
 
-/** 文字を置く。content は Miro が受け付ける HTML(<p>・<a href> など) */
-module.exports.createText = (token, boardId, {content, x, y, width, parentId}) =>
+/**
+ * 文字を置く。content は Miro が受け付ける HTML(<p>・<a href> など)。
+ * style は Miro の文字の見た目(color・fillColor・fillOpacity・fontSize・textAlign)。省略できる
+ */
+module.exports.createText = (token, boardId, {content, x, y, width, parentId, style}) =>
 	call("POST", `${boardPath(boardId)}/texts`, {token, body: {
-		data: {content}, position: {x, y}, geometry: {width}, ...(parentId ? {parent: {id: parentId}} : {})
+		data: {content}, position: {x, y}, geometry: {width}, ...(style ? {style} : {}), ...(parentId ? {parent: {id: parentId}} : {})
 	}});
 
-/** 文字の中身を変える */
-module.exports.updateText = (token, boardId, textId, {content}) =>
-	call("PATCH", `${boardPath(boardId)}/texts/${encodeURIComponent(textId)}`, {token, body: {data: {content}}});
+/** 文字の中身・見た目を変える */
+module.exports.updateText = (token, boardId, textId, {content, style}) =>
+	call("PATCH", `${boardPath(boardId)}/texts/${encodeURIComponent(textId)}`, {token, body: {
+		...(content != null ? {data: {content}} : {}), ...(style ? {style} : {})
+	}});
+
+/**
+ * 図形を置く(区切りの線・区画の背景など)。shape は rectangle・round_rectangle・circle など。
+ * style は Miro の図形の見た目(fillColor・fillOpacity・borderColor・borderWidth・borderOpacity・borderStyle・color・fontSize)。
+ * Miro の REST API では重なりの順(前面・背面)を指定できず、あとから置いたものが上になるので、
+ * 資料の上に重ねる背景は fillOpacity を小さくする
+ */
+module.exports.createShape = (token, boardId, {shape = "rectangle", content = "", x, y, width, height, style, parentId}) =>
+	call("POST", `${boardPath(boardId)}/shapes`, {token, body: {
+		data: {shape, content}, position: {x, y}, geometry: {width, height}, ...(style ? {style} : {}), ...(parentId ? {parent: {id: parentId}} : {})
+	}});
 
 /** 項目をまとめる(人が画面で動かすと一緒に動く。APIで動かすときは1つずつ動かす必要がある) */
 module.exports.createGroup = (token, boardId, itemIds) =>

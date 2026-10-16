@@ -762,7 +762,13 @@ module.exports.moveDocument = async (projectId, documentId, instruction, user) =
 			await ds.run(SQL_SET_FRAME, {project_id: instruction.project, frame_id: other.frame_id, x: Number(other.frame_x), y, width: Number(other.frame_width) || frameWidth(), height: needed});
 		}
 	} else if (Number.isFinite(Number(instruction.x)) && Number.isFinite(Number(instruction.y)) && instruction.x !== null && instruction.y !== null) {
+		if (Number(instruction.x) < 0 || Number(instruction.y) < 0) throw moveError("x と y は枠の左上からの位置です(0 以上)");
 		destination = {x: Number(instruction.x), y: Number(instruction.y), parentId: current.parentId};
+		// はみ出す位置なら、いまの枠(自分のプロジェクトの枠に入っているとき)を広げる
+		const link = await ds.get(SQL_GET_PROJECT, [projectId]);
+		if (link?.frame_id != null && current.parentId === link.frame_id) {
+			await growFrameToFit(projectId, link, board, {right: destination.x + current.width / 2, bottom: destination.y + current.height / 2 + LAYOUT.captionHeight});
+		}
 	} else {
 		throw moveError("nextTo(と side)・project・x と y のどれかを指定してください");
 	}
@@ -834,6 +840,224 @@ module.exports.arrange = async (projectId, user) => {
 	}
 };
 
+// ---- レイアウトをまとめて当てる ----
+// 並べ方(十字型・フォルダ列型・時系列型など)を決めるのは、指示を出す側(人や AI)。ここは、決まった並べ方を
+// ボードへそのまま置く仕組みだけを持つ: 資料の位置と色、見出しの文字、図形(区切りの線・区画の背景)、枠の大きさ。
+// 見出しの文字と図形は Document Manager が覚えておき、次に当て直すときに片付けてから置く
+// (初めて並べたときのフォルダの見出しも同じ扱い)。
+
+const LAYOUT_LIMITS = Object.freeze({items: 2000, labels: 500, shapes: 500, maxCoordinate: 200000, textLength: 300});
+const SHAPE_KINDS = Object.freeze(["rectangle", "round_rectangle", "circle", "triangle", "rhombus", "parallelogram", "trapezoid", "pentagon", "hexagon", "octagon", "star", "flow_chart_predefined_process", "can", "cross", "right_arrow", "left_arrow", "left_right_arrow", "left_brace", "right_brace"]);
+const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+module.exports.LAYOUT_LIMITS = LAYOUT_LIMITS;
+module.exports.SHAPE_KINDS = SHAPE_KINDS;
+
+/** 指示を検め、Miro に渡す形にする。正しくないものがあれば、何も当てずに理由の一覧を返す */
+const normalizeLayout = (layout) => {
+	const errors = [];
+	const number = (value, label, {min = 0, max = LAYOUT_LIMITS.maxCoordinate} = {}) => {
+		const n = Number(value);
+		if (value === null || value === undefined || value === "" || !Number.isFinite(n) || n < min || n > max) {
+			errors.push(`${label} は ${min} 以上 ${max} 以下の数です(${JSON.stringify(value)})`);
+			return 0;
+		}
+		return n;
+	};
+	const color = (value, label) => {
+		if (value == null) return null;
+		if (!COLOR_PATTERN.test(String(value))) errors.push(`${label} は #rrggbb の形の色です(${JSON.stringify(value)})`);
+		return String(value);
+	};
+	const text = (value, label) => {
+		const s = String(value ?? "");
+		if (s.length === 0 || s.length > LAYOUT_LIMITS.textLength) errors.push(`${label} は 1〜${LAYOUT_LIMITS.textLength} 文字です`);
+		return s;
+	};
+	const list = (value, key) => {
+		if (value == null) return [];
+		if (!Array.isArray(value)) {
+			errors.push(`${key} は配列です`);
+			return [];
+		}
+		if (value.length > LAYOUT_LIMITS[key]) errors.push(`${key} は ${LAYOUT_LIMITS[key]} 件までです(${value.length} 件)`);
+		return value;
+	};
+	const items = list(layout?.items, "items").map((item, i) => ({
+		documentId: String(item?.documentId ?? ""),
+		x: number(item?.x, `items[${i}].x`),
+		y: number(item?.y, `items[${i}].y`),
+		// 色の指定が無ければ見出しの色は変えない。null を明示すると色を外す
+		...(item && "color" in item ? {color: color(item.color, `items[${i}].color`), setColor: true} : {})
+	}));
+	const seen = new Set();
+	for (const item of items) {
+		if (seen.has(item.documentId)) errors.push(`同じ資料が2回指定されています(${item.documentId})`);
+		seen.add(item.documentId);
+	}
+	const labels = list(layout?.labels, "labels").map((label, i) => ({
+		text: text(label?.text, `labels[${i}].text`),
+		x: number(label?.x, `labels[${i}].x`),
+		y: number(label?.y, `labels[${i}].y`),
+		width: number(label?.width ?? 400, `labels[${i}].width`, {min: 40, max: 50000}),
+		fontSize: label?.fontSize == null ? null : number(label.fontSize, `labels[${i}].fontSize`, {min: 10, max: 288}),
+		color: color(label?.color, `labels[${i}].color`),
+		fillColor: color(label?.fillColor, `labels[${i}].fillColor`),
+		bold: label?.bold !== false,
+		align: ["left", "center", "right"].includes(label?.align) ? label.align : "left"
+	}));
+	const shapes = list(layout?.shapes, "shapes").map((shape, i) => {
+		const kind = shape?.shape ?? "rectangle";
+		if (!SHAPE_KINDS.includes(kind)) errors.push(`shapes[${i}].shape は ${SHAPE_KINDS.join(" / ")} のどれかです`);
+		return {
+			shape: kind,
+			text: shape?.text == null ? "" : String(shape.text).slice(0, LAYOUT_LIMITS.textLength),
+			x: number(shape?.x, `shapes[${i}].x`),
+			y: number(shape?.y, `shapes[${i}].y`),
+			width: number(shape?.width, `shapes[${i}].width`, {min: 1, max: 100000}),
+			height: number(shape?.height, `shapes[${i}].height`, {min: 1, max: 100000}),
+			fillColor: color(shape?.fillColor, `shapes[${i}].fillColor`),
+			fillOpacity: shape?.fillOpacity == null ? null : number(shape.fillOpacity, `shapes[${i}].fillOpacity`, {min: 0, max: 1}),
+			borderColor: color(shape?.borderColor, `shapes[${i}].borderColor`),
+			borderWidth: shape?.borderWidth == null ? null : number(shape.borderWidth, `shapes[${i}].borderWidth`, {min: 0, max: 24}),
+			borderStyle: ["normal", "dotted", "dashed"].includes(shape?.borderStyle) ? shape.borderStyle : null
+		};
+	});
+	const frame = layout?.frame == null ? null : {
+		width: number(layout.frame.width, "frame.width", {min: 400, max: LAYOUT_LIMITS.maxCoordinate}),
+		height: number(layout.frame.height, "frame.height", {min: 400, max: LAYOUT_LIMITS.maxCoordinate})
+	};
+	if (items.length === 0 && labels.length === 0 && shapes.length === 0 && frame == null) {
+		errors.push("items・labels・shapes・frame のどれかを指定してください");
+	}
+	return {errors, items, labels, shapes, frame, keepDecorations: layout?.keepDecorations === true};
+};
+module.exports.normalizeLayout = normalizeLayout;
+
+/**
+ * 枠を、中身(右端・下端)が収まる大きさまで広げる。左上の角は動かさない(中の項目は左上からの位置なので、
+ * 中心を動かさずに広げると、中身ごと上や左へずれて見える)。縮めはしない
+ */
+const growFrameToFit = async (projectId, link, board, {right, bottom, width: requestedWidth, height: requestedHeight}) => {
+	const currentWidth = Number(link.frame_width) || frameWidth();
+	const currentHeight = Number(link.frame_height) || 600;
+	const width = Math.max(currentWidth, Math.ceil(right + LAYOUT.padding), requestedWidth ?? 0);
+	const height = Math.max(currentHeight, Math.ceil(bottom + LAYOUT.padding), requestedHeight ?? 0);
+	if (width === currentWidth && height === currentHeight) return {width, height};
+	const left = Number(link.frame_x) - currentWidth / 2;
+	const top = Number(link.frame_y) - currentHeight / 2;
+	const x = left + width / 2;
+	const y = top + height / 2;
+	await MiroConnection.withToken((token) => Miro.updateFrame(token, board, link.frame_id, {width, height, x, y}));
+	await ds.run(SQL_SET_FRAME, {project_id: projectId, frame_id: link.frame_id, x, y, width, height});
+	Object.assign(link, {frame_x: x, frame_y: y, frame_width: width, frame_height: height});
+	return {width, height};
+};
+
+/**
+ * レイアウトをまとめて当てる。位置はすべて、枠の左上からの中心の位置。
+ * @param {{items?: Array<{documentId: string, x: number, y: number, color?: ?string}>,
+ *          labels?: Array<{text: string, x: number, y: number, width?: number, fontSize?: number, color?: string, fillColor?: string, bold?: boolean, align?: string}>,
+ *          shapes?: Array<{shape?: string, x: number, y: number, width: number, height: number, text?: string, fillColor?: string, fillOpacity?: number, borderColor?: string, borderWidth?: number, borderStyle?: string}>,
+ *          frame?: {width: number, height: number}, keepDecorations?: boolean}} layout
+ */
+module.exports.applyLayout = async (projectId, layout, user) => {
+	const target = await MiroConnection.target();
+	if (target == null) throw moveError("Miro と連携していないか、貼り先のボードが決まっていません", 409);
+	const link = await ds.get(SQL_GET_PROJECT, [projectId]);
+	if (link == null || link.state !== "active" || link.frame_id == null) throw moveError("このプロジェクトは Miro と連動していません", 409);
+	const plan = normalizeLayout(layout);
+	// 資料は、このプロジェクトの枠に出ているものだけ(版が変わっていても同じ資料なら引ける)
+	const rows = new Map();
+	for (const item of plan.items) {
+		const row = await placedRowOf(projectId, item.documentId).catch(() => null);
+		if (row == null) plan.errors.push(`この資料はこのプロジェクトの Miro に出ていません(${item.documentId})`);
+		else rows.set(item.documentId, row);
+	}
+	if (plan.errors.length > 0) throw Object.assign(moveError("レイアウトの指示に正しくないところがあります(何も動かしていません)"), {details: plan.errors.slice(0, 50)});
+	if (!(await takeLock(projectId))) throw moveError("いま Miro へ反映しているところです。終わってからやり直してください", 409);
+	try {
+		const board = target.boardId;
+		const heightOf = (row) => Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
+		const widthOf = (row) => Number(row.width) || LAYOUT.itemWidth;
+		// 枠を先に広げる(はみ出した位置に置くと、枠の外に出たように見えるため)
+		let right = 0;
+		let bottom = 0;
+		for (const item of plan.items) {
+			const row = rows.get(item.documentId);
+			right = Math.max(right, item.x + widthOf(row) / 2);
+			bottom = Math.max(bottom, item.y + heightOf(row) / 2 + LAYOUT.captionHeight);
+		}
+		for (const label of plan.labels) {
+			right = Math.max(right, label.x + label.width / 2);
+			bottom = Math.max(bottom, label.y + (label.fontSize ?? 36));
+		}
+		for (const shape of plan.shapes) {
+			right = Math.max(right, shape.x + shape.width / 2);
+			bottom = Math.max(bottom, shape.y + shape.height / 2);
+		}
+		const frame = await growFrameToFit(projectId, link, board, {right, bottom, width: plan.frame?.width, height: plan.frame?.height});
+
+		// 前に置いた見出しの文字・図形を片付ける(当て直すたびに重ならないように)
+		let decorations = [];
+		if (plan.keepDecorations) {
+			try {
+				decorations = JSON.parse(link.header_ids || "[]");
+			} catch {
+				decorations = [];
+			}
+		} else {
+			await deleteHeaders(link, board);
+		}
+
+		// 図形 → 見出しの文字の順に置く(あとから置いたものが上に重なる)
+		const createdShapes = [];
+		await forEachConcurrently(plan.shapes, CONCURRENCY, async (shape) => {
+			const created = await MiroConnection.withToken((token) => Miro.createShape(token, board, {
+				shape: shape.shape, content: shape.text ? `<p>${escapeHtml(shape.text)}</p>` : "",
+				x: shape.x, y: shape.y, width: shape.width, height: shape.height, parentId: link.frame_id,
+				style: Object.fromEntries(Object.entries({
+					fillColor: shape.fillColor, fillOpacity: shape.fillOpacity == null ? null : String(shape.fillOpacity),
+					borderColor: shape.borderColor, borderWidth: shape.borderWidth == null ? null : String(shape.borderWidth), borderStyle: shape.borderStyle
+				}).filter(([, v]) => v != null))
+			}));
+			createdShapes.push(created.id);
+		});
+		const createdLabels = [];
+		await forEachConcurrently(plan.labels, CONCURRENCY, async (label) => {
+			const body = label.bold ? `<strong>${escapeHtml(label.text)}</strong>` : escapeHtml(label.text);
+			const created = await MiroConnection.withToken((token) => Miro.createText(token, board, {
+				content: `<p>${body}</p>`, x: label.x, y: label.y, width: label.width, parentId: link.frame_id,
+				style: Object.fromEntries(Object.entries({
+					fontSize: label.fontSize == null ? null : String(label.fontSize), color: label.color,
+					fillColor: label.fillColor, fillOpacity: label.fillColor ? "1" : null, textAlign: label.align
+				}).filter(([, v]) => v != null))
+			}));
+			createdLabels.push(created.id);
+		});
+		await ds.run(SQL_SET_HEADERS, {project_id: projectId, header_ids: JSON.stringify([...decorations, ...createdShapes, ...createdLabels])});
+
+		// 資料を動かす(見出しも一緒に)。色の指定があれば見出しの背景を塗る
+		let moved = 0;
+		await forEachConcurrently(plan.items, CONCURRENCY, async (item) => {
+			const row = rows.get(item.documentId);
+			await placeAt(board, row, {x: item.x, y: item.y, parentId: link.frame_id});
+			if (item.setColor && row.caption_id) {
+				await MiroConnection.withToken((token) => Miro.updateText(token, board, row.caption_id, {
+					style: item.color ? {fillColor: item.color, fillOpacity: "1"} : {fillOpacity: "0"}
+				})).catch((err) => {
+					if (err.status !== 404) throw err;
+				});
+			}
+			await ds.run(SQL_SET_POSITION, [item.x, item.y, row.width, row.height, user, new Date().toISOString(), projectId, row.alias]);
+			moved++;
+		});
+		logger.info({audit: "miro_layout_applied", user, projectId, moved, labels: createdLabels.length, shapes: createdShapes.length}, "audit");
+		return {moved, labels: createdLabels.length, shapes: createdShapes.length, frame};
+	} finally {
+		await releaseLock(projectId);
+	}
+};
+
 /** プロジェクトの連動の状態(画面・API の応答) */
 module.exports.status = async (projectId) => {
 	const target = await MiroConnection.target().catch(() => null);
@@ -849,6 +1073,8 @@ module.exports.status = async (projectId) => {
 		boardUrl,
 		// 枠へ直接飛ぶリンク(Miro は ?moveToWidget= で、その項目の位置を開く)
 		frameUrl: boardUrl && link?.frame_id ? `${boardUrl}${boardUrl.includes("?") ? "&" : "?"}moveToWidget=${link.frame_id}` : null,
+		// 枠の大きさ(レイアウトを組むときの目安。中身に合わせて広がる)
+		frame: link?.frame_id ? {width: Number(link.frame_width) || null, height: Number(link.frame_height) || null} : null,
 		linkedBy: link?.linked_by ?? null,
 		linkedAt: link?.linked_at ?? null,
 		lastSyncedAt: link?.last_synced_at ?? null,

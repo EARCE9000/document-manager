@@ -508,6 +508,26 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "applyProjectMiroLayout", method: "post", path: "/api/projects/:id/miro/layout", role: "readwrite", tag: "プロジェクト",
+		summary: "Miro の枠に、レイアウトをまとめて当てる",
+		description: "並べ方(十字型・フォルダ列型・時系列型など)は呼ぶ側が決め、ここではそのままボードへ置く。位置はすべて**枠の左上からの中心の位置**。"
+			+ "`items`: 資料の位置(`documentId`・`x`・`y`。見出しも一緒に動く)と、見出しの背景の色(`color`。`#rrggbb`、`null`で外す)。"
+			+ "`labels`: 区画や列の見出しの文字(`text`・`x`・`y`・`width`・`fontSize`・`color`・`fillColor`・`bold`・`align`)。"
+			+ "`shapes`: 区切りの線・区画の背景などの図形(`shape`・`x`・`y`・`width`・`height`・`fillColor`・`fillOpacity`・`borderColor`・`borderWidth`・`borderStyle`・`text`)。Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なるので、背景は`fillOpacity`を小さくする。"
+			+ "`frame`: 枠の大きさ(省略すると中身に合わせて広げる。左上は動かさず、縮めはしない)。"
+			+ "見出しの文字と図形は覚えておき、次に当てるときに片付けてから置く(`keepDecorations: true`で残す)。資料の大きさは`GET /api/projects/:id/miro`の`items[].position`、枠の大きさは`frame`で分かる。"
+			+ "正しくないところがあれば何も動かさずに400と理由の一覧(`details`)を返す。上限は資料2000件・見出し500件・図形500件",
+		body: {schema: {type: "object", properties: {
+			items: {type: "array", items: {type: "object", required: ["documentId", "x", "y"], properties: {documentId: {type: "string"}, x: {type: "number"}, y: {type: "number"}, color: {type: ["string", "null"]}}}},
+			labels: {type: "array", items: {type: "object", required: ["text", "x", "y"]}},
+			shapes: {type: "array", items: {type: "object", required: ["x", "y", "width", "height"]}},
+			frame: {type: "object", properties: {width: {type: "number"}, height: {type: "number"}}},
+			keepDecorations: {type: "boolean"}
+		}}},
+		responses: {400: "指示に正しくないところがある(details に理由の一覧)", 409: "連動していない・いま反映しているところ"},
+		aiGuide: false
+	},
+	{
 		id: "arrangeProjectMiro", method: "post", path: "/api/projects/:id/miro/arrange", role: "readwrite", tag: "プロジェクト",
 		summary: "Miro の枠の中を、フォルダの順に並べ直す",
 		description: "おしながきと同じ順に、フォルダごとの見出しを付けて並べ直す。**人が Miro で並べた配置は上書きされる**ので、頼まれたときだけ使う",

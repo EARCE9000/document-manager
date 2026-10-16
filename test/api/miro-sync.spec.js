@@ -397,3 +397,137 @@ test.describe.serial("Miro のボードの上で資料を動かす", () => {
 		expect(new Set(placed.map((i) => i.position.y)).size).toBe(1);
 	});
 });
+
+// 並べ方は指示を出す側(人や AI)が決め、Document Manager はそのまま置く(十字型・フォルダ列型・時系列型など)
+test.describe.serial("Miro の枠にレイアウトをまとめて当てる", () => {
+	let projectId;
+	const docs = {};
+	const file = (items, title) => items.find((i) => (i.type === "document" || i.type === "image") && i.data?.title === title);
+	const caption = (items, title) => items.find((i) => i.type === "text" && i.data.content.includes(title));
+	const layout = (body) => request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: body});
+	let request;
+
+	test.beforeAll(async ({playwright}) => {
+		request = await playwright.request.newContext({baseURL: test.info().project.use.baseURL});
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `レイアウト${STAMP}`}})).json()).id;
+		await request.post(`api/projects/${projectId}/unlock`, {headers: rw});
+		const folder = await (await request.post(`api/projects/${projectId}/folders`, {headers: rw, data: {name: "設計"}})).json();
+		for (const key of ["req", "design", "test"]) {
+			docs[key] = await upload(request, `L-${key}${STAMP}.pdf`, PDF);
+			await request.put(`api/projects/${projectId}/documents/${docs[key].id}`, {headers: rw, data: {folderId: key === "design" ? folder.id : null}});
+		}
+		await request.post(`api/projects/${projectId}/miro`, {headers: rw});
+		await settled(request, projectId);
+	});
+
+	test.afterAll(async () => {
+		await request.delete(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+		await request.dispose();
+	});
+
+	test("資料の位置と色・見出しの文字・図形をまとめて当て、はみ出す分は枠を広げる(左上は動かさない)", async () => {
+		const before = (await boardItems(request)).find((i) => i.type === "frame");
+		const status = await (await request.get(`api/projects/${projectId}/miro`, {headers: rw})).json();
+		expect(status.frame).toMatchObject({width: before.geometry.width, height: before.geometry.height});
+
+		const res = await layout({
+			items: [
+				{documentId: docs.req.id, x: 300, y: 400, color: "#fde68a"},
+				{documentId: docs.design.id, x: 800, y: 400},
+				{documentId: docs.test.id, x: 300, y: 3000, color: "#bfdbfe"}
+			],
+			labels: [{text: "左上: 要件定義〜設計", x: 600, y: 100, width: 1000, fontSize: 48}],
+			shapes: [
+				{x: 1500, y: 1600, width: 8, height: 3000, fillColor: "#333333"},
+				{x: 3500, y: 800, width: 2000, height: 1200, fillColor: "#e0f2fe", fillOpacity: 0.2}
+			]
+		});
+		expect(res.status()).toBe(200);
+		const result = await res.json();
+		expect(result).toMatchObject({moved: 3, labels: 1, shapes: 2});
+
+		const items = await boardItems(request);
+		const frame = items.find((i) => i.id === before.id);
+		// 右端(図形の 3500 + 1000)・下端(資料の 3000 + 高さ/2 + 見出し)が収まるまで広がる
+		expect(frame.geometry.width).toBeGreaterThanOrEqual(4500);
+		expect(frame.geometry.height).toBeGreaterThan(3000);
+		expect(frame.position.x - frame.geometry.width / 2).toBeCloseTo(before.position.x - before.geometry.width / 2, 3);
+		expect(frame.position.y - frame.geometry.height / 2).toBeCloseTo(before.position.y - before.geometry.height / 2, 3);
+
+		const req = file(items, `L-req${STAMP}.pdf`);
+		expect(req.position).toMatchObject({x: 300, y: 400});
+		expect(caption(items, `L-req${STAMP}.pdf`).style).toMatchObject({fillColor: "#fde68a"});
+		// 色を指定しなかった資料の見出しは、塗らない
+		expect(caption(items, `L-design${STAMP}.pdf`).style?.fillColor).toBeUndefined();
+		const label = items.find((i) => i.type === "text" && i.data.content.includes("左上: 要件定義〜設計"));
+		expect(label.parent.id).toBe(frame.id);
+		expect(label.style).toMatchObject({fontSize: "48"});
+		const shapes = items.filter((i) => i.type === "shape");
+		expect(shapes).toHaveLength(2);
+		expect(shapes.find((i) => i.geometry.width === 2000).style).toMatchObject({fillColor: "#e0f2fe", fillOpacity: "0.2"});
+		// 初めて並べたときのフォルダの見出しは片付けて、指示どおりのものだけにする
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("■ 設計"))).toBe(false);
+	});
+
+	test("当て直すと、前の見出しの文字と図形を片付けてから置く(残すこともできる)", async () => {
+		await layout({labels: [{text: "右上: 管理系", x: 600, y: 100}]});
+		let items = await boardItems(request);
+		expect(items.filter((i) => i.type === "shape")).toHaveLength(0);
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("左上: 要件定義〜設計"))).toBe(false);
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("右上: 管理系"))).toBe(true);
+
+		await layout({labels: [{text: "左下: テスト〜リリース", x: 600, y: 2000}], keepDecorations: true});
+		items = await boardItems(request);
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("右上: 管理系"))).toBe(true);
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("左下: テスト〜リリース"))).toBe(true);
+	});
+
+	test("色は null で外せる。新しい版が出ても、当てた位置のまま差し替える", async () => {
+		await layout({items: [{documentId: docs.req.id, x: 300, y: 400, color: null}], keepDecorations: true});
+		let items = await boardItems(request);
+		expect(caption(items, `L-req${STAMP}.pdf`).style).toMatchObject({fillOpacity: "0"});
+
+		const v2 = await upload(request, `L-req${STAMP}.pdf`, Buffer.concat([PDF, Buffer.from("% v2\n")]), docs.req.id);
+		await waitFor(request, projectId, (s) => itemOf(s, v2.id)?.state === "placed");
+		items = await boardItems(request);
+		expect(file(items, `L-req${STAMP}.pdf`).position).toMatchObject({x: 300, y: 400});
+	});
+
+	test("正しくないところがあれば、何も動かさずに理由の一覧を返す", async () => {
+		const before = file(await boardItems(request), `L-design${STAMP}.pdf`).position;
+		const stray = await upload(request, `出ていない${STAMP}.pdf`, PDF);
+		const res = await layout({
+			items: [{documentId: docs.design.id, x: 5, y: 5}, {documentId: stray.id, x: 1, y: 1}, {documentId: docs.test.id, x: -1, y: "abc"}],
+			labels: [{text: "", x: 0, y: 0}],
+			shapes: [{shape: "unknown", x: 0, y: 0, width: 10, height: 10, fillColor: "red"}]
+		});
+		expect(res.status()).toBe(400);
+		const body = await res.json();
+		expect(body.error).toContain("何も動かしていません");
+		const details = body.details.join("\n");
+		expect(details).toContain(stray.id);
+		expect(details).toContain("items[2].x");
+		expect(details).toContain("items[2].y");
+		expect(details).toContain("labels[0].text");
+		expect(details).toContain("shapes[0].shape");
+		expect(details).toContain("shapes[0].fillColor");
+		expect(file(await boardItems(request), `L-design${STAMP}.pdf`).position, "一部だけ動いている").toEqual(before);
+
+		expect((await layout({})).status()).toBe(400);
+		expect((await layout({items: [{documentId: docs.req.id, x: 1, y: 1}, {documentId: docs.req.id, x: 2, y: 2}]})).status()).toBe(400);
+		expect((await request.post(`api/projects/${projectId}/miro/layout`, {headers: ro, data: {frame: {width: 5000, height: 5000}}})).status()).toBe(403);
+	});
+
+	test("1件ずつ位置を指定して動かすときも、はみ出したら枠を広げる", async () => {
+		const before = (await boardItems(request)).find((i) => i.type === "frame");
+		const res = await request.patch(`api/projects/${projectId}/miro/items/${docs.design.id}`, {headers: rw, data: {x: before.geometry.width + 1000, y: 300}});
+		expect(res.status()).toBe(200);
+		const after = (await boardItems(request)).find((i) => i.type === "frame");
+		expect(after.geometry.width).toBeGreaterThan(before.geometry.width + 1000);
+		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.design.id}`, {headers: rw, data: {x: -10, y: 300}})).status()).toBe(400);
+	});
+});

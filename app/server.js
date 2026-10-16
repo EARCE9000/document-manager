@@ -4253,6 +4253,31 @@ app.patch(BASE_URL_PATH + 'api/projects/:id/miro/items/:documentId', requireAuth
 	}
 });
 
+/**
+ * レイアウトをまとめて当てる(並べ方を決めるのは指示を出す側。lib/miro-sync.js の applyLayout)。本体:
+ *   {items: [{documentId, x, y, color?}], labels: [{text, x, y, width?, fontSize?, color?, fillColor?, bold?, align?}],
+ *    shapes: [{shape?, x, y, width, height, text?, fillColor?, fillOpacity?, borderColor?, borderWidth?, borderStyle?}],
+ *    frame?: {width, height}, keepDecorations?: boolean}
+ * 位置はすべて枠の左上からの中心の位置。正しくないところがあれば、何も動かさずに400と理由の一覧(details)を返す
+ */
+app.post(BASE_URL_PATH + 'api/projects/:id/miro/layout', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(await MiroSync.applyLayout(req.params.id, req.body ?? {}, req.authData.user_identifier));
+	} catch (err) {
+		if (err.needsReconnect) {
+			res.status(409).json({error: err.message, needsReconnect: true});
+			return;
+		}
+		if ([400, 404, 409].includes(err.status)) {
+			res.status(err.status).json({error: err.message, ...(err.details ? {details: err.details} : {})});
+			return;
+		}
+		logger.error(err, "::api/projects/:id/miro/layout");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 /** 枠の中を、フォルダの順に並べ直す(人が並べた配置は上書きされる。フォルダの見出しも置き直す) */
 app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange', requireAuth, requireWrite, async (req, res) => {
 	try {

@@ -222,7 +222,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 				return;
 			}
 			// ---- ボードの項目 ----
-			const itemPath = /^\/v2\/boards\/([^/]+)\/(frames|documents|images|texts|groups|items)(?:\/([^/]+))?$/.exec(url.pathname);
+			const itemPath = /^\/v2\/boards\/([^/]+)\/(frames|documents|images|texts|shapes|groups|items)(?:\/([^/]+))?$/.exec(url.pathname);
 			if (itemPath) {
 				const boardId = decodeURIComponent(itemPath[1]);
 				const kind = itemPath[2];
@@ -231,7 +231,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 					send(res, 404, {code: "boardNotFound", message: "Board not found", status: 404});
 					return;
 				}
-				const typeOf = {frames: "frame", documents: "document", images: "image", texts: "text", groups: "group"};
+				const typeOf = {frames: "frame", documents: "document", images: "image", texts: "text", shapes: "shape", groups: "group"};
 				// multipart の data(JSON)と resource(ファイル)を取り出す
 				const multipart = () => {
 					const boundary = /boundary=(.+)$/.exec(String(req.headers["content-type"] || ""))?.[1];
@@ -282,13 +282,14 @@ module.exports.start = (port) => new Promise((resolve) => {
 						return;
 					}
 					const width = input?.geometry?.width ?? (kind === "frames" ? 800 : naturalWidth);
-					const height = kind === "frames" ? (input?.geometry?.height ?? 600) : kind === "texts" ? 50 : heightFor(width);
+					const height = kind === "frames" || kind === "shapes" ? (input?.geometry?.height ?? 600) : kind === "texts" ? 50 : heightFor(width);
 					const item = {
 						id: newId, type: typeOf[kind], boardId,
 						data: kind === "documents" || kind === "images" ? {title: input?.title ?? null} : (input?.data ?? {}),
 						position: {x: input?.position?.x ?? 0, y: input?.position?.y ?? 0},
 						geometry: {width, height},
 						parent: parentId ? {id: parentId} : null,
+						...(input?.style ? {style: input.style} : {}),
 						...(body?.resource ? {size: body.resource.size, contentType: body.resource.contentType} : {})
 					};
 					items.set(newId, item);
@@ -345,6 +346,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 					if (body.parent !== undefined) item.parent = body.parent?.id ? {id: body.parent.id} : null;
 					if (body.geometry) item.geometry = {...item.geometry, ...Object.fromEntries(Object.entries(body.geometry).filter(([, v]) => v != null))};
 					if (body.data) item.data = {...item.data, ...body.data};
+					if (body.style) item.style = {...(item.style ?? {}), ...body.style};
 					send(res, 200, toResponse(item));
 					return;
 				}

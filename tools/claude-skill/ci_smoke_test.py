@@ -547,6 +547,19 @@ def smoke_miro(kind, env, workdir):
     arranged = json.loads(run_client(kind, ["miro-arrange", project_name], env).stdout)
     check(arranged.get("moved") == 2, "miro-arrange: 枠の中を並べ直せる")
 
+    # 並べ方は AI が決め、まとめて当てる(位置と色・見出しの文字・図形)
+    layout_path = os.path.join(workdir, f"miro-layout-{kind}.json")
+    json.dump({"items": [{"documentId": ids[0], "x": 300, "y": 400, "color": "#fde68a"}, {"documentId": ids[1], "x": 800, "y": 400}],
+               "labels": [{"text": "左上: 要件定義", "x": 400, "y": 100}],
+               "shapes": [{"x": 1200, "y": 600, "width": 8, "height": 1000, "fillColor": "#333333"}]},
+              open(layout_path, "w", encoding="utf-8"), ensure_ascii=False)
+    applied = json.loads(run_client(kind, ["miro-layout", project_name, layout_path], env).stdout)
+    check(applied.get("moved") == 2 and applied.get("labels") == 1 and applied.get("shapes") == 1,
+          f"miro-layout: レイアウトをまとめて当てられる ({applied})")
+    json.dump({"items": [{"documentId": ids[0], "x": -1, "y": 0}]}, open(layout_path, "w", encoding="utf-8"))
+    rejected = run_client(kind, ["miro-layout", project_name, layout_path], env, expect_ok=False)
+    check(rejected.returncode == 1 and "items[0].x" in rejected.stderr, "miro-layout: 正しくない指示は、理由の一覧つきで断られる")
+
     unlinked = json.loads(run_client(kind, ["miro-unlink", project_name, "--remove-documents"], env).stdout)
     check(unlinked == {"unlinked": True, "removedDocuments": True}, "miro-unlink --remove-documents: 連動をやめて資料も消せる")
     check(json.loads(run_client(kind, ["miro", project_name], env).stdout)["state"] == "stopped", "miro: 止めたことが分かる")
