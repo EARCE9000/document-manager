@@ -60,6 +60,27 @@ const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
 module.exports.MAX_UPLOAD_BYTES = MAX_UPLOAD_BYTES;
 
 const SYNC_LOCK_MS = Number(process.env.MIRO_SYNC_LOCK_SECONDS || 600) * 1000;
+// 資料を置くとき、同時に書き込む件数。1件ごとに Miro を3回呼ぶ(中身・見出し・グループ)ので、1件ずつだと
+// 1件あたり約5秒かかった(実物で76件に約7分)。多くしすぎると Miro の回数制限に当たる
+const CONCURRENCY = Math.max(1, Number(process.env.MIRO_SYNC_CONCURRENCY || 4));
+
+/** 並べたものを、決まった数ずつ同時に処理する(途中で連携が切れたら、そこで止める) */
+const forEachConcurrently = async (list, limit, fn) => {
+	let next = 0;
+	let stop = null;
+	const worker = async () => {
+		while (stop == null && next < list.length) {
+			const entry = list[next++];
+			try {
+				await fn(entry);
+			} catch (err) {
+				stop = err;
+			}
+		}
+	};
+	await Promise.all(Array.from({length: Math.min(limit, list.length)}, worker));
+	if (stop != null) throw stop;
+};
 const INTERVAL_MS = Number(process.env.MIRO_SYNC_INTERVAL_MINUTES || 15) * 60 * 1000;
 const DEBOUNCE_MS = Number(process.env.MIRO_SYNC_DEBOUNCE_SECONDS || 5) * 1000;
 const INSTANCE_ID = `${os.hostname()}:${process.pid}:${crypto.randomBytes(4).toString("hex")}`;
@@ -78,6 +99,7 @@ const SQL_UPSERT_PROJECT = `
 		linked_at = excluded.linked_at, stopped_by = NULL, stopped_at = NULL, last_error = NULL
 `;
 const SQL_SET_FRAME = `UPDATE miro_projects SET frame_id = @frame_id, frame_x = @x, frame_y = @y, frame_width = @width, frame_height = @height WHERE project_id = @project_id`;
+const SQL_SET_HEADERS = `UPDATE miro_projects SET header_ids = @header_ids WHERE project_id = @project_id`;
 const SQL_SET_SYNCED = `UPDATE miro_projects SET last_synced_at = @now, last_error = @error WHERE project_id = @project_id`;
 const SQL_STOP_PROJECT = `UPDATE miro_projects SET state = 'stopped', stopped_by = @user, stopped_at = @now, last_error = @error WHERE project_id = @project_id`;
 const SQL_TAKE_LOCK = `
@@ -206,6 +228,22 @@ const nextFramePosition = async (boardId, height) => {
 	const width = frameWidth();
 	const x = right == null ? 0 : right + LAYOUT.frameGap + width / 2;
 	return {x, y: height / 2, width};
+};
+
+/** 置いてあるフォルダの見出しを消す(Miro で消されていれば何もしない) */
+const deleteHeaders = async (link, board) => {
+	let ids = [];
+	try {
+		ids = JSON.parse(link?.header_ids || "[]");
+	} catch {
+		ids = [];
+	}
+	for (const id of ids) {
+		await MiroConnection.withToken((token) => Miro.deleteItem(token, board, id)).catch((err) => {
+			if (err.status !== 404) logger.warn({err: err.message}, "フォルダの見出しを消せませんでした");
+		});
+	}
+	if (ids.length > 0 && link?.project_id) await ds.run(SQL_SET_HEADERS, {project_id: link.project_id, header_ids: "[]"});
 };
 
 // ---- 1プロジェクトの同期 ----
@@ -418,16 +456,25 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 			}
 		}
 
-		// フォルダの見出し
-		for (const header of headers) {
-			await call((token) => Miro.createText(token, board, {
-				content: `<p><strong>■ ${escapeHtml(header.title)}</strong></p>`,
-				x: frameWidth() / 2, y: header.y, width: frameWidth() - LAYOUT.padding * 2, parentId: frameId
-			})).catch((err) => logger.warn({err: err.message, projectId}, "フォルダの見出しを置けませんでした"));
+		// フォルダの見出し。並べ直すとき(初めて・全部片付けたあと)は、前の見出しを消してから置く
+		if (headers.length > 0) {
+			await deleteHeaders(link, board);
+			const headerIds = [];
+			for (const header of headers) {
+				const text = await call((token) => Miro.createText(token, board, {
+					content: `<p><strong>■ ${escapeHtml(header.title)}</strong></p>`,
+					x: frameWidth() / 2, y: header.y, width: frameWidth() - LAYOUT.padding * 2, parentId: frameId
+				})).catch((err) => {
+					logger.warn({err: err.message, projectId}, "フォルダの見出しを置けませんでした");
+					return null;
+				});
+				if (text != null) headerIds.push(text.id);
+			}
+			await ds.run(SQL_SET_HEADERS, {project_id: projectId, header_ids: JSON.stringify(headerIds)});
 		}
 
-		// 資料を置く(中身 → 見出し → グループ)
-		for (const entry of plan) {
+		// 資料を置く(中身 → 見出し → グループ)。置く場所は決めてあるので、数件ずつ同時に書き込む
+		await forEachConcurrently(plan, CONCURRENCY, async (entry) => {
 			const {doc, payload} = entry;
 			let itemId = null;
 			try {
@@ -456,7 +503,7 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 				await save({alias: doc.alias, document_id: doc.id, title: doc.entry_file, state: STATES.FAILED, reason: err.message.slice(0, 300)});
 				counts.failed++;
 			}
-		}
+		});
 
 		// プロジェクトから外れた・アーカイブされた資料。ボードからは消さず、見出しで知らせる
 		for (const row of items.values()) {
@@ -587,6 +634,7 @@ module.exports.unlink = async (projectId, user, {removeDocuments = false} = {}) 
 			}
 		}
 		await ds.run(`DELETE FROM miro_items WHERE project_id = ? AND state <> 'excluded'`, [projectId]);
+		if (target != null) await deleteHeaders(link, target.boardId);
 	}
 	logger.info({audit: "miro_project_unlinked", user, projectId, removeDocuments}, "audit");
 };
