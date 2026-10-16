@@ -411,11 +411,25 @@ const OPERATIONS = [
 		description: "「PDFでダウンロード」の変換サービスへ到達できるかを確かめる。`enabled:false`は未設定(異常ではない)。到達できた場合はChromiumの版・受け付ける上限・タイムアウトと、変換できる形式(`formats`。`drawio`が無ければdraw.ioはPDFにできない)も返す",
 		aiGuide: false
 	},
-	// ---- Miro 連携(管理者)。MIRO_CLIENT_ID / MIRO_CLIENT_SECRET が未設定の環境では、どれも404 ----
+	// ---- Miro 連携(管理者)。アプリの値が未設定のうちは、状態とアプリの値の保存だけが使える(ほかは404) ----
 	{
 		id: "getMiroStatus", method: "get", path: "/api/miro/status", role: "admin", tag: "その他",
 		summary: "Miro 連携の状態",
 		description: "連携しているか、チーム・Miroの利用者名・権限・貼り先のボード・トークンの期限、最後の失敗(連携し直しが要るか)を返す。トークンそのものは返さない。`redirectUri`は Miro のアプリに登録する戻り先(一字一句同じであること)",
+		aiGuide: false
+	},
+	{
+		id: "saveMiroCredentials", method: "put", path: "/api/miro/credentials", role: "admin", tag: "その他",
+		summary: "Miro のアプリの値(クライアントID・シークレット)を保存する",
+		description: "環境変数(MIRO_CLIENT_ID / MIRO_CLIENT_SECRET)が無い環境のための入力口。シークレットは暗号化して保存し、応答にも出さない。クライアントIDが変わったら、それまでの連携は消す(シークレットだけの入れ替えなら連携はそのまま)",
+		body: {schema: {type: "object", required: ["clientId", "clientSecret"], properties: {clientId: {type: "string"}, clientSecret: {type: "string"}}}},
+		responses: {400: "形が違う(貼り損ねの空白・引用符など)", 409: "環境変数で設定されているため、画面からは変えられない"},
+		aiGuide: false
+	},
+	{
+		id: "clearMiroCredentials", method: "delete", path: "/api/miro/credentials", role: "admin", tag: "その他",
+		summary: "管理画面で保存した Miro のアプリの値を消す",
+		description: "連携も解除する。環境変数で設定されている環境では409",
 		aiGuide: false
 	},
 	{

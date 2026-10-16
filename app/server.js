@@ -706,7 +706,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 		setHTTPHeaders(res);
 
 		if (AUTH_DISABLED) {
-			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled(), htmlPdfEnabled: HtmlPdf.isEnabled(), miroEnabled: MiroConnection.isConfigured()});
+			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled(), htmlPdfEnabled: HtmlPdf.isEnabled(), miroEnabled: await MiroConnection.isConfigured()});
 			return;
 		}
 
@@ -724,7 +724,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 					// 同じく、「PDFでダウンロード」を出すか
 					htmlPdfEnabled: HtmlPdf.isEnabled(),
 					// 同じく、Miro 連携の入口を出すか(アプリの値が設定されている環境だけ)
-					miroEnabled: MiroConnection.isConfigured()
+					miroEnabled: await MiroConnection.isConfigured()
 				});
 				return;
 			}
@@ -1955,15 +1955,20 @@ app.get(BASE_URL_PATH + 'api/office-render/health', requireAuth, requireAdmin, a
 /**
  * ---- Miro 連携(管理者) ----
  * Document Manager が Miro のアプリとして、管理者が連携したアカウントの権限でボードへ資料を出す。
- * ここは連携そのもの(許可・ボードの選択・解除)。トークンは応答に出さない(lib/miro-connection.js)。
- * MIRO_CLIENT_ID / MIRO_CLIENT_SECRET が未設定の環境では、どれも404(機能ごと無い)。
+ * ここは連携そのもの(アプリの値・許可・ボードの選択・解除)。トークンもシークレットも応答に出さない
+ * (lib/miro-connection.js)。アプリの値は環境変数(クラウドの秘密情報の保管庫から渡す)を優先し、
+ * 無ければ管理画面で入力した値を使う。どちらも無いうちは、状態とアプリの値の保存だけが使える。
  */
-const requireMiroConfigured = (req, res, next) => {
-	if (MiroConnection.isConfigured()) {
-		next();
-		return;
+const requireMiroConfigured = async (req, res, next) => {
+	try {
+		if (await MiroConnection.isConfigured()) {
+			next();
+			return;
+		}
+		res.status(404).json({error: "Miro のアプリの値(クライアントID・シークレット)が設定されていません。管理画面の「Miro 連携」で設定してください"});
+	} catch (err) {
+		next(err);
 	}
-	res.status(404).json({error: "Miro 連携はこの環境では使えません(MIRO_CLIENT_ID / MIRO_CLIENT_SECRET が未設定)"});
 };
 
 /** Miro の失敗を、利用者に返すステータスへ直す(Miro 側の都合は 502、連携し直しが要るときは 409) */
@@ -1987,7 +1992,8 @@ app.get(BASE_URL_PATH + 'api/miro/status', requireAuth, requireAdmin, async (req
 		setHTTPHeaders(res);
 		const status = await MiroConnection.status();
 		// 許可のあとの戻り先。Miro のアプリに登録する値と一致している必要があるため、管理画面に出す
-		res.status(200).json({...status, redirectUri: MiroConnection.isConfigured() ? MiroConnection.redirectUri(publicBaseUrl(req)) : null});
+		// (アプリを作る前から見えるよう、未設定でも返す)
+		res.status(200).json({...status, redirectUri: MiroConnection.redirectUri(publicBaseUrl(req))});
 	} catch (err) {
 		sendMiroError(res, err, "::api/miro/status");
 	}
@@ -2003,7 +2009,7 @@ app.get(BASE_URL_PATH + 'api/miro/connect', requireAuth, requireAdmin, requireMi
 		const {state, nonce} = MiroConnection.issueState(user);
 		req.session.miroOAuthNonce = nonce;
 		const redirectUri = MiroConnection.redirectUri(publicBaseUrl(req));
-		res.redirect(MiroConnection.authorizeUrl({redirectUri, state}));
+		res.redirect(await MiroConnection.authorizeUrl({redirectUri, state}));
 	} catch (err) {
 		sendMiroError(res, err, "::api/miro/connect");
 	}
@@ -2039,6 +2045,40 @@ app.get(BASE_URL_PATH + 'api/miro/callback', requireAuth, requireAdmin, requireM
 	} catch (err) {
 		logger.warn({error: err.message, status: err.status}, "::api/miro/callback: 連携できませんでした");
 		back({miro: "error", reason: "exchange"});
+	}
+});
+
+/**
+ * アプリの値(クライアントID・シークレット)を保存する。本体: {clientId, clientSecret}
+ * 環境変数で設定されている環境では409(画面からは変えられない)。シークレットは暗号化して保存し、応答にも出さない
+ */
+app.put(BASE_URL_PATH + 'api/miro/credentials', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const clientId = String(req.body?.clientId ?? "").trim();
+		const clientSecret = String(req.body?.clientSecret ?? "").trim();
+		await MiroConnection.saveCredentials({clientId, clientSecret}, req.authData.user_identifier);
+		res.status(200).json({...(await MiroConnection.status()), redirectUri: MiroConnection.redirectUri(publicBaseUrl(req))});
+	} catch (err) {
+		if (err.name === "MiroError" && (err.status === 400 || err.status === 409)) {
+			res.status(err.status).json({error: err.message});
+			return;
+		}
+		sendMiroError(res, err, "::api/miro/credentials");
+	}
+});
+
+/** 管理画面で保存したアプリの値を消す(連携も解除する) */
+app.delete(BASE_URL_PATH + 'api/miro/credentials', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		await MiroConnection.clearCredentials(req.authData.user_identifier);
+		res.status(204).end();
+	} catch (err) {
+		if (err.name === "MiroError" && err.status === 409) {
+			res.status(409).json({error: err.message});
+			return;
+		}
+		sendMiroError(res, err, "::api/miro/credentials");
 	}
 });
 

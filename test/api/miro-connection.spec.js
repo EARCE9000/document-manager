@@ -21,6 +21,9 @@ const STUB_URL = `http://127.0.0.1:${process.env.MIRO_STUB_PORT || Number(proces
 const control = async (request, body) => (await request.post(`${STUB_URL}/__control`, {data: body})).json();
 const stubState = async (request) => (await request.get(`${STUB_URL}/__state`)).json();
 const stubRequests = async (request) => (await request.get(`${STUB_URL}/__requests`)).json();
+const {CLIENT_ID, CLIENT_SECRET} = require("./miro-stub.js");
+const saveCredentials = (request, clientId = CLIENT_ID, clientSecret = CLIENT_SECRET) =>
+	request.put("api/miro/credentials", {headers: admin, data: {clientId, clientSecret}});
 
 /**
  * 管理者として連携する(許可の画面 → 戻り先 → 画面へ戻る、を手でたどる)。
@@ -37,7 +40,81 @@ const connect = async (request) => {
 	return {authorize, callbackLocation: callback.headers().location};
 };
 
+// アプリの値(クライアントID・シークレット)は、環境変数が無ければ管理画面で入れる
+test.describe.serial("Miro のアプリの値(管理画面で入力する場合)", () => {
+	test.beforeEach(async ({request}) => {
+		await request.delete("api/miro/credentials", {headers: admin});
+	});
+	test.afterAll(async ({request}) => {
+		await saveCredentials(request);
+	});
+
+	test("未設定のうちは、使えないことと、Miro のアプリに登録する戻り先が分かる", async ({request}) => {
+		const status = await (await request.get("api/miro/status", {headers: admin})).json();
+		expect(status).toMatchObject({configured: false, connected: false, credentials: {source: null, editable: true}});
+		expect(status.redirectUri).toBe(`${BASE_URL.replace(/\/+$/, "")}/api/miro/callback`);
+		expect((await (await request.get("api/check_access_token", {headers: admin})).json()).miroEnabled).toBe(false);
+		// 連携やボードの操作はまだできない
+		expect((await request.get("api/miro/connect", {headers: admin, maxRedirects: 0})).status()).toBe(404);
+		expect((await request.get("api/miro/boards", {headers: admin})).status()).toBe(404);
+	});
+
+	test("保存すると使えるようになる。シークレットは応答に出さず、暗号化して保存する", async ({request}) => {
+		const res = await saveCredentials(request);
+		expect(res.status()).toBe(200);
+		const text = await res.text();
+		expect(text, "シークレットが応答に出ている").not.toContain(CLIENT_SECRET);
+		expect(JSON.parse(text)).toMatchObject({configured: true, credentials: {source: "settings", clientId: CLIENT_ID, editable: true}});
+		expect((await (await request.get("api/check_access_token", {headers: admin})).json()).miroEnabled).toBe(true);
+
+		const path = require("node:path");
+		const Database = require("../../app/node_modules/better-sqlite3");
+		const {TEST_DATA_DIR} = require("./config.js");
+		const db = new Database(path.join(TEST_DATA_DIR, "db", "document_manager_v21.sqlite"), {readonly: true});
+		try {
+			const row = db.prepare("SELECT value FROM app_settings WHERE key = 'miro.client_secret'").get();
+			expect(row.value).toMatch(/^v1:/);
+			expect(row.value).not.toContain(CLIENT_SECRET);
+		} finally {
+			db.close();
+		}
+	});
+
+	test("形の違う値は保存しない(貼り損ねの空白・引用符など)", async ({request}) => {
+		for (const [clientId, clientSecret] of [["abc", CLIENT_SECRET], [CLIENT_ID, "short"], [CLIENT_ID, `"${CLIENT_SECRET} x"`], ["", ""]]) {
+			const res = await saveCredentials(request, clientId, clientSecret);
+			expect(res.status(), `${clientId} / ${clientSecret}`).toBe(400);
+		}
+		expect((await (await request.get("api/miro/status", {headers: admin})).json()).configured).toBe(false);
+	});
+
+	test("シークレットだけの入れ替えなら連携はそのまま。クライアントIDが変わったら、連携は別のアプリのものなので消す", async ({request}) => {
+		await saveCredentials(request);
+		await connect(request);
+		await saveCredentials(request, CLIENT_ID, "rotated-secret-0123456789");
+		expect((await (await request.get("api/miro/status", {headers: admin})).json()).connected).toBe(true);
+		await saveCredentials(request, "3458764600000000777", CLIENT_SECRET);
+		expect((await (await request.get("api/miro/status", {headers: admin})).json()).connected).toBe(false);
+	});
+
+	test("値を消すと連携も解除され、使えなくなる", async ({request}) => {
+		await saveCredentials(request);
+		await connect(request);
+		expect((await request.delete("api/miro/credentials", {headers: admin})).status()).toBe(204);
+		const status = await (await request.get("api/miro/status", {headers: admin})).json();
+		expect(status).toMatchObject({configured: false, connected: false});
+	});
+
+	test("管理者以外は保存できない", async ({request}) => {
+		expect((await request.put("api/miro/credentials", {headers: rw, data: {clientId: CLIENT_ID, clientSecret: CLIENT_SECRET}})).status()).toBe(403);
+		expect((await request.delete("api/miro/credentials", {headers: rw})).status()).toBe(403);
+	});
+});
+
 test.describe.serial("Miro 連携(管理者)", () => {
+	test.beforeAll(async ({request}) => {
+		await saveCredentials(request);
+	});
 	test.beforeEach(async ({request}) => {
 		// 前のテストの連携を解除してから、Miro の代わりの記録を消す(逆にすると解除の取り消しが数に残る)
 		await request.delete("api/miro/connection", {headers: admin});
@@ -55,7 +132,7 @@ test.describe.serial("Miro 連携(管理者)", () => {
 
 	test("連携する前の状態と、Miro のアプリに登録する戻り先が分かる", async ({request}) => {
 		const status = await (await request.get("api/miro/status", {headers: admin})).json();
-		expect(status).toMatchObject({configured: true, connected: false});
+		expect(status).toMatchObject({configured: true, connected: false, credentials: {source: "settings"}});
 		expect(status.redirectUri).toBe(`${BASE_URL.replace(/\/+$/, "")}/api/miro/callback`);
 	});
 

@@ -328,7 +328,10 @@ const createSchema = (targetDb) => {
 			connected_at TEXT,
 			updated_at TEXT,
 			last_error TEXT,
-			last_error_at TEXT
+			last_error_at TEXT,
+			-- トークンを更新している台と、その期限(複数台で同時に更新しないための順番取り)
+			refresh_lock_owner TEXT,
+			refresh_lock_until TEXT
 		);
 		-- プロジェクトごとの連動(ボード上の枠)
 		CREATE TABLE IF NOT EXISTS miro_projects (

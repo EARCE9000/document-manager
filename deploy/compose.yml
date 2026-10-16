@@ -51,6 +51,11 @@ services:
       # HTML・Markdown・MHTML・draw.ioの文書をPDFにして持ち出すための変換サービス。
       # 未設定なら「PDFでダウンロード」が画面に出ないだけで、他には影響しない
       HTML_PDF_URL: http://pdf-converter:3000
+      # Miro 連携(任意)。Miro の開発者ハブで作ったアプリの値。ここで渡さなくても、管理画面の
+      # 「Miro 連携」で入力できる(渡した場合は管理画面からは変えられない)。docs/miro.md 参照
+      MIRO_CLIENT_ID: ${MIRO_CLIENT_ID:-}
+      MIRO_CLIENT_SECRET: ${MIRO_CLIENT_SECRET:-}
+      MIRO_REDIRECT_URI: ${MIRO_REDIRECT_URI:-}
     networks:
       # Apacheのリバースプロキシが向いている既存ネットワーク(固定IPを維持する)
       application_network:

@@ -15,6 +15,7 @@ const {loadKeys, BASE_URL} = require("./config.js");
 const keys = loadKeys();
 const STUB_URL = `http://127.0.0.1:${process.env.MIRO_STUB_PORT || Number(process.env.CONVERTER_STUB_PORT || 18096) + 20}`;
 const admin = {Cookie: `${keys.sessionCookieName}=${keys.sessionCookie}`};
+const {CLIENT_ID, CLIENT_SECRET} = require("./miro-stub.js");
 
 const openMiroTab = async (page) => {
 	await page.locator("#allowedUsersManageLink").click();
@@ -25,6 +26,7 @@ test.describe.serial("管理画面の Miro 連携(実ブラウザ)", () => {
 	test.beforeEach(async ({context, page, request}) => {
 		await request.delete("api/miro/connection", {headers: admin});
 		await request.post(`${STUB_URL}/__control`, {data: {reset: true}});
+		await request.put("api/miro/credentials", {headers: admin, data: {clientId: CLIENT_ID, clientSecret: CLIENT_SECRET}});
 		await context.addCookies([{name: keys.sessionCookieName, value: keys.sessionCookie, url: BASE_URL}]);
 		await page.goto("./");
 		await expect(page.locator("#uploadDropZone")).toBeVisible();
@@ -38,7 +40,7 @@ test.describe.serial("管理画面の Miro 連携(実ブラウザ)", () => {
 		const panel = page.locator("#miroConnectionResult");
 		await expect(panel.locator(".adminStatus")).toHaveText("未連携");
 		await expect(page.locator("#miroConnectButton")).toBeVisible();
-		await expect(panel.locator(".miroRedirectUri")).toHaveText(`${BASE_URL}/api/miro/callback`);
+		await expect(panel.locator(".miroRedirectUri").first()).toHaveText(`${BASE_URL}/api/miro/callback`);
 	});
 
 	test("連携すると管理画面に戻って知らせ、ボードを選べる", async ({page}) => {
@@ -99,15 +101,27 @@ test.describe.serial("管理画面の Miro 連携(実ブラウザ)", () => {
 		await expect(page.locator("#miroReconnectButton")).toBeVisible();
 	});
 
-	test("Miro のアプリが設定されていない環境では、タブを出さない", async ({page}) => {
-		await page.route("**/api/check_access_token", async (route) => {
-			const response = await route.fetch();
-			const body = await response.json();
-			await route.fulfill({response, json: {...body, miroEnabled: false}});
-		});
-		await page.goto("./");
-		await page.locator("#allowedUsersManageLink").click();
-		await expect(page.locator('.adminTab[data-tab="convert"]')).toBeVisible();
-		await expect(page.locator('.adminTab[data-tab="miro"]')).toHaveCount(0);
+	test("アプリの値が未設定なら、作り方の手順と入力欄が出て、画面から保存できる", async ({page, request}) => {
+		await request.delete("api/miro/credentials", {headers: admin});
+		await openMiroTab(page);
+		const panel = page.locator("#miroConnectionResult");
+		await expect(panel.locator(".adminStatus").first()).toHaveText("未設定");
+		// Miro 側で作るときに要る戻り先を、手順の中に出す
+		await expect(panel.locator(".miroSteps")).toContainText(`${BASE_URL}/api/miro/callback`);
+		await expect(page.locator("#miroClientSecretInput")).toHaveAttribute("type", "password");
+
+		await page.locator("#miroClientIdInput").fill(CLIENT_ID);
+		await page.locator("#miroClientSecretInput").fill(CLIENT_SECRET);
+		await page.locator("#miroCredentialSaveButton").click();
+		await expect(page.locator("#miroFlash")).toHaveText(/保存しました/);
+		await expect(panel.locator(".adminStatus").first()).toHaveText("未連携");
+		await expect(panel).toContainText("管理画面で設定済み");
+		// シークレットは画面に出さない
+		await expect(panel).not.toContainText(CLIENT_SECRET);
+		await expect(page.locator("#miroCredentialForm")).toBeHidden();
+
+		// そのまま連携まで進める
+		await page.locator("#miroConnectButton").click();
+		await expect(page.locator("#miroFlash")).toHaveText(/連携しました/);
 	});
 });

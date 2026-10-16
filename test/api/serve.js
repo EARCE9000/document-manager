@@ -39,16 +39,13 @@ const pdfStubPort = Number(process.env.PDF_STUB_PORT || stubPort + 10);
 if (process.env.PDF_STUB_DISABLED !== "1") {
 	process.env.HTML_PDF_URL = process.env.HTML_PDF_URL || `http://127.0.0.1:${pdfStubPort}`;
 }
-// Miro 連携も、Miro の代わり(miro-stub.js)へつなぐ。MIRO_STUB_DISABLED=1 で立てると、
-// アプリの値が未設定の環境(機能ごと出ない)の振る舞いを確かめられる
+// Miro 連携も、Miro の代わり(miro-stub.js)へつなぐ。アプリの値(クライアントID・シークレット)は
+// 環境変数では渡さず、テストが管理画面のAPIで保存する(未設定の状態から確かめられるように)。
+// 環境変数で渡す形は、単体テスト(test/miro-connection.test.js)で確かめる
 const miroStub = require("./miro-stub.js");
 const miroStubPort = Number(process.env.MIRO_STUB_PORT || stubPort + 20);
-if (process.env.MIRO_STUB_DISABLED !== "1") {
-	process.env.MIRO_CLIENT_ID = process.env.MIRO_CLIENT_ID || miroStub.CLIENT_ID;
-	process.env.MIRO_CLIENT_SECRET = process.env.MIRO_CLIENT_SECRET || miroStub.CLIENT_SECRET;
-	process.env.MIRO_API_URL = process.env.MIRO_API_URL || `http://127.0.0.1:${miroStubPort}`;
-	process.env.MIRO_AUTH_URL = process.env.MIRO_AUTH_URL || `http://127.0.0.1:${miroStubPort}`;
-}
+process.env.MIRO_API_URL = process.env.MIRO_API_URL || `http://127.0.0.1:${miroStubPort}`;
+process.env.MIRO_AUTH_URL = process.env.MIRO_AUTH_URL || `http://127.0.0.1:${miroStubPort}`;
 // 「サーバーに新しいクライアントがある」状態を作り、更新のお知らせを検証できるようにする
 // (同梱のクライアントと同じ版のままでは、お知らせが出る経路を通れないため)
 process.env.SKILL_CLIENT_VERSION = process.env.SKILL_CLIENT_VERSION || "9.9.9";

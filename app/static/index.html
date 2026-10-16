@@ -417,6 +417,10 @@
 	.miroBoardList { list-style: none; margin: 0 0 16px; padding: 0; max-width: 900px; }
 	.miroBoardList li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-bottom: 1px solid #eee; }
 	.miroBoardList li .name { flex: 1; }
+	.miroCredentialForm { display: grid; grid-template-columns: max-content minmax(240px, 420px); gap: 8px 12px; align-items: center; margin: 8px 0 12px; }
+	.miroCredentialForm input { padding: 6px 8px; font-family: monospace; }
+	.miroCredentialForm[hidden] { display: none; }
+	.miroSteps { margin: 6px 0 10px; padding-left: 1.4em; line-height: 1.7; max-width: 900px; }
 	.miroRedirectUri { font-family: monospace; background: #f5f5f5; padding: 1px 6px; border-radius: 3px; word-break: break-all; }
 	.adminStatus.unknown { background: #eee; color: #666; }
 	.adminProblemList { margin: 10px 0 0; padding-left: 1.2em; color: #c0392b; font-size: 0.85em; }
@@ -5912,8 +5916,8 @@ const ADMIN_TABS = [
 	{key: "server", label: "サーバー", load: () => Promise.all([loadServerStatus(), loadFeatures()])},
 	{key: "database", label: "データベース", load: () => loadDatabaseTab()},
 	{key: "convert", label: "変換サービス", load: () => loadConvertTab()},
-	// Miro のアプリの値が設定されている環境だけに出す
-	{key: "miro", label: "Miro 連携", load: () => loadMiroTab(), available: () => miroEnabled}
+	// アプリの値(クライアントID・シークレット)もここで入れられるので、管理者には常に出す
+	{key: "miro", label: "Miro 連携", load: () => loadMiroTab()}
 ];
 const availableAdminTabs = () => ADMIN_TABS.filter((tab) => tab.available == null || tab.available());
 let currentAdminTab = ADMIN_TABS[0].key;
@@ -6306,16 +6310,96 @@ const searchMiroBoards = async (currentId) => {
 	renderMiroBoards(body.boards || [], currentId);
 };
 
+/** アプリの値の欄。環境変数で決まっていれば表示だけ、そうでなければ入力・変更・消去ができる */
+const renderMiroCredentials = (status) => {
+	const creds = status.credentials || {};
+	const redirect = '<span class="miroRedirectUri">' + escapeHtml(status.redirectUri || "") + '</span>';
+	if (creds.source === "env") {
+		return '<h3>Miro のアプリ</h3>'
+			+ '<div class="adminSectionNote">環境変数(MIRO_CLIENT_ID / MIRO_CLIENT_SECRET)で設定されています。画面からは変えられません。'
+			+ 'クライアントID: <span class="miroRedirectUri">' + escapeHtml(creds.clientId || "") + '</span></div>';
+	}
+	const form = '<div class="miroCredentialForm" id="miroCredentialForm"' + (creds.source === "settings" ? " hidden" : "") + '>'
+		+ '<label for="miroClientIdInput">クライアントID</label><input type="text" id="miroClientIdInput" autocomplete="off" inputmode="numeric" value="' + escapeHtml(creds.clientId || "") + '">'
+		+ '<label for="miroClientSecretInput">クライアントシークレット</label><input type="password" id="miroClientSecretInput" autocomplete="new-password" placeholder="貼り付け(保存後は表示しません)">'
+		+ '<span></span><div><button type="button" id="miroCredentialSaveButton" class="modalButton save">保存</button></div>'
+		+ '</div>';
+	if (creds.source === "settings") {
+		return '<h3>Miro のアプリ</h3>'
+			+ '<div class="adminSectionNote">管理画面で設定済みです(' + escapeHtml(creds.updatedBy || "-") + '、' + escapeHtml(formatDateTime(creds.updatedAt)) + ')。'
+			+ 'クライアントID: <span class="miroRedirectUri">' + escapeHtml(creds.clientId || "") + '</span>。シークレットは表示しません。</div>'
+			+ '<div class="toolbarRow" style="margin:8px 0;">'
+			+ '<button type="button" id="miroCredentialEditButton" class="modalButton">値を変更する</button>'
+			+ '<button type="button" id="miroCredentialClearButton" class="modalButton primary">値を消す</button>'
+			+ '</div>' + form;
+	}
+	return '<h3>Miro のアプリ</h3>'
+		+ '<div class="adminSectionNote">まだ設定されていません。Miro の開発者ハブでアプリを作り、その値を入れてください。</div>'
+		+ '<ol class="miroSteps">'
+		+ '<li>Miro の右上のアイコン →「開発者ハブ」→「作成アプリ」→「新しいアプリを作成する」(開発者チームを選び、「ユーザー認証トークンの有効期限を失効させる」にチェック)</li>'
+		+ '<li>アプリの設定で「OAuth2.0 用のリダイレクト URI」に ' + redirect + ' を追加し、「アクセス権限」で boards:read と boards:write にチェック</li>'
+		+ '<li>「アプリの認証情報」のクライアントIDとシークレットを、下に貼って保存(クラウドで動かす場合は、秘密情報の保管庫から環境変数 MIRO_CLIENT_ID / MIRO_CLIENT_SECRET で渡す方法もあります)</li>'
+		+ '</ol>' + form;
+};
+
+const bindMiroCredentialForm = () => {
+	const save = document.getElementById("miroCredentialSaveButton");
+	if (save != null) {
+		save.addEventListener("click", async () => {
+			save.disabled = true;
+			const res = await fetch("./api/miro/credentials", {
+				method: "PUT",
+				headers: {"Content-Type": "application/json"},
+				body: JSON.stringify({
+					clientId: document.getElementById("miroClientIdInput").value,
+					clientSecret: document.getElementById("miroClientSecretInput").value
+				})
+			});
+			// 入力した値は、保存できてもできなくても画面に残さない
+			document.getElementById("miroClientSecretInput").value = "";
+			if (!res.ok) {
+				alert((await res.json().catch(() => ({}))).error || "保存できませんでした");
+				save.disabled = false;
+				return;
+			}
+			showMiroFlash(true, "Miro のアプリの値を保存しました。続けて「Miro と連携」を押してください。");
+			loadMiroTab();
+		});
+	}
+	const edit = document.getElementById("miroCredentialEditButton");
+	if (edit != null) {
+		edit.addEventListener("click", () => {
+			document.getElementById("miroCredentialForm").hidden = false;
+			edit.disabled = true;
+		});
+	}
+	const clear = document.getElementById("miroCredentialClearButton");
+	if (clear != null) {
+		clear.addEventListener("click", async () => {
+			const ok = await showConfirmDialog("Miro のアプリの値を消しますか?\n\nMiro との連携も解除されます。ボードに出してある資料は Miro に残ります。");
+			if (!ok) return;
+			await fetch("./api/miro/credentials", {method: "DELETE"});
+			miroFlash.hidden = true;
+			loadMiroTab();
+		});
+	}
+};
+
 const renderMiroStatus = (status) => {
-	const redirect = status.redirectUri
-		? '<div class="adminSectionNote" style="margin-top:8px;">Miro のアプリ(開発者ハブ)に登録する戻り先: <span class="miroRedirectUri">' + escapeHtml(status.redirectUri) + '</span></div>'
-		: "";
+	const credentials = renderMiroCredentials(status);
+	if (!status.configured) {
+		miroConnectionResult.innerHTML = '<span class="adminStatus unknown">未設定</span>' + credentials;
+		bindMiroCredentialForm();
+		return;
+	}
+	const redirect = '<div class="adminSectionNote" style="margin-top:8px;">Miro のアプリ(開発者ハブ)に登録する戻り先: <span class="miroRedirectUri">' + escapeHtml(status.redirectUri || "") + '</span></div>';
 	if (!status.connected) {
 		miroConnectionResult.innerHTML = '<span class="adminStatus unknown">未連携</span>'
 			+ '<div class="adminSectionNote" style="margin-top:8px;">「Miro と連携」を押すと Miro の許可の画面へ移ります。<strong>資料を出すチーム</strong>を選んで許可してください。'
 			+ 'このアカウントの権限で、選んだボードへ資料を出し入れします。</div>'
 			+ '<div class="toolbarRow" style="margin:12px 0;"><a class="modalButton save" id="miroConnectButton" href="./api/miro/connect">Miro と連携</a></div>'
-			+ redirect;
+			+ redirect + credentials;
+		bindMiroCredentialForm();
 		return;
 	}
 	const board = status.board;
@@ -6341,7 +6425,8 @@ const renderMiroStatus = (status) => {
 		+ '<a class="modalButton" id="miroReconnectButton" href="./api/miro/connect">連携し直す</a>'
 		+ '<button type="button" id="miroDisconnectButton" class="modalButton primary">連携を解除</button>'
 		+ '</div>'
-		+ redirect;
+		+ redirect + credentials;
+	bindMiroCredentialForm();
 	const search = () => searchMiroBoards(board?.id);
 	document.getElementById("miroBoardSearchButton").addEventListener("click", search);
 	document.getElementById("miroBoardSearchInput").addEventListener("keydown", (ev) => {
@@ -6379,7 +6464,7 @@ const openMiroResultIfReturned = () => {
 	params.delete("reason");
 	const rest = params.toString();
 	window.history.replaceState(null, "", window.location.pathname + (rest ? "?" + rest : ""));
-	if (!miroEnabled || !appShell.classList.contains("adminMode")) return;
+	if (!appShell.classList.contains("adminMode")) return;
 	setView("admin");
 	showAdminTab("miro");
 	if (result === "connected") showMiroFlash(true, "Miro と連携しました。資料を出すボードを選んでください。");
