@@ -138,7 +138,7 @@ Google Antigravity 用の Skill も画面からダウンロードでき、「こ
 (フォルダを渡すだけでよく、ZIPに固める必要はありません)。おしながきも「この案件の資料一覧ちょうだい」で
 そのまま受け取れます。
 
-![APIキー管理とAIエージェント用Skill](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/api-keys-skill.png)
+![AIエージェント用Skillの配布](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/tools.png)
 
 **構成は後から変えられます。** 既定では1コンテナで完結し、文書のメタデータは SQLite、ファイルは
 ローカルディスクに保存します。環境変数を変えるだけで、メタデータを PostgreSQL に、ファイルを S3 や

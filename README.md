@@ -27,9 +27,9 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 |---|---|
 | ![モックアップ](docs/screenshots/mockups.png) | ![操作履歴](docs/screenshots/history.png) |
 
-| APIキー管理・AIエージェント用 Skill |
+| ツール(AIエージェント用 Skill の配布) |
 |---|
-| <img src="docs/screenshots/api-keys-skill.png" alt="APIキー管理とAIエージェント用Skill" width="720"> |
+| <img src="docs/screenshots/tools.png" alt="ツール(AIエージェント用Skillの配布)" width="720"> |
 
 画像はダミーのサンプルデータで撮影したもの。画面が変わったら `npm run screenshots`([docs/screenshots/capture.js](docs/screenshots/capture.js))で撮り直せる。
 
@@ -217,14 +217,14 @@ LLMなどで作ったWebページのモックアップ(ビルド済みの一式)
 - **更新のお知らせ**: 手元のクライアントがサーバー同梱のものより古い場合、サーバーが応答ヘッダー`X-Skill-Latest-Version`で知らせ、クライアントが利用者とAIへ「ZIPを取り直してフォルダを置き換える」よう促す(認証に失敗した応答にも付くため、APIキーが期限切れでも気づける)。またサーバーが更新されたときは`X-Server-Updated`で**APIキーごとに1回だけ**知らせ、AIに`spec`での取り直しを促す。合図はビルドであって起動ではないため、クラッシュ復帰や再起動では通知されない
   - 貼り付けた利用ガイドで動くAI(コピペ経路)にはヘッダーが届かないため、ガイド自身の冒頭に「いつ・どの版の内容か」と入手先(ガイド・OpenAPI・同梱クライアントのZIP・`GET api/version`)を表で載せ、AIが自分で取り直せるようにしている
 - クライアントのバージョン: `--version`(または`config`の`clientVersion`)で確認でき、`User-Agent: document-manager-skill/<バージョン>`として送られるためサーバーのアクセスログからも追える。Python版・Node.js版・SKILL.mdの記載が揃っていることは結合テストで検証する。タグ`skill-v<バージョン>`のpushでGitHub Releaseを作る
-- 画面右上「APIキー管理」→「AIエージェント用 Skill」から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、エージェント別(タブで切り替え)の登録手順・接続先URL入りの登録依頼文のコピーができる。リポジトリからは `python tools/claude-skill/build_skill_zip.py` で `tools/claude-skill/dist/document-manager-skill.zip` を作れる。このZIPを各エージェントのチャットに渡して「Skillとして登録して」と頼むか、上記の展開先に展開すれば登録できる。GitHub Actions(`skill-package.yml`)が、Skill関連の変更のたびにクライアントの結合テストとZIP作成を行ってアーティファクトに保存し、タグ`skill-v*`のpushでGitHub ReleaseにZIPを公開する。詳細は [tools/claude-skill/document-manager/README.md](tools/claude-skill/document-manager/README.md) を参照
+- **「ツール」のページ**(メニューの「ベクトル索引」と「アーカイブ」の間)から、SkillのZIPのダウンロード(`GET api/claude-skill.zip`。ログイン済みならロールを問わず取得可。サーバー側でリポジトリの`tools/claude-skill/document-manager/`から生成する)と、エージェント別の登録手順・接続先URL入りの登録依頼文のコピーができる。Document Manager を起点に作業するための支援ツールの置き場で、Skill を1枚のカードに1つずつ並べ、見出しの横に配っている版を出す(`GET api/skills`)。使うエージェント(Claude Code / Codex / Antigravity)はページの上で1回だけ選び、すべてのカードの手順と展開先がそれに合わせて切り替わる。以前は「APIキー管理」の中に置いていたが、Document Manager 以外のサービス用(Backlog)も配るようになり、キーの画面に置く理由がなくなったため独立させた(「APIキー管理」には「ツールを開く」の案内だけを残し、ツールの Document Manager のカードには「APIキーを発行」を置いている)。閲覧だけの権限でも入口は出る
 - **APIキーはAIエージェントとのチャットに貼らない**。チャットに貼ったキーは、会話の記録やログなど利用者の手を離れた場所に残る。登録は同梱クライアントの`setup`で行う
   - `setup [--base-url URL]`: **利用者が自分の端末で実行する**。APIキーの入力欄が出て、貼り付けた文字は`*`で表示される。接続を確かめてから`~/.document-manager.json`に保存し(POSIXでは権限600)、繋がらないキーは保存しない。すでにキーがあれば、置き換えることを先に表示する(期限切れで発行し直したときの入れ替えに使う)。キーの形(`dm_`で始まる46文字)が違うときは、キーそのものは出さずに「入力は何文字で、`dm_`で始まっているか」を伝えて止める
   - よくある使い方は、Claude Code のデスクトップアプリで、AIが示したコマンドをコードブロックの実行ボタンから右側の端末で実行し、入力欄にブラウザでコピーしたキーを貼る形。AIエージェントが自分で`setup`を実行した場合は、入力待ちで止まらずに断り、「コマンドを利用者に示すように」と返す(Windowsでは入力が無い場合も端末と判定されるため、本物のコンソールかまで確かめている)
   - `setup --edit`: 設定ファイル(無ければひな形)をメモ帳などで開く。キーは利用者が書き込むので、AIエージェントが実行してよい。設定ファイルの場所を探して開く手間をなくすためのもの
   - **APIキーが期限切れ・無効で`401`になったとき**は、エラーに`setupCommand`(利用者が実行して登録し直すコマンド。いま動いているPython/Node.jsとクライアントを絶対パスで指し、WindowsではPowerShellの書き方)と`hint`(進め方)を添える。AIはそれをコードブロックで示すだけでよい
   - 画面の登録依頼文も、「APIキーは尋ねないで、登録するコマンドを示して」という内容にしてある
-- **関連するSkill(Backlog)**も、同じ「APIキー管理」の画面から配る(`GET api/related-skills/backlog.zip`)。Backlog の課題の操作と、BacklogのMCPではできないファイルの添付を行うSkill([tools/claude-skill/backlog/](tools/claude-skill/backlog/)。Python版のみ)。接続先とキーはBacklogのもので、登録は同じく`setup`で行う。配る対象は`lib/claude-skill.js`の`RELATED_SKILLS`に決め打ちしてあり、それ以外の名前は404。Document Manager の版の知らせ(`X-Skill-Latest-Version`)の対象にはしない
+- **関連するSkill(Backlog)**も、同じ「ツール」のページから配る(`GET api/related-skills/backlog.zip`)。Backlog の課題の操作と、BacklogのMCPではできないファイルの添付を行うSkill([tools/claude-skill/backlog/](tools/claude-skill/backlog/)。Python版のみ)。接続先とキーはBacklogのもので、登録は同じく`setup`で行う。配る対象は`lib/claude-skill.js`の`RELATED_SKILLS`に決め打ちしてあり、それ以外の名前は404。Document Manager の版の知らせ(`X-Skill-Latest-Version`)の対象にはしない
 
 ## ディレクトリ構成
 

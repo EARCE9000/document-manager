@@ -358,13 +358,18 @@ const main = async () => {
 		// 公開READMEにキー形式の文字列を載せないよう、表示中の平文キーを伏せ字にしてから撮る
 		// (一時DBのキーで撮影後に破棄されるが、秘密情報スキャナ等の誤検知も避ける)
 		await page.locator(".apiKeyValue").evaluate((el) => { el.textContent = "dm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; });
-		await page.locator("#claudeSkillBox summary").click();
-		await page.locator('#claudeSkillBox .skillAgentTab[data-agent="claude"]').click();
-		// モーダルは縦に長いため、ビューポートを広げてモーダル部分だけを撮る
-		await page.setViewportSize({width: VIEWPORT.width, height: 1400});
 		await page.waitForTimeout(400);
 		await page.locator("#apiKeyModalBox").screenshot({path: path.join(OUT_DIR, "api-keys-skill.png")});
 		console.log("saved: docs/screenshots/api-keys-skill.png");
+		await page.locator("#apiKeyCloseButton").click();
+
+		// 8. ツール(AIエージェント用 Skill の配布)。手順まで写すため、縦に広げて撮る
+		await page.locator("#menuToolsLink").click();
+		await page.locator('#toolsPane .skillAgentTab[data-agent="claude"]').click();
+		await page.locator("#toolCardDocumentManager .toolVersion").filter({hasText: /v\d/}).waitFor();
+		await page.setViewportSize({width: VIEWPORT.width, height: 1100});
+		await page.waitForTimeout(400);
+		await shot("tools");
 	} finally {
 		await browser.close();
 		// Windowsではサーバーがファイル(SQLite)を掴んだままだと削除できないため、終了を待ってから消す

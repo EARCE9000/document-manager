@@ -428,6 +428,12 @@ const OPERATIONS = [
 	{id: "getHistory", method: "get", path: "/api/history", role: "readonly", tag: "その他", summary: "自分の操作履歴(直近30日)", aiGuide: false},
 	{id: "getSkillZip", method: "get", path: "/api/claude-skill.zip", role: "readonly", tag: "その他", summary: "AIエージェント用SkillのZIP取得", produces: "application/zip"},
 	{
+		id: "listSkills", method: "get", path: "/api/skills", role: "readonly", tag: "その他",
+		summary: "配っているSkillの一覧と版",
+		description: "画面の「ツール」で使う。Skillの名前・同梱クライアントの版・ZIPの場所を返す",
+		aiGuide: false
+	},
+	{
 		id: "getRelatedSkillZip", method: "get", path: "/api/related-skills/:name.zip", role: "readonly", tag: "その他",
 		summary: "関連するSkill(Backlog等)のZIP取得",
 		description: "Document Manager とは別のサービスを操作するSkillを、同じ場所から配る。いまは `backlog` だけ(それ以外の名前は404)。接続先とキーはそのサービスのものを利用者が用意する",

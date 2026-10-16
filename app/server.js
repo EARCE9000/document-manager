@@ -3281,6 +3281,20 @@ app.get(BASE_URL_PATH + 'api/claude-skill.zip', requireAuth, async (req, res) =>
 });
 
 /**
+ * 配っているSkillの一覧と版(画面の「ツール」で、手元のものが古くないかを見比べるため)。
+ * 中身は公開してよい情報だけ(名前・版・ZIPの場所)。ログイン済みならロールを問わず取れる
+ */
+app.get(BASE_URL_PATH + 'api/skills', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json({skills: ClaudeSkill.listDistributedSkills()});
+	} catch (err) {
+		logger.error(err, "::api/skills");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * 関連するSkill(Document Manager とは別のサービスを操作するもの。いまは Backlog)のZIP。
  * 社内の人が、Document Manager のSkillと同じ場所から取れるようにするため。
  * 中身は接続情報を含まないクライアント・手順書のみ(接続先とキーは、そのサービスのものを利用者が用意する)。

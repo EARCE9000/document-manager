@@ -46,16 +46,17 @@ test.describe("モーダルが画面に収まる(実ブラウザ)", () => {
 		}
 	};
 
-	test("APIキー管理はSkillの手順を開いても収まる", async ({page}) => {
+	// 以前はSkillの手順もこの画面にあり、開くと一気に長くなった(いまは「ツール」のページへ移した)。
+	// キーを発行して、平文のキーと一覧が並んだ状態でも収まること
+	test("APIキー管理は、キーを発行した直後でも収まる", async ({page}) => {
 		await page.setViewportSize(NARROW);
 		await page.goto("./");
 		await page.click("#apiKeyManageLink");
 		await expect(page.locator("#apiKeyModalBox")).toBeVisible();
 		await expectFits(page, "#apiKeyModalBox");
 
-		// ここが実際に起きた状態。手順を開くと一気に長くなる
-		await page.click("#claudeSkillBox summary");
-		await page.locator('#claudeSkillBox .skillAgentTab[data-agent="claude"]').waitFor();
+		await page.click("#apiKeyCreateButton");
+		await page.locator(".apiKeyValue").waitFor();
 		await expectFits(page, "#apiKeyModalBox");
 
 		// 末尾まで送っても、先頭の説明に戻れること(戻れないと読み直せない)
@@ -68,7 +69,8 @@ test.describe("モーダルが画面に収まる(実ブラウザ)", () => {
 		await page.setViewportSize({width: 1024, height: 450});
 		await page.goto("./");
 		await page.click("#apiKeyManageLink");
-		await page.click("#claudeSkillBox summary");
+		await page.click("#apiKeyCreateButton");
+		await page.locator(".apiKeyValue").waitFor();
 		await expectFits(page, "#apiKeyModalBox");
 	});
 

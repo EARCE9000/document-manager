@@ -269,25 +269,24 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		expect(copied).not.toContain("<APIキー>");
 	});
 
-	// APIキー管理画面から Claude Code 用 Skill のZIPをダウンロードでき、登録手順・依頼文が表示される
-	test("APIキー管理画面からSkillのZIPをダウンロードできる", async ({page}) => {
+	// 「ツール」のページから Skill のZIPをダウンロードでき、登録手順・依頼文が表示される
+	test("ツールのページからSkillのZIPをダウンロードできる", async ({page}) => {
 		await page.goto("./");
-		await page.locator("#apiKeyManageLink").click();
-		await expect(page.locator("#apiKeyOverlay")).toBeVisible();
-		await page.locator("#claudeSkillBox summary").click();
+		await page.locator("#menuToolsLink").click();
+		await expect(page.locator("#toolsPane")).toBeVisible();
 		// 接続先URLはこのページの位置から算出される
 		await expect(page.locator("#claudeSkillBaseUrl")).toHaveText(new URL("./", page.url()).href);
 		// エージェントを切り替えると展開先(手順・手動コマンド)が切り替わる
 		const expectedDirs = {claude: "~/.claude/skills", codex: "~/.agents/skills", antigravity: "~/.gemini/config/skills"};
 		for (const [agent, dir] of Object.entries(expectedDirs)) {
-			await page.locator(`#claudeSkillBox .skillAgentTab[data-agent="${agent}"]`).click();
-			await expect(page.locator(`#claudeSkillBox .skillAgentTab[data-agent="${agent}"]`)).toHaveClass(/selected/);
+			await page.locator(`#toolsPane .skillAgentTab[data-agent="${agent}"]`).click();
+			await expect(page.locator(`#toolsPane .skillAgentTab[data-agent="${agent}"]`)).toHaveClass(/selected/);
 			await expect(page.locator("#claudeSkillSteps")).toContainText(`${dir}/document-manager/`);
 			await expect(page.locator("#claudeSkillManual")).toContainText(`-d ${dir}/`);
 		}
-		await page.locator('#claudeSkillBox .skillAgentTab[data-agent="codex"]').click();
+		await page.locator('#toolsPane .skillAgentTab[data-agent="codex"]').click();
 		if (process.env.E2E_SCREENSHOT) {
-			await page.locator("#apiKeyModalBox").screenshot({path: process.env.E2E_SCREENSHOT});
+			await page.locator("#toolsPane").screenshot({path: process.env.E2E_SCREENSHOT});
 		}
 		const downloadPromise = page.waitForEvent("download");
 		await page.locator("#claudeSkillDownloadLink").click();

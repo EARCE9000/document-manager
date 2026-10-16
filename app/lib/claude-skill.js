@@ -157,5 +157,31 @@ module.exports.getBundledClientVersion = () => {
 	}
 };
 
+/**
+ * Skillに同梱しているクライアントの版。画面(ツール)に並べて、手元のものが古くないかを見比べられるようにする。
+ * クライアントの中の CLIENT_VERSION を読む(Skillごとに、どのファイルが本体かを決めてある)
+ */
+const CLIENT_SCRIPTS = Object.freeze({"document-manager": "dm_client.py", backlog: "backlog_client.py"});
+module.exports.getSkillVersion = (name) => {
+	if (name === SKILL_NAME) return module.exports.getBundledClientVersion();
+	const dir = findSkillDir(name);
+	if (dir == null || CLIENT_SCRIPTS[name] == null) return null;
+	try {
+		const source = fs.readFileSync(path.join(dir, "scripts", CLIENT_SCRIPTS[name]), "utf-8");
+		return /CLIENT_VERSION\s*=\s*"([^"]+)"/.exec(source)?.[1] ?? null;
+	} catch {
+		return null;
+	}
+};
+
+/** このサーバーが配っているSkillの一覧(画面の「ツール」用) */
+module.exports.listDistributedSkills = () => DISTRIBUTED_SKILLS
+	.filter((name) => findSkillDir(name) != null)
+	.map((name) => ({
+		name,
+		version: module.exports.getSkillVersion(name),
+		zip: name === SKILL_NAME ? "api/claude-skill.zip" : `api/related-skills/${name}.zip`
+	}));
+
 module.exports.SKILL_ZIP_FILENAME = `${SKILL_NAME}-skill.zip`;
 module.exports.buildZip = buildZip;

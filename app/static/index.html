@@ -104,6 +104,7 @@
 	/* 日常的に使うもの(左)と、時々しか使わないもの(右)で分ける。
 	   右寄せは先頭の要素に付ける。readOnlyModeではこの2つをまとめて隠している */
 	#breadcrumbBar #menuVectorIndexLink { margin-left: auto; }
+	#appShell.readOnlyMode #breadcrumbBar #menuToolsLink { margin-left: auto; }
 	/* モックアップは文書とは別のコレクション。同じ段に置くが、仕切りを入れて区別する。
 	   "|" の文字では他のリンクと同じ大きさで主張してしまうため、細い縦線にしている */
 	#breadcrumbBar #menuMockupsLink { margin-left: 18px; position: relative; }
@@ -308,6 +309,33 @@
 	#appShell.vectorIndexMode #vectorIndexPane { display: flex; }
 	#appShell.vectorIndexMode #sideBar,
 	#appShell.vectorIndexMode #previewArea { display: none !important; }
+
+	/* ツール: 支援ツール(AIエージェント用のSkillなど)を配るページ。方式は #vectorIndexPane と同じ */
+	#toolsPane { display: none; flex: 1; flex-direction: column; min-width: 0; background: #fff; overflow-y: auto; }
+	#appShell.toolsMode #toolsPane { display: flex; }
+	#appShell.toolsMode #sideBar,
+	#appShell.toolsMode #previewArea { display: none !important; }
+	#toolsPaneHeader { padding: 14px 20px; border-bottom: 1px solid #ddd; flex-shrink: 0; }
+	#toolsPaneHeader h2 { margin: 0 0 6px; font-size: 1.05em; }
+	#toolsPaneMeta { color: #666; font-size: 0.85em; line-height: 1.6; max-width: 80em; }
+	#toolsAgentRow { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 0.85em; color: #555; flex-wrap: wrap; }
+	#toolsPane .skillAgentTabs { display: flex; gap: 4px; }
+	#toolsPane .skillAgentTab { background: #fff; border: 1px solid #d0d7de; border-radius: 4px; padding: 4px 12px; font-size: 0.95em; color: #555; cursor: pointer; }
+	#toolsPane .skillAgentTab:hover { color: #1a56db; }
+	#toolsPane .skillAgentTab.selected { background: #eaf2ff; border-color: #1a56db; color: #1a56db; font-weight: 600; }
+	#toolsPaneBody { padding: 16px 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; align-items: start; }
+	.toolCard { border: 1px solid #d0d7de; border-radius: 8px; padding: 12px 14px; background: #fafbfc; font-size: 0.85em; min-width: 0; }
+	.toolCardHeader { display: flex; align-items: baseline; gap: 8px; }
+	.toolCardHeader h3 { margin: 0; font-size: 1.1em; }
+	.toolVersion { margin-left: auto; color: #888; font-size: 0.9em; }
+	.toolCardIntro { margin: 6px 0 8px; line-height: 1.6; }
+	.toolCard .claudeSkillActions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
+	.toolCard .claudeSkillActions .modalButton { font-size: 0.95em; padding: 5px 12px; text-decoration: none; }
+	.toolSteps { margin-top: 8px; }
+	.toolSteps summary { cursor: pointer; font-weight: 600; }
+	.toolCard ol { margin: 8px 0 4px; padding-left: 1.4em; line-height: 1.7; }
+	.toolCard code { background: #fff; border: 1px solid #ddd; border-radius: 3px; padding: 0 4px; word-break: break-all; }
+	.toolCard pre { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 8px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; font-size: 0.95em; }
 
 	/* 管理ペイン(adminロール限定)。タブが増える前提のため、モーダルではなくページとして開く。
 	   方式は上の #vectorIndexPane と同じ(appShellのクラスでペインを入れ替える)。
@@ -1400,44 +1428,9 @@
 		font-family: monospace;
 	}
 	.apiKeyNewBoxButtons { display: flex; gap: 8px; margin-top: 10px; }
-	/* Claude Code 用 Skill のダウンロードと登録手順(APIキー管理画面内。普段は畳んでおく) */
-	#claudeSkillBox {
-		border: 1px solid #d0d7de;
-		border-radius: 6px;
-		padding: 8px 10px;
-		margin-top: 10px;
-		font-size: 0.85em;
-		background: #fafbfc;
-	}
-	#claudeSkillBox summary { cursor: pointer; font-weight: 600; }
-	/* 関連するSkill。上のSkill案内と同じ見た目にそろえる */
-	#relatedSkillBox { margin-top: 10px; padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; background: #fafbfc; font-size: 0.85em; }
-	#relatedSkillBox .claudeSkillActions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
-	#relatedSkillBox .claudeSkillActions .modalButton { font-size: 0.95em; padding: 5px 12px; text-decoration: none; }
-	#relatedSkillBox summary { cursor: pointer; font-weight: 600; }
-	#relatedSkillBox .relatedSkillTitle { margin: 12px 0 4px; font-size: 1em; }
-	#relatedSkillBox ol { margin: 8px 0 4px; padding-left: 1.4em; line-height: 1.7; }
-	#relatedSkillBox code { background: #fff; border: 1px solid #ddd; border-radius: 3px; padding: 0 4px; word-break: break-all; }
-	#relatedSkillBox pre { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 8px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; font-size: 0.95em; }
-	#claudeSkillBox ol { margin: 8px 0 4px; padding-left: 1.4em; line-height: 1.7; }
-	#claudeSkillBox code { background: #fff; border: 1px solid #ddd; border-radius: 3px; padding: 0 4px; word-break: break-all; }
-	#claudeSkillBox pre { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 8px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; font-size: 0.95em; }
-	#claudeSkillBox .claudeSkillActions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
-	#claudeSkillBox .claudeSkillActions .modalButton { font-size: 0.95em; padding: 5px 12px; text-decoration: none; }
-	#claudeSkillBox .skillAgentTabs { display: flex; gap: 4px; margin-top: 8px; border-bottom: 1px solid #d0d7de; }
-	#claudeSkillBox .skillAgentTab {
-		background: none;
-		border: 1px solid transparent;
-		border-bottom: none;
-		border-radius: 4px 4px 0 0;
-		padding: 4px 12px;
-		font-size: 0.95em;
-		color: #555;
-		cursor: pointer;
-		margin-bottom: -1px;
-	}
-	#claudeSkillBox .skillAgentTab:hover { color: #1a56db; }
-	#claudeSkillBox .skillAgentTab.selected { background: #fff; border-color: #d0d7de; color: #1a56db; font-weight: 600; }
+	/* APIキー管理から「ツール」への案内(Skillの配布は「ツール」のページへ移した) */
+	#apiKeyToolsNote { margin-top: 12px; padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; background: #fafbfc; font-size: 0.85em; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+	#apiKeyToolsNote .modalButton { font-size: 0.95em; padding: 4px 12px; }
 	.apiKeyNewBoxButtons .modalButton { font-size: 0.95em; padding: 6px 14px; }
 	/* キーが増えるとモーダルの縦があふれるため、3件分で頭打ちにして中をスクロールさせる
 	   (1行 = 高さ46px + 下の余白6px。行を1行表示にしたので3件でも十分に見分けられる) */
@@ -1531,7 +1524,7 @@
 	</header>
 	<div id="activityToastStack" aria-live="polite"></div>
 	<nav id="breadcrumbBar">
-		<a href="#" id="menuDocumentsLink" class="menuLink active">文書一覧</a><a href="#" id="menuTagTreeLink" class="menuLink">タグ体系</a><a href="#" id="menuProjectsLink" class="menuLink">プロジェクト</a><a href="#" id="menuMockupsLink" class="menuLink">モックアップ</a><a href="#" id="menuVectorIndexLink" class="menuLink">ベクトル索引</a><a href="#" id="menuArchiveLink" class="menuLink">アーカイブ</a>
+		<a href="#" id="menuDocumentsLink" class="menuLink active">文書一覧</a><a href="#" id="menuTagTreeLink" class="menuLink">タグ体系</a><a href="#" id="menuProjectsLink" class="menuLink">プロジェクト</a><a href="#" id="menuMockupsLink" class="menuLink">モックアップ</a><a href="#" id="menuVectorIndexLink" class="menuLink">ベクトル索引</a><a href="#" id="menuToolsLink" class="menuLink">ツール</a><a href="#" id="menuArchiveLink" class="menuLink">アーカイブ</a>
 	</nav>
 	<div id="projectSwitcherBar">
 		<div id="projectTabs"></div>
@@ -1710,6 +1703,52 @@
 					</button>
 				</div>
 				<textarea id="memoTextarea" rows="3" placeholder="このドキュメントについての備忘録を入力..."></textarea>
+			</div>
+		</main>
+		<!-- ツール: Document Manager を起点に作業するための支援ツール(AIエージェント用のSkillなど)を配る。
+		     以前は「APIキー管理」の中に置いていたが、Document Manager 以外のサービス用(Backlog など)も
+		     配るようになり、キーの画面に置く理由がなくなったため、独立したページにした -->
+		<main id="toolsPane">
+			<div id="toolsPaneHeader">
+				<h2>ツール</h2>
+				<div id="toolsPaneMeta">Document Manager を起点に作業するための支援ツールです。AIエージェント用の Skill は、ZIPを取ってエージェントに登録すると、話しかけるだけで各サービスを操作できるようになります。Skill の形式は共通なので、どのエージェントでも同じZIPを使えます(置き場所だけが違います)。</div>
+				<div id="toolsAgentRow">
+					<span>使うエージェント</span>
+					<div class="skillAgentTabs" role="tablist">
+						<button type="button" class="skillAgentTab" data-agent="claude" role="tab">Claude Code</button>
+						<button type="button" class="skillAgentTab" data-agent="codex" role="tab">Codex</button>
+						<button type="button" class="skillAgentTab" data-agent="antigravity" role="tab">Antigravity</button>
+					</div>
+				</div>
+			</div>
+			<div id="toolsPaneBody">
+				<section class="toolCard" id="toolCardDocumentManager" data-skill="document-manager">
+					<div class="toolCardHeader"><h3>Document Manager</h3><span class="toolVersion"></span></div>
+					<div class="toolCardIntro">「この資料アップして」「前の版を置き換えて」「〜を探して」「PDFにして」「この案件の資料一覧ちょうだい」と話しかけるだけで、この Document Manager を操作できます(Python / Node.js のクライアント同梱)。</div>
+					<div class="claudeSkillActions">
+						<a id="claudeSkillDownloadLink" class="modalButton save" href="./api/claude-skill.zip" download>SkillのZIPをダウンロード</a>
+						<button type="button" id="claudeSkillCopyPromptButton" class="modalButton">登録依頼文をコピー</button>
+						<button type="button" id="toolsOpenApiKeyButton" class="modalButton">APIキーを発行</button>
+					</div>
+					<details class="toolSteps" open>
+						<summary>登録の手順</summary>
+						<ol id="claudeSkillSteps"></ol>
+						<div id="claudeSkillManual"></div>
+					</details>
+				</section>
+				<section class="toolCard" id="toolCardBacklog" data-skill="backlog">
+					<div class="toolCardHeader"><h3>Backlog</h3><span class="toolVersion"></span></div>
+					<div class="toolCardIntro">「Backlogにチケットを作って」「このスクショを課題に貼って」「PROJ-123 を完了にして」と話しかけるだけで、Backlog の課題を操作できます。BacklogのMCPではできない<strong>ファイルの添付</strong>ができるのが特長です(Python 3.8 以上が必要)。接続先とAPIキーは Backlog のものを使います。</div>
+					<div class="claudeSkillActions">
+						<a id="backlogSkillDownloadLink" class="modalButton save" href="./api/related-skills/backlog.zip" download>SkillのZIPをダウンロード</a>
+						<button type="button" id="backlogSkillCopyPromptButton" class="modalButton">登録依頼文をコピー</button>
+					</div>
+					<details class="toolSteps">
+						<summary>登録の手順</summary>
+						<ol id="backlogSkillSteps"></ol>
+						<div id="backlogSkillManual"></div>
+					</details>
+				</section>
 			</div>
 		</main>
 		<main id="vectorIndexPane">
@@ -2002,33 +2041,10 @@
 			<input type="text" id="apiKeyLabelInput" placeholder="用途メモ(任意)" style="width:100%;">
 		</div>
 		<ul id="apiKeyList"></ul>
-		<details id="claudeSkillBox">
-			<summary>AIエージェント用 Skill(Claude Code / Codex / Antigravity からアップロード・検索)</summary>
-			<div class="skillIntro" style="margin-top:6px;">AIエージェントに「この資料アップして」「前の版を置き換えて」「〜を探して」「この画面案をアップして」「この案件の資料一覧ちょうだい」と話しかけるだけで、このDocument Managerを操作できるようにするSkillです(Python/Node.jsのAPIクライアント同梱)。Skillの形式は共通のため、どのエージェントでも同じZIPを使えます(置き場所だけが違います)。</div>
-			<div class="skillAgentTabs" role="tablist">
-				<button type="button" class="skillAgentTab" data-agent="claude" role="tab">Claude Code</button>
-				<button type="button" class="skillAgentTab" data-agent="codex" role="tab">Codex</button>
-				<button type="button" class="skillAgentTab" data-agent="antigravity" role="tab">Antigravity</button>
-			</div>
-			<div class="claudeSkillActions">
-				<a id="claudeSkillDownloadLink" class="modalButton save" href="./api/claude-skill.zip" download>SkillのZIPをダウンロード</a>
-				<button type="button" id="claudeSkillCopyPromptButton" class="modalButton">登録依頼文をコピー</button>
-			</div>
-			<ol id="claudeSkillSteps"></ol>
-			<div id="claudeSkillManual"></div>
-		</details>
-		<details id="relatedSkillBox">
-			<summary>関連するSkill(Document Manager 以外のサービス用)</summary>
-			<div class="skillIntro" style="margin-top:6px;">AIエージェントから、Document Manager とあわせて使うことの多いサービスを操作するためのSkillです。接続先・APIキーはそれぞれのサービスのものを使います。どのエージェント向けの手順を出すかは、上の「AIエージェント用 Skill」のタブで選びます。</div>
-			<h4 class="relatedSkillTitle">Backlog(課題の操作とファイルの添付)</h4>
-			<div class="skillIntro">「Backlogに課題を作って」「このスクショを課題に貼って」「PROJ-123 を完了にして」と話しかけるだけで、Backlog の課題を操作できます。BacklogのMCPではできない<strong>ファイルの添付</strong>ができるのが特長です(Python 3.8 以上が必要)。</div>
-			<div class="claudeSkillActions">
-				<a id="backlogSkillDownloadLink" class="modalButton save" href="./api/related-skills/backlog.zip" download>SkillのZIPをダウンロード</a>
-				<button type="button" id="backlogSkillCopyPromptButton" class="modalButton">登録依頼文をコピー</button>
-			</div>
-			<ol id="backlogSkillSteps"></ol>
-			<div id="backlogSkillManual"></div>
-		</details>
+		<div id="apiKeyToolsNote">
+			AIエージェント(Claude Code など)から使う Skill は、メニューの「ツール」で配っています。
+			<button type="button" id="apiKeyGoToolsButton" class="modalButton">ツールを開く</button>
+		</div>
 		<div class="modalButtons">
 			<button id="apiKeyCloseButton" type="button" class="modalButton">閉じる</button>
 		</div>
@@ -2326,6 +2342,7 @@ const archiveMockupsTab = document.getElementById("archiveMockupsTab");
 // アーカイブで今どちらのタブを見ているか("documents" / "mockups")
 let archiveTab = "documents";
 const menuVectorIndexLink = document.getElementById("menuVectorIndexLink");
+const menuToolsLink = document.getElementById("menuToolsLink");
 const menuArchiveLink = document.getElementById("menuArchiveLink");
 const projectSwitcherBar = document.getElementById("projectSwitcherBar");
 const projectTabsEl = document.getElementById("projectTabs");
@@ -3604,6 +3621,7 @@ const setView = (view) => {
 	appShell.classList.toggle("tagTreeMode", view === "tagTree");
 	appShell.classList.toggle("projectsMode", view === "projects");
 	appShell.classList.toggle("vectorIndexMode", view === "vectorIndex");
+	appShell.classList.toggle("toolsMode", view === "tools");
 	appShell.classList.toggle("mockupsMode", view === "mockups");
 	appShell.classList.toggle("archiveMockupsMode", view === "archive" && archiveTab === "mockups");
 	// 管理ペインはadminのときだけ開く。APIはすべてrequireAdminで守られているため、
@@ -3622,12 +3640,14 @@ const setView = (view) => {
 	menuProjectsLink.classList.toggle("active", view === "projects");
 	menuMockupsLink.classList.toggle("active", view === "mockups");
 	menuVectorIndexLink.classList.toggle("active", view === "vectorIndex");
+	menuToolsLink.classList.toggle("active", view === "tools");
 	menuArchiveLink.classList.toggle("active", view === "archive");
 	clearPreview();
 	// モックアップは「モックアップ」メニューと、アーカイブのモックアップタブの2か所から開く
 	const showsMockups = view === "mockups" || (view === "archive" && archiveTab === "mockups");
 	// 管理ペインとモックアップは文書を扱わないため、文書一覧の取得は行わない
-	if (view !== "admin" && !showsMockups) loadDocuments();
+	if (view !== "admin" && view !== "tools" && !showsMockups) loadDocuments();
+	if (view === "tools") loadToolVersions();
 	if (view === "projects") loadProjects();
 	if (showsMockups) {
 		mockupsArchiveMode = view === "archive";
@@ -3658,6 +3678,10 @@ menuVectorIndexLink.addEventListener("click", (ev) => {
 menuArchiveLink.addEventListener("click", (ev) => {
 	ev.preventDefault();
 	setView("archive");
+});
+menuToolsLink.addEventListener("click", (ev) => {
+	ev.preventDefault();
+	setView("tools");
 });
 
 // アーカイブの中のタブ(文書 / モックアップ)。どちらも「引退したもの」なので同じ入口にまとめる
@@ -5254,14 +5278,14 @@ const buildClaudeSkillInstallPrompt = () => {
 
 const renderSkillAgentGuide = () => {
 	const agent = SKILL_AGENTS[selectedSkillAgent];
-	document.querySelectorAll("#claudeSkillBox .skillAgentTab").forEach((tab) => {
+	document.querySelectorAll("#toolsPane .skillAgentTab").forEach((tab) => {
 		const selected = tab.dataset.agent === selectedSkillAgent;
 		tab.classList.toggle("selected", selected);
 		tab.setAttribute("aria-selected", String(selected));
 	});
 	document.getElementById("claudeSkillSteps").innerHTML = `
 		<li>上のボタンで <code>document-manager-skill.zip</code> をダウンロードします。</li>
-		<li>この画面で、ロール <code>readwrite</code>・有効期限「1年」のAPIキーを発行し、「APIキーをコピー」で手元に控えます(継続して使うため。既に他のエージェント用に発行・設定済みなら不要)。期限が切れたら発行し直します。</li>
+		<li>上の「APIキーを発行」で、ロール <code>readwrite</code>・有効期限「1年」のAPIキーを発行し、「APIキーをコピー」で手元に控えます(継続して使うため。既に他のエージェント用に発行・設定済みなら不要)。期限が切れたら発行し直します。</li>
 		<li>${escapeHtml(agent.label)} のチャットにZIPを添付(またはZIPのパスを貼り付け)し、「登録依頼文をコピー」でコピーした文を貼り付けて送ります。ZIPが <code>${escapeHtml(agent.dir)}/document-manager/</code> に展開されます。</li>
 		<li>接続先URLは <code id="claudeSkillBaseUrl">${escapeHtml(claudeSkillBaseUrl)}</code> です(依頼文に含まれています)。エージェントがAPIキーを登録するコマンドを示すので、実行します(Claude Code のデスクトップアプリなら、実行ボタンから右側の端末で実行できます)。<strong>「APIキー」の入力欄が出たら、手順2のキーを貼り付けて Enter</strong> を押し、「保存した」と伝えます。貼り付けた文字は <code>*</code> で表示されます。<strong>APIキーはチャットに貼らないでください</strong>(会話の記録に残ります)。設定は <code>~/.document-manager.json</code> に保存され、他のエージェントとも共有されます。</li>
 		<li>${agent.check}</li>
@@ -5307,7 +5331,7 @@ const renderRelatedSkillGuide = () => {
 	`;
 };
 
-document.querySelectorAll("#claudeSkillBox .skillAgentTab").forEach((tab) => {
+document.querySelectorAll("#toolsPane .skillAgentTab").forEach((tab) => {
 	tab.addEventListener("click", () => {
 		selectedSkillAgent = tab.dataset.agent;
 		try {
@@ -5326,6 +5350,22 @@ document.getElementById("backlogSkillCopyPromptButton").addEventListener("click"
 	copyTextWithFeedback(buildBacklogSkillInstallPrompt(), ev.currentTarget);
 });
 
+// 配っているSkillの版を、カードの見出しの横に出す(手元のものが古くないかを見比べられるように)
+const loadToolVersions = async () => {
+	try {
+		const res = await fetch("./api/skills");
+		if (res.status !== 200) return;
+		const {skills} = await res.json();
+		for (const skill of skills) {
+			const card = document.querySelector(`#toolsPane .toolCard[data-skill="${CSS.escape(skill.name)}"] .toolVersion`);
+			if (card != null) card.textContent = skill.version ? `v${skill.version}` : "";
+		}
+	} catch {
+		// 版が出なくても、配布そのものには差し支えない
+	}
+};
+document.getElementById("toolsOpenApiKeyButton").addEventListener("click", () => openApiKeyManager());
+
 const openApiKeyManager = () => {
 	apiKeyNewBox.style.display = "none";
 	apiKeyLabelInput.value = "";
@@ -5337,6 +5377,11 @@ const openApiKeyManager = () => {
 	apiKeyOverlay.style.display = "flex";
 	loadApiKeys();
 };
+
+document.getElementById("apiKeyGoToolsButton").addEventListener("click", () => {
+	apiKeyOverlay.style.display = "none";
+	setView("tools");
+});
 
 document.getElementById("apiKeyManageLink").addEventListener("click", (ev) => {
 	ev.preventDefault();
