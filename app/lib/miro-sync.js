@@ -665,6 +665,175 @@ module.exports.setPublish = async (projectId, documentId, publish, user) => {
 	runProject(projectId, {user});
 };
 
+// ---- 動かす ----
+// 人が Miro で動かしたあとでも正しく動かせるよう、動かす前に Miro からいまの位置を読み直す。
+// 資料と見出しはグループにしてあるが、API で動かすときは1つずつ動かす必要がある(実物で確かめた)ので、
+// 見出しも資料の下へ一緒に動かす
+
+const SIDES = Object.freeze(["right", "left", "above", "below"]);
+module.exports.SIDES = SIDES;
+
+const moveError = (message, status = 400) => Object.assign(new Error(message), {status});
+
+/** 資料を、置き場所(枠の左上からの中心の位置)へ動かし、見出しを下へ付ける */
+const placeAt = async (board, row, {x, y, parentId}) => {
+	await MiroConnection.withToken((token) => Miro.moveItem(token, board, row.item_id, {x, y, parentId}));
+	if (row.caption_id) {
+		await MiroConnection.withToken((token) => Miro.moveItem(token, board, row.caption_id, {
+			x, y: y + Number(row.height || 0) / 2 + LAYOUT.captionHeight / 2, parentId
+		})).catch((err) => {
+			if (err.status !== 404) throw err;
+		});
+	}
+};
+
+/** いま Miro にある位置と大きさを読む(消されていれば 404 の例外) */
+const readPlacement = async (board, row) => {
+	const item = await MiroConnection.withToken((token) => Miro.getItem(token, board, row.item_id));
+	return {
+		x: item.position?.x, y: item.position?.y,
+		width: item.geometry?.width ?? row.width, height: item.geometry?.height ?? row.height,
+		parentId: item.parent?.id ?? null
+	};
+};
+
+const SQL_GET_ITEM = `SELECT * FROM miro_items WHERE project_id = ? AND alias = ?`;
+const SQL_SET_POSITION = `UPDATE miro_items SET x = ?, y = ?, width = ?, height = ?, updated_by = ?, updated_at = ? WHERE project_id = ? AND alias = ?`;
+
+/** プロジェクトの資料(出ているもの)を、文書IDから引く。版が変わっていても、同じ資料なら引ける */
+const placedRowOf = async (projectId, documentId) => {
+	const alias = await DocumentAliases.aliasOf(documentId);
+	const row = alias == null ? null : await ds.get(SQL_GET_ITEM, [projectId, alias]);
+	if (row == null || row.item_id == null || ![STATES.PLACED, STATES.DETACHED].includes(row.state)) {
+		throw moveError("この資料は Miro に出ていません", 404);
+	}
+	return row;
+};
+
+/**
+ * 資料を動かす。指示は次のどれか1つ:
+ *   {nextTo: 文書ID, side: "right"|"left"|"above"|"below"}  ほかの資料の隣へ(同じプロジェクトの資料)
+ *   {project: プロジェクトID}                                ほかのプロジェクトの枠へ(その枠の下の空いているところ)
+ *   {x, y}                                                    いまの枠の左上からの位置へ(資料の中心)
+ * 動かしたあとの位置は覚えておき、新しい版もその場所で差し替える。
+ */
+module.exports.moveDocument = async (projectId, documentId, instruction, user) => {
+	const target = await MiroConnection.target();
+	if (target == null) throw moveError("Miro と連携していないか、貼り先のボードが決まっていません", 409);
+	const board = target.boardId;
+	const row = await placedRowOf(projectId, documentId);
+	const current = await readPlacement(board, row).catch((err) => {
+		if (err.status === 404) throw moveError("この資料は Miro で消されています", 404);
+		throw err;
+	});
+	row.width = current.width;
+	row.height = current.height;
+	let destination;
+	if (instruction.nextTo != null) {
+		const side = instruction.side ?? "right";
+		if (!SIDES.includes(side)) throw moveError("side は right / left / above / below のどれかです");
+		const reference = await placedRowOf(projectId, instruction.nextTo).catch(() => {
+			throw moveError("隣に置く相手の資料が、このプロジェクトの Miro に出ていません", 404);
+		});
+		if (reference.alias === row.alias) throw moveError("自分自身の隣には置けません");
+		const ref = await readPlacement(board, reference);
+		const horizontal = (ref.width + current.width) / 2 + LAYOUT.gapX;
+		// 縦に並べるときは、上の資料の見出しの分も空ける
+		const below = ref.height / 2 + LAYOUT.captionHeight + LAYOUT.gapY + current.height / 2;
+		const above = current.height / 2 + LAYOUT.captionHeight + LAYOUT.gapY + ref.height / 2;
+		destination = {
+			x: side === "right" ? ref.x + horizontal : side === "left" ? ref.x - horizontal : ref.x,
+			y: side === "below" ? ref.y + below : side === "above" ? ref.y - above : ref.y,
+			parentId: ref.parentId
+		};
+	} else if (instruction.project != null) {
+		const other = await ds.get(SQL_GET_PROJECT, [instruction.project]);
+		if (other == null || other.state !== "active" || other.frame_id == null) throw moveError("移す先のプロジェクトは Miro と連動していません", 409);
+		// 移す先の枠の、いちばん下の資料のさらに下
+		const rows = (await ds.all(SQL_LIST_ITEMS, [instruction.project])).filter((r) => r.state === STATES.PLACED && r.y != null);
+		let bottom = LAYOUT.padding;
+		for (const r of rows) bottom = Math.max(bottom, Number(r.y) + Number(r.height || 0) / 2 + LAYOUT.captionHeight + LAYOUT.gapY);
+		destination = {x: LAYOUT.padding + current.width / 2, y: bottom + current.height / 2, parentId: other.frame_id};
+		// 枠からはみ出すなら伸ばす(上の端は動かさない)
+		const needed = bottom + current.height + LAYOUT.captionHeight + LAYOUT.padding;
+		if (needed > Number(other.frame_height || 0)) {
+			const y = Number(other.frame_y) + (needed - Number(other.frame_height || 0)) / 2;
+			await MiroConnection.withToken((token) => Miro.updateFrame(token, board, other.frame_id, {width: Number(other.frame_width) || frameWidth(), height: needed, x: Number(other.frame_x), y}));
+			await ds.run(SQL_SET_FRAME, {project_id: instruction.project, frame_id: other.frame_id, x: Number(other.frame_x), y, width: Number(other.frame_width) || frameWidth(), height: needed});
+		}
+	} else if (Number.isFinite(Number(instruction.x)) && Number.isFinite(Number(instruction.y)) && instruction.x !== null && instruction.y !== null) {
+		destination = {x: Number(instruction.x), y: Number(instruction.y), parentId: current.parentId};
+	} else {
+		throw moveError("nextTo(と side)・project・x と y のどれかを指定してください");
+	}
+	await placeAt(board, row, destination);
+	await ds.run(SQL_SET_POSITION, [destination.x, destination.y, row.width, row.height, user, new Date().toISOString(), projectId, row.alias]);
+	logger.info({audit: "miro_document_moved", user, projectId, documentId, instruction}, "audit");
+	return {x: destination.x, y: destination.y, frameId: destination.parentId};
+};
+
+/**
+ * 枠の中を、フォルダの順(おしながきと同じ順)に並べ直す。人が並べた配置は上書きされる。
+ * フォルダの見出しも置き直す。枠の外へ出した資料も枠に戻す。
+ */
+module.exports.arrange = async (projectId, user) => {
+	const target = await MiroConnection.target();
+	if (target == null) throw moveError("Miro と連携していないか、貼り先のボードが決まっていません", 409);
+	const link = await ds.get(SQL_GET_PROJECT, [projectId]);
+	if (link == null || link.state !== "active" || link.frame_id == null) throw moveError("このプロジェクトは Miro と連動していません", 409);
+	if (!(await takeLock(projectId))) throw moveError("いま Miro へ反映しているところです。終わってからやり直してください", 409);
+	try {
+		const board = target.boardId;
+		const desired = await desiredDocuments(projectId);
+		const rows = new Map((await ds.all(SQL_LIST_ITEMS, [projectId])).filter((r) => r.state === STATES.PLACED && r.item_id != null).map((r) => [r.alias, r]));
+		let cursorY = LAYOUT.padding;
+		const moves = [];
+		const headers = [];
+		for (const section of desired.sections) {
+			const entries = section.documents.map((doc) => rows.get(doc.alias)).filter(Boolean);
+			if (entries.length === 0) continue;
+			if (section.title) {
+				headers.push({title: section.title, y: cursorY + LAYOUT.headerHeight / 2});
+				cursorY += LAYOUT.headerHeight;
+			}
+			for (let i = 0; i < entries.length; i += LAYOUT.columns) {
+				const line = entries.slice(i, i + LAYOUT.columns);
+				const heightOf = (r) => Number(r.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
+				const rowHeight = Math.max(...line.map(heightOf));
+				line.forEach((r, index) => {
+					moves.push({row: r, x: LAYOUT.padding + index * (LAYOUT.itemWidth + LAYOUT.gapX) + LAYOUT.itemWidth / 2, y: cursorY + heightOf(r) / 2});
+				});
+				cursorY += rowHeight + LAYOUT.captionHeight + LAYOUT.gapY;
+			}
+		}
+		const height = Math.max(cursorY - LAYOUT.gapY + LAYOUT.padding, 600);
+		// 枠の高さを中身に合わせる(上の端は動かさない)
+		const frameY = Number(link.frame_y) + (height - Number(link.frame_height || height)) / 2;
+		await MiroConnection.withToken((token) => Miro.updateFrame(token, board, link.frame_id, {width: Number(link.frame_width) || frameWidth(), height, x: Number(link.frame_x), y: frameY}));
+		await ds.run(SQL_SET_FRAME, {project_id: projectId, frame_id: link.frame_id, x: Number(link.frame_x), y: frameY, width: Number(link.frame_width) || frameWidth(), height});
+		await forEachConcurrently(moves, CONCURRENCY, async ({row, x, y}) => {
+			await placeAt(board, row, {x, y, parentId: link.frame_id}).catch((err) => {
+				if (err.status !== 404) throw err;
+			});
+			await ds.run(SQL_SET_POSITION, [x, y, row.width, row.height, user, new Date().toISOString(), projectId, row.alias]);
+		});
+		await deleteHeaders(link, board);
+		const headerIds = [];
+		for (const header of headers) {
+			const text = await MiroConnection.withToken((token) => Miro.createText(token, board, {
+				content: `<p><strong>■ ${escapeHtml(header.title)}</strong></p>`,
+				x: frameWidth() / 2, y: header.y, width: frameWidth() - LAYOUT.padding * 2, parentId: link.frame_id
+			})).catch(() => null);
+			if (text != null) headerIds.push(text.id);
+		}
+		await ds.run(SQL_SET_HEADERS, {project_id: projectId, header_ids: JSON.stringify(headerIds)});
+		logger.info({audit: "miro_project_arranged", user, projectId, moved: moves.length}, "audit");
+		return {moved: moves.length};
+	} finally {
+		await releaseLock(projectId);
+	}
+};
+
 /** プロジェクトの連動の状態(画面・API の応答) */
 module.exports.status = async (projectId) => {
 	const target = await MiroConnection.target().catch(() => null);
@@ -685,7 +854,9 @@ module.exports.status = async (projectId) => {
 		lastSyncedAt: link?.last_synced_at ?? null,
 		lastError: link?.last_error ?? null,
 		counts,
-		items: rows.map((row) => ({alias: row.alias, documentId: row.document_id, title: row.title, state: row.state, reason: row.reason, updatedAt: row.updated_at}))
+		// 位置は枠の左上からの資料の中心(x, y)と大きさ。人が Miro で動かした分は、定期の反映か「今すぐ反映」で読み直す
+		items: rows.map((row) => ({alias: row.alias, documentId: row.document_id, title: row.title, state: row.state, reason: row.reason, updatedAt: row.updated_at,
+			...(row.x != null ? {position: {x: Number(row.x), y: Number(row.y), width: Number(row.width), height: Number(row.height)}} : {})}))
 	};
 };
 

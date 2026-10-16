@@ -409,6 +409,20 @@
 	.adminStatus.ok { background: #e6f4ea; color: #1e7e34; }
 	.adminStatus.bad { background: #fdecea; color: #c0392b; }
 	/* Miro 連携: 許可の画面から戻ってきたときの結果 */
+	/* プロジェクトの Miro 連動 */
+	#miroProjectModalBox { width: min(860px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
+	#miroProjectStatus { margin: 10px 0 8px; line-height: 1.7; }
+	#miroProjectActions { gap: 8px; margin: 4px 0 12px; flex-wrap: wrap; }
+	#miroProjectActions a.modalButton { text-decoration: none; }
+	#miroProjectItemsWrap { overflow: auto; flex: 1; min-height: 0; border-top: 1px solid #eee; }
+	.miroItemTable { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+	.miroItemTable th, .miroItemTable td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+	.miroItemTable td.reason { color: #666; }
+	.miroState { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.85em; white-space: nowrap; }
+	.miroState.placed { background: #e6f4ea; color: #1e7e34; }
+	.miroState.skipped, .miroState.excluded, .miroState.detached { background: #eee; color: #555; }
+	.miroState.failed, .miroState.removed { background: #fdecea; color: #c0392b; }
+	.miroItemTable button { font-size: 0.85em; padding: 2px 10px; }
 	.miroFlash { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px; max-width: 900px; }
 	.miroFlash.ok { background: #e6f4ea; color: #1e7e34; }
 	.miroFlash.bad { background: #fdecea; color: #c0392b; }
@@ -1575,6 +1589,10 @@
 						<button type="button" id="projectCopyLinkButton" class="iconButton" title="このプロジェクトのリンクをコピー(開くと、ログイン後にこのプロジェクトが表示されます)" aria-label="このプロジェクトのリンクをコピー" disabled>
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
 						</button>
+						<!-- 資料を Miro のボードへ並べる(Miro 連携が設定された環境だけに出す)。閲覧だけの権限でも状態は見られる -->
+						<button type="button" id="projectMiroButton" class="iconButton" title="Miro と連動(このプロジェクトの資料をボードに並べる)" aria-label="Miro と連動" style="display:none;" disabled>
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="6.5" y="6.5" width="4.5" height="5"/><rect x="13" y="6.5" width="4.5" height="3.5"/><rect x="13" y="12" width="4.5" height="5.5"/><rect x="6.5" y="13.5" width="4.5" height="4"/></svg>
+						</button>
 						<button type="button" id="projectExpandAllButton" class="iconButton" title="すべて展開" aria-label="すべて展開">
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 6 12 11 17 6"/><polyline points="7 13 12 18 17 13"/></svg>
 						</button>
@@ -2169,6 +2187,19 @@
 	</div>
 </div>
 
+<div id="miroProjectOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="miroProjectModalBox">
+		<p id="miroProjectTitle">Miro と連動</p>
+		<div class="docMeta">このプロジェクトの資料を、Miro のボードの枠に並べます。連動しているあいだ、新しい版はボード上の同じ場所で差し替わり、増えた資料は下に足されます(Miro に出すのは写しで、正本は Document Manager のままです)。</div>
+		<div id="miroProjectStatus"></div>
+		<div id="miroProjectActions" class="toolbarRow"></div>
+		<div id="miroProjectItemsWrap"></div>
+		<div class="modalButtons">
+			<button id="miroProjectCloseButton" type="button" class="modalButton">閉じる</button>
+		</div>
+	</div>
+</div>
+
 <div id="tagOrderOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="tagOrderModalBox">
 		<p>タグ体系の管理</p>
@@ -2505,6 +2536,8 @@ const applyProjectModeState = () => {
 		: (projectsEditMode ? "編集モードをやめる" : "編集モードにする"));
 	projectEditToggleButton.disabled = currentProjectId == null || projectFullyLocked;
 	projectCopyLinkButton.disabled = currentProjectId == null;
+	projectMiroButton.style.display = miroEnabled ? "inline-flex" : "none";
+	projectMiroButton.disabled = currentProjectId == null;
 
 	projectFullLockButton.innerHTML = projectFullyLocked ? PROJECT_LOCK_ICON : PROJECT_UNLOCK_ICON;
 	projectFullLockButton.classList.toggle("fullLockOn", projectFullyLocked);
@@ -6470,6 +6503,138 @@ const openMiroResultIfReturned = () => {
 	if (result === "connected") showMiroFlash(true, "Miro と連携しました。資料を出すボードを選んでください。");
 	else showMiroFlash(false, MIRO_ERROR_REASONS[reason] || "Miro と連携できませんでした。");
 };
+
+// ---- プロジェクトの Miro 連動 ----
+const projectMiroButton = document.getElementById("projectMiroButton");
+const miroProjectOverlay = document.getElementById("miroProjectOverlay");
+const miroProjectStatus = document.getElementById("miroProjectStatus");
+const miroProjectActions = document.getElementById("miroProjectActions");
+const miroProjectItemsWrap = document.getElementById("miroProjectItemsWrap");
+let miroProjectTimer = null;
+let miroProjectId = null;
+
+const MIRO_STATE_LABELS = {
+	placed: "出ている",
+	skipped: "出せない",
+	failed: "失敗",
+	excluded: "出さない",
+	removed: "Miro で消された",
+	detached: "外れた"
+};
+
+const miroCanEdit = () => !appShell.classList.contains("readOnlyMode");
+
+const renderMiroProject = (status) => {
+	const project = currentProjects.find((p) => p.id === miroProjectId);
+	document.getElementById("miroProjectTitle").textContent = "Miro と連動 — " + (project?.name || "");
+	const canEdit = miroCanEdit();
+	const counts = status.counts || {};
+	let line;
+	if (!status.available) {
+		line = '<span class="adminStatus unknown">使えません</span> Miro との連携が無いか、貼り先のボードが決まっていません。'
+			+ (appShell.classList.contains("adminMode") ? '管理画面の「Miro 連携」で設定してください。' : '管理者に設定を頼んでください。');
+	} else if (status.syncing) {
+		line = '<span class="adminStatus ok">反映中</span> ボードに並べています(資料の数によって数分かかります)。この画面を閉じても続きます。';
+	} else if (status.linked) {
+		line = '<span class="adminStatus ok">連動中</span> 出ている ' + (counts.placed || 0) + ' 件'
+			+ ((counts.skipped || 0) + (counts.failed || 0) > 0 ? '・出せない/失敗 ' + ((counts.skipped || 0) + (counts.failed || 0)) + ' 件' : '')
+			+ (status.lastSyncedAt ? '(最後に反映: ' + escapeHtml(formatDateTime(status.lastSyncedAt)) + ')' : '');
+	} else if (status.state === "stopped") {
+		line = '<span class="adminStatus unknown">止めています</span> ボードには前に出した資料が残っています。';
+	} else {
+		line = '<span class="adminStatus unknown">未連動</span> 「Miro と連動」を押すと、このプロジェクトの枠を作って資料を並べます。';
+	}
+	if (status.lastError) line += '<div class="adminSectionNote" style="color:#c0392b;margin-top:4px;">' + escapeHtml(status.lastError) + '</div>';
+	miroProjectStatus.innerHTML = line;
+
+	const buttons = [];
+	if (status.frameUrl) buttons.push('<a class="modalButton" href="' + escapeHtml(status.frameUrl) + '" target="_blank" rel="noopener noreferrer">Miro で開く</a>');
+	if (canEdit && status.available && !status.linked) buttons.push('<button type="button" class="modalButton save" data-miro-action="link">Miro と連動</button>');
+	if (canEdit && status.linked) {
+		buttons.push('<button type="button" class="modalButton" data-miro-action="sync"' + (status.syncing ? " disabled" : "") + '>今すぐ反映</button>');
+		buttons.push('<button type="button" class="modalButton primary" data-miro-action="unlink">連動をやめる</button>');
+	}
+	miroProjectActions.innerHTML = buttons.join("");
+	miroProjectActions.querySelectorAll("button[data-miro-action]").forEach((button) => {
+		button.addEventListener("click", () => runMiroProjectAction(button.dataset.miroAction));
+	});
+
+	const items = (status.items || []).slice().sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "ja"));
+	if (items.length === 0) {
+		miroProjectItemsWrap.innerHTML = "";
+		return;
+	}
+	miroProjectItemsWrap.innerHTML = '<table class="miroItemTable"><thead><tr><th>資料</th><th>状態</th><th>理由</th>' + (canEdit ? '<th></th>' : '') + '</tr></thead><tbody>'
+		+ items.map((item) => {
+			const toggle = !canEdit || !item.documentId ? ""
+				: item.state === "excluded" || item.state === "removed"
+					? '<button type="button" class="modalButton" data-miro-publish="true" data-document-id="' + escapeHtml(item.documentId) + '">出す</button>'
+					: item.state === "detached" ? ""
+						: '<button type="button" class="modalButton" data-miro-publish="false" data-document-id="' + escapeHtml(item.documentId) + '">出さない</button>';
+			return '<tr><td>' + escapeHtml(item.title || "") + '</td>'
+				+ '<td><span class="miroState ' + escapeHtml(item.state) + '">' + escapeHtml(MIRO_STATE_LABELS[item.state] || item.state) + '</span></td>'
+				+ '<td class="reason">' + escapeHtml(item.reason || "") + '</td>'
+				+ (canEdit ? '<td>' + toggle + '</td>' : '') + '</tr>';
+		}).join("")
+		+ '</tbody></table>';
+	miroProjectItemsWrap.querySelectorAll("button[data-miro-publish]").forEach((button) => {
+		button.addEventListener("click", async () => {
+			button.disabled = true;
+			const res = await fetch("./api/projects/" + encodeURIComponent(miroProjectId) + "/miro/documents/" + encodeURIComponent(button.dataset.documentId), {
+				method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({publish: button.dataset.miroPublish === "true"})
+			});
+			if (!res.ok) alert((await res.json().catch(() => ({}))).error || "変更できませんでした");
+			loadMiroProject();
+		});
+	});
+};
+
+const loadMiroProject = async () => {
+	if (miroProjectId == null) return;
+	clearTimeout(miroProjectTimer);
+	try {
+		const res = await fetch("./api/projects/" + encodeURIComponent(miroProjectId) + "/miro");
+		if (!res.ok) throw new Error();
+		const status = await res.json();
+		renderMiroProject(status);
+		// 反映しているあいだは、進み具合を見せるために読み直す
+		if (status.syncing && miroProjectOverlay.style.display !== "none") miroProjectTimer = setTimeout(loadMiroProject, 3000);
+	} catch {
+		miroProjectStatus.textContent = "状態を取得できませんでした。";
+	}
+};
+
+const runMiroProjectAction = async (action) => {
+	const base = "./api/projects/" + encodeURIComponent(miroProjectId) + "/miro";
+	let res;
+	if (action === "link") {
+		res = await fetch(base, {method: "POST"});
+	} else if (action === "sync") {
+		res = await fetch(base + "/sync", {method: "POST"});
+	} else if (action === "unlink") {
+		const stop = await showConfirmDialog("Miro との連動をやめますか?\n\nボードはそのまま残し、これからの変更だけ反映しなくなります(資料も消すかは、次に選びます)。");
+		if (!stop) return;
+		const remove = await showConfirmDialog("ボードに出した資料も消しますか?\n\n「はい」: 資料と見出しを消します(付箋や枠は残ります)\n「いいえ」: 資料は残します(最後の版の記録として残ります)");
+		res = await fetch(base + (remove ? "?removeDocuments=1" : ""), {method: "DELETE"});
+	}
+	if (res != null && !res.ok) alert((await res.json().catch(() => ({}))).error || "操作できませんでした");
+	loadMiroProject();
+};
+
+const openMiroProject = () => {
+	if (currentProjectId == null) return;
+	miroProjectId = currentProjectId;
+	miroProjectStatus.textContent = "確認中...";
+	miroProjectActions.innerHTML = "";
+	miroProjectItemsWrap.innerHTML = "";
+	miroProjectOverlay.style.display = "flex";
+	loadMiroProject();
+};
+projectMiroButton.addEventListener("click", openMiroProject);
+document.getElementById("miroProjectCloseButton").addEventListener("click", () => {
+	miroProjectOverlay.style.display = "none";
+	clearTimeout(miroProjectTimer);
+});
 
 const loadPdfHealth = async () => {
 	pdfHealthResult.innerHTML = `<div class="adminSectionNote">確認中...</div>`;

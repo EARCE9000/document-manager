@@ -4227,6 +4227,51 @@ app.put(BASE_URL_PATH + 'api/projects/:id/miro/documents/:documentId', requireAu
 	}
 });
 
+/**
+ * ボードの上で資料を動かす。本体は次のどれか1つ(見出しも一緒に動かす):
+ *   {nextTo: 文書ID, side: "right"|"left"|"above"|"below"}  ほかの資料の隣へ
+ *   {project: プロジェクトID}                                ほかのプロジェクトの枠へ
+ *   {x, y}                                                    枠の左上からの位置へ(資料の中心)
+ */
+app.patch(BASE_URL_PATH + 'api/projects/:id/miro/items/:documentId', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const {nextTo, side, project, x, y} = req.body ?? {};
+		const result = await MiroSync.moveDocument(req.params.id, req.params.documentId, {nextTo, side, project, x, y}, req.authData.user_identifier);
+		res.status(200).json(result);
+	} catch (err) {
+		if (err.needsReconnect) {
+			res.status(409).json({error: err.message, needsReconnect: true});
+			return;
+		}
+		if ([400, 404, 409].includes(err.status)) {
+			res.status(err.status).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/projects/:id/miro/items/:documentId");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 枠の中を、フォルダの順に並べ直す(人が並べた配置は上書きされる。フォルダの見出しも置き直す) */
+app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(await MiroSync.arrange(req.params.id, req.authData.user_identifier));
+	} catch (err) {
+		if (err.needsReconnect) {
+			res.status(409).json({error: err.message, needsReconnect: true});
+			return;
+		}
+		if ([400, 404, 409].includes(err.status)) {
+			res.status(err.status).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/projects/:id/miro/arrange");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 app.get(BASE_URL_PATH + 'api/projects/:id/manifest', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);

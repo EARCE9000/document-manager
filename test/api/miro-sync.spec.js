@@ -298,3 +298,102 @@ test.describe.serial("プロジェクトの資料を Miro に出す", () => {
 		expect((await (await request.get(`api/projects/${projectId}/miro`, {headers: rw})).json()).available).toBe(false);
 	});
 });
+
+test.describe.serial("Miro のボードの上で資料を動かす", () => {
+	let projectId;
+	let otherProjectId;
+	const docs = {};
+	const caption = (items, title) => items.find((i) => i.type === "text" && i.data.content.includes(title));
+	const file = (items, title) => items.find((i) => (i.type === "document" || i.type === "image") && i.data?.title === title);
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `移動${STAMP}`}})).json()).id;
+		otherProjectId = (await (await request.post("api/projects", {headers: rw, data: {name: `移動先${STAMP}`}})).json()).id;
+		for (const id of [projectId, otherProjectId]) await request.post(`api/projects/${id}/unlock`, {headers: rw});
+		for (const key of ["a", "b", "c"]) {
+			docs[key] = await upload(request, `資料${key.toUpperCase()}${STAMP}.pdf`, PDF);
+			await request.put(`api/projects/${projectId}/documents/${docs[key].id}`, {headers: rw, data: {folderId: null}});
+		}
+		const other = await upload(request, `別の資料${STAMP}.pdf`, PDF);
+		await request.put(`api/projects/${otherProjectId}/documents/${other.id}`, {headers: rw, data: {folderId: null}});
+		await request.post(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.post(`api/projects/${otherProjectId}/miro`, {headers: rw});
+		await settled(request, projectId);
+		await settled(request, otherProjectId);
+	});
+
+	test.afterAll(async ({request}) => {
+		for (const id of [projectId, otherProjectId]) await request.delete(`api/projects/${id}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("ほかの資料の右・下へ動かせる。見出しも一緒に動く", async ({request}) => {
+		const move = (doc, body) => request.patch(`api/projects/${projectId}/miro/items/${doc.id}`, {headers: rw, data: body});
+		expect((await move(docs.b, {x: 3000, y: 3000})).status()).toBe(200);
+		expect((await move(docs.b, {nextTo: docs.a.id, side: "right"})).status()).toBe(200);
+		expect((await move(docs.c, {nextTo: docs.a.id, side: "below"})).status()).toBe(200);
+		const items = await boardItems(request);
+		const a = file(items, `資料A${STAMP}.pdf`);
+		const b = file(items, `資料B${STAMP}.pdf`);
+		const c = file(items, `資料C${STAMP}.pdf`);
+		expect(b.position.x).toBeCloseTo(a.position.x + (a.geometry.width + b.geometry.width) / 2 + 60, 3);
+		expect(b.position.y).toBeCloseTo(a.position.y, 3);
+		expect(c.position.x).toBeCloseTo(a.position.x, 3);
+		// 下に置くときは、上の資料の見出しの分も空ける
+		expect(c.position.y).toBeCloseTo(a.position.y + a.geometry.height / 2 + 80 + 60 + c.geometry.height / 2, 3);
+		const captionB = caption(items, `資料B${STAMP}.pdf`);
+		expect(captionB.position.x).toBeCloseTo(b.position.x, 3);
+		expect(captionB.position.y).toBeCloseTo(b.position.y + b.geometry.height / 2 + 40, 3);
+		// 状態にも新しい位置が載る(AI が次の指示を組み立てるときに使う)
+		const status = await (await request.get(`api/projects/${projectId}/miro`, {headers: rw})).json();
+		expect(itemOf(status, docs.b.id).position.x).toBeCloseTo(b.position.x, 3);
+	});
+
+	test("動かした資料に新しい版が出ても、その場所のまま差し替える", async ({request}) => {
+		const before = file(await boardItems(request), `資料B${STAMP}.pdf`);
+		const v2 = await upload(request, `資料B${STAMP}.pdf`, Buffer.concat([PDF, Buffer.from("% v2\n")]), docs.b.id);
+		await waitFor(request, projectId, (s) => itemOf(s, v2.id)?.state === "placed");
+		const after = (await boardItems(request)).find((i) => i.id === before.id);
+		expect(after.position).toMatchObject({x: before.position.x, y: before.position.y});
+		docs.b = v2;
+	});
+
+	test("ほかのプロジェクトの枠へ移せる", async ({request}) => {
+		const res = await request.patch(`api/projects/${projectId}/miro/items/${docs.c.id}`, {headers: rw, data: {project: otherProjectId}});
+		expect(res.status()).toBe(200);
+		const items = await boardItems(request);
+		const frames = items.filter((i) => i.type === "frame");
+		const otherFrame = frames.find((f) => f.data.title === `移動先${STAMP}`);
+		expect(file(items, `資料C${STAMP}.pdf`).parent.id).toBe(otherFrame.id);
+		expect(caption(items, `資料C${STAMP}.pdf`).parent.id).toBe(otherFrame.id);
+	});
+
+	test("正しくない指示は断る", async ({request}) => {
+		const move = (doc, body) => request.patch(`api/projects/${projectId}/miro/items/${doc.id}`, {headers: rw, data: body});
+		expect((await move(docs.a, {})).status()).toBe(400);
+		expect((await move(docs.a, {nextTo: docs.b.id, side: "diagonal"})).status()).toBe(400);
+		expect((await move(docs.a, {nextTo: docs.a.id})).status()).toBe(400);
+		expect((await move(docs.a, {project: "not-linked"})).status()).toBe(409);
+		const stray = await upload(request, `出ていない${STAMP}.pdf`, PDF);
+		expect((await move(stray, {x: 1, y: 1})).status()).toBe(404);
+		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.a.id}`, {headers: ro, data: {x: 1, y: 1}})).status()).toBe(403);
+	});
+
+	test("フォルダの順に並べ直すと、枠の外へ出した資料も戻り、格子に揃う", async ({request}) => {
+		const res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw});
+		expect(res.status()).toBe(200);
+		expect((await res.json()).moved).toBe(3);
+		const items = await boardItems(request);
+		const frame = items.find((i) => i.type === "frame" && i.data.title === `移動${STAMP}`);
+		const placed = ["A", "B", "C"].map((k) => file(items, `資料${k}${STAMP}.pdf`));
+		for (const item of placed) expect(item.parent.id).toBe(frame.id);
+		// 同じ行に、左から幅と間隔の分ずつ並ぶ
+		const xs = placed.map((i) => i.position.x).sort((p, q) => p - q);
+		expect(xs[1] - xs[0]).toBeCloseTo(360 + 60, 3);
+		expect(xs[2] - xs[1]).toBeCloseTo(360 + 60, 3);
+		expect(new Set(placed.map((i) => i.position.y)).size).toBe(1);
+	});
+});

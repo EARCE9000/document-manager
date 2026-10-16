@@ -500,6 +500,21 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "moveProjectMiroDocument", method: "patch", path: "/api/projects/:id/miro/items/:documentId", role: "readwrite", tag: "プロジェクト",
+		summary: "Miro のボードの上で資料を動かす",
+		description: "本体は次のどれか1つ。`{nextTo: 文書ID, side: \"right\"|\"left\"|\"above\"|\"below\"}`(同じプロジェクトのほかの資料の隣へ)、`{project: プロジェクトID}`(ほかの連動しているプロジェクトの枠の下へ)、`{x, y}`(枠の左上からの位置。資料の中心)。見出しも一緒に動かす。動かした位置は覚えておき、新しい版もその場所で差し替える。いまの位置は`GET /api/projects/:id/miro`の`items[].position`",
+		body: {schema: {type: "object", properties: {nextTo: {type: "string"}, side: {type: "string", enum: ["right", "left", "above", "below"]}, project: {type: "string"}, x: {type: "number"}, y: {type: "number"}}}},
+		responses: {400: "指示が足りない・正しくない", 404: "資料が Miro に出ていない・消されている", 409: "連動していない"},
+		aiGuide: false
+	},
+	{
+		id: "arrangeProjectMiro", method: "post", path: "/api/projects/:id/miro/arrange", role: "readwrite", tag: "プロジェクト",
+		summary: "Miro の枠の中を、フォルダの順に並べ直す",
+		description: "おしながきと同じ順に、フォルダごとの見出しを付けて並べ直す。**人が Miro で並べた配置は上書きされる**ので、頼まれたときだけ使う",
+		responses: {409: "連動していない・いま反映しているところ"},
+		aiGuide: false
+	},
+	{
 		id: "getServerStatus", method: "get", path: "/api/server-status", role: "admin", tag: "その他",
 		summary: "サーバーの状態(版・起動時刻・DB)",
 		description: "版・リビジョン・ビルド時刻・起動時刻・稼働秒・同梱クライアントの版・DBファイルの一覧とサイズ・最後に確認したDBの整合性を返す。公開の`/api/version`には起動時刻を含めない",
