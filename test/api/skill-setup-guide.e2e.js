@@ -147,9 +147,83 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 		expect(prompt).not.toContain("--token");
 	});
 
+	test("GitHub のカードは公式の gh を案内し、ログインはブラウザで行わせる(トークンを尋ねさせない)", async ({page}) => {
+		const card = page.locator("#toolCardGitHub");
+		await expect(card).toContainText("公式ツール");
+		await expect(card.locator('.claudeSkillActions a[href="https://cli.github.com/"]')).toHaveCount(1);
+		await expect(card.locator("a[download]")).toHaveCount(0);
+
+		const prompt = await copiedPrompt(page, "#githubToolCopyPromptButton", "GitHub 公式の CLI");
+		// 入手先は公式の配布元だけ
+		expect(prompt).toContain("winget install --id GitHub.cli --source winget");
+		expect(prompt).toContain("brew install gh");
+		expect(prompt).toContain("https://github.com/cli/cli/blob/trunk/docs/install_linux.md");
+		expect(prompt).toContain("gh auth login --hostname github.com --git-protocol https --web");
+		expect(prompt).toContain("トークンは私に尋ねないでください");
+		expect(prompt).toContain("あなたは実行しないでください");
+		// GitHub に書き込む操作は、確認してから
+		expect(prompt).toContain("内容を示して私に確認してから実行してください");
+		expect(prompt).toContain("Issue にファイルを添付できない");
+		// トークンを渡す方式は案内しない
+		expect(prompt).not.toContain("--with-token");
+	});
+
+	// Anthropic の document-skills はライセンス上 Anthropic のサービスの中でだけ使える
+	test("Word・Excel・PowerPoint のカードは Claude Code のときだけ依頼文を出し、ほかのエージェントでは使えないと示す", async ({page}) => {
+		const card = page.locator("#toolCardOffice");
+		await expect(card).toContainText("Claude 専用");
+		await expect(card.locator('.claudeSkillActions a[href="https://github.com/anthropics/skills"]')).toHaveCount(1);
+
+		const prompt = await copiedPrompt(page, "#officeToolCopyPromptButton", "document-skills");
+		expect(prompt).toContain("claude plugin marketplace add anthropics/skills");
+		expect(prompt).toContain("claude plugin install document-skills@anthropic-agent-skills");
+		expect(prompt).toContain("実行する前に私に確認してから");
+		expect(prompt).toContain("/reload-plugins");
+		// 作った資料の登録は Document Manager の Skill へつなぐ
+		expect(prompt).toContain("Document Manager の Skill を使ってください");
+
+		for (const agent of ["codex", "antigravity"]) {
+			await page.locator(`#toolsPane .skillAgentTab[data-agent="${agent}"]`).click();
+			await expect(page.locator("#officeToolCopyPromptButton")).toBeHidden();
+			await expect(page.locator("#officeToolUnavailable")).toBeVisible();
+			await expect(page.locator("#officeToolUnavailable")).toContainText("Claude 専用");
+			await expect(page.locator("#officeToolSteps")).toContainText("Anthropic のサービス");
+		}
+		await page.locator('#toolsPane .skillAgentTab[data-agent="claude"]').click();
+		await expect(page.locator("#officeToolCopyPromptButton")).toBeVisible();
+		await expect(page.locator("#officeToolUnavailable")).toBeHidden();
+	});
+
+	test("draw.io のカードは、エージェントごとに公式の入れ方を案内し、図の中身が入るリンクは頼まれない限り作らせない", async ({page}) => {
+		const card = page.locator("#toolCardDrawio");
+		await expect(card).toContainText("公式ツール");
+		await expect(card.locator('.claudeSkillActions a[href="https://github.com/jgraph/drawio-mcp"]')).toHaveCount(1);
+
+		const expected = {
+			claude: ["claude plugin marketplace add jgraph/drawio-mcp", "claude plugin install drawio@drawio", "/reload-plugins"],
+			codex: ["codex plugin marketplace add jgraph/drawio-mcp", "codex plugin add drawio@drawio", "Codex を起動し直す"],
+			// Antigravity 向けのプラグインは無いので、公式の SKILL.md を Skill の置き場所に置く
+			antigravity: ["https://raw.githubusercontent.com/jgraph/drawio-mcp/main/plugins/claude-code/skills/drawio/SKILL.md",
+				"~/.gemini/config/skills/drawio/SKILL.md", "置き場所を私に確認してください"]
+		};
+		for (const [agent, phrases] of Object.entries(expected)) {
+			await page.locator(`#toolsPane .skillAgentTab[data-agent="${agent}"]`).click();
+			const prompt = await copiedPrompt(page, "#drawioToolCopyPromptButton", "draw.io 本家");
+			for (const phrase of phrases) expect(prompt, agent).toContain(phrase);
+			expect(prompt, agent).toContain("app.diagrams.net のリンクは作らないでください");
+			expect(prompt, agent).toContain("Document Manager の Skill を使ってください");
+			// 書き出しに要る draw.io Desktop は、入れるかどうかを利用者が決める
+			expect(prompt, agent).toContain("入れるかどうかは私が決めます");
+		}
+		// 手動のやり方にも、リンクに図の中身が入ることを書いておく
+		await expect(page.locator("#drawioToolManual")).toContainText("リンクには図の中身がそのまま入ります");
+		await expect(page.locator("#drawioToolManual")).toContainText("~/.gemini/config/skills/drawio");
+	});
+
 	// どのカードも同じ見え方にする(前面はコピーのボタンだけ。手順は開いて読むもの)
 	test("登録の手順は、どのカードも最初は閉じている", async ({page}) => {
-		for (const card of ["#toolCardDocumentManager", "#toolCardBacklog", "#toolCardJira"]) {
+		await expect(page.locator("#toolsPane .toolCard")).toHaveCount(6);
+		for (const card of ["#toolCardDocumentManager", "#toolCardBacklog", "#toolCardJira", "#toolCardGitHub", "#toolCardOffice", "#toolCardDrawio"]) {
 			expect(await page.locator(`${card} .toolSteps`).evaluate((el) => el.open), card).toBe(false);
 		}
 	});

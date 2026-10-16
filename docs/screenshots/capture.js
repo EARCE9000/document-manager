@@ -367,9 +367,11 @@ const main = async () => {
 		await page.locator("#menuToolsLink").click();
 		await page.locator('#toolsPane .skillAgentTab[data-agent="claude"]').click();
 		await page.locator("#toolCardDocumentManager .toolVersion").filter({hasText: /v\d/}).waitFor();
-		await page.setViewportSize(VIEWPORT);
+		// カードが3段になったので、最後の段まで入る高さで撮る
+		await page.setViewportSize({width: VIEWPORT.width, height: 1080});
 		await page.waitForTimeout(400);
 		await shot("tools");
+		await page.setViewportSize(VIEWPORT);
 	} finally {
 		await browser.close();
 		// Windowsではサーバーがファイル(SQLite)を掴んだままだと削除できないため、終了を待ってから消す
