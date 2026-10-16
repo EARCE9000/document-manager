@@ -123,9 +123,33 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 		await expect(page.locator("#backlogSkillDownloadLink")).toBeVisible();
 	});
 
+	// 自前で配らず、提供元の道具を案内するカード(Jira: Atlassian 公式の CLI)
+	test("Jira のカードは公式の CLI を案内し、ログインはブラウザで行わせる(トークンを尋ねさせない)", async ({page}) => {
+		const card = page.locator("#toolCardJira");
+		await expect(card).toContainText("公式ツール");
+		// 前面のボタンから公式の手順へ行ける(手動のやり方の中にも同じリンクがある)
+		await expect(card.locator('.claudeSkillActions a[href^="https://developer.atlassian.com/cloud/acli/"]')).toHaveCount(1);
+		// 配っていないので、ZIPのダウンロードは無い
+		await expect(card.locator("a[download]")).toHaveCount(0);
+
+		await page.locator("#jiraToolCopyPromptButton").click();
+		const prompt = await page.evaluate(() => navigator.clipboard.readText());
+		// 入手先は公式の配布先だけ
+		expect(prompt).toContain("https://acli.atlassian.com/");
+		expect(prompt).toContain("acli jira auth login --web");
+		expect(prompt).toContain("APIトークンは私に尋ねないでください");
+		expect(prompt).toContain("あなたは実行しないでください");
+		// 置き場所や PATH の変更は、勝手にさせない
+		expect(prompt).toContain("実行する前に私に確認してください");
+		// できないことも伝える(頼まれて黙って失敗しないように)
+		expect(prompt).toContain("添付ファイルのアップロードに対応していない");
+		// トークンを渡す方式は案内しない
+		expect(prompt).not.toContain("--token");
+	});
+
 	// どのカードも同じ見え方にする(前面はコピーのボタンだけ。手順は開いて読むもの)
 	test("登録の手順は、どのカードも最初は閉じている", async ({page}) => {
-		for (const card of ["#toolCardDocumentManager", "#toolCardBacklog"]) {
+		for (const card of ["#toolCardDocumentManager", "#toolCardBacklog", "#toolCardJira"]) {
 			expect(await page.locator(`${card} .toolSteps`).evaluate((el) => el.open), card).toBe(false);
 		}
 	});

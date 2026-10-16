@@ -331,6 +331,8 @@
 	.toolCardHeader { display: flex; align-items: baseline; gap: 8px; }
 	.toolCardHeader h3 { margin: 0; font-size: 1.1em; }
 	.toolVersion { margin-left: auto; color: #888; font-size: 0.9em; }
+	/* 自前で配るものではなく、提供元の道具を案内しているカードの目印 */
+	.toolBadge { margin-left: auto; font-size: 0.8em; color: #1a56db; background: #eaf2ff; border: 1px solid #bcd3fb; border-radius: 10px; padding: 1px 8px; }
 	.toolCardIntro { margin: 6px 0 8px; line-height: 1.6; }
 	.toolCard .claudeSkillActions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
 	.toolCard .claudeSkillActions .modalButton { font-size: 0.95em; padding: 5px 12px; text-decoration: none; }
@@ -1752,6 +1754,21 @@
 						<summary>登録の手順</summary>
 						<ol id="backlogSkillSteps"></ol>
 						<div id="backlogSkillManual"></div>
+					</details>
+				</section>
+				<!-- 公式の道具を案内するカード。Skill は配らず、入手と使い始め方だけを示す
+				     (自前で作るより、提供元が保守しているものを使う方がよい場合) -->
+				<section class="toolCard" id="toolCardJira" data-tool="jira">
+					<div class="toolCardHeader"><h3>Jira</h3><span class="toolBadge">公式ツール</span></div>
+					<div class="toolCardIntro">Atlassian 公式の CLI(<code>acli</code>)を入れると、「Jiraにチケットを作って」「KEY-123 を完了にして」と話しかけて Jira を操作できます(Jira Cloud 向け)。ログインはブラウザで行うので、APIトークンをチャットに貼る必要はありません。<strong>添付ファイルのアップロードには対応していません</strong>(添付が必要なら Atlassian 公式の MCP を使います)。</div>
+					<div class="claudeSkillActions">
+						<button type="button" id="jiraToolCopyPromptButton" class="modalButton save">登録依頼文をコピー</button>
+						<a class="modalButton" href="https://developer.atlassian.com/cloud/acli/guides/how-to-get-started/" target="_blank" rel="noopener noreferrer">公式の手順</a>
+					</div>
+					<details class="toolSteps">
+						<summary>登録の手順</summary>
+						<ol id="jiraToolSteps"></ol>
+						<div id="jiraToolManual"></div>
 					</details>
 				</section>
 			</div>
@@ -5317,6 +5334,7 @@ const renderSkillAgentGuide = () => {
 		<pre>python ${escapeHtml(agent.dir)}/document-manager/scripts/dm_client.py setup --base-url ${escapeHtml(claudeSkillBaseUrl)}</pre>
 	`;
 	renderRelatedSkillGuide();
+	renderJiraToolGuide();
 };
 
 // ---- 関連するSkill(Document Manager 以外のサービス用) ----
@@ -5330,6 +5348,44 @@ const buildBacklogSkillInstallPrompt = (link) => {
 - 展開後、backlog/SKILL.md を読んで内容を把握してください。
 - 接続先のBacklogスペースのホスト名(例: example.backlog.jp)を私に確認してください。APIキーは私に尋ねないでください(チャットには貼りません)。代わりに、APIキーを登録するコマンド(scripts/backlog_client.py の setup --space <ホスト名>)を、私が実行できるようにコードブロックで示してください。あなたは実行しないでください。私が実行して、表示される入力欄にBacklogのAPIキーを貼り付けます。
 - 私が「保存した」と伝えたら、config コマンドと myself コマンドで接続を確認し、結果を教えてください。`;
+};
+
+// ---- 公式の道具(Jira: Atlassian CLI) ----
+// Skill は配らず、公式の CLI を入れて使ってもらう。入手先・ログインの仕方は公式の手順に合わせている
+// (https://developer.atlassian.com/cloud/acli/guides/how-to-get-started/)。
+// ログインはブラウザで行う方式(--web)にする。APIトークンを使う方式はトークンを渡す必要があり、
+// チャットに貼られる恐れがあるため案内しない
+const JIRA_TOOL_DOCS_URL = "https://developer.atlassian.com/cloud/acli/guides/how-to-get-started/";
+const buildJiraToolInstallPrompt = () => {
+	const agent = SKILL_AGENTS[selectedSkillAgent];
+	return `Atlassian 公式の CLI(acli)を入れて、${agent.label} から Jira を操作できるようにしてください。
+
+- 公式の手順は ${JIRA_TOOL_DOCS_URL} です。この内容に沿って進めてください。
+- まず私のOSに合う acli を公式の配布先から入れてください。Windows は PowerShell で Invoke-WebRequest -Uri https://acli.atlassian.com/windows/latest/acli_windows_amd64/acli.exe -OutFile acli.exe(ARM64 は acli_windows_arm64)、macOS は brew tap atlassian/homebrew-acli のあと brew install acli、Linux は https://acli.atlassian.com/linux/latest/acli_linux_amd64/acli を取得して実行権限を付けます。置き場所と、PATH に追加するかどうかは、実行する前に私に確認してください。
+- 入ったら acli --help で動くことを確かめてください。
+- ログインは私が行います。APIトークンは私に尋ねないでください(チャットには貼りません)。ログインのコマンド(acli jira auth login --web)を、私が実行できるようにコードブロックで示してください。あなたは実行しないでください。ブラウザが開くので、私がアクセスを許可し、端末で使う Jira のサイトを選びます。
+- 私が「ログインした」と伝えたら、acli jira auth status で確認し、結果を教えてください。
+- 以後、私が「Jiraにチケットを作って」「KEY-123 を完了にして」などと頼んだら acli を使ってください。使い方は acli jira --help と公式のコマンドリファレンス(https://developer.atlassian.com/cloud/acli/reference/commands/)で確認してください。acli は添付ファイルのアップロードに対応していないので、添付を頼まれたらそう伝えてください。`;
+};
+
+const renderJiraToolGuide = () => {
+	const agent = SKILL_AGENTS[selectedSkillAgent];
+	document.getElementById("jiraToolSteps").innerHTML = `
+		<li>「登録依頼文をコピー」を押し、${escapeHtml(agent.label)} のチャットに貼り付けて送ります。エージェントが公式の配布先から <code>acli</code> を取ってきて入れます(置き場所と PATH への追加は、実行前に確認があります)。</li>
+		<li>エージェントがログインのコマンド(<code>acli jira auth login --web</code>)を示すので、実行します(Claude Code のデスクトップアプリなら、実行ボタンから右側の端末で実行できます)。<strong>ブラウザが開いたらアクセスを許可し、端末で使う Jira のサイトを選びます。</strong>終わったら「ログインした」と伝えます。APIトークンは使いません。</li>
+		<li>エージェントが <code>acli jira auth status</code> で確かめれば完了です。</li>
+	`;
+	document.getElementById("jiraToolManual").innerHTML = `
+		<hr class="toolManualRule">
+		<div class="toolManualLead"><strong>自分で入れる場合</strong>は、公式の手順(<a href="${JIRA_TOOL_DOCS_URL}" target="_blank" rel="noopener noreferrer">How to get started with Atlassian CLI</a>)に沿います。主な入れ方は次のとおりです。</div>
+		<pre>Invoke-WebRequest -Uri https://acli.atlassian.com/windows/latest/acli_windows_amd64/acli.exe -OutFile acli.exe</pre>
+		<pre>brew tap atlassian/homebrew-acli
+brew install acli</pre>
+		<pre>curl -LO "https://acli.atlassian.com/linux/latest/acli_linux_amd64/acli"
+chmod +x acli</pre>
+		<div>(上から Windows PowerShell、macOS、Linux。ARM版は公式の手順を参照)。入れたら <code>acli jira auth login --web</code> でログインします。</div>
+		<div>Atlassian CLI の各版は、出てから6か月だけサポートされます。ときどき新しい版に入れ替えてください。</div>
+	`;
 };
 
 const renderRelatedSkillGuide = () => {
@@ -5384,6 +5440,9 @@ const copySkillPrompt = async (button, skill, buildPrompt, stepsBox) => {
 };
 document.getElementById("claudeSkillCopyPromptButton").addEventListener("click", (ev) => {
 	copySkillPrompt(ev.currentTarget, "document-manager", buildClaudeSkillInstallPrompt, document.querySelector("#toolCardDocumentManager .toolSteps"));
+});
+document.getElementById("jiraToolCopyPromptButton").addEventListener("click", (ev) => {
+	copyTextWithFeedback(buildJiraToolInstallPrompt(), ev.currentTarget);
 });
 document.getElementById("backlogSkillCopyPromptButton").addEventListener("click", (ev) => {
 	copySkillPrompt(ev.currentTarget, "backlog", buildBacklogSkillInstallPrompt, document.querySelector("#toolCardBacklog .toolSteps"));
