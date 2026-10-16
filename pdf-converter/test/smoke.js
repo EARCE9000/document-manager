@@ -12,12 +12,12 @@
  *   docker run -d --name dm-pdf-converter -p 127.0.0.1:3012:3000 --tmpfs /tmp:rw,size=512m \
  *     --read-only --security-opt no-new-privileges:true --cap-drop ALL dm-pdf-converter:local
  *   docker run -d --name dm-pdf-converter-limits -p 127.0.0.1:3013:3000 --tmpfs /tmp:rw,size=512m \
- *     --read-only -e CONVERT_MAX_BYTES=1048576 -e CONVERT_TIMEOUT_SECONDS=1 dm-pdf-converter:local
+ *     --read-only -e CONVERT_MAX_BYTES=1048576 -e CONVERT_TIMEOUT_SECONDS=1 -e DRAWIO_DISABLED=1 dm-pdf-converter:local
  *   PDF_CONVERTER_LIMITS_URL=http://127.0.0.1:3013 PDF_CONVERTER_CONTAINER=dm-pdf-converter \
  *     node pdf-converter/test/smoke.js
  *
  *   PDF_CONVERTER_URL         接続先(既定 http://127.0.0.1:3012)
- *   PDF_CONVERTER_LIMITS_URL  小さい上限・短い打ち切りで起動したインスタンス(省略すると、その検証を飛ばす)
+ *   PDF_CONVERTER_LIMITS_URL  小さい上限・短い打ち切り・draw.io を止めた設定で起動したインスタンス(省略すると、その検証を飛ばす)
  *   PDF_CONVERTER_CONTAINER   コンテナ名(指定すると、変換後にChromiumが残っていないことも確かめる)
  */
 
@@ -35,11 +35,11 @@ const check = (condition, message) => {
 	if (!condition) failures++;
 };
 
-const convert = async (html, baseUrl = BASE_URL) => {
+const convert = async (html, baseUrl = BASE_URL, endpoint = "/convert") => {
 	const started = Date.now();
-	const res = await fetch(new URL("/convert", baseUrl), {
+	const res = await fetch(new URL(endpoint, baseUrl), {
 		method: "POST",
-		headers: {"Content-Type": "text/html; charset=utf-8", "X-Document-Id": "202610_smoke"},
+		headers: {"Content-Type": endpoint === "/convert" ? "text/html; charset=utf-8" : "application/xml", "X-Document-Id": "202610_smoke"},
 		body: Buffer.isBuffer(html) ? html : Buffer.from(html, "utf-8")
 	});
 	const body = Buffer.from(await res.arrayBuffer());
@@ -48,6 +48,15 @@ const convert = async (html, baseUrl = BASE_URL) => {
 		contentType: res.headers.get("content-type"),
 		blocked: Number(res.headers.get("x-blocked-requests") || 0)
 	};
+};
+
+const convertDrawio = (xml) => convert(xml, BASE_URL, "/convert-drawio");
+
+/** 直近の変換のログ(1行のJSON)。コンテナ名が分かるときだけ読める */
+const lastConvertLog = () => {
+	const out = execFileSync(CONTAINER_CLI, ["logs", "--tail", "5", CONTAINER], {encoding: "utf-8"});
+	const lines = out.trim().split("\n").filter((line) => line.includes('"converted"'));
+	return lines.length === 0 ? null : JSON.parse(lines[lines.length - 1]);
 };
 
 /** コンテナの中で動いているChromiumの数(終了済みで後始末待ちのものも数える) */
@@ -64,6 +73,7 @@ const main = async () => {
 	check(health.status === "ok", `稼働している (apiVersion ${health.apiVersion})`);
 	check(typeof health.chromium === "string" && /\d+\./.test(health.chromium), `Chromiumを起動できる (${health.chromium})`);
 	check(health.viewportWidth === 1280, `画面として描く幅は1280px (${health.viewportWidth})`);
+	check(Array.isArray(health.formats) && health.formats.includes("drawio"), `draw.io に対応している (${health.formats})`);
 
 	console.log("[レイアウト]");
 	const layout = await convert(F.LAYOUT);
@@ -135,6 +145,50 @@ const main = async () => {
 	check(hostile.blocked >= 3, `外部・内部への読み込みを断っている (${hostile.blocked}件)`);
 	check(F.pageSizes(hostile.body).length === 1, "別のページへ飛ばされない(meta refresh)");
 
+	console.log("[draw.io: ページと大きさ]");
+	const drawio = await convertDrawio(F.DRAWIO_PAGES);
+	check(drawio.status === 200 && drawio.body.subarray(0, 4).toString("latin1") === "%PDF", `PDFになる (${drawio.status})`);
+	const drawioPages = F.pageSizes(drawio.body);
+	check(drawioPages.length === 2, `図の1ページが紙1枚になる (${drawioPages.length}ページ)`);
+	F.DRAWIO_PAGE_SIZES.forEach((expected, index) => {
+		const actual = drawioPages[index] || {};
+		check(Math.abs(actual.width - expected.width) <= 2 && Math.abs(actual.height - expected.height) <= 2,
+			`${index + 1}ページ目の紙は図の大きさ (${actual.width}x${actual.height} / 期待 ${expected.width}x${expected.height})`);
+	});
+	const drawioChars = F.usedCharacters(drawio.body);
+	check(F.containsAll(drawioChars, F.DRAWIO_PAGES_TEXT), "ラベルの日本語が文字として入っている");
+	check(F.fontNames(drawio.body).some((name) => name.startsWith("BIZUDPGothic")), `ラベルは BIZ UDPゴシック で描かれる (${F.fontNames(drawio.body).join(", ")})`);
+	console.log(`         ${(drawio.body.length / 1024).toFixed(0)}KB / ${(drawio.ms / 1000).toFixed(2)}秒`);
+	if (CONTAINER !== "") {
+		// 拡張図形(stencils)が同梱に無いと、抵抗などがただの四角に化ける(図自体は出るので気づきにくい)
+		const missing = lastConvertLog()?.missing || [];
+		check(!missing.some((item) => item.includes("stencils")), `拡張図形を同梱から読めている (無かったもの: ${missing.join(", ") || "なし"})`);
+	}
+
+	console.log("[draw.io: 大きすぎる図・圧縮形式]");
+	const huge = await convertDrawio(F.DRAWIO_HUGE);
+	const hugePages = F.pageSizes(huge.body);
+	check(hugePages.length === 1 && hugePages[0].width <= 19200 && hugePages[0].width > 19000,
+		`200インチを超える図は縮めて1枚に収める (${hugePages.map((size) => `${size.width}x${size.height}`).join(", ")})`);
+	const compressed = await convertDrawio(F.DRAWIO_COMPRESSED);
+	check(compressed.status === 200 && F.containsAll(F.usedCharacters(compressed.body), "圧縮された図"), "圧縮形式で保存された図も描ける");
+
+	console.log("[draw.io: してはいけないこと]");
+	const drawioHostile = await convertDrawio(F.DRAWIO_HOSTILE);
+	check(drawioHostile.status === 200, "危ない書き方の図でも変換できる");
+	const drawioHostileChars = F.usedCharacters(drawioHostile.body);
+	check(F.containsAll(drawioHostileChars, "図の本文"), "ラベルはそのまま出る");
+	check(!drawioHostileChars.has(F.HOSTILE_MARK), "ラベルに仕込まれたスクリプト(<script>・onerror)は動かない");
+	check(drawioHostile.blocked >= 1, `外部の画像を読み込まない (${drawioHostile.blocked}件)`);
+
+	console.log("[draw.io: 異常系]");
+	const notDrawio = await convertDrawio(Buffer.from("<html><body>図ではない</body></html>"));
+	check(notDrawio.status === 422, `draw.io でないものは422 (${notDrawio.status})`);
+	const brokenXml = await convertDrawio(Buffer.from("<mxfile><diagram"));
+	check(brokenXml.status === 422, `壊れたXMLは422 (${brokenXml.status})`);
+	const noPages = await convertDrawio(Buffer.from("<mxfile></mxfile>"));
+	check(noPages.status === 422, `ページの無い図は422 (${noPages.status})`);
+
 	console.log("[異常系]");
 	const empty = await convert(Buffer.alloc(0));
 	check(empty.status === 400, `空の本体は400 (${empty.status})`);
@@ -167,6 +221,10 @@ const main = async () => {
 		check(timedOut.status === 504, `打ち切り時間を超えた変換は504 (${timedOut.status} / ${(timedOut.ms / 1000).toFixed(1)}秒)`);
 		const afterTimeout = await convert(F.VIEWPORT_UNITS, LIMITS_URL);
 		check(afterTimeout.status === 200, "タイムアウトのあとも次の変換ができる");
+		// draw.io はスクリプトを動かして描く。「スクリプトは一切動かさない」構成にできること
+		check(JSON.stringify(limits.formats) === JSON.stringify(["html"]), `DRAWIO_DISABLED で draw.io を止められる (formats: ${limits.formats})`);
+		const drawioOff = await convert(F.DRAWIO_PAGES, LIMITS_URL, "/convert-drawio");
+		check(drawioOff.status === 404, `止めた draw.io の受け口は404 (${drawioOff.status})`);
 	}
 
 	console.log(failures === 0 ? "\nすべて成功しました" : `\n${failures} 件失敗しました`);

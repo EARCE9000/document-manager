@@ -62,10 +62,11 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
   - converterは信用できない文書をLibreOfficeで開くため、**専用の内部ネットワークに閉じ込める**(インターネットにも他サービスにも到達できない。読み取り専用・作業場所はtmpfs・非root・メモリ上限)。設定を書いただけでは効いている保証にならないので、実機で確かめる手順を[deploy/check-converter-isolation.sh](deploy/check-converter-isolation.sh)に用意している。詳細は[converter/README.md](converter/README.md)
   - 変換に失敗した文書は`GET api/documents?renderStatus=failed`で一覧でき、`POST api/documents/:id/render/retry`で再実行できる(管理画面からも操作できる)
   - プレビュー用iframe(html/mhtml/md変換結果)は `sandbox` 属性でスクリプト実行を制限する
-- **PDFでダウンロード(HTML・Markdown・MHTML → PDF。任意機能)**: `HTML_PDF_URL`を設定すると、プレビュー上部に「PDFでダウンロード」が出て、**プレビューで見えているものを1枚の長いPDF**にして持ち出せる(`GET api/documents/:id/pdf`)。HTMLをメールに添付すると相手の環境ではテキストとして出てしまうことがあるため、人に渡すための形として用意している。変換はChromiumを同梱した別イメージ([pdf-converter/](pdf-converter/)、`earce9000/document-manager-pdf-converter`)が行う
+- **PDFでダウンロード(HTML・Markdown・MHTML・draw.io → PDF。任意機能)**: `HTML_PDF_URL`を設定すると、プレビュー上部に「PDFでダウンロード」が出て、**プレビューで見えているものを1枚の長いPDF**にして持ち出せる(`GET api/documents/:id/pdf`)。HTMLをメールに添付すると相手の環境ではテキストとして出てしまうことがあるため、人に渡すための形として用意している。変換はChromiumを同梱した別イメージ([pdf-converter/](pdf-converter/)、`earce9000/document-manager-pdf-converter`)が行う
   - **未設定でも動く**。その場合はボタンも使い方の説明も出ず、他の機能には影響しない。変換サービスが落ちていても同じ(押したときに理由を出して失敗するだけ。アプリ側は`depends_on`にも入れていない)
-  - **渡すのは元ファイルではなく、プレビューとして配信しているHTML**。Markdownなら見出しや表を整えたもの、MHTMLなら画像ごと1つにまとめたものになる(Markdownの記号がそのまま見えるPDFにはならない)。対象はHTML・Markdown・MHTMLだけで、CSVやOfficeは対象外(原本を渡すほうが相手の役に立つ)
+  - **渡すのは元ファイルではなく、プレビューとして配信しているHTML**。Markdownなら見出しや表を整えたもの、MHTMLなら画像ごと1つにまとめたものになる(Markdownの記号がそのまま見えるPDFにはならない)。対象はHTML・Markdown・MHTML・draw.ioだけで、CSVやOfficeは対象外(原本を渡すほうが相手の役に立つ)
   - **1枚の長いページにする**(A4には区切らない)。区切ると表や図がページの途中で切れ、右へはみ出した分が欠けるため。横に長い表・1行が長いコードはページを右へ広げて入れ、スクロールする枠は開いて中身を全部出す。PDFの1ページは200インチ(A4でおよそ17枚分)までなので、それより長い文書だけ次のページへ続く
+  - **draw.io は図の1ページが紙1枚**になり、紙の大きさはページごとに図の大きさに合わせる。描くのはアプリの画面と同じ版の draw.io 公式ビューア(変換サービスのイメージに同梱)で、渡すのは元ファイル(XML)。受け取った人が draw.io を持っていなくても見られる。**draw.io だけは描くために変換サービスの中でスクリプト(同梱のビューア)を動かす**ため、守りがHTMLより一段弱くなる。図に仕込まれたスクリプトはCSPで止める。「スクリプトは一切動かさない」構成にしたい場合は`PDF_DRAWIO_DISABLED=1`で draw.io の変換だけを止められる(詳細は[pdf-converter/README.md](pdf-converter/README.md))
   - **変換結果は保存しない**(Office用と違う点)。1件0.1〜0.4秒で、押されたときに作れば足りる。保存すると、版を上げたときやプレビューの作りを変えたときに古いPDFが出る事故の元になる
   - **画面と完全に同じにはならない**。文書が指定するフォント(游ゴシック・メイリオ等)は再配布できないためコンテナに無く、日本語はBIZ UDPゴシックで描く。字幅が少し違うので行の折り返し位置がずれることがある(配置は変わらない。実際の文書52件での高さの差は中央値+1%前後)。**外部に置かれた画像・CSSは入らない**(変換時に外部へ接続しないため。該当するときは保存時に画面が知らせる)
   - **スクリプトは動かさない**。プレビューと同じ条件で描くので「画面で見えているもの = PDFに写るもの」になる。pdf-converterは他人が作ったHTMLをブラウザのエンジンで開くため、文書以外の読み込みを全て断ったうえで、**Office用とも別の専用ネットワークに閉じ込める**(詳細と、弱くなっている点=Chromium自身のサンドボックスを切っていることは[pdf-converter/README.md](pdf-converter/README.md))
@@ -271,7 +272,7 @@ document-manager/
 │   │   ├── drawio.js          # .drawio(XML/圧縮diagram)からのテキスト抽出(全文検索用)
 │   │   ├── office.js          # Excel/Word/PowerPoint(OOXML)→概要プレビューHTML+全文検索用テキスト
 │   │   ├── office-render.js   # 体裁つき表示(Office→PDF)。変換サービスへの依頼(OFFICE_RENDER_URLで有効化)
-│   │   ├── html-pdf.js        # PDFでダウンロード(HTML・Markdown・MHTML→PDF)。変換サービスへの依頼(HTML_PDF_URLで有効化)
+│   │   ├── html-pdf.js        # PDFでダウンロード(HTML・Markdown・MHTML・draw.io→PDF)。変換サービスへの依頼(HTML_PDF_URLで有効化)
 │   │   ├── db-integrity.js    # SQLiteの破損検知(起動時の自動確認・管理画面からの再確認)
 │   │   ├── storage-reconcile.js # DBと実ファイルの照合(読み取りのみ。孤立ファイル/欠損の報告)
 │   │   ├── claude-skill.js    # AIエージェント用SkillのZIP生成(api/claude-skill.zip。Node標準のzlibのみ使用)
@@ -348,7 +349,7 @@ document-manager/
 | `VECTOR_INSERT_BATCH_SIZE` | `50` | ベクトル索引付けで、1リクエストにまとめて送るチャンク数。Weaviateはリクエスト単位でタイムアウトするため、大きな文書でも1回あたりの埋め込み計算量が上限内に収まるよう小分けにする |
 | `VECTOR_INSERT_TIMEOUT_SECONDS` | `180` | Weaviateへの登録リクエストのタイムアウト(秒)。CPUでの埋め込み計算は遅いため既定より長めに取る |
 | `OFFICE_RENDER_URL` | (未設定) | 体裁つき表示(Office→PDF)の変換サービスのURL(例: `http://converter:3000`)。未設定の間はこの機能が無効になり、Office文書は概要プレビューだけで扱う(登録・検索・ダウンロードには影響しない) |
-| `HTML_PDF_URL` | (未設定) | PDFでダウンロード(HTML・Markdown・MHTML→PDF)の変換サービスのURL(例: `http://pdf-converter:3000`)。未設定の間はこの機能が無効になり、画面にボタンが出ない(他の機能には影響しない) |
+| `HTML_PDF_URL` | (未設定) | PDFでダウンロード(HTML・Markdown・MHTML・draw.io→PDF)の変換サービスのURL(例: `http://pdf-converter:3000`)。未設定の間はこの機能が無効になり、画面にボタンが出ない(他の機能には影響しない) |
 | `HTML_PDF_MAX_BYTES` | `52428800` (50MB) | PDFにする文書(プレビューのHTML)の上限。変換サービス側の上限(`CONVERT_MAX_BYTES`)と揃える |
 | `HTML_PDF_TIMEOUT_SECONDS` | `90` | 変換サービスの応答を待つ上限(秒)。変換サービス側の打ち切り(既定60秒)より少し長く取る |
 | `MEMO_MAX_CHARS` | `4000` | 文書メモの上限(文字数)。メモは文書一覧・検索の応答すべてに載るため、1件で応答を埋め尽くせないようにする安全弁 |

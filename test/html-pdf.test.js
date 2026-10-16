@@ -35,15 +35,85 @@ test("接続先が未設定なら、機能ごと無効になる", async () => {
 	await assert.rejects(HtmlPdf.convertToPdf(Buffer.from("<p>x</p>"), "202610_x"), (err) => err.status === 404);
 });
 
-test("対象は HTML・Markdown・MHTML だけ", () => {
+test("対象は HTML・Markdown・MHTML・draw.io だけ", () => {
 	const HtmlPdf = load("http://127.0.0.1:19918");
-	for (const extension of [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht", ".HTML", ".Md"]) {
+	for (const extension of [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht", ".drawio", ".HTML", ".Md", ".DRAWIO"]) {
 		assert.equal(HtmlPdf.isConvertible(extension), true, extension);
 	}
 	// CSVやOfficeの概要表示もプレビューはHTMLだが、渡すなら原本のほうが相手の役に立つ
-	for (const extension of [".csv", ".tsv", ".txt", ".xlsx", ".docx", ".pdf", ".svg", ".drawio", "", null, undefined]) {
+	for (const extension of [".csv", ".tsv", ".txt", ".xlsx", ".docx", ".pdf", ".svg", ".mmd", "", null, undefined]) {
 		assert.equal(HtmlPdf.isConvertible(extension), false, String(extension));
 	}
+	// draw.io だけは、プレビューではなく元ファイル(XML)を渡して描かせる
+	assert.equal(HtmlPdf.isDrawio(".drawio"), true);
+	assert.equal(HtmlPdf.isDrawio(".html"), false);
+});
+
+/** 変換サービスの代わり。受けたパスと種類を記録し、決めた応答を返す */
+const withStubConverter = async (respond, run) => {
+	const http = require("node:http");
+	const received = [];
+	const server = http.createServer((req, res) => {
+		const chunks = [];
+		req.on("data", (chunk) => chunks.push(chunk));
+		req.on("end", () => {
+			received.push({path: req.url, contentType: req.headers["content-type"], body: Buffer.concat(chunks).toString()});
+			respond(req, res);
+		});
+	});
+	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+	try {
+		await run(load(`http://127.0.0.1:${server.address().port}`), received);
+	} finally {
+		await new Promise((resolve) => server.close(resolve));
+	}
+};
+const pdfResponse = (req, res) => {
+	res.writeHead(200, {"Content-Type": "application/pdf", "X-Blocked-Requests": "1"});
+	res.end("%PDF-1.7 stub");
+};
+
+test("draw.io は draw.io 用の受け口へ、元のXMLのまま送る", async () => {
+	await withStubConverter(pdfResponse, async (HtmlPdf, received) => {
+		const {pdf, blocked} = await HtmlPdf.convertToPdf(Buffer.from("<mxfile/>"), "202610_x", {format: "drawio"});
+		assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
+		assert.equal(blocked, 1);
+		await HtmlPdf.convertToPdf(Buffer.from("<p>x</p>"), "202610_y");
+		assert.deepEqual(received.map((r) => [r.path, r.contentType, r.body]), [
+			["/convert-drawio", "application/xml", "<mxfile/>"],
+			["/convert", "text/html; charset=utf-8", "<p>x</p>"]
+		]);
+	});
+});
+
+// draw.io に対応する前のイメージ・draw.io を止めている変換サービスは /convert-drawio を持たない(404)。
+// 「変換に失敗した」だけでは、何をすればよいか分からない
+test("draw.io に対応していない変換サービスなら、その理由を伝える", async () => {
+	await withStubConverter((req, res) => {
+		res.writeHead(404, {"Content-Type": "application/json"});
+		res.end(JSON.stringify({error: "not found"}));
+	}, async (HtmlPdf) => {
+		await assert.rejects(HtmlPdf.convertToPdf(Buffer.from("<mxfile/>"), "202610_x", {format: "drawio"}), (err) => {
+			assert.equal(err.status, 502);
+			assert.match(err.message, /draw\.io に対応していません/);
+			assert.match(err.message, /イメージが古い/);
+			assert.match(err.message, /DRAWIO_DISABLED/);
+			return true;
+		});
+	});
+});
+
+test("図として読めない(422)は、そのまま利用者へ伝える", async () => {
+	await withStubConverter((req, res) => {
+		res.writeHead(422, {"Content-Type": "application/json"});
+		res.end(JSON.stringify({error: "図を描けませんでした: draw.io のファイルとして読めません"}));
+	}, async (HtmlPdf) => {
+		await assert.rejects(HtmlPdf.convertToPdf(Buffer.from("x"), "202610_x", {format: "drawio"}), (err) => {
+			assert.equal(err.status, 422);
+			assert.match(err.message, /draw\.io のファイルとして読めません/);
+			return true;
+		});
+	});
 });
 
 test("保存名は、元の名前の拡張子を .pdf に替えたもの", () => {

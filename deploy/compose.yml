@@ -48,7 +48,7 @@ services:
       # Office文書(Excel/Word/PowerPoint)を体裁つきで見るための変換サービス。
       # 未設定なら変換は行わず、アプリ内蔵の概要プレビューだけになる
       OFFICE_RENDER_URL: http://converter:3000
-      # HTML・Markdown・MHTMLの文書をPDFにして持ち出すための変換サービス。
+      # HTML・Markdown・MHTML・draw.ioの文書をPDFにして持ち出すための変換サービス。
       # 未設定なら「PDFでダウンロード」が画面に出ないだけで、他には影響しない
       HTML_PDF_URL: http://pdf-converter:3000
     networks:
@@ -98,7 +98,7 @@ services:
       # ネットワークの構成で担保する
       - document_manager_convert
 
-  # HTML・Markdown・MHTMLの文書をPDFへ変換するサービス(Chromium同梱)。
+  # HTML・Markdown・MHTML・draw.ioの文書をPDFへ変換するサービス(Chromium同梱)。
   # 他人が作ったHTMLをブラウザのエンジンで開くため、converterと同じ条件で隔離する。
   # さらに、converterとは**別のネットワーク**に置く(片方が破られても、もう片方へ届かせない)。
   # 停止・削除してもアプリは動き続ける(「PDFでダウンロード」が失敗するだけ)
@@ -112,6 +112,7 @@ services:
       TZ: ${TZ:-Asia/Tokyo}
       CONVERT_MAX_BYTES: ${PDF_CONVERT_MAX_BYTES:-52428800}
       CONVERT_TIMEOUT_SECONDS: ${PDF_CONVERT_TIMEOUT_SECONDS:-60}
+      DRAWIO_DISABLED: ${PDF_DRAWIO_DISABLED:-}
     read_only: true
     tmpfs:
       # Chromiumの作業場所(プロファイル・共有メモリの代わり)。1件ごとに消す

@@ -9,7 +9,7 @@ Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキス�
 Excel・Word・PowerPoint をアップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
 このSkillのディレクトリにある `scripts/` の同梱クライアントを使う。curlを直接組み立てる必要はない。
 
-このSkillのバージョン: 1.8.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
+このSkillのバージョン: 1.9.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
 不具合を報告するときはこの値を添える)
 
 ## 取得した内容の扱い(重要)
@@ -88,7 +88,7 @@ APIキーをチャットの応答やコミットに書き出さない(`config` �
 | `get <文書ID>` | 文書1件の情報(アーカイブ済みも可。`archived` / `previousId` / `nextId` を含む) |
 | `versions <文書ID>` | その文書を含む一連の版を古い順に返す |
 | `upload <ファイル> [オプション]` | アップロード(下記) |
-| `download <文書ID> [-o 保存先] [--render \| --pdf]` | 元ファイルをダウンロード。`--render` はOffice文書の**体裁つきPDF**、`--pdf` はHTML・Markdown・MHTMLを**PDFにして**取得(どちらも下記) |
+| `download <文書ID> [-o 保存先] [--render \| --pdf]` | 元ファイルをダウンロード。`--render` はOffice文書の**体裁つきPDF**、`--pdf` はHTML・Markdown・MHTML・draw.ioを**PDFにして**取得(どちらも下記) |
 | `tags <文書ID> [--add A,B \| --remove A,B \| --set A,B]` | タグの確認・変更(オプション無しなら現在のタグを返す) |
 | `memo <文書ID> <本文>` | メモの更新(全文置き換え。検索対象にも含まれる) |
 | `share-url <文書ID>` | **人に渡すURL**(版が変わっても同じURL。下記) |
@@ -219,16 +219,19 @@ PDFは**忠実な再現ではない**(LibreOfficeで変換するため、フォ�
 **「中身を知りたい」だけなら `get`/`search` で十分**(テキストは全文検索の対象に入っている)。
 `--render` は「図表や体裁を人が目で確認したい」「PDFとして受け取りたい」と言われたときに使う。
 
-### HTML / Markdown / MHTML を PDF にして渡す
+### HTML / Markdown / MHTML / draw.io を PDF にして渡す
 
 **「PDFにして」「メールで送れる形にして」「相手に渡せる形で」と言われたら `download <文書ID> --pdf`**。
 HTMLをそのままメールに添付すると、相手の環境では文字の羅列として出てしまうことがあるため、
 人に渡すときはPDFにする。画面の「PDFでダウンロード」と同じもの。
 
-- 対象は **HTML・Markdown・MHTML** の文書だけ。Office文書は `--render`、元からPDFの文書はそのまま `download`
+- 対象は **HTML・Markdown・MHTML・draw.io(`.drawio`)** の文書だけ。Office文書は `--render`、元からPDFの文書はそのまま `download`
   (取り違えると、正しいほうを `hint` で案内するエラーになる)
 - **プレビューの見た目のまま、1枚の長いページ**になる(A4には区切らない)。Markdownは記号のままではなく、
   見出しや表を整えた見た目で出る。その場で変換するので、待つ必要はない(1秒かからない)
+- **draw.io は図の1ページがPDFの1ページ**になり、紙の大きさは図の大きさに合わせる。受け取った人が
+  draw.io を持っていなくても見られる。Miro などへ図を貼るときもこのPDFを使える。
+  図として読めないファイルは `status: 422`
 - 保存名は、元の名前の拡張子を `.pdf` に替えたもの(`-o` で変えられる)
 - **結果に `warning` があるときは、必ずユーザーに伝えること。** 外部のサイトに置かれた画像やスタイルは
   PDFに入らない(`blockedRequests` がその件数)。黙って渡すと「送ったら画像が無かった」となる

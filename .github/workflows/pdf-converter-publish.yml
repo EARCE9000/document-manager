@@ -17,12 +17,20 @@ on:
     branches: [main]
     paths:
       - "pdf-converter/**"
+      # draw.io を描くビューア一式はアプリと共有している(pdf-converter/Dockerfile)
+      - "app/static/vendor/drawio/**"
+      - "app/static/drawio-viewer-boot.js"
+      - "app/static/drawio-math/**"
       - "app/lib/html-pdf.js"
       - "test/integration-pdf.js"
       - ".github/workflows/pdf-converter-publish.yml"
   pull_request:
     paths:
       - "pdf-converter/**"
+      # draw.io を描くビューア一式はアプリと共有している(pdf-converter/Dockerfile)
+      - "app/static/vendor/drawio/**"
+      - "app/static/drawio-viewer-boot.js"
+      - "app/static/drawio-math/**"
       - "app/lib/html-pdf.js"
       - "test/integration-pdf.js"
       - ".github/workflows/pdf-converter-publish.yml"
@@ -75,7 +83,7 @@ jobs:
           docker run -d --name pdf-converter-limits -p 3013:3000 \
             --tmpfs /tmp:rw,size=512m --read-only --memory 1g \
             --security-opt no-new-privileges:true --cap-drop ALL \
-            -e CONVERT_MAX_BYTES=1048576 -e CONVERT_TIMEOUT_SECONDS=1 \
+            -e CONVERT_MAX_BYTES=1048576 -e CONVERT_TIMEOUT_SECONDS=1 -e DRAWIO_DISABLED=1 \
             document-manager-pdf-converter:test
           for i in $(seq 1 60); do
             curl -sf -m 2 http://127.0.0.1:3012/health > /dev/null \

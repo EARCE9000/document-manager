@@ -4,20 +4,22 @@ Docker Hub (https://hub.docker.com/r/earce9000/document-manager-pdf-converter) �
 
 短い説明(Description)欄には次の1行を使う。Docker Hub側の上限は100文字なので、
 書き換えるときは必ず文字数を数えること(超えると入らない)。
-HTML to PDF converter for Document Manager (headless Chromium, single long page, no scripts).
+HTML / draw.io to PDF converter for Document Manager (headless Chromium, no network access).
 -->
 
 # Document Manager PDF Converter
 
 *HTML-to-PDF conversion service for [Document Manager](https://hub.docker.com/r/earce9000/document-manager).
 Renders HTML / Markdown / MHTML documents with headless Chromium into a single long PDF page that looks like
-the on-screen preview. Scripts are never executed and nothing but the document itself is loaded.
+the on-screen preview, and draw.io diagrams into one PDF page per diagram page. Document scripts are never
+executed and nothing but the document itself is loaded.
 Documentation below is in Japanese.*
 
 ## これは何か
 
 [Document Manager](https://hub.docker.com/r/earce9000/document-manager) の「PDFでダウンロード」のための
 変換サービスです。HTML・Markdown・MHTML の文書を、**プレビューで見たままの1枚の長いPDF**にします。
+draw.io の図(`.drawio`)は、**図の1ページを紙1枚**にしたPDFにします。
 HTML をメールに添付すると相手の環境では文字の羅列として出てしまうことがあるため、人に渡すための形として
 用意しています。
 
@@ -35,6 +37,9 @@ HTML をメールに添付すると相手の環境では文字の羅列として
 フォントは BIZ UDゴシック / BIZ UD明朝で描きます(文書が指定する游ゴシック・メイリオ等は再配布できない
 ため入っていません)。字幅が少し違うので、行の折り返し位置が画面とずれることがあります。
 **外部に置かれた画像・フォント・CSS は入りません**(変換時に外部へ接続しないため)。
+
+draw.io の図は、Document Manager の画面と同じ版の draw.io 公式ビューア(このイメージに同梱)で描きます。
+紙の大きさはページごとに図の大きさに合わせ、回路図の記号などの拡張図形も描けます。
 
 ## 使い方
 
@@ -74,12 +79,13 @@ networks:
 | `CONVERT_TIMEOUT_SECONDS` | `60` | 1件あたりの打ち切り(通常は1秒かかりません) |
 | `PDF_VIEWPORT_WIDTH` | `1280` | 画面として描く幅(px) |
 | `LISTEN_PORT` | `3000` | 待ち受けるポート |
+| `DRAWIO_DISABLED` | (未設定) | `1` で draw.io の変換を止めます(下の「安全面」) |
 
 ## 安全面
 
 他人が作ったHTMLをブラウザのエンジンで開くので、何重にも閉じてあります。
 
-- **文書のスクリプトを動かしません**
+- **文書のスクリプトを動かしません**(draw.io は例外。下記)
 - **文書そのもの以外は読み込みません**(外部の画像・CSS、コンテナ内のファイル、内部の宛先)
 - 変換1件ごとに Chromium を起動して捨てます(前の文書の状態を持ち越しません)
 - 非root で動き、読み取り専用のファイルシステムで動かせます
@@ -90,6 +96,11 @@ networks:
 スクリプトを動かさず通信も断っているので攻撃の入口は狭いですが、描画そのものの欠陥に対する守りは
 コンテナの隔離だけになります。そのため**イメージを毎週作り直しています**(Chromium のセキュリティ修正を
 取り込むため)。定期的に取得し直してください。
+
+**draw.io の図では、スクリプトを動かします。** 図を描くのに draw.io のビューア(JavaScript)が要るためです。
+動くのはイメージに同梱したビューアだけで、図に仕込まれたスクリプトは CSP(`script-src 'self'`)で止め、
+通信の遮断も HTML と同じです。それでも守りは HTML より一段弱くなるので、「スクリプトは一切動かさない」
+構成にしたい場合は `DRAWIO_DISABLED=1` で draw.io の変換だけを止めてください。
 
 ## タグ
 

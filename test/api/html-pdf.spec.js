@@ -1,5 +1,5 @@
 /*!
- * html-pdf.spec.js : HTML・Markdown・MHTMLの文書を、PDFにしてダウンロードする
+ * html-pdf.spec.js : HTML・Markdown・MHTML・draw.ioの文書を、PDFにしてダウンロードする
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
@@ -41,7 +41,7 @@ const upload = async (request, name, body) => {
 const MARKDOWN = "# 導入手順\n\n| 項目 | 値 |\n|---|---|\n| 上限 | 16 |\n";
 const HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>報告</title></head><body><h1 id="origin">元のHTMLそのもの</h1></body></html>`;
 
-test.describe.serial("PDFでダウンロード(HTML・Markdown・MHTML)", () => {
+test.describe.serial("PDFでダウンロード(HTML・Markdown・MHTML・draw.io)", () => {
 	test.beforeEach(async ({request}) => {
 		await controlStub(request, {mode: "ok", blocked: 0, status: 500, reset: true});
 	});
@@ -75,6 +75,27 @@ test.describe.serial("PDFでダウンロード(HTML・Markdown・MHTML)", () => 
 		expect((await request.get(`api/documents/${doc.id}/pdf`, {headers: rw})).status()).toBe(200);
 		const [sent] = await stubRequests(request);
 		expect(sent.bodyHead).toBe(HTML);
+	});
+
+	// draw.io は画面でも元ファイルをビューアで描いている。PDFも同じ元ファイルから描かせる
+	test("draw.io は、元の図(XML)を draw.io 用の受け口へ渡す", async ({request}) => {
+		const drawio = `<mxfile><diagram id="p" name="構成"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" value="受付${STAMP}" vertex="1" parent="1"><mxGeometry width="80" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>`;
+		const doc = await upload(request, `構成図${STAMP}.drawio`, drawio);
+		const res = await request.get(`api/documents/${doc.id}/pdf`, {headers: rw});
+		expect(res.status()).toBe(200);
+		expect(res.headers()["content-type"]).toBe("application/pdf");
+		expect(decodeURIComponent(res.headers()["content-disposition"])).toContain(`構成図${STAMP}.pdf`);
+		const [sent] = await stubRequests(request);
+		expect(sent.path).toBe("/convert-drawio");
+		expect(sent.bodyHead).toBe(drawio);
+		expect(sent.documentId).toBe(doc.id);
+	});
+
+	test("図として読めない draw.io は422をそのまま伝える", async ({request}) => {
+		const doc = await upload(request, `壊れた図${STAMP}.drawio`, "<mxfile><diagram");
+		await controlStub(request, {mode: "fail", status: 422});
+		const res = await request.get(`api/documents/${doc.id}/pdf`, {headers: rw});
+		expect(res.status()).toBe(422);
 	});
 
 	// ファイル名には患者名・施設名などが入り得る。変換サービスのログにも残さない
@@ -123,7 +144,7 @@ test.describe.serial("PDFでダウンロード(HTML・Markdown・MHTML)", () => 
 			const doc = await upload(request, name, body);
 			const res = await request.get(`api/documents/${doc.id}/pdf`, {headers: rw});
 			expect(res.status(), name).toBe(400);
-			expect((await res.json()).error).toContain("HTML・Markdown・MHTML");
+			expect((await res.json()).error).toContain("HTML・Markdown・MHTML・draw.io");
 		}
 		expect(await stubRequests(request), "対象外の文書を変換サービスへ渡している").toHaveLength(0);
 	});
@@ -178,6 +199,8 @@ test.describe.serial("PDFでダウンロード(HTML・Markdown・MHTML)", () => 
 			expect(res.status()).toBe(200);
 			const health = await res.json();
 			expect(health).toMatchObject({enabled: true, reachable: true, chromium: "stub"});
+			// draw.io に対応しているか(古いイメージでは formats が無く、html だけとみなす)
+			expect(health.formats).toEqual(["html", "drawio"]);
 			expect(health.checkedAt).toBeTruthy();
 		});
 

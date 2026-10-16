@@ -55,7 +55,7 @@ CSV・TSV / テキスト・ログ / JSON / draw.io / Excel・Word・PowerPoint �
 HTML や Markdown の資料を**メールなどで人に渡す**ための **「PDFでダウンロード」** もあります
 (HTML をそのまま添付すると、相手の環境では文字の羅列として出てしまうことがあるため)。
 **PDF変換サービス**(別イメージ `earce9000/document-manager-pdf-converter`)を併せて起動すると、
-HTML・Markdown・MHTML の文書を、**プレビューの見た目のまま1枚の長いPDF**にして保存できます。
+HTML・Markdown・MHTML・draw.io の文書を、**プレビューの見た目のまま**PDFにして保存できます。
 A4 には区切らないので表や図が途中で切れず、横に長い表はページを右へ広げて入れます。
 フォントは BIZ UDゴシックで描くため行の折り返しが少しずれることがあり、**外部のサイトに置かれた
 画像は入りません**(該当するときは保存時に知らせます)。
@@ -320,7 +320,7 @@ PDF変換サービス(`earce9000/document-manager-pdf-converter`)を**外へ出�
 | `DATABASE_BACKEND` | `sqlite` | `sqlite` / `postgres`(複数インスタンス構成では必須) |
 | `DATABASE_URL` | (未設定) | PostgreSQL の接続文字列(標準の `PG*` 変数でも可) |
 | `STORAGE_BACKEND` | `local` | `local` / `s3` / `gcs` |
-| `HTML_PDF_URL` | (未設定) | PDFでダウンロード(HTML・Markdown・MHTML→PDF)の変換サービスのURL。未設定ならこの機能は無効(画面にボタンが出ないだけ) |
+| `HTML_PDF_URL` | (未設定) | PDFでダウンロード(HTML・Markdown・MHTML・draw.io→PDF)の変換サービスのURL。未設定ならこの機能は無効(画面にボタンが出ないだけ) |
 | `OFFICE_RENDER_URL` | (未設定) | 体裁つき表示(Office→PDF)の変換サービスのURL。未設定ならこの機能は無効(概要表示だけになります) |
 | `WEAVIATE_URL` | (未設定) | 設定すると意味検索が有効になる |
 | `UPLOAD_MAX_BYTES` | `268435456` | 1ファイルのアップロード上限(256MB)。超過時は413 |

@@ -66,7 +66,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 		}
 		if (req.url === "/health") {
 			res.writeHead(200, {"Content-Type": "application/json"});
-			res.end(JSON.stringify({status: "ok", apiVersion: "stub", libreOffice: "stub", chromium: "stub", maxBytes: 50 * 1024 * 1024, timeoutSeconds: 120}));
+			res.end(JSON.stringify({status: "ok", apiVersion: "stub", libreOffice: "stub", chromium: "stub", maxBytes: 50 * 1024 * 1024, timeoutSeconds: 120, formats: ["html", "drawio"]}));
 			return;
 		}
 		const documentId = String(req.headers["x-document-id"] || "");

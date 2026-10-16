@@ -24,7 +24,7 @@
  *                                        [--project プロジェクト] [--folder フォルダ]
  *   node dm_client.mjs download <文書ID> [-o 保存先] [--render | --pdf]
  *       --render で「体裁つき」のPDFを取得する(Office文書のみ)
- *       --pdf で、プレビューの見た目のまま1枚の長いPDFにする(HTML・Markdown・MHTMLのみ)
+ *       --pdf で、プレビューの見た目のままPDFにする(HTML・Markdown・MHTML・draw.ioのみ。draw.ioは図の1ページが1ページ)
  *   node dm_client.mjs tags <文書ID> [--add A,B | --remove A,B | --set A,B]
  *   node dm_client.mjs memo <文書ID> <メモ本文>
  *   node dm_client.mjs archive <文書ID> / restore <文書ID>
@@ -56,7 +56,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.8.0";
+const CLIENT_VERSION = "1.9.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -383,7 +383,7 @@ const request = async (method, apiPath, {query, json, formData, raw = false, wit
 };
 
 // download --pdf でPDFにできる文書(元ファイルの拡張子)。サーバー側(lib/html-pdf.js)と揃える
-const PDF_SOURCE_EXTENSIONS = [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht"];
+const PDF_SOURCE_EXTENSIONS = [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht", ".drawio"];
 // download --render の対象(Office文書)。取り違えたときに、正しいほうを案内するために持つ
 const OFFICE_EXTENSIONS = [".xlsx", ".docx", ".pptx", ".xlsm", ".docm", ".pptm"];
 
@@ -574,7 +574,7 @@ const commands = {
 		const doc = await request("GET", docPath(id));
 		const extension = path.extname(doc.entryFile || "").toLowerCase();
 		if (opts.render && opts.pdf) {
-			throw new DmError("--render と --pdf は同時に指定できません(--render はOffice文書、--pdf はHTML・Markdown・MHTML)");
+			throw new DmError("--render と --pdf は同時に指定できません(--render はOffice文書、--pdf はHTML・Markdown・MHTML・draw.io)");
 		}
 		// --render はOffice文書を元の体裁のまま見るためのPDF(サーバー側で変換済みのもの)
 		if (opts.render && doc.renderStatus !== "ok") {
@@ -582,14 +582,14 @@ const commands = {
 				error: "体裁つきのPDFは用意されていません",
 				renderStatus: doc.renderStatus ?? null,
 				hint: PDF_SOURCE_EXTENSIONS.includes(extension)
-					? "HTML・Markdown・MHTMLの文書は --render ではなく --pdf でPDFにできる"
+					? "HTML・Markdown・MHTML・draw.ioの文書は --render ではなく --pdf でPDFにできる"
 					: "対象はExcel/Word/PowerPoint。変換中(pending)なら少し待つ。failedなら管理者に再実行を依頼する"
 			}));
 		}
-		// --pdf はHTML・Markdown・MHTMLを、プレビューの見た目のまま1枚の長いPDFにする(その場で変換する)。
+		// --pdf はHTML・Markdown・MHTML・draw.ioを、プレビューの見た目のままPDF(draw.ioは図の1ページが1ページ)にする(その場で変換する)。
 		// メール添付など、人に渡すための形
 		if (opts.pdf && !PDF_SOURCE_EXTENSIONS.includes(extension)) {
-			let hint = "PDFにできるのはHTML・Markdown・MHTMLの文書だけ。それ以外は download で原本を取得する";
+			let hint = "PDFにできるのはHTML・Markdown・MHTML・draw.ioの文書だけ。それ以外は download で原本を取得する";
 			if (OFFICE_EXTENSIONS.includes(extension)) hint = "Office文書は --pdf ではなく --render で体裁つきのPDFを取得できる(get の renderStatus が ok のとき)";
 			else if (extension === ".pdf") hint = "この文書は元からPDF。download でそのまま取得する";
 			throw new DmError(JSON.stringify({error: `この形式はPDFにできません: ${extension || "(拡張子なし)"}`, hint}));

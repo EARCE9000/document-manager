@@ -7,6 +7,7 @@
  * ここでは本物を相手に、アップロードから「PDFでダウンロード」で受け取るPDFの中身までを通しで確かめる。
  * 「PDFが返った」だけでなく、**元の文書の文字がPDFに入っていること・1枚に収まっていること**まで見る。
  * Markdownは、記号(# や |)が残っていないこと=整えたプレビューが渡っていることも見る。
+ * draw.io は、図の1ページが紙1枚になること(元の図のXMLが渡り、変換サービスで描かれていること)を見る。
  *
  * 実行:
  *   docker build -f pdf-converter/Dockerfile -t dm-pdf-converter:local .
@@ -118,10 +119,12 @@ const main = async () => {
 			{file: "報告書.html", body: F.LAYOUT, expect: ["月次レポート", "受注件数", F.SCREEN_ONLY_TEXT], absent: []},
 			// 記号が残っていない = 原本ではなく、整えたプレビューが渡っている
 			{file: "導入手順書.md", body: MARKDOWN, expect: ["導入手順書", "運用サーバ", "右端まで見えること"], absent: ["# 導入手順書", "**運用サーバ**", "|---"], widened: true},
-			{file: "お知らせ.mhtml", body: MHTML, expect: ["社内ポータルのお知らせ", "定期メンテナンスを行います"], absent: ["Content-Type"]}
+			{file: "お知らせ.mhtml", body: MHTML, expect: ["社内ポータルのお知らせ", "定期メンテナンスを行います"], absent: ["Content-Type"]},
+			// XMLのまま文字になっていない = 図として描かれている
+			{file: "構成図.drawio", body: F.DRAWIO_PAGES, expect: ["受付サーバー", "データベース", "二枚目のページ"], absent: ["mxCell", "mxGeometry"], pageCount: 2}
 		];
 
-		for (const {file, body, expect, absent, widened} of cases) {
+		for (const {file, body, expect, absent, widened, pageCount = 1} of cases) {
 			console.log(`[${file}]`);
 			const form = new FormData();
 			form.append("uploadfile", new Blob([body]), file);
@@ -136,7 +139,7 @@ const main = async () => {
 			check(decodeURIComponent(String(res.headers.get("content-disposition"))).includes(file.replace(/\.[^.]+$/, ".pdf")), "保存名は拡張子を .pdf に替えたもの");
 
 			const pages = F.pageSizes(pdf);
-			check(pages.length === 1, `1枚のページに収まる (${pages.length}ページ)`);
+			check(pages.length === pageCount, pageCount === 1 ? `1枚のページに収まる (${pages.length}ページ)` : `図の1ページが紙1枚になる (${pages.length}ページ)`);
 			if (widened) check(pages[0]?.width > 1280, `横に長い表に合わせて、ページを右へ広げている (幅 ${pages[0]?.width}px)`);
 
 			const parser = new PDFParse({data: pdf});

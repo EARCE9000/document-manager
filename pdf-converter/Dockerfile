@@ -48,6 +48,13 @@ ENV WORK_DIR=/tmp/convert
 ENV XDG_CACHE_HOME=/tmp/cache
 
 WORKDIR /app
+# draw.io(.drawio)を描くための部品。ビューアはアプリが画面で使っているものと同じ版を入れる
+# (版がずれると、画面とPDFで図の見え方が変わる)。stencils は約42MBあるので先に置いて層を分ける
+COPY app/static/vendor/drawio/stencils/ ./drawio/vendor/drawio/stencils/
+COPY app/static/vendor/drawio/viewer-static.min.js app/static/vendor/drawio/LICENSE ./drawio/vendor/drawio/
+COPY app/static/drawio-viewer-boot.js ./drawio/
+COPY app/static/drawio-math/ ./drawio/drawio-math/
+COPY pdf-converter/drawio/ ./drawio/
 COPY pdf-converter/server.js ./
 
 # 公式イメージが用意している非rootユーザーで動かす

@@ -1,5 +1,5 @@
 /*!
- * html-pdf.js : HTML・Markdown・MHTMLの文書を、PDFにして渡すための変換(pdf-converterサービスの呼び出し)
+ * html-pdf.js : HTML・Markdown・MHTML・draw.io の文書を、PDFにして渡すための変換(pdf-converterサービスの呼び出し)
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
@@ -31,9 +31,15 @@ const TIMEOUT_MS = Number(process.env.HTML_PDF_TIMEOUT_SECONDS || 90) * 1000;
 //   .md/.markdown   見出しや表を整えたプレビュー(素のMarkdownではない)
 //   .mhtml/.mht     保存されていた画像・スタイルごと1つのHTMLへ直したプレビュー
 // CSVやOfficeの概要表示もHTMLだが対象にしない(表計算やOfficeの原本を渡すほうが相手の役に立つ)
-const SOURCE_EXTENSIONS = Object.freeze([".html", ".htm", ".md", ".markdown", ".mhtml", ".mht"]);
+const HTML_SOURCE_EXTENSIONS = Object.freeze([".html", ".htm", ".md", ".markdown", ".mhtml", ".mht"]);
+// draw.io は元ファイル(XML)を渡し、pdf-converter が同梱のビューアで描く。図の1ページが紙1枚になる
+const DRAWIO_SOURCE_EXTENSIONS = Object.freeze([".drawio"]);
+const SOURCE_EXTENSIONS = Object.freeze([...HTML_SOURCE_EXTENSIONS, ...DRAWIO_SOURCE_EXTENSIONS]);
 
 module.exports.SOURCE_EXTENSIONS = SOURCE_EXTENSIONS;
+module.exports.DRAWIO_SOURCE_EXTENSIONS = DRAWIO_SOURCE_EXTENSIONS;
+/** この拡張子が draw.io として変換するものか(元ファイルを渡す) */
+module.exports.isDrawio = (extension) => DRAWIO_SOURCE_EXTENSIONS.includes(String(extension || "").toLowerCase());
 module.exports.MAX_BYTES = MAX_BYTES;
 
 /** PDFでの持ち出しが使える構成か(pdf-converterの接続先が設定されているか) */
@@ -54,13 +60,14 @@ module.exports.pdfFileName = (entryFile) => {
 };
 
 /**
- * pdf-converterへHTMLを渡してPDFを受け取る。
- * @param {Buffer} html プレビューとして見せているHTML(UTF-8)
+ * pdf-converterへHTML(または draw.io の図)を渡してPDFを受け取る。
+ * @param {Buffer} html プレビューとして見せているHTML(UTF-8)。format が "drawio" なら .drawio の元ファイル
  * @param {string} documentId ログ用(pdf-converter側のログに残る)
+ * @param {{format?: "html"|"drawio"}} [options]
  * @returns {Promise<{pdf: Buffer, blocked: number}>} blockedは、読み込ませなかった外部の部品の数。
  *   失敗時は例外(理由をmessageに、利用者へ返すHTTPステータスをstatusに持つ)
  */
-module.exports.convertToPdf = async (html, documentId) => {
+module.exports.convertToPdf = async (html, documentId, {format = "html"} = {}) => {
 	if (PDF_URL === "") throw Object.assign(new Error("PDFでの持ち出しは無効です(HTML_PDF_URL が未設定)"), {status: 404});
 	if (html.length > MAX_BYTES) {
 		throw Object.assign(new Error(`文書が大きすぎるためPDFにできません(上限 ${Math.floor(MAX_BYTES / 1024 / 1024)}MB)`), {status: 413});
@@ -68,10 +75,11 @@ module.exports.convertToPdf = async (html, documentId) => {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 	try {
-		const res = await fetch(`${PDF_URL}/convert`, {
+		const drawio = format === "drawio";
+		const res = await fetch(`${PDF_URL}/${drawio ? "convert-drawio" : "convert"}`, {
 			method: "POST",
 			headers: {
-				"Content-Type": "text/html; charset=utf-8",
+				"Content-Type": drawio ? "application/xml" : "text/html; charset=utf-8",
 				"X-Document-Id": documentId
 			},
 			body: html,
@@ -83,9 +91,14 @@ module.exports.convertToPdf = async (html, documentId) => {
 			try {
 				message = JSON.parse(detail).error || message;
 			} catch {}
-			// 大きすぎる・時間切れは、利用者が次に何をすればよいか分かるようそのまま伝える。
-			// それ以外(変換サービス側の不具合)は、こちらの都合なので502にまとめる
-			const status = res.status === 413 || res.status === 504 ? res.status : 502;
+			// draw.io に対応する前の pdf-converter(1.0.x)と、draw.io の変換を止めている(DRAWIO_DISABLED)
+			// pdf-converter は、draw.io の受け口を持たない。「変換に失敗した」ではなく、理由が分かるように伝える
+			if (drawio && res.status === 404) {
+				throw Object.assign(new Error("変換サービスが draw.io に対応していません(pdf-converter のイメージが古いか、DRAWIO_DISABLED で draw.io の変換を止めています)"), {status: 502});
+			}
+			// 大きすぎる・時間切れ・図として読めない(422)は、利用者が次に何をすればよいか分かるよう
+			// そのまま伝える。それ以外(変換サービス側の不具合)は、こちらの都合なので502にまとめる
+			const status = [413, 422, 504].includes(res.status) ? res.status : 502;
 			throw Object.assign(new Error(`変換サービスがエラーを返しました(HTTP ${res.status}): ${message}`), {status});
 		}
 		const pdf = Buffer.from(await res.arrayBuffer());

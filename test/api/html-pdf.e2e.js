@@ -22,6 +22,7 @@ const STUB_URL = process.env.PDF_STUB_URL || `http://127.0.0.1:${process.env.PDF
 const STAMP = Date.now();
 const MARKDOWN_NAME = `PDF持ち出し${STAMP}.md`;
 const TEXT_NAME = `PDF対象外${STAMP}.txt`;
+const DRAWIO_NAME = `PDF構成図${STAMP}.drawio`;
 
 const upload = async (request, name, body) => {
 	const res = await request.post("api/documents", {
@@ -42,6 +43,7 @@ test.describe.serial("PDFでダウンロード(実ブラウザ)", () => {
 	test.beforeAll(async ({request}) => {
 		await upload(request, MARKDOWN_NAME, "# 手順\n\n本文です。\n");
 		await upload(request, TEXT_NAME, "テキストの本文");
+		await upload(request, DRAWIO_NAME, '<mxfile><diagram id="p" name="p"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" value="受付" vertex="1" parent="1"><mxGeometry width="80" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>');
 	});
 
 	test.beforeEach(async ({context, page, request}) => {
@@ -70,6 +72,18 @@ test.describe.serial("PDFでダウンロード(実ブラウザ)", () => {
 		expect(sent[0].bodyHead).toContain("<h1>手順</h1>");
 		// 押し直せる状態に戻っている
 		await expect(button).toBeEnabled();
+	});
+
+	test("draw.io の図でもボタンが出て、元の図を渡してPDFにする", async ({page, request}) => {
+		await openDocument(page, DRAWIO_NAME);
+		const button = page.locator("#previewPdfButton");
+		await expect(button).toBeVisible();
+		const [download] = await Promise.all([page.waitForEvent("download"), button.click()]);
+		expect(download.suggestedFilename()).toBe(DRAWIO_NAME.replace(/\.drawio$/, ".pdf"));
+		const sent = await (await request.get(`${STUB_URL}/__requests`)).json();
+		expect(sent).toHaveLength(1);
+		expect(sent[0].path).toBe("/convert-drawio");
+		expect(sent[0].bodyHead).toContain("<mxfile>");
 	});
 
 	test("対象外の形式では、ボタンを出さない", async ({page}) => {
@@ -143,6 +157,7 @@ test.describe.serial("PDFでダウンロード(実ブラウザ)", () => {
 		const result = page.locator("#pdfHealthResult");
 		await expect(result.locator(".adminStatus")).toHaveText("正常");
 		await expect(result).toContainText("Chromium");
+		await expect(page.locator("#pdfHealthDrawio")).toHaveText("対応");
 		// Office用の状態はこれまでどおり、別に出ている
 		await expect(page.locator("#convertHealthResult .adminStatus")).toBeVisible();
 	});

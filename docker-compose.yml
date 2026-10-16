@@ -103,7 +103,7 @@ services:
       # 到達できないよう、ループバックにだけ割り当てる
       - "127.0.0.1:3010:3000"
 
-  # HTML・Markdown・MHTMLの文書をPDFにする変換サービス(Chromium同梱)。こちらも普段は起動しない:
+  # HTML・Markdown・MHTML・draw.ioの文書をPDFにする変換サービス(Chromium同梱)。こちらも普段は起動しない:
   #   docker compose --profile pdf up
   pdf-converter:
     profiles: ["pdf"]

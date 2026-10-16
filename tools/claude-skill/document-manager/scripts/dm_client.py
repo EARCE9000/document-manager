@@ -23,7 +23,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
                                        [--project プロジェクト] [--folder フォルダ]
   python dm_client.py download <文書ID> [-o 保存先] [--render | --pdf]
                                        --render で「体裁つき」のPDFを取得する(Office文書のみ)
-                                       --pdf で、プレビューの見た目のまま1枚の長いPDFにする(HTML・Markdown・MHTMLのみ)
+                                       --pdf で、プレビューの見た目のままPDFにする(HTML・Markdown・MHTML・draw.ioのみ。draw.ioは図の1ページが1ページ)
   python dm_client.py tags <文書ID> [--add A,B | --remove A,B | --set A,B]   タグの確認・変更
   python dm_client.py memo <文書ID> <メモ本文>     メモの更新(全文置き換え)
   python dm_client.py share-url <文書ID>           人に渡す共有リンク(版が変わっても同じURL)
@@ -71,7 +71,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.8.0"
+CLIENT_VERSION = "1.9.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -609,7 +609,7 @@ def cmd_upload(args):
 
 
 # download --pdf でPDFにできる文書(元ファイルの拡張子)。サーバー側(lib/html-pdf.js)と揃える
-PDF_SOURCE_EXTENSIONS = (".html", ".htm", ".md", ".markdown", ".mhtml", ".mht")
+PDF_SOURCE_EXTENSIONS = (".html", ".htm", ".md", ".markdown", ".mhtml", ".mht", ".drawio")
 # download --render の対象(Office文書)。取り違えたときに、正しいほうを案内するために持つ
 OFFICE_EXTENSIONS = (".xlsx", ".docx", ".pptx", ".xlsm", ".docm", ".pptm")
 
@@ -619,13 +619,13 @@ def cmd_download(args):
     extension = os.path.splitext(doc.get("entryFile") or "")[1].lower()
     blocked = None
     if args.render and args.pdf:
-        raise DmError("--render と --pdf は同時に指定できません(--render はOffice文書、--pdf はHTML・Markdown・MHTML)")
+        raise DmError("--render と --pdf は同時に指定できません(--render はOffice文書、--pdf はHTML・Markdown・MHTML・draw.io)")
     # --render はOffice文書を元の体裁のまま見るためのPDF(サーバー側で変換済みのもの)
     if args.render:
         if doc.get("renderStatus") != "ok":
             hint = "対象はExcel/Word/PowerPoint。変換中(pending)なら少し待つ。failedなら管理者に再実行を依頼する"
             if extension in PDF_SOURCE_EXTENSIONS:
-                hint = "HTML・Markdown・MHTMLの文書は --render ではなく --pdf でPDFにできる"
+                hint = "HTML・Markdown・MHTML・draw.ioの文書は --render ではなく --pdf でPDFにできる"
             raise DmError(json.dumps({
                 "error": "体裁つきのPDFは用意されていません",
                 "renderStatus": doc.get("renderStatus"),
@@ -633,11 +633,11 @@ def cmd_download(args):
             }, ensure_ascii=False))
         payload, _headers = request("GET", f"api/documents/{quote_id(args.id)}/file", query={"render": "1"}, raw=True)
         name = os.path.splitext(safe_local_filename(doc["entryFile"]))[0] + ".pdf"
-    # --pdf はHTML・Markdown・MHTMLを、プレビューの見た目のまま1枚の長いPDFにする(その場で変換する)。
+    # --pdf はHTML・Markdown・MHTML・draw.ioを、プレビューの見た目のままPDF(draw.ioは図の1ページが1ページ)にする(その場で変換する)。
     # メール添付など、人に渡すための形
     elif args.pdf:
         if extension not in PDF_SOURCE_EXTENSIONS:
-            hint = "PDFにできるのはHTML・Markdown・MHTMLの文書だけ。それ以外は download で原本を取得する"
+            hint = "PDFにできるのはHTML・Markdown・MHTML・draw.ioの文書だけ。それ以外は download で原本を取得する"
             if extension in OFFICE_EXTENSIONS:
                 hint = "Office文書は --pdf ではなく --render で体裁つきのPDFを取得できる(get の renderStatus が ok のとき)"
             elif extension == ".pdf":
@@ -1114,7 +1114,7 @@ def main():
     p.add_argument("id")
     p.add_argument("-o", "--output", help="保存先(ファイルまたはディレクトリ。省略時はカレントに元のファイル名で保存)")
     p.add_argument("--render", action="store_true", help="Office文書の体裁つきPDFを取得する(元ファイルの代わり)")
-    p.add_argument("--pdf", action="store_true", help="HTML・Markdown・MHTMLを、プレビューの見た目のまま1枚の長いPDFにして取得する(元ファイルの代わり)")
+    p.add_argument("--pdf", action="store_true", help="HTML・Markdown・MHTML・draw.ioを、プレビューの見た目のままPDF(draw.ioは図の1ページが1ページ)にして取得する(元ファイルの代わり)")
     p.set_defaults(func=cmd_download)
     p = sub.add_parser("tags", help="タグの確認・変更")
     p.add_argument("id")

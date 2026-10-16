@@ -1966,7 +1966,9 @@ app.get(BASE_URL_PATH + 'api/html-pdf/health', requireAuth, requireAdmin, async 
 				chromium: health.chromium ?? null,
 				apiVersion: health.apiVersion ?? null,
 				maxBytes: health.maxBytes ?? null,
-				timeoutSeconds: health.timeoutSeconds ?? null
+				timeoutSeconds: health.timeoutSeconds ?? null,
+				// 変換できる形式。draw.io に対応する前のイメージ(1.0.x)は formats を返さないので html だけとみなす
+				formats: Array.isArray(health.formats) ? health.formats : ["html"]
 			} : {})
 		});
 	} catch (err) {
@@ -2452,12 +2454,13 @@ app.get(BASE_URL_PATH + 'api/documents/:id/file', requireAuth, async (req, res) 
 });
 
 /**
- * HTML・Markdown・MHTMLの文書を、PDFにしてダウンロードする。
+ * HTML・Markdown・MHTML・draw.io の文書を、PDFにしてダウンロードする。
  *
  * HTMLをメールに添付すると、相手の環境ではテキストとして出てしまうことがある。人に渡すための
  * 形として、**プレビューで見えているものを、そのまま1枚の長いPDFにする**(lib/html-pdf.js)。
  * 渡すのは元ファイルではなく、プレビューとして配信しているHTML。Markdownなら見出しや表を
  * 整えたもの、MHTMLなら画像ごと1つにまとめたものになる。
+ * draw.io は元ファイル(XML)を渡し、変換サービス側でアプリと同じビューアで描く。図の1ページが紙1枚になる。
  *
  * 文書の持ち出しなので、元ファイルのダウンロードと同じく監査ログに残す。
  * アーカイブ済みの文書も対象(プレビュー・ダウンロードと揃える)。
@@ -2476,18 +2479,20 @@ app.get(BASE_URL_PATH + 'api/documents/:id/pdf', requireAuth, async (req, res) =
 		}
 		const extension = path.extname(document.entry_file || "").toLowerCase();
 		if (!HtmlPdf.isConvertible(extension)) {
-			res.status(400).json({error: `PDFにできるのは HTML・Markdown・MHTML の文書だけです(${extension || "拡張子なし"})`});
+			res.status(400).json({error: `PDFにできるのは HTML・Markdown・MHTML・draw.io の文書だけです(${extension || "拡張子なし"})`});
 			return;
 		}
-		// 画面で見えているものと同じにするため、プレビューが古ければ先に作り直す
-		await rebuildPreviewIfOutdated(document);
-		const targetFile = document.preview_file;
+		const drawio = HtmlPdf.isDrawio(extension);
+		// 画面で見えているものと同じにするため、プレビューが古ければ先に作り直す。
+		// draw.io は画面でも元ファイルを描いているので、元ファイルを渡す
+		if (!drawio) await rebuildPreviewIfOutdated(document);
+		const targetFile = drawio ? document.entry_file : document.preview_file;
 		if (targetFile == null || !(await storage.exists(document.id, targetFile))) {
 			res.status(404).json({error: "preview not available"});
 			return;
 		}
-		const html = await storage.readFile(document.id, targetFile);
-		const {pdf, blocked} = await HtmlPdf.convertToPdf(html, document.id);
+		const source = await storage.readFile(document.id, targetFile);
+		const {pdf, blocked} = await HtmlPdf.convertToPdf(source, document.id, {format: drawio ? "drawio" : "html"});
 		logger.info({
 			audit: "download",
 			format: "pdf",

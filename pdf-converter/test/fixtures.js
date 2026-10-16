@@ -165,8 +165,51 @@ const HEAVY = page(
 	"<i></i>".repeat(130000)
 );
 
+// ---- draw.io ----
+// .drawio は <mxfile> の下に、ページ(<diagram>)ごとの図を持つXML
+const drawioCell = (id, value, style, x, y, width, height) =>
+	`<mxCell id="${id}" value="${value}" style="${style}" vertex="1" parent="1"><mxGeometry x="${x}" y="${y}" width="${width}" height="${height}" as="geometry"/></mxCell>`;
+const drawioModel = (cells) => `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${cells}</root></mxGraphModel>`;
+const drawioPage = (name, cells) => `<diagram id="${name}" name="${name}">${drawioModel(cells)}</diagram>`;
+const drawioFile = (...pages) => `<mxfile>${pages.join("")}</mxfile>`;
+const escapeXml = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+// 図の周りの余白(render.js の BORDER)。紙の大きさ = 図の右下 + 余白
+const DRAWIO_BORDER = 12;
+
+// 大きさの違う2ページ。どちらも紙が図の大きさぴったりになること、2ページ目が画面の幅(1280px)に
+// 縮められないことを見る。1ページ目の抵抗は拡張図形(stencils)で、同梱が無いとただの四角に化ける
+const DRAWIO_PAGES = drawioFile(
+	drawioPage("構成図",
+		drawioCell("a", "受付サーバー", "rounded=1;whiteSpace=wrap;html=1;", 40, 40, 160, 60)
+		+ drawioCell("b", "データベース", "shape=cylinder3;whiteSpace=wrap;html=1;", 300, 40, 120, 80)
+		+ drawioCell("r", "", "pointerEvents=1;html=1;shape=mxgraph.electrical.resistors.resistor_1;", 40, 160, 100, 20)),
+	drawioPage("詳細", drawioCell("c", "二枚目のページ", "rounded=0;whiteSpace=wrap;html=1;", 0, 0, 1500, 900))
+);
+const DRAWIO_PAGES_TEXT = "受付サーバーデータベース二枚目のページ";
+// 図の範囲は (40,40)-(420,180) と (0,0)-(1500,900)。紙は、その周りに余白を足した大きさ
+const DRAWIO_PAGE_SIZES = [
+	{width: 420 - 40 + 2 * DRAWIO_BORDER, height: 180 - 40 + 2 * DRAWIO_BORDER},
+	{width: 1500 + 2 * DRAWIO_BORDER, height: 900 + 2 * DRAWIO_BORDER}
+];
+
+// ラベルにはHTMLを書ける。図に仕込まれたスクリプトは動かない(動くと HOSTILE_MARK が紙に出る)。
+// 外部の画像は読み込まない
+const DRAWIO_HOSTILE = drawioFile(drawioPage("p",
+	drawioCell("t", "図の本文", "text;html=1;", 20, 20, 200, 30)
+	+ drawioCell("x", escapeXml(`<img src="x" onerror="document.body.append('${HOSTILE_MARK}')"><script>document.body.append('${HOSTILE_MARK}')</script>`), "text;html=1;", 20, 60, 200, 30)
+	+ drawioCell("i", "", "shape=image;image=https://example.com/a.png;", 20, 100, 40, 40)
+));
+
+// 紙の上限(200インチ = 19200px)を超える図は、比を保って縮めて1枚に収める
+const DRAWIO_HUGE = drawioFile(drawioPage("p", drawioCell("w", "とても横に長い図", "rounded=0;whiteSpace=wrap;html=1;", 0, 0, 30000, 200)));
+
+// 圧縮形式(base64(deflate(urlencode(XML))))のページ。古い版や Web 版の draw.io が保存する形
+const DRAWIO_COMPRESSED = `<mxfile><diagram id="z" name="z">${zlib.deflateRawSync(Buffer.from(encodeURIComponent(
+	drawioModel(drawioCell("c", "圧縮された図", "rounded=1;whiteSpace=wrap;html=1;", 0, 0, 200, 60))))).toString("base64")}</diagram></mxfile>`;
+
 module.exports = {
 	pageSizes, fontNames, type3FontCount, usedCharacters, containsAll,
 	LAYOUT, LAYOUT_TEXT, SCREEN_ONLY_TEXT, MARKDOWN, VIEWPORT_UNITS, VIEWPORT_UNITS_HEIGHT, SCROLL_BOX, SCROLL_BOX_HEIGHT,
-	LONG, LONG_HEIGHT, FRACTIONAL, HOSTILE, HOSTILE_MARK, HEAVY
+	LONG, LONG_HEIGHT, FRACTIONAL, HOSTILE, HOSTILE_MARK, HEAVY,
+	DRAWIO_PAGES, DRAWIO_PAGES_TEXT, DRAWIO_PAGE_SIZES, DRAWIO_HOSTILE, DRAWIO_HUGE, DRAWIO_COMPRESSED
 };

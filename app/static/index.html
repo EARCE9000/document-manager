@@ -1653,8 +1653,9 @@
 					</a>
 					<!-- HTMLをメールに添付すると、相手の環境ではテキストとして出てしまうことがある。
 					     人に渡す用に、プレビューで見えているものを1枚の長いPDFにして落とす。
-					     変換サービス(pdf-converter)がある環境の、HTML・Markdown・MHTMLの文書でだけ出す -->
-					<button type="button" id="previewPdfButton" class="previewActionButton" title="PDFでダウンロード(メール添付など、人に渡す用。プレビューの見た目のまま1枚の長いPDFにします)" aria-label="PDFでダウンロード" style="display:none;">
+					     変換サービス(pdf-converter)がある環境の、HTML・Markdown・MHTML・draw.io の文書でだけ出す
+					     (draw.io は図の1ページが紙1枚になる) -->
+					<button type="button" id="previewPdfButton" class="previewActionButton" title="PDFでダウンロード(メール添付など、人に渡す用。プレビューの見た目のままPDFにします)" aria-label="PDFでダウンロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="17"/><polyline points="9 14.5 12 17.5 15 14.5"/></svg>
 					</button>
 					<button type="button" id="previewRenderButton" class="previewActionButton" title="体裁つきで開く(元のレイアウトをPDFで表示。別ウィンドウ)" aria-label="体裁つきで開く" style="display:none;">
@@ -2027,9 +2028,9 @@
 					<h3>変換に失敗した文書</h3>
 					<div class="adminSectionNote">変換サービスが停止していた間に登録された文書は、ここに残ります。再実行すると、その場で変換し直します。</div>
 					<div id="convertFailedWrap"></div>
-					<h3>PDFでダウンロード(HTML・Markdown・MHTML)</h3>
+					<h3>PDFでダウンロード(HTML・Markdown・MHTML・draw.io)</h3>
 					<div class="adminSectionNote">
-						HTML・Markdown・MHTML の文書を、<strong>プレビューの見た目のまま1枚の長いPDF</strong>にして持ち出すための変換サービスの状態です(上のOffice用とは別のコンテナです)。
+						HTML・Markdown・MHTML・draw.io の文書を、<strong>プレビューの見た目のまま1枚の長いPDF</strong>にして持ち出すための変換サービスの状態です(上のOffice用とは別のコンテナです)。
 						動いていなくても、プレビューの上の「PDFでダウンロード」が使えなくなるだけで、他には影響しません。
 					</div>
 					<div id="pdfHealthResult"></div>
@@ -2253,8 +2254,8 @@
 
 			<section id="helpPdfSection">
 				<h3>メールなどで渡す — PDFでダウンロード</h3>
-				<p>HTML・Markdown の資料を、プレビュー上部の<strong>書類に下向き矢印のアイコン</strong>で PDF にして保存できます。HTML をそのままメールに添付すると、相手の環境では文字の羅列として出てしまうことがあるため、渡すときはこちらを使ってください。</p>
-				<p><strong>画面で見たままの1枚の長いページ</strong>になります(A4 には区切りません。区切ると表や図が途中で切れるためです)。横に長い表は、切れないようにページを右へ広げます。</p>
+				<p>HTML・Markdown・draw.io の資料を、プレビュー上部の<strong>書類に下向き矢印のアイコン</strong>で PDF にして保存できます。HTML をそのままメールに添付すると、相手の環境では文字の羅列として出てしまうことがあるため、渡すときはこちらを使ってください。draw.io の図も、相手が draw.io を持っていなくても見られるようになります。</p>
+				<p>HTML・Markdown は<strong>画面で見たままの1枚の長いページ</strong>になります(A4 には区切りません。区切ると表や図が途中で切れるためです)。横に長い表は、切れないようにページを右へ広げます。draw.io は<strong>図の1ページが PDF の1ページ</strong>になり、紙の大きさは図の大きさに合わせます。</p>
 				<p class="helpNote">文字の形(フォント)は画面と少し違い、行の折り返し位置がずれることがあります。<strong>外部のサイトに置かれた画像は入りません</strong>(該当するときは保存時に知らせます)。渡す前に、PDF を開いて確かめてください。</p>
 			</section>
 
@@ -2341,7 +2342,7 @@ const previewReviseButton = document.getElementById("previewReviseButton");
 const previewRenderButton = document.getElementById("previewRenderButton");
 const previewPdfButton = document.getElementById("previewPdfButton");
 // PDFにできる文書(元ファイルの拡張子)。サーバ側(lib/html-pdf.js の SOURCE_EXTENSIONS)と揃える
-const PDF_SOURCE_EXTENSIONS = [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht"];
+const PDF_SOURCE_EXTENSIONS = [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht", ".drawio"];
 // 変換サービス(pdf-converter)がある環境か。ログイン時の応答で決まる
 let htmlPdfEnabled = false;
 
@@ -3153,7 +3154,7 @@ const showPreview = (doc) => {
 	previewRenderButton.onclick = () => {
 		window.open(`./api/documents/${encodeURIComponent(doc.id)}/file?render=1`, "_blank");
 	};
-	// PDFでダウンロード。HTML・Markdown・MHTMLの文書で、変換サービスがある環境のときだけ出す
+	// PDFでダウンロード。HTML・Markdown・MHTML・draw.ioの文書で、変換サービスがある環境のときだけ出す
 	const pdfSourceExtension = (String(doc.entryFile || "").match(/\.[^.]+$/) || [""])[0].toLowerCase();
 	previewPdfButton.style.display = htmlPdfEnabled && PDF_SOURCE_EXTENSIONS.includes(pdfSourceExtension) ? "inline-flex" : "none";
 	previewPdfButton.onclick = () => downloadAsPdf(doc);
@@ -6214,6 +6215,9 @@ const renderPdfHealth = (health) => {
 			<dt>Chromium</dt><dd>${escapeHtml(health.chromium || "-")}</dd>
 			<dt>受け付ける上限</dt><dd>${escapeHtml(formatBytes(health.maxBytes))}</dd>
 			<dt>変換の打ち切り</dt><dd>${escapeHtml(String(health.timeoutSeconds ?? "-"))} 秒</dd>
+			<dt>draw.io</dt><dd id="pdfHealthDrawio">${(health.formats || []).includes("drawio")
+				? "対応"
+				: "未対応(イメージが古いか、DRAWIO_DISABLED で止めています。draw.io の文書で「PDFでダウンロード」を押すとエラーになります)"}</dd>
 			<dt>確認日時</dt><dd>${escapeHtml(formatDateTime(health.checkedAt))}</dd>
 		</dl>`;
 };

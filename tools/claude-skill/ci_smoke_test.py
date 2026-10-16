@@ -435,7 +435,7 @@ def control_pdf_stub(**control):
 
 
 def smoke_pdf(kind, env, workdir):
-    """HTML・Markdown・MHTMLをPDFにして取得する(人に渡すための形)。変換サービスにはスタブが繋がっている"""
+    """HTML・Markdown・MHTML・draw.ioをPDFにして取得する(人に渡すための形)。変換サービスにはスタブが繋がっている"""
     control_pdf_stub(mode="ok", blocked=0, reset=True)
     markdown = json.loads(run_client(kind, ["upload", os.path.join(workdir, f"smoke-{kind}.md")], env).stdout)
 

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>draw.io → PDF</title>
+<!--
+	pdf-converter が .drawio を PDF にするときに開くページ(server.js の convertDrawio)。
+	図そのものは diagram.xml として別に渡し、ここでは draw.io 公式のビューア(アプリと同じ版を
+	イメージに同梱)で描くだけ。ページ全体に script-src 'self' の CSP を付けて配信するので、
+	図に仕込まれたインラインのスクリプトやイベントハンドラは動かない。スクリプトは全て外部ファイル。
+-->
+<style>
+	html, body { margin: 0; padding: 0; background: #fff; }
+	/* 1ページ = 図の1ページ。紙の大きさは render.js が図ごとに @page で決める */
+	.page { position: relative; overflow: hidden; break-after: page; }
+	.page:last-child { break-after: auto; }
+</style>
+</head>
+<body>
+<div id="pages"></div>
+<script src="./drawio-viewer-boot.js"></script>
+<script src="./vendor/drawio/viewer-static.min.js"></script>
+<script src="./render.js"></script>
+</body>
+</html>

@@ -8,6 +8,7 @@
  *
  *   GET  /health          稼働確認。{status, apiVersion, chromium, maxBytes, timeoutSeconds, viewportWidth} を返す
  *   POST /convert         本体にHTMLのバイト列(UTF-8)。application/pdf を返す
+ *   POST /convert-drawio  本体に .drawio(XML)のバイト列。図の1ページを紙1枚にした application/pdf を返す
  *
  * 目的は「HTMLで作った資料を、メールに添付して渡せる形にする」こと。HTMLをそのまま添付すると
  * 相手の環境ではテキストとして出てしまうことがあるため、**画面で見たままの1枚の長いPDF**にする。
@@ -28,6 +29,12 @@
  *   - 変換は直列(同時実行1)。非力なサーバでも他の処理を圧迫しないことを優先する
  *   - 依存パッケージは持たない(Node標準モジュールのみ)。Chromiumとは --remote-debugging-pipe
  *     (fd3/fd4、NUL区切りのJSON)で話すので、待ち受けるポートも増えない
+ *
+ * draw.io(.drawio)だけは例外として**スクリプトを動かす**。図はXMLで、描くには draw.io 公式の
+ * ビューア(JavaScript)が要るため。動かすのはイメージに同梱したビューアと描画用のスクリプトだけで、
+ * 図はデータとして渡す。図のラベルにはHTMLを書けるので、ページ全体に script-src 'self' のCSPを付け、
+ * 図に仕込まれたスクリプトは動かさない(アプリのビューアと同じ守り方)。通信の遮断はHTMLと同じ。
+ * それでも「Chromiumの中でスクリプトが動く」分だけHTMLより守りが一段弱い(pdf-converter/README.md参照)
  */
 
 const http = require("node:http");
@@ -37,7 +44,12 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const {spawn, execFile} = require("node:child_process");
 
-const API_VERSION = "1.0.0";
+// 1.1.0: draw.io(POST /convert-drawio)に対応。/health の formats で、対応している形式が分かる
+const API_VERSION = "1.1.0";
+// draw.io はスクリプトを動かして描く(上の説明)。「スクリプトは一切動かさない」構成にしたい場合は
+// DRAWIO_DISABLED=1 で止められる(受け口は404になり、/health の formats からも消える)
+const DRAWIO_ENABLED = !["1", "true"].includes(String(process.env.DRAWIO_DISABLED || "").toLowerCase());
+const FORMATS = Object.freeze(DRAWIO_ENABLED ? ["html", "drawio"] : ["html"]);
 const PORT = Number(process.env.LISTEN_PORT || 3000);
 const WORK_DIR = process.env.WORK_DIR || path.join(os.tmpdir(), "convert");
 const CHROMIUM = process.env.CHROMIUM_PATH || "chromium-headless-shell";
@@ -73,6 +85,49 @@ const GENERIC_FONTS = Object.freeze({
 const DOCUMENT_URL = "http://document.invalid/";
 // アプリが文書を配信するときと同じ指定(スクリプトを動かさない)。app/server.js の ACTIVE_CONTENT_CSP
 const DOCUMENT_CSP = "script-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+
+// draw.io を描くためのページと、ビューア一式(アプリと同じ版を同梱する。pdf-converter/Dockerfile)
+const DRAWIO_DIR = process.env.DRAWIO_ASSETS_DIR || path.join(__dirname, "drawio");
+// draw.io 用ページのCSP。アプリの図のビューア(app/server.js の DIAGRAM_VIEWER_CSP)と同じ。
+// スクリプトは同梱のファイルだけ。図のラベルに書かれたインラインのスクリプトやイベントハンドラは動かない
+const DRAWIO_CSP = [
+	"default-src 'none'",
+	"script-src 'self'",
+	"style-src 'self' 'unsafe-inline'",
+	"img-src 'self' data: blob:",
+	"font-src 'self' data:",
+	"connect-src 'self'",
+	"base-uri 'none'",
+	"form-action 'none'"
+].join("; ");
+const CONTENT_TYPES = Object.freeze({
+	".html": "text/html; charset=utf-8",
+	".js": "text/javascript; charset=utf-8",
+	".xml": "application/xml; charset=utf-8",
+	".css": "text/css; charset=utf-8",
+	".json": "application/json; charset=utf-8",
+	".png": "image/png",
+	".gif": "image/gif",
+	".svg": "image/svg+xml"
+});
+
+/**
+ * draw.io 用ページの部品を返す。図(diagram.xml)は受け取ったもの、それ以外は同梱のファイル。
+ * 同梱の場所の外を指すもの(.. など)と、無いものは null
+ */
+const drawioAsset = async (pathname, diagram) => {
+	if (pathname === "/diagram.xml") return {body: diagram, type: CONTENT_TYPES[".xml"]};
+	try {
+		// 壊れた%エンコードは decodeURIComponent が投げる。ここで受け止めて「無い」にする
+		// (投げたままにすると読み込みに答えないまま、打ち切りまで待つことになる)
+		const relative = pathname === "/" ? "render.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+		const file = path.resolve(DRAWIO_DIR, relative);
+		if (!file.startsWith(path.resolve(DRAWIO_DIR) + path.sep)) return null;
+		return {body: await fs.readFile(file), type: CONTENT_TYPES[path.extname(file).toLowerCase()] || "application/octet-stream"};
+	} catch {
+		return null;
+	}
+};
 
 const log = (fields, message) => {
 	console.log(JSON.stringify({time: new Date().toISOString(), ...fields, msg: message}));
@@ -292,15 +347,19 @@ const PREPARE = (viewportWidth, viewportHeight) => {
 };
 
 /**
- * HTMLをPDFにする。
- * @param {Buffer} html
- * @returns {Promise<{pdf: Buffer, width: number, contentHeight: number, pageHeight: number, notes: object, blocked: number}>}
+ * HTML・draw.io をPDFにする。
+ * @param {Buffer} source HTML(format が "html")か、.drawio のXML(format が "drawio")
+ * @param {"html"|"drawio"} format
+ * @returns {Promise<{pdf: Buffer, blocked: number, width?: number, contentHeight?: number, pageHeight?: number, notes?: object, pages?: object[]}>}
  */
-const convert = async (html) => {
+const convert = async (source, format = "html") => {
+	const html = source;
 	const jobDir = path.join(WORK_DIR, crypto.randomUUID());
 	await fs.mkdir(jobDir, {recursive: true});
 	const browser = launch(jobDir);
 	let blocked = 0;
+	// draw.io で、同梱に無かった部品(パスだけ。切り分け用にログへ残す)
+	const missing = [];
 	let timer;
 	try {
 		const work = (async () => {
@@ -313,7 +372,27 @@ const convert = async (html) => {
 			browser.on((message) => {
 				if (message.method !== "Fetch.requestPaused" || message.sessionId !== sessionId) return;
 				const {requestId, request} = message.params;
-				if (request.url === DOCUMENT_URL) {
+				if (format === "drawio" && request.url.startsWith(DOCUMENT_URL)) {
+					// 描画用のページ・ビューア・図。同梱に無いもの(ビューアが探しに来る任意の部品)は
+					// 「無い」と答える。外へ出ようとしたものではないので、遮断の数には入れない
+					const {pathname} = new URL(request.url);
+					drawioAsset(pathname, source).then((asset) => {
+						if (asset == null && missing.length < 20) missing.push(pathname);
+						return asset;
+					}).then((asset) => send("Fetch.fulfillRequest", asset == null
+						? {requestId, responseCode: 404}
+						: {
+							requestId,
+							responseCode: 200,
+							responseHeaders: [
+								{name: "Content-Type", value: asset.type},
+								{name: "Content-Security-Policy", value: DRAWIO_CSP}
+							],
+							body: asset.body.toString("base64")
+						})).catch(() => {});
+					return;
+				}
+				if (format === "html" && request.url === DOCUMENT_URL) {
 					send("Fetch.fulfillRequest", {
 						requestId,
 						responseCode: 200,
@@ -342,7 +421,8 @@ const convert = async (html) => {
 			// そのままだと日本語は「足りない字の控え」として1文字ずつ探され、太字が別のフォント
 			// (Noto。図形として埋め込まれPDFが膨らむ)になった。system-ui の落ち先は fonts.conf で決める
 			await send("Page.setFontFamilies", {fontFamilies: GENERIC_FONTS});
-			await send("Emulation.setScriptExecutionDisabled", {value: true});
+			// HTMLの文書のスクリプトは動かさない。draw.io は同梱のビューアで描くため動かす(上の説明)
+			if (format === "html") await send("Emulation.setScriptExecutionDisabled", {value: true});
 			await send("Emulation.setDeviceMetricsOverride", {width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false});
 			// 印刷用ではなく、画面用の見た目で描く(印刷用のCSSで配置が変わるのを避ける)
 			await send("Emulation.setEmulatedMedia", {media: "screen"});
@@ -350,6 +430,11 @@ const convert = async (html) => {
 			const loaded = browser.waitFor("Page.loadEventFired", sessionId);
 			await send("Page.navigate", {url: DOCUMENT_URL});
 			await loaded;
+			if (format === "drawio") {
+				const printed = await printDrawio(send);
+				blocked += printed.blocked;
+				return printed;
+			}
 
 			const {executionContextId} = await send("Page.createIsolatedWorld", {frameId: mainFrameId, worldName: "prepare"});
 			const prepared = await send("Runtime.evaluate", {
@@ -384,12 +469,36 @@ const convert = async (html) => {
 			timer = setTimeout(() => reject(Object.assign(new Error(`変換がタイムアウトしました(${TIMEOUT_MS / 1000}秒)`), {status: 504})), TIMEOUT_MS);
 		});
 		const result = await Promise.race([work, timeout]);
-		return {...result, blocked};
+		return {...result, blocked, ...(format === "drawio" ? {missing} : {})};
 	} finally {
 		clearTimeout(timer);
 		await terminate(browser.child);
 		await fs.rm(jobDir, {recursive: true, force: true}).catch(() => {});
 	}
+};
+
+/**
+ * draw.io のページが描き終わるのを待って、紙に出す。紙の大きさは render.js がページごとに
+ * 図の大きさで決めている(@page)ので、ここでは大きさを指定しない
+ */
+const printDrawio = async (send) => {
+	const rendered = await send("Runtime.evaluate", {
+		expression: "new Promise((resolve) => { const check = () => window.drawioRendered ? resolve(window.drawioRendered) : setTimeout(check, 50); check(); })",
+		awaitPromise: true,
+		returnByValue: true
+	});
+	if (rendered.exceptionDetails) throw new Error(`図の描画に失敗しました: ${JSON.stringify(rendered.exceptionDetails).slice(0, 300)}`);
+	const result = rendered.result.value || {};
+	if (result.error) throw Object.assign(new Error(`図を描けませんでした: ${result.error}`), {status: 422});
+	const {data} = await send("Page.printToPDF", {
+		printBackground: true,
+		preferCSSPageSize: true,
+		marginTop: 0,
+		marginBottom: 0,
+		marginLeft: 0,
+		marginRight: 0
+	});
+	return {pdf: Buffer.from(data, "base64"), pages: result.pages, blocked: Number(result.blocked) || 0};
 };
 
 /** 入っているChromiumの版(健全性の確認と、障害時の切り分け用)。1度取れたら覚えておく */
@@ -421,11 +530,14 @@ const server = http.createServer(async (req, res) => {
 			// 実際に効いている設定。反映されているかを外から確認できるようにする
 			maxBytes: MAX_BYTES,
 			timeoutSeconds: TIMEOUT_MS / 1000,
-			viewportWidth: VIEWPORT_WIDTH
+			viewportWidth: VIEWPORT_WIDTH,
+			// 変換できる形式。アプリはこれを見て、古いイメージでは draw.io を出さない
+			formats: FORMATS
 		});
 		return;
 	}
-	if (req.method !== "POST" || url.pathname !== "/convert") {
+	const format = url.pathname === "/convert" ? "html" : url.pathname === "/convert-drawio" && DRAWIO_ENABLED ? "drawio" : null;
+	if (req.method !== "POST" || format == null) {
 		sendJson(res, 404, {error: "not found"});
 		return;
 	}
@@ -436,9 +548,9 @@ const server = http.createServer(async (req, res) => {
 	try {
 		const buffer = await readBody(req);
 		if (buffer.length === 0) throw Object.assign(new Error("本体が空です"), {status: 400});
-		const result = await runExclusively(() => convert(buffer));
+		const result = await runExclusively(() => convert(buffer, format));
 		log({
-			documentId, bytes: buffer.length, pdfBytes: result.pdf.length,
+			documentId, format, bytes: buffer.length, pdfBytes: result.pdf.length, pages: result.pages, missing: result.missing,
 			width: result.width, contentHeight: result.contentHeight, pageHeight: result.pageHeight,
 			// 読み込ませなかった外部の部品の数(画像が抜けた、という問い合わせの切り分け用)
 			blocked: result.blocked, notes: result.notes, ms: Date.now() - started
