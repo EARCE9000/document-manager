@@ -288,6 +288,8 @@ test.describe.serial("主要UIフロー(実ブラウザ)", () => {
 		if (process.env.E2E_SCREENSHOT) {
 			await page.locator("#toolsPane").screenshot({path: process.env.E2E_SCREENSHOT});
 		}
+		// ZIPの保存は、手順の中の「自分で渡す場合」にある(手順は既定では閉じている)
+		await page.locator("#toolCardDocumentManager .toolSteps summary").click();
 		const downloadPromise = page.waitForEvent("download");
 		await page.locator("#claudeSkillDownloadLink").click();
 		const download = await downloadPromise;

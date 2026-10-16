@@ -367,7 +367,7 @@ const main = async () => {
 		await page.locator("#menuToolsLink").click();
 		await page.locator('#toolsPane .skillAgentTab[data-agent="claude"]').click();
 		await page.locator("#toolCardDocumentManager .toolVersion").filter({hasText: /v\d/}).waitFor();
-		await page.setViewportSize({width: VIEWPORT.width, height: 1100});
+		await page.setViewportSize(VIEWPORT);
 		await page.waitForTimeout(400);
 		await shot("tools");
 	} finally {

@@ -323,8 +323,11 @@
 	#toolsPane .skillAgentTab { background: #fff; border: 1px solid #d0d7de; border-radius: 4px; padding: 4px 12px; font-size: 0.95em; color: #555; cursor: pointer; }
 	#toolsPane .skillAgentTab:hover { color: #1a56db; }
 	#toolsPane .skillAgentTab.selected { background: #eaf2ff; border-color: #1a56db; color: #1a56db; font-weight: 600; }
-	#toolsPaneBody { padding: 16px 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; align-items: start; }
-	.toolCard { border: 1px solid #d0d7de; border-radius: 8px; padding: 12px 14px; background: #fafbfc; font-size: 0.85em; min-width: 0; }
+	/* カードは同じ高さにそろえ、中の段(見出し・説明・ボタン・手順)も横でそろえる(subgrid)。
+	   説明の長さが違っても、ボタンが横一列に並ぶ。行の間隔はカード内の余白で取るため row-gap は 0 */
+	#toolsPaneBody { padding: 16px 20px 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); column-gap: 16px; row-gap: 0; align-items: stretch; }
+	.toolCard { border: 1px solid #d0d7de; border-radius: 8px; padding: 12px 14px; background: #fafbfc; font-size: 0.85em; min-width: 0;
+		display: grid; grid-template-rows: subgrid; grid-row: span 4; align-content: start; margin-bottom: 16px; }
 	.toolCardHeader { display: flex; align-items: baseline; gap: 8px; }
 	.toolCardHeader h3 { margin: 0; font-size: 1.1em; }
 	.toolVersion { margin-left: auto; color: #888; font-size: 0.9em; }
@@ -1733,7 +1736,7 @@
 						<button type="button" id="claudeSkillCopyPromptButton" class="modalButton save">登録依頼文をコピー</button>
 						<button type="button" id="toolsOpenApiKeyButton" class="modalButton">APIキーを発行</button>
 					</div>
-					<details class="toolSteps" open>
+					<details class="toolSteps">
 						<summary>登録の手順</summary>
 						<ol id="claudeSkillSteps"></ol>
 						<div id="claudeSkillManual"></div>

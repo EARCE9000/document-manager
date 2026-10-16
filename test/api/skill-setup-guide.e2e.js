@@ -123,6 +123,13 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 		await expect(page.locator("#backlogSkillDownloadLink")).toBeVisible();
 	});
 
+	// どのカードも同じ見え方にする(前面はコピーのボタンだけ。手順は開いて読むもの)
+	test("登録の手順は、どのカードも最初は閉じている", async ({page}) => {
+		for (const card of ["#toolCardDocumentManager", "#toolCardBacklog"]) {
+			expect(await page.locator(`${card} .toolSteps`).evaluate((el) => el.open), card).toBe(false);
+		}
+	});
+
 	// ふだんの手順は「依頼文をコピーして貼る」だけ。ZIPの保存は手順の中の逃げ道として置く
 	test("カードの前面にはZIPのダウンロードを置かず、手順の中の「自分で渡す場合」に置く", async ({page}) => {
 		for (const card of ["#toolCardDocumentManager", "#toolCardBacklog"]) {
