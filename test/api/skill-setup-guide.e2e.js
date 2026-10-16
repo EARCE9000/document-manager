@@ -18,6 +18,14 @@ const {loadKeys, BASE_URL} = require("./config.js");
 
 const keys = loadKeys();
 
+// 依頼文は、取得用のURLを発行してからコピーする(非同期)。コピーし終わるまで待って読む
+const copiedPrompt = async (page, buttonSelector, marker = "Skillとして登録してください") => {
+	await page.evaluate(() => navigator.clipboard.writeText(""));
+	await page.locator(buttonSelector).click();
+	await expect.poll(async () => page.evaluate(() => navigator.clipboard.readText())).toContain(marker);
+	return page.evaluate(() => navigator.clipboard.readText());
+};
+
 test.describe("ツールのページ: Skillの登録手順と配布(実ブラウザ)", () => {
 	test.beforeEach(async ({context, page}) => {
 		await context.addCookies([{name: keys.sessionCookieName, value: keys.sessionCookie, url: BASE_URL}]);
@@ -29,8 +37,7 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 
 	// この変更の要
 	test("登録依頼文は、エージェントにAPIキーを尋ねさせず、利用者が実行するコマンドを示させる", async ({page}) => {
-		await page.locator("#claudeSkillCopyPromptButton").click();
-		const prompt = await page.evaluate(() => navigator.clipboard.readText());
+		const prompt = await copiedPrompt(page, "#claudeSkillCopyPromptButton");
 		expect(prompt).toContain("APIキーは私に尋ねないでください");
 		expect(prompt).toContain(`setup --base-url ${new URL("./", page.url()).href}`);
 		expect(prompt).toContain("あなたは実行しないでください");
@@ -58,13 +65,48 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 	});
 
 	test("Backlogの登録依頼文も、キーを尋ねさせない。Backlogのキーであることが分かる", async ({page}) => {
-		await page.locator("#backlogSkillCopyPromptButton").click();
-		const prompt = await page.evaluate(() => navigator.clipboard.readText());
+		const prompt = await copiedPrompt(page, "#backlogSkillCopyPromptButton");
 		expect(prompt).toContain("backlog-skill.zip");
 		expect(prompt).toContain("APIキーは私に尋ねないでください");
 		expect(prompt).toContain("backlog_client.py の setup --space");
 		// Document Manager のキーと取り違えないこと
 		await expect(page.locator("#backlogSkillSteps")).toContainText("Document Manager のAPIキーとは別のもの");
+	});
+
+	// ZIPを保存して添付する手間をなくす。依頼文に入ったURLから、AIがキー無しで取れること
+	test("依頼文には、ZIPを取ってくるためのURLが入り、そのURLはログイン無しで取れる", async ({page, browser}) => {
+		for (const [button, fileName] of [["#claudeSkillCopyPromptButton", "document-manager-skill.zip"], ["#backlogSkillCopyPromptButton", "backlog-skill.zip"]]) {
+			const prompt = await copiedPrompt(page, button);
+			expect(prompt).toContain(`次のURLから ${fileName} をダウンロードして`);
+			expect(prompt).toContain("30分で使えなくなります");
+			const url = prompt.match(/https?:\/\/\S+\/api\/skill-downloads\/\S+/)[0];
+			expect(url.endsWith(`/${fileName}`)).toBe(true);
+
+			// ログインしていないブラウザ(=AIエージェントの立場)から取れる
+			const context = await browser.newContext();
+			try {
+				const res = await context.request.get(url);
+				expect(res.status(), fileName).toBe(200);
+				expect((await res.body()).subarray(0, 2).toString("latin1")).toBe("PK");
+			} finally {
+				await context.close();
+			}
+		}
+	});
+
+	test("押すたびに新しいURLになる(押した時点から期限が始まる)", async ({page}) => {
+		const first = await copiedPrompt(page, "#backlogSkillCopyPromptButton");
+		await page.waitForTimeout(1100);
+		const second = await copiedPrompt(page, "#backlogSkillCopyPromptButton");
+		const urlOf = (text) => text.match(/\/api\/skill-downloads\/\S+/)[0];
+		expect(urlOf(second)).not.toBe(urlOf(first));
+	});
+
+	test("URLを発行できないときは、ZIPを添付してもらう依頼文に戻す", async ({page}) => {
+		await page.route("**/api/skills/*/download-link", (route) => route.fulfill({status: 500, json: {error: "x"}}));
+		const prompt = await copiedPrompt(page, "#claudeSkillCopyPromptButton");
+		expect(prompt).toContain("添付した document-manager-skill.zip を");
+		expect(prompt).not.toContain("skill-downloads");
 	});
 
 	// どのエージェント向けかは、上のSkill案内のタブで選ぶ(2か所で選ばせない)

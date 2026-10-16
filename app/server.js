@@ -569,6 +569,7 @@ const TagOrder = require("./lib/tag-order.js");
 const Projects = require("./lib/projects.js");
 const ProjectManifest = require("./lib/project-manifest.js");
 const ClaudeSkill = require("./lib/claude-skill.js");
+const SkillDownloadToken = require("./lib/skill-download-token.js");
 const ApiSpec = require("./lib/api-spec.js");
 const DocumentLinks = require("./lib/document-links.js");
 const AuditLog = require("./lib/audit-log.js");
@@ -3290,6 +3291,61 @@ app.get(BASE_URL_PATH + 'api/skills', requireAuth, async (req, res) => {
 		res.status(200).json({skills: ClaudeSkill.listDistributedSkills()});
 	} catch (err) {
 		logger.error(err, "::api/skills");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * Skill のZIPを、AIエージェントに取ってきてもらうためのURLを発行する(画面の「登録依頼文をコピー」で使う)。
+ * AIはまだAPIキーを持っていないため、短時間だけ・そのZIPにしか使えない引換券をURLに埋める
+ * (lib/skill-download-token.js)。チャットの記録に残っても、期限が過ぎれば使えない
+ */
+app.post(BASE_URL_PATH + 'api/skills/:name/download-link', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const name = String(req.params.name || "");
+		if (!ClaudeSkill.DISTRIBUTED_SKILLS.includes(name) || ClaudeSkill.getSkillZip(name) == null) {
+			res.status(404).json({error: "そのSkillはこのサーバーから配布していません"});
+			return;
+		}
+		const {token, expiresAt} = SkillDownloadToken.issue(name, req.authData.user_identifier);
+		res.status(200).json({
+			url: `${publicBaseUrl(req)}/api/skill-downloads/${token}/${ClaudeSkill.skillZipFilename(name)}`,
+			fileName: ClaudeSkill.skillZipFilename(name),
+			expiresAt,
+			expiresInMinutes: SkillDownloadToken.TTL_MINUTES
+		});
+	} catch (err) {
+		logger.error(err, "::api/skills/:name/download-link");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+// 引換券で守るZIPの配信。requireAuth を置かないのは、取りに来るのがまだAPIキーを持たないAIだから。
+// 券は「そのZIPだけ・短時間だけ」有効で、偽造できない。末尾のファイル名は、取りに来た側が
+// そのまま保存名に使えるようにするためのもので、券の対象と一致しなければ断る
+app.get(BASE_URL_PATH + 'api/skill-downloads/:token/:fileName', async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const ticket = SkillDownloadToken.read(req.params.token);
+		// 券はログインとは別に効くため、発行先の利用者が切断された・許可から外されたときはここで止める
+		const ticketAlive = ticket != null
+			&& req.params.fileName === ClaudeSkill.skillZipFilename(ticket.skill)
+			&& (AUTH_DISABLED || await AllowedUsers.isAllowed(ticket.user))
+			&& await Sessions.isIssuedAfterRevocation(ticket.user, ticket.issuedAt);
+		const zip = ticketAlive ? ClaudeSkill.getSkillZip(ticket.skill) : null;
+		if (zip == null) {
+			logger.warn("::api/skill-downloads: 引換券が無効な要求を拒否しました");
+			res.status(401).json({error: "このURLは使えません(有効期限が切れたか、正しくありません)。Document Manager の「ツール」で、登録依頼文をコピーし直してください"});
+			return;
+		}
+		logger.info({audit: "skill-download", skill: ticket.skill, user: ticket.user}, "audit");
+		res.setHeader("Content-Type", "application/zip");
+		res.setHeader("Content-Disposition", `attachment; filename="${ClaudeSkill.skillZipFilename(ticket.skill)}"`);
+		res.setHeader("Content-Length", zip.length);
+		res.status(200).end(zip);
+	} catch (err) {
+		logger.error(err, "::api/skill-downloads");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

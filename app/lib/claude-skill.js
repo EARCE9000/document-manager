@@ -139,6 +139,7 @@ module.exports.listRelatedSkills = () => RELATED_SKILLS.filter((name) => findSki
 /** SkillのZIPを保存するときの名前 */
 module.exports.skillZipFilename = (name = SKILL_NAME) => `${name}-skill.zip`;
 module.exports.RELATED_SKILLS = RELATED_SKILLS;
+module.exports.DISTRIBUTED_SKILLS = DISTRIBUTED_SKILLS;
 
 /**
  * 同梱しているクライアント(dm_client.py)のバージョンを読む。

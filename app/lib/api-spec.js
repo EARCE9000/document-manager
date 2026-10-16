@@ -428,6 +428,18 @@ const OPERATIONS = [
 	{id: "getHistory", method: "get", path: "/api/history", role: "readonly", tag: "その他", summary: "自分の操作履歴(直近30日)", aiGuide: false},
 	{id: "getSkillZip", method: "get", path: "/api/claude-skill.zip", role: "readonly", tag: "その他", summary: "AIエージェント用SkillのZIP取得", produces: "application/zip"},
 	{
+		id: "createSkillDownloadLink", method: "post", path: "/api/skills/:name/download-link", role: "readonly", tag: "その他",
+		summary: "SkillのZIPを取ってくるための、短時間だけ有効なURLの発行",
+		description: "画面の「登録依頼文をコピー」で使う。依頼文を貼られたAIエージェントが、APIキーを持たないままZIPを取れるようにする。URLはそのSkillのZIPにしか使えず、既定30分で使えなくなる",
+		aiGuide: false
+	},
+	{
+		id: "downloadSkillByLink", method: "get", path: "/api/skill-downloads/:token/:fileName", role: "public", tag: "その他",
+		summary: "発行したURLでSkillのZIPを取る",
+		description: "認証は不要(URLに埋めた引換券で確かめる)。期限切れ・改ざん・ファイル名の不一致、発行した利用者が切断された場合は401",
+		produces: "application/zip", aiGuide: false
+	},
+	{
 		id: "listSkills", method: "get", path: "/api/skills", role: "readonly", tag: "その他",
 		summary: "配っているSkillの一覧と版",
 		description: "画面の「ツール」で使う。Skillの名前・同梱クライアントの版・ZIPの場所を返す",
