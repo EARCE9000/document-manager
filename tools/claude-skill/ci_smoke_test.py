@@ -50,13 +50,19 @@ def run_client(kind, args, env, expect_ok=True):
     return proc
 
 
-def check_skill_md():
-    print("[SKILL.md]")
-    text = open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8").read()
+def check_skill_md(skill_dir=SKILL_DIR):
+    """
+    Skillとして読み込まれる形になっているか。AIエージェントは説明書の冒頭(フロントマター)の
+    name と description を見て、どのSkillを使うかを決める。ここが崩れると、Skillとして認識されないか、
+    使ってほしい場面で選ばれない。配っているSkillはすべて同じ決まりで確かめる
+    """
+    skill = os.path.basename(skill_dir)
+    print(f"[SKILL.md: {skill}]")
+    text = open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8").read()
     m = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n", text, re.S)
     check(m is not None, "YAMLフロントマターがある")
     fields = dict(re.findall(r"^(\w+):\s*(.+)$", m.group(1), re.M)) if m else {}
-    check(fields.get("name") == "document-manager", "name がフォルダ名(document-manager)と一致する")
+    check(fields.get("name") == skill, f"name がフォルダ名({skill})と一致する")
     check(re.fullmatch(r"[a-z0-9-]{1,64}", fields.get("name", "")) is not None, "name は小文字・数字・ハイフンのみ(64文字以内)")
     description = fields.get("description", "")
     check(0 < len(description) <= 1024, f"description が1〜1024文字 ({len(description)}文字)")
@@ -545,9 +551,14 @@ def main():
         keys = json.load(open(KEYS_FILE, encoding="utf-8"))
         env = {**os.environ, "DM_BASE_URL": BASE_URL, "DM_API_KEY": keys["readwrite"], "DM_CONFIG": os.path.join(workdir, "none.json")}
 
-        check_skill_md()
         for skill_dir in (SKILL_DIR, BACKLOG_DIR):
+            check_skill_md(skill_dir)
             check_referenced_scripts(skill_dir)
+        # Backlogのクライアントは本物のBacklogが無いと動かせる操作が少ない。起動できて版を名乗れることだけ確かめる
+        backlog_version = subprocess.run([sys.executable, BACKLOG_CLIENT, "--version"], capture_output=True, text=True, encoding="utf-8")
+        printed = (backlog_version.stdout + backlog_version.stderr).strip()
+        check(backlog_version.returncode == 0 and re.search(r"\d+\.\d+\.\d+", printed) is not None,
+              f"backlog_client.py: 起動でき、版を名乗れる ({printed})")
         smoke_clients(env, workdir)
         smoke_setup("python", [sys.executable, PY_CLIENT], "DM", workdir, keys["readwrite"], ["--base-url", BASE_URL])
         smoke_setup("node", ["node", NODE_CLIENT], "DM", workdir, keys["readwrite"], ["--base-url", BASE_URL])
