@@ -267,6 +267,8 @@ test.describe.serial("プロジェクトの資料を Miro に出す", () => {
 		const items = await boardItems(request);
 		expect(items.filter((i) => i.type === "document" || i.type === "image")).toHaveLength(0);
 		expect(items.filter((i) => i.type === "frame")).toHaveLength(1);
+		// フォルダの見出しも片付ける(残すと、連動し直したときに二重になる)
+		expect(items.filter((i) => i.type === "text" && i.data.content.includes("■"))).toHaveLength(0);
 	});
 
 	test("Miro で枠が消されたら、連動を止めて理由を出す。連動し直すと新しい枠に並べる", async ({request}) => {
@@ -283,6 +285,10 @@ test.describe.serial("プロジェクトの資料を Miro に出す", () => {
 		expect(relinked.linked).toBe(true);
 		const frames = (await boardItems(request)).filter((i) => i.type === "frame");
 		expect(frames.some((f) => f.id !== frame.id)).toBe(true);
+		// フォルダの見出しは二重にならない(前の枠のものを引きずらない)。
+		// ここでは「要件定義」の資料はアーカイブ済み・出さない設定なので、見出しも置かれない
+		const headers = (await boardItems(request)).filter((i) => i.type === "text" && i.data.content.includes("■"));
+		expect(headers.length).toBeLessThanOrEqual(1);
 	});
 
 	test("Miro と連携していなければ、連動は始められない", async ({request}) => {

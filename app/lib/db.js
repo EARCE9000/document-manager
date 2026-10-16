@@ -354,7 +354,9 @@ const createSchema = (targetDb) => {
 			frame_height REAL,
 			-- 同期している台と、その期限(複数台で同じプロジェクトを同時に同期しないための順番取り)
 			sync_lock_owner TEXT,
-			sync_lock_until TEXT
+			sync_lock_until TEXT,
+			-- 枠の中に置いたフォルダの見出し(文字の項目のID。JSONの配列)。資料を片付けるときに一緒に消す
+			header_ids TEXT
 		);
 		-- 資料ごとに、ボードのどの項目に出したか。版をまたいで追いかけるため、資料は
 		-- 共有用のID(document_aliases.alias)で覚える
