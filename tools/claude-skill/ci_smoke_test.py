@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -173,6 +174,7 @@ def smoke_setup(name, command, env_prefix, workdir, real_key, extra):
 
 def smoke_clients(env, workdir):
     client_versions = set()
+    setup_miro()
     for kind in ("python", "node"):
         print(f"[client: {kind}]")
         name = f"smoke-{kind}.md"
@@ -228,6 +230,7 @@ def smoke_clients(env, workdir):
         smoke_update_notice(kind, env)
         smoke_render(kind, env, workdir)
         smoke_pdf(kind, env, workdir)
+        smoke_miro(kind, env, workdir)
         smoke_spec(kind, env)
         smoke_watch(kind, env, workdir)
 
@@ -475,6 +478,78 @@ def smoke_pdf(kind, env, workdir):
     check(failed.returncode == 1 and "502" in failed.stderr and "変換サービス" in failed.stderr, "download --pdf: 変換に失敗したら理由を返す(502)")
     check(set(os.listdir(out_dir)) == before, "download --pdf: 失敗したときは何も保存しない")
     control_pdf_stub(mode="ok", status=500, reset=True)
+
+
+# Miro の代わり(test/api/miro-stub.js。serve.js が起動し、MIRO_API_URL で繋いでいる)
+MINIMAL_PDF = (b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+               b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def setup_miro():
+    """管理者として Miro と連携し、貼り先のボードを決める(本番では管理者が画面で行うこと)"""
+    keys = json.load(open(KEYS_FILE, encoding="utf-8"))
+    cookie = f"{keys['sessionCookieName']}={keys['sessionCookie']}"
+    opener = urllib.request.build_opener(_NoRedirect)
+
+    def call(method, url, body=None, with_cookie=True):
+        req = urllib.request.Request(url, method=method, data=None if body is None else json.dumps(body).encode("utf-8"),
+                                     headers={**({"Cookie": cookie} if with_cookie else {}), **({"Content-Type": "application/json"} if body is not None else {})})
+        try:
+            return opener.open(req)
+        except urllib.error.HTTPError as err:
+            if err.code in (301, 302, 303):
+                return err
+            raise
+
+    call("PUT", BASE_URL + "api/miro/credentials", {"clientId": "3458764600000000001", "clientSecret": "stub-client-secret"})
+    location = call("GET", BASE_URL + "api/miro/connect").headers["Location"]
+    back = call("GET", location, with_cookie=False).headers["Location"]
+    call("GET", back)
+    call("PUT", BASE_URL + "api/miro/settings", {"boardId": "uXjVStubBoard1="})
+
+
+def smoke_miro(kind, env, workdir):
+    """プロジェクトの資料を Miro のボードに並べる(Miro にはスタブが繋がっている)"""
+    project_name = f"smoke-miro-{kind}"
+    run_client(kind, ["project-create", project_name], env)
+    ids = []
+    for label in ("a", "b"):
+        path = os.path.join(workdir, f"miro-{kind}-{label}.pdf")
+        open(path, "wb").write(MINIMAL_PDF)
+        ids.append(json.loads(run_client(kind, ["upload", path, "--project", project_name], env).stdout)["id"])
+
+    linked = json.loads(run_client(kind, ["miro-link", project_name], env).stdout)
+    check(linked.get("linked") is True and linked.get("syncing") is False and linked["counts"]["placed"] == 2,
+          f"miro-link: 並び終わるまで待って、出ている資料の数を返す ({linked.get('counts')})")
+    check("moveToWidget=" in (linked.get("frameUrl") or ""), "miro-link: Miro で枠を開くURLを返す")
+    check(linked.get("notPlaced") == [], "miro-link: 出せなかった資料が無ければ notPlaced は空")
+
+    status = json.loads(run_client(kind, ["miro", project_name], env).stdout)
+    positioned = [i for i in status["items"] if i.get("position")]
+    check(len(positioned) == 2, "miro: 各資料の位置(枠の左上から)が分かる")
+
+    moved = json.loads(run_client(kind, ["miro-move", project_name, ids[1], "--next-to", ids[0], "--side", "below"], env).stdout)
+    first = next(i for i in status["items"] if i["documentId"] == ids[0])["position"]
+    check(abs(moved["x"] - first["x"]) < 0.01 and moved["y"] > first["y"], "miro-move --next-to --side below: 相手の資料の下へ動かせる")
+    bad = run_client(kind, ["miro-move", project_name, ids[1]], env, expect_ok=False)
+    check(bad.returncode == 1 and "--next-to" in bad.stderr, "miro-move: 動かし方を指定しないとエラー")
+
+    off = json.loads(run_client(kind, ["miro-publish", project_name, ids[1], "--off"], env).stdout)
+    check(off["counts"]["excluded"] == 1, "miro-publish --off: 資料を出さないにできる")
+    on = json.loads(run_client(kind, ["miro-publish", project_name, ids[1]], env).stdout)
+    check(on["counts"]["placed"] == 2, "miro-publish: もう一度出せる")
+
+    arranged = json.loads(run_client(kind, ["miro-arrange", project_name], env).stdout)
+    check(arranged.get("moved") == 2, "miro-arrange: 枠の中を並べ直せる")
+
+    unlinked = json.loads(run_client(kind, ["miro-unlink", project_name, "--remove-documents"], env).stdout)
+    check(unlinked == {"unlinked": True, "removedDocuments": True}, "miro-unlink --remove-documents: 連動をやめて資料も消せる")
+    check(json.loads(run_client(kind, ["miro", project_name], env).stdout)["state"] == "stopped", "miro: 止めたことが分かる")
 
 
 def smoke_spec(kind, env):

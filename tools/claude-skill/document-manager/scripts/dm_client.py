@@ -38,6 +38,13 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py unlink-previous <文書ID>     版の紐付けを解除する
   python dm_client.py projects [--archived]        プロジェクト一覧
   python dm_client.py project-url <プロジェクト>   人に渡す、プロジェクトを開くリンク
+  python dm_client.py miro <プロジェクト>          Miro 連動の状態(出ている資料・出せない理由・Miro で開くURL)
+  python dm_client.py miro-link <プロジェクト>     Miro と連動する(ボードの枠に資料を並べる。並び終わるまで待つ)
+  python dm_client.py miro-sync <プロジェクト>     Miro へ今すぐ反映する(普段は自動)
+  python dm_client.py miro-unlink <プロジェクト> [--remove-documents]   連動をやめる(既定ではボードに残す)
+  python dm_client.py miro-publish <プロジェクト> <文書ID> [--off]      資料ごとに出す・出さない
+  python dm_client.py miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
+  python dm_client.py miro-arrange <プロジェクト>  Miro の枠の中をフォルダの順に並べ直す
   python dm_client.py project-create <名前>        プロジェクトの作成
   python dm_client.py folder-create <プロジェクト> <名前> [--parent 親フォルダ]
   python dm_client.py tree <プロジェクト>          フォルダ階層と文書の配置
@@ -71,7 +78,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.9.0"
+CLIENT_VERSION = "1.10.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -940,6 +947,88 @@ def cmd_manifest(args):
     return request("GET", f"api/projects/{quote_id(project_id)}/manifest", query=query)
 
 
+# ---- Miro に資料を出す(プロジェクト単位) ----
+# 連携とボードの設定は管理者が画面で行う。ここでは、プロジェクトの連動の開始・反映・停止と、ボードの上での移動を扱う
+
+MIRO_WAIT_SECONDS = 600
+
+
+def miro_status(project_id):
+    return request("GET", f"api/projects/{quote_id(project_id)}/miro")
+
+
+def wait_miro(project_id, wait):
+    """並べ終わる(syncing が偽になる)まで待って、状態を返す。資料が多いと数分かかる"""
+    status = miro_status(project_id)
+    if not wait:
+        return status
+    deadline = time.time() + MIRO_WAIT_SECONDS
+    while status.get("syncing") and time.time() < deadline:
+        time.sleep(3)
+        status = miro_status(project_id)
+    return status
+
+
+def summarize_miro(status):
+    """AI が利用者へ伝えやすい形に整える(出せなかった資料は理由つきで並べる)"""
+    items = status.get("items") or []
+    problems = [{"title": i.get("title"), "state": i.get("state"), "reason": i.get("reason")}
+                for i in items if i.get("state") in ("skipped", "failed", "removed")]
+    result = {k: status.get(k) for k in ("available", "linked", "state", "syncing", "frameUrl", "lastSyncedAt", "lastError", "counts")}
+    result["notPlaced"] = problems
+    result["items"] = items
+    if status.get("syncing"):
+        result["note"] = "まだボードに並べている途中です。しばらくしてから miro で確かめてください"
+    return result
+
+
+def cmd_miro(args):
+    return summarize_miro(miro_status(resolve_project(args.project)["id"]))
+
+
+def cmd_miro_link(args):
+    project_id = resolve_project(args.project)["id"]
+    request("POST", f"api/projects/{quote_id(project_id)}/miro")
+    return summarize_miro(wait_miro(project_id, not args.no_wait))
+
+
+def cmd_miro_sync(args):
+    project_id = resolve_project(args.project)["id"]
+    request("POST", f"api/projects/{quote_id(project_id)}/miro/sync")
+    return summarize_miro(wait_miro(project_id, not args.no_wait))
+
+
+def cmd_miro_unlink(args):
+    project_id = resolve_project(args.project)["id"]
+    query = {"removeDocuments": "1"} if args.remove_documents else None
+    request("DELETE", f"api/projects/{quote_id(project_id)}/miro", query=query)
+    return {"unlinked": True, "removedDocuments": bool(args.remove_documents)}
+
+
+def cmd_miro_publish(args):
+    project_id = resolve_project(args.project)["id"]
+    status = request("PUT", f"api/projects/{quote_id(project_id)}/miro/documents/{quote_id(args.id)}", body={"publish": not args.off})
+    return summarize_miro(wait_miro(project_id, True) if not args.off else status)
+
+
+def cmd_miro_move(args):
+    project_id = resolve_project(args.project)["id"]
+    if args.next_to:
+        body = {"nextTo": args.next_to, "side": args.side}
+    elif args.to_project:
+        body = {"project": resolve_project(args.to_project)["id"]}
+    elif args.x is not None and args.y is not None:
+        body = {"x": args.x, "y": args.y}
+    else:
+        raise DmError("--next-to(と --side)・--to-project・--x と --y のどれかを指定してください")
+    return request("PATCH", f"api/projects/{quote_id(project_id)}/miro/items/{quote_id(args.id)}", body=body)
+
+
+def cmd_miro_arrange(args):
+    project_id = resolve_project(args.project)["id"]
+    return request("POST", f"api/projects/{quote_id(project_id)}/miro/arrange")
+
+
 def cmd_folder_reorder(args):
     """おしながきではフォルダがそのまま章の順番になるため、人に渡す前に整えるために使う"""
     project_id = resolve_project(args.project)["id"]
@@ -1244,6 +1333,40 @@ def main():
     p.add_argument("--id", help="対象の文書ID")
     p.add_argument("--folder", help="対象のフォルダID(章の前書き)")
     p.set_defaults(func=cmd_note)
+
+    # ---- Miro ----
+    p = sub.add_parser("miro", help="プロジェクトの Miro 連動の状態(出ている資料・出せない理由・Miro で開くURL)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.set_defaults(func=cmd_miro)
+    p = sub.add_parser("miro-link", help="プロジェクトを Miro と連動する(ボードの枠に資料を並べる。並び終わるまで待つ)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("--no-wait", action="store_true", help="並び終わるのを待たずに返す")
+    p.set_defaults(func=cmd_miro_link)
+    p = sub.add_parser("miro-sync", help="Miro へ今すぐ反映する(普段は自動)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("--no-wait", action="store_true", help="反映し終わるのを待たずに返す")
+    p.set_defaults(func=cmd_miro_sync)
+    p = sub.add_parser("miro-unlink", help="Miro との連動をやめる(既定ではボードに資料を残す)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("--remove-documents", action="store_true", help="ボードに出した資料も消す(付箋・枠は残る)")
+    p.set_defaults(func=cmd_miro_unlink)
+    p = sub.add_parser("miro-publish", help="資料ごとに Miro に出す・出さないを決める")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("id", help="文書ID")
+    p.add_argument("--off", action="store_true", help="出さない(ボードからも消す)。付けなければ出す")
+    p.set_defaults(func=cmd_miro_publish)
+    p = sub.add_parser("miro-move", help="Miro のボードの上で資料を動かす(見出しも一緒に動く)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("id", help="動かす資料の文書ID")
+    p.add_argument("--next-to", help="この文書の隣へ")
+    p.add_argument("--side", default="right", choices=["right", "left", "above", "below"], help="隣のどちら側か(既定 right)")
+    p.add_argument("--to-project", help="このプロジェクトの枠へ移す(IDまたは名前。連動しているもの)")
+    p.add_argument("--x", type=float, help="枠の左上からの位置(資料の中心)")
+    p.add_argument("--y", type=float, help="枠の左上からの位置(資料の中心)")
+    p.set_defaults(func=cmd_miro_move)
+    p = sub.add_parser("miro-arrange", help="Miro の枠の中をフォルダの順に並べ直す(人が並べた配置は上書きされる)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.set_defaults(func=cmd_miro_arrange)
 
     p = sub.add_parser("spec", help="APIの仕様を出力する(同梱コマンドに無い操作を呼ぶとき)")
     p.add_argument("--openapi", action="store_true", help="OpenAPI 3.1のJSONを出力する(既定はAI向けMarkdown)")

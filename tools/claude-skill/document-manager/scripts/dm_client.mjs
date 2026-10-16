@@ -33,6 +33,11 @@
  *   node dm_client.mjs projects [--archived] / project-create <名前> / tree <プロジェクト>
  *   node dm_client.mjs project-url <プロジェクト>
  *       人に渡す、プロジェクトを開くリンク
+ *   node dm_client.mjs miro <プロジェクト> / miro-link <プロジェクト> [--no-wait] / miro-sync <プロジェクト>
+ *   node dm_client.mjs miro-unlink <プロジェクト> [--remove-documents] / miro-publish <プロジェクト> <文書ID> [--off]
+ *   node dm_client.mjs miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
+ *   node dm_client.mjs miro-arrange <プロジェクト>
+ *       プロジェクトの資料を Miro のボードへ並べる(連携とボードの設定は管理者が画面で行う)
  *   node dm_client.mjs folder-create <プロジェクト> <名前> [--parent 親フォルダ]
  *   node dm_client.mjs place <プロジェクト> <文書ID> [--folder フォルダ] / unplace <プロジェクト> <文書ID>
  *   node dm_client.mjs watch [--count N] [--timeout 秒] [--action upload,revise,...] [--all]
@@ -56,7 +61,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.9.0";
+const CLIENT_VERSION = "1.10.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -527,6 +532,33 @@ const buildZipFromDirectory = (directory) => {
 const mockupPath = (id, suffix = "") => `api/mockups/${encodeURIComponent(id)}${suffix}`;
 const mockupViewUrl = (id) => new URL(mockupPath(id, "/view"), loadConfig().baseUrl).toString();
 
+// ---- Miro に資料を出す(プロジェクト単位。dm_client.py と同じ) ----
+// 連携とボードの設定は管理者が画面で行う。ここでは、プロジェクトの連動の開始・反映・停止と、ボードの上での移動を扱う
+const MIRO_WAIT_MS = 600 * 1000;
+const miroPath = (projectId, rest = "") => `api/projects/${encodeURIComponent(projectId)}/miro${rest}`;
+const miroStatus = (projectId) => request("GET", miroPath(projectId));
+
+/** 並べ終わる(syncing が偽になる)まで待って、状態を返す。資料が多いと数分かかる */
+const waitMiro = async (projectId, wait) => {
+	let status = await miroStatus(projectId);
+	const deadline = Date.now() + MIRO_WAIT_MS;
+	while (wait && status.syncing && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, 3000));
+		status = await miroStatus(projectId);
+	}
+	return status;
+};
+
+/** AI が利用者へ伝えやすい形に整える(出せなかった資料は理由つきで並べる) */
+const summarizeMiro = (status) => {
+	const items = status.items || [];
+	const result = Object.fromEntries(["available", "linked", "state", "syncing", "frameUrl", "lastSyncedAt", "lastError", "counts"].map((k) => [k, status[k] ?? null]));
+	result.notPlaced = items.filter((i) => ["skipped", "failed", "removed"].includes(i.state)).map((i) => ({title: i.title, state: i.state, reason: i.reason}));
+	result.items = items;
+	if (status.syncing) result.note = "まだボードに並べている途中です。しばらくしてから miro で確かめてください";
+	return result;
+};
+
 const commands = {
 	setup: async (_rest, opts) => setup(opts),
 	config: async () => {
@@ -778,6 +810,38 @@ const commands = {
 			note: "開くにはログインが必要です。開くと、このプロジェクトの資料一覧と説明書き(おしながき)が表示されます"
 		};
 	},
+	miro: async ([project]) => summarizeMiro(await miroStatus((await resolveProject(requireArg(project, "プロジェクト"))).id)),
+	"miro-link": async ([project], opts) => {
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		await request("POST", miroPath(id));
+		return summarizeMiro(await waitMiro(id, !opts["no-wait"]));
+	},
+	"miro-sync": async ([project], opts) => {
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		await request("POST", miroPath(id, "/sync"));
+		return summarizeMiro(await waitMiro(id, !opts["no-wait"]));
+	},
+	"miro-unlink": async ([project], opts) => {
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		await request("DELETE", miroPath(id), {query: opts["remove-documents"] ? {removeDocuments: "1"} : {}});
+		return {unlinked: true, removedDocuments: Boolean(opts["remove-documents"])};
+	},
+	"miro-publish": async ([project, documentId], opts) => {
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		const status = await request("PUT", miroPath(id, `/documents/${encodeURIComponent(requireArg(documentId, "文書ID"))}`), {json: {publish: !opts.off}});
+		return summarizeMiro(opts.off ? status : await waitMiro(id, true));
+	},
+	"miro-move": async ([project, documentId], opts) => {
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		let body;
+		if (opts["next-to"]) body = {nextTo: opts["next-to"], side: opts.side || "right"};
+		else if (opts["to-project"]) body = {project: (await resolveProject(opts["to-project"])).id};
+		else if (opts.x != null && opts.y != null) body = {x: Number(opts.x), y: Number(opts.y)};
+		else throw new DmError("--next-to(と --side)・--to-project・--x と --y のどれかを指定してください");
+		if (body.side != null && !["right", "left", "above", "below"].includes(body.side)) throw new DmError("--side は right / left / above / below のどれかです");
+		return request("PATCH", miroPath(id, `/items/${encodeURIComponent(requireArg(documentId, "文書ID"))}`), {json: body});
+	},
+	"miro-arrange": async ([project]) => request("POST", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id, "/arrange")),
 	"alias-move": async ([alias, id]) => {
 		requireArg(alias, "Alias");
 		requireArg(id, "指す先にしたい文書ID");
@@ -1009,7 +1073,15 @@ const main = async () => {
 			render: {type: "boolean"},
 			pdf: {type: "boolean"},
 			version: {type: "boolean", short: "V"},
-			"no-reconnect": {type: "boolean"}
+			"no-reconnect": {type: "boolean"},
+			"no-wait": {type: "boolean"},
+			"remove-documents": {type: "boolean"},
+			off: {type: "boolean"},
+			"next-to": {type: "string"},
+			side: {type: "string"},
+			"to-project": {type: "string"},
+			x: {type: "string"},
+			y: {type: "string"}
 		}
 	});
 	const [command, ...rest] = positionals;
