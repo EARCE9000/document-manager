@@ -411,6 +411,45 @@ const OPERATIONS = [
 		description: "「PDFでダウンロード」の変換サービスへ到達できるかを確かめる。`enabled:false`は未設定(異常ではない)。到達できた場合はChromiumの版・受け付ける上限・タイムアウトと、変換できる形式(`formats`。`drawio`が無ければdraw.ioはPDFにできない)も返す",
 		aiGuide: false
 	},
+	// ---- Miro 連携(管理者)。MIRO_CLIENT_ID / MIRO_CLIENT_SECRET が未設定の環境では、どれも404 ----
+	{
+		id: "getMiroStatus", method: "get", path: "/api/miro/status", role: "admin", tag: "その他",
+		summary: "Miro 連携の状態",
+		description: "連携しているか、チーム・Miroの利用者名・権限・貼り先のボード・トークンの期限、最後の失敗(連携し直しが要るか)を返す。トークンそのものは返さない。`redirectUri`は Miro のアプリに登録する戻り先(一字一句同じであること)",
+		aiGuide: false
+	},
+	{
+		id: "connectMiro", method: "get", path: "/api/miro/connect", role: "admin", tag: "その他",
+		summary: "Miro との連携を始める(ブラウザで開く)",
+		description: "Miro の許可の画面へリダイレクトする。許可すると`/api/miro/callback`へ戻り、管理画面に結果が出る。ブラウザでログインした管理者が開くもので、APIクライアントから呼ぶものではない",
+		aiGuide: false
+	},
+	{
+		id: "miroCallback", method: "get", path: "/api/miro/callback", role: "admin", tag: "その他",
+		summary: "Miro の許可の画面からの戻り先",
+		description: "Miro のアプリ(開発者ハブ)に登録する戻り先。送り出した本人であること(署名つきの`state`とセッション)を確かめてからトークンを受け取り、`/?miro=connected`(失敗は`/?miro=error&reason=…`)へ戻す",
+		aiGuide: false
+	},
+	{
+		id: "listMiroBoards", method: "get", path: "/api/miro/boards", role: "admin", tag: "その他",
+		summary: "貼り先の候補(連携しているチームのボード)",
+		description: "`?q=`で名前を絞れる。連携が切れていれば409(`needsReconnect: true`)",
+		aiGuide: false
+	},
+	{
+		id: "updateMiroSettings", method: "put", path: "/api/miro/settings", role: "admin", tag: "その他",
+		summary: "貼り先のボードを決める",
+		description: "連携しているチームのボードだけを選べる",
+		body: {schema: {type: "object", required: ["boardId"], properties: {boardId: {type: "string", description: "Miro のボードID"}}}},
+		responses: {400: "boardIdが不正、または別のチームのボード", 404: "ボードが無い", 409: "連携が切れている(連携し直しが要る)"},
+		aiGuide: false
+	},
+	{
+		id: "disconnectMiro", method: "delete", path: "/api/miro/connection", role: "admin", tag: "その他",
+		summary: "Miro との連携を解除する",
+		description: "Miro 側のトークンも取り消す。ボードに出してある資料は Miro に残る",
+		aiGuide: false
+	},
 	{
 		id: "getServerStatus", method: "get", path: "/api/server-status", role: "admin", tag: "その他",
 		summary: "サーバーの状態(版・起動時刻・DB)",

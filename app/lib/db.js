@@ -25,7 +25,7 @@ fs.mkdirSync(DB_DIR, {recursive: true});
 
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 // v1のみ既存デプロイ互換のため無印ファイル名。v2以降は _v{N} を付ける
 const dbFileNameForVersion = (version) => (version === 1 ? "document_manager.sqlite" : `document_manager_v${version}.sqlite`);
@@ -305,12 +305,127 @@ const createSchema = (targetDb) => {
 			updated_at TEXT
 		)
 	`);
+
+	// Miroとの連携(v21で追加)。資料をMiroのボードへ並べ、版の更新を反映するための記録。
+	// 連携のトークンは更新のたびに入れ替わるため、環境変数ではなくここに暗号化して持つ
+	targetDb.exec(`
+		-- 連携(1行だけ)。トークンは暗号化して持つ(lib/miro-connection.js)
+		CREATE TABLE IF NOT EXISTS miro_connection (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			team_id TEXT,
+			team_name TEXT,
+			miro_user_id TEXT,
+			miro_user_name TEXT,
+			access_token TEXT,
+			refresh_token TEXT,
+			access_expires_at TEXT,
+			refresh_expires_at TEXT,
+			scopes TEXT,
+			board_id TEXT,
+			board_name TEXT,
+			board_url TEXT,
+			connected_by TEXT,
+			connected_at TEXT,
+			updated_at TEXT,
+			last_error TEXT,
+			last_error_at TEXT
+		);
+		-- プロジェクトごとの連動(ボード上の枠)
+		CREATE TABLE IF NOT EXISTS miro_projects (
+			project_id TEXT PRIMARY KEY,
+			board_id TEXT NOT NULL,
+			frame_id TEXT,
+			state TEXT NOT NULL,
+			linked_by TEXT,
+			linked_at TEXT,
+			stopped_by TEXT,
+			stopped_at TEXT,
+			last_synced_at TEXT,
+			last_error TEXT
+		);
+		-- 資料ごとに、ボードのどの項目に出したか。版をまたいで追いかけるため、資料は
+		-- 共有用のID(document_aliases.alias)で覚える
+		CREATE TABLE IF NOT EXISTS miro_items (
+			project_id TEXT NOT NULL,
+			alias TEXT NOT NULL,
+			board_id TEXT NOT NULL,
+			document_id TEXT,
+			item_id TEXT,
+			item_kind TEXT,
+			caption_id TEXT,
+			state TEXT NOT NULL,
+			reason TEXT,
+			x REAL,
+			y REAL,
+			width REAL,
+			height REAL,
+			updated_by TEXT,
+			updated_at TEXT,
+			PRIMARY KEY (project_id, alias)
+		);
+	`);
 };
 
 // 旧バージョンのファイルをATTACHし、テーブルごとに列を明示してデータをコピーする。
 // 新バージョンで追加されたテーブル(tag_order等)はコピー元に存在しないため対象外とし、
 // createSchema()で空のまま作られたものをそのまま使う
 const MIGRATIONS = {
+	// v21: Miro連携の表を追加(空で作る)。それ以外の表はすべてそのまま移す
+	21: (newDb, oldDbPath) => {
+		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
+		try {
+			newDb.exec(`
+				INSERT INTO documents (id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at)
+				SELECT id, entry_file, preview_file, content_text, size, uploaded_by, uploaded_at, deleted_by, deleted_at, memo, vector_index_status, vector_index_error, vector_indexed_at, previous_id, content_truncated, render_status, render_error, render_file, rendered_at FROM old.documents;
+
+				INSERT INTO document_tags (document_id, tag)
+				SELECT document_id, tag FROM old.document_tags;
+
+				INSERT INTO api_keys (id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at, notified_build)
+				SELECT id, label, key_hash, role, created_by, created_at, expires_at, last_used_at, revoked_at, notified_build FROM old.api_keys;
+
+				INSERT INTO allowed_users (email, role, added_by, added_at)
+				SELECT email, role, added_by, added_at FROM old.allowed_users;
+
+				INSERT INTO tag_order (tag, sort_order, updated_by, updated_at)
+				SELECT tag, sort_order, updated_by, updated_at FROM old.tag_order;
+
+				INSERT INTO projects (id, name, created_by, created_at, sort_order, archived_by, archived_at, locked)
+				SELECT id, name, created_by, created_at, sort_order, archived_by, archived_at, locked FROM old.projects;
+
+				INSERT INTO project_folders (id, project_id, parent_folder_id, name, sort_order, created_by, created_at, note)
+				SELECT id, project_id, parent_folder_id, name, sort_order, created_by, created_at, note FROM old.project_folders;
+
+				INSERT INTO project_documents (project_id, document_id, folder_id, sort_order, added_by, added_at, note)
+				SELECT project_id, document_id, folder_id, sort_order, added_by, added_at, note FROM old.project_documents;
+
+				-- 「人」が対象の操作(target_user・detail。v20で追加)も移す
+				INSERT INTO audit_log (id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at, target_user, detail)
+				SELECT id, user_identifier, action, document_id, entry_file, project_id, project_name, created_at, target_user, detail FROM old.audit_log;
+
+				INSERT INTO document_links (document_id_a, document_id_b, created_by, created_at)
+				SELECT document_id_a, document_id_b, created_by, created_at FROM old.document_links;
+
+				INSERT INTO vector_search_settings (id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at)
+				SELECT id, chunk_size, chunk_overlap, vectorizer, updated_by, updated_at FROM old.vector_search_settings;
+
+				INSERT INTO app_settings (key, value, updated_by, updated_at)
+				SELECT key, value, updated_by, updated_at FROM old.app_settings;
+
+				INSERT INTO mockups (id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, updated_at, deleted_by, deleted_at, previous_id)
+				SELECT id, name, zip_file, entry_file, preview_file, file_count, total_bytes, zip_bytes, content_text, memo, uploaded_by, uploaded_at, updated_at, deleted_by, deleted_at, previous_id FROM old.mockups;
+
+				INSERT INTO document_aliases (alias, document_id, created_at)
+				SELECT alias, document_id, created_at FROM old.document_aliases;
+
+				-- 利用者の切断の記録(v20で追加)。移し忘れると、切断した人が最新化のあと入れるようになる
+				INSERT INTO session_revocations (user_identifier, revoked_at, revoked_by)
+				SELECT user_identifier, revoked_at, revoked_by FROM old.session_revocations;
+			`);
+		} finally {
+			newDb.exec("DETACH DATABASE old");
+		}
+	},
 	2: (newDb, oldDbPath) => {
 		newDb.prepare("ATTACH DATABASE ? AS old").run(oldDbPath);
 		try {

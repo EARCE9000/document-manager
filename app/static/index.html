@@ -408,6 +408,16 @@
 	.adminStatus { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 0.85em; font-weight: 600; }
 	.adminStatus.ok { background: #e6f4ea; color: #1e7e34; }
 	.adminStatus.bad { background: #fdecea; color: #c0392b; }
+	/* Miro 連携: 許可の画面から戻ってきたときの結果 */
+	.miroFlash { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px; max-width: 900px; }
+	.miroFlash.ok { background: #e6f4ea; color: #1e7e34; }
+	.miroFlash.bad { background: #fdecea; color: #c0392b; }
+	.miroBoardPicker { display: flex; gap: 8px; margin: 6px 0 8px; max-width: 900px; }
+	.miroBoardPicker input { flex: 1; padding: 6px 8px; }
+	.miroBoardList { list-style: none; margin: 0 0 16px; padding: 0; max-width: 900px; }
+	.miroBoardList li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-bottom: 1px solid #eee; }
+	.miroBoardList li .name { flex: 1; }
+	.miroRedirectUri { font-family: monospace; background: #f5f5f5; padding: 1px 6px; border-radius: 3px; word-break: break-all; }
 	.adminStatus.unknown { background: #eee; color: #666; }
 	.adminProblemList { margin: 10px 0 0; padding-left: 1.2em; color: #c0392b; font-size: 0.85em; }
 	.adminCurrentFile { font-weight: 600; }
@@ -2035,6 +2045,14 @@
 					</div>
 					<div id="pdfHealthResult"></div>
 				</section>
+				<section class="adminTabPanel" data-tab="miro">
+					<div class="adminSectionNote">
+						Document Manager の資料を <strong>Miro のボードへ並べる</strong>ための連携です。ここで管理者が1回連携した Miro のアカウントで、選んだボードに資料を出し入れします(利用者ひとりずつの連携は要りません)。
+						Miro に出すのは資料の写しで、正本は Document Manager のままです。
+					</div>
+					<div id="miroFlash" class="miroFlash" hidden></div>
+					<div id="miroConnectionResult"></div>
+				</section>
 			</div>
 		</main>
 	</div>
@@ -2345,6 +2363,8 @@ const previewPdfButton = document.getElementById("previewPdfButton");
 const PDF_SOURCE_EXTENSIONS = [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht", ".drawio"];
 // 変換サービス(pdf-converter)がある環境か。ログイン時の応答で決まる
 let htmlPdfEnabled = false;
+// Miro 連携が使える環境か(アプリの値が設定されているか)。ログイン時の応答で決まる
+let miroEnabled = false;
 
 /**
  * 文書をPDFにしてダウンロードする。
@@ -5891,12 +5911,15 @@ const ADMIN_TABS = [
 	{key: "sessions", label: "セッション", load: () => loadSessionsTab()},
 	{key: "server", label: "サーバー", load: () => Promise.all([loadServerStatus(), loadFeatures()])},
 	{key: "database", label: "データベース", load: () => loadDatabaseTab()},
-	{key: "convert", label: "変換サービス", load: () => loadConvertTab()}
+	{key: "convert", label: "変換サービス", load: () => loadConvertTab()},
+	// Miro のアプリの値が設定されている環境だけに出す
+	{key: "miro", label: "Miro 連携", load: () => loadMiroTab(), available: () => miroEnabled}
 ];
+const availableAdminTabs = () => ADMIN_TABS.filter((tab) => tab.available == null || tab.available());
 let currentAdminTab = ADMIN_TABS[0].key;
 
 const renderAdminTabs = () => {
-	adminTabs.innerHTML = ADMIN_TABS
+	adminTabs.innerHTML = availableAdminTabs()
 		.map((tab) => `<button type="button" class="adminTab${tab.key === currentAdminTab ? " active" : ""}" data-tab="${tab.key}">${escapeHtml(tab.label)}</button>`)
 		.join("");
 	adminTabs.querySelectorAll(".adminTab").forEach((button) => {
@@ -5905,7 +5928,7 @@ const renderAdminTabs = () => {
 };
 
 const showAdminTab = (key) => {
-	const tab = ADMIN_TABS.find((item) => item.key === key) || ADMIN_TABS[0];
+	const tab = availableAdminTabs().find((item) => item.key === key) || ADMIN_TABS[0];
 	currentAdminTab = tab.key;
 	renderAdminTabs();
 	adminPaneBody.querySelectorAll(".adminTabPanel").forEach((panel) => {
@@ -6220,6 +6243,147 @@ const renderPdfHealth = (health) => {
 				: "未対応(イメージが古いか、DRAWIO_DISABLED で止めています。draw.io の文書で「PDFでダウンロード」を押すとエラーになります)"}</dd>
 			<dt>確認日時</dt><dd>${escapeHtml(formatDateTime(health.checkedAt))}</dd>
 		</dl>`;
+};
+
+// ---- Miro 連携 ----
+const miroConnectionResult = document.getElementById("miroConnectionResult");
+const miroFlash = document.getElementById("miroFlash");
+
+// 許可の画面から戻ってきたときの結果(?miro=connected / ?miro=error&reason=…)
+const MIRO_ERROR_REASONS = {
+	denied: "Miro で許可されなかったため、連携しませんでした。",
+	state: "連携の手続きの途中で期限が切れたか、別のブラウザで開かれました。もう一度「Miro と連携」からやり直してください。",
+	code: "Miro から必要な情報が返りませんでした。もう一度やり直してください。",
+	exchange: "Miro と連携できませんでした。Miro のアプリに登録した戻り先の URL が、下に表示しているものと同じか確かめてください。"
+};
+const showMiroFlash = (ok, message) => {
+	miroFlash.hidden = false;
+	miroFlash.className = "miroFlash " + (ok ? "ok" : "bad");
+	miroFlash.textContent = message;
+};
+
+const renderMiroBoards = (boards, currentId) => {
+	const list = document.getElementById("miroBoardList");
+	if (boards.length === 0) {
+		list.innerHTML = '<li class="emptyMessage">ボードが見つかりません(連携したチームのボードだけが出ます)。</li>';
+		return;
+	}
+	list.innerHTML = boards.map((board) => '<li>'
+		+ '<span class="name">' + escapeHtml(board.name || "(名前なし)") + '</span>'
+		+ (board.id === currentId
+			? '<span class="adminStatus ok">貼り先</span>'
+			: '<button type="button" class="modalButton" data-board-id="' + escapeHtml(board.id) + '">このボードにする</button>')
+		+ '</li>').join("");
+	list.querySelectorAll("button[data-board-id]").forEach((button) => {
+		button.addEventListener("click", async () => {
+			button.disabled = true;
+			const res = await fetch("./api/miro/settings", {
+				method: "PUT",
+				headers: {"Content-Type": "application/json"},
+				body: JSON.stringify({boardId: button.dataset.boardId})
+			});
+			if (!res.ok) {
+				alert((await res.json().catch(() => ({}))).error || "ボードを設定できませんでした");
+				button.disabled = false;
+				return;
+			}
+			loadMiroTab();
+		});
+	});
+};
+
+const searchMiroBoards = async (currentId) => {
+	const list = document.getElementById("miroBoardList");
+	const query = document.getElementById("miroBoardSearchInput").value.trim();
+	list.innerHTML = '<li class="adminSectionNote">探しています...</li>';
+	const res = await fetch("./api/miro/boards" + (query ? "?q=" + encodeURIComponent(query) : ""));
+	const body = await res.json().catch(() => ({}));
+	if (!res.ok) {
+		list.innerHTML = '<li class="emptyMessage">' + escapeHtml(body.error || "ボードの一覧を取得できませんでした") + '</li>';
+		if (body.needsReconnect) loadMiroTab();
+		return;
+	}
+	renderMiroBoards(body.boards || [], currentId);
+};
+
+const renderMiroStatus = (status) => {
+	const redirect = status.redirectUri
+		? '<div class="adminSectionNote" style="margin-top:8px;">Miro のアプリ(開発者ハブ)に登録する戻り先: <span class="miroRedirectUri">' + escapeHtml(status.redirectUri) + '</span></div>'
+		: "";
+	if (!status.connected) {
+		miroConnectionResult.innerHTML = '<span class="adminStatus unknown">未連携</span>'
+			+ '<div class="adminSectionNote" style="margin-top:8px;">「Miro と連携」を押すと Miro の許可の画面へ移ります。<strong>資料を出すチーム</strong>を選んで許可してください。'
+			+ 'このアカウントの権限で、選んだボードへ資料を出し入れします。</div>'
+			+ '<div class="toolbarRow" style="margin:12px 0;"><a class="modalButton save" id="miroConnectButton" href="./api/miro/connect">Miro と連携</a></div>'
+			+ redirect;
+		return;
+	}
+	const board = status.board;
+	const badge = status.usable
+		? '<span class="adminStatus ok">連携中</span>'
+		: '<span class="adminStatus bad">連携し直しが必要</span>';
+	miroConnectionResult.innerHTML = badge
+		+ (status.usable ? "" : '<div class="adminSectionNote" style="margin-top:8px;">' + escapeHtml(status.lastError || "連携を読み取れません。連携し直してください。") + '</div>')
+		+ '<dl class="adminDefList" style="margin-top:12px;">'
+		+ '<dt>チーム</dt><dd>' + escapeHtml(status.team?.name || status.team?.id || "-") + '</dd>'
+		+ '<dt>Miro のアカウント</dt><dd>' + escapeHtml(status.miroUser?.name || "-") + '</dd>'
+		+ '<dt>連携した人</dt><dd>' + escapeHtml(status.connectedBy || "-") + '(' + escapeHtml(formatDateTime(status.connectedAt)) + ')</dd>'
+		+ '<dt>権限</dt><dd>' + escapeHtml((status.scopes || []).join(", ") || "-") + '</dd>'
+		+ '<dt>貼り先のボード</dt><dd id="miroBoardName">' + (board
+			? escapeHtml(board.name || board.id) + (board.url ? ' <a href="' + escapeHtml(board.url) + '" target="_blank" rel="noopener noreferrer">Miro で開く</a>' : "")
+			: '<span class="adminStatus bad">未選択</span>(下から選んでください)') + '</dd>'
+		+ '</dl>'
+		+ '<h3>貼り先のボード</h3>'
+		+ '<div class="adminSectionNote">連携したチームのボードから選びます。資料はプロジェクトごとの枠に分けて、このボード1枚に並べます。</div>'
+		+ '<div class="miroBoardPicker"><input type="search" id="miroBoardSearchInput" placeholder="ボード名で絞り込む"><button type="button" id="miroBoardSearchButton" class="modalButton">ボードを探す</button></div>'
+		+ '<ul class="miroBoardList" id="miroBoardList"></ul>'
+		+ '<div class="toolbarRow" style="margin:12px 0;">'
+		+ '<a class="modalButton" id="miroReconnectButton" href="./api/miro/connect">連携し直す</a>'
+		+ '<button type="button" id="miroDisconnectButton" class="modalButton primary">連携を解除</button>'
+		+ '</div>'
+		+ redirect;
+	const search = () => searchMiroBoards(board?.id);
+	document.getElementById("miroBoardSearchButton").addEventListener("click", search);
+	document.getElementById("miroBoardSearchInput").addEventListener("keydown", (ev) => {
+		if (ev.key === "Enter") search();
+	});
+	document.getElementById("miroDisconnectButton").addEventListener("click", async () => {
+		const ok = await showConfirmDialog("Miro との連携を解除しますか?\n\nボードに出してある資料は Miro に残りますが、新しい版の反映や出し入れはできなくなります。");
+		if (!ok) return;
+		await fetch("./api/miro/connection", {method: "DELETE"});
+		miroFlash.hidden = true;
+		loadMiroTab();
+	});
+	if (status.usable) search();
+};
+
+const loadMiroTab = async () => {
+	miroConnectionResult.innerHTML = '<div class="adminSectionNote">確認中...</div>';
+	try {
+		const res = await fetch("./api/miro/status");
+		if (!res.ok) throw new Error();
+		renderMiroStatus(await res.json());
+	} catch {
+		miroConnectionResult.innerHTML = '<div class="adminSectionNote">取得できませんでした。</div>';
+	}
+};
+
+/** 許可の画面から戻ってきたとき、管理画面の Miro 連携を開いて結果を知らせる */
+const openMiroResultIfReturned = () => {
+	const params = new URLSearchParams(window.location.search);
+	const result = params.get("miro");
+	if (result == null) return;
+	const reason = params.get("reason");
+	// 再読み込みで同じ知らせが出続けないよう、URL からは消しておく
+	params.delete("miro");
+	params.delete("reason");
+	const rest = params.toString();
+	window.history.replaceState(null, "", window.location.pathname + (rest ? "?" + rest : ""));
+	if (!miroEnabled || !appShell.classList.contains("adminMode")) return;
+	setView("admin");
+	showAdminTab("miro");
+	if (result === "connected") showMiroFlash(true, "Miro と連携しました。資料を出すボードを選んでください。");
+	else showMiroFlash(false, MIRO_ERROR_REASONS[reason] || "Miro と連携できませんでした。");
 };
 
 const loadPdfHealth = async () => {
@@ -6993,6 +7157,7 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 		// モックアップはローカル保存の構成でのみ使える。使えない構成では入口を出さない
 		appShell.classList.toggle("mockupsEnabled", !!authData.mockupsEnabled);
 		htmlPdfEnabled = !!authData.htmlPdfEnabled;
+		miroEnabled = !!authData.miroEnabled;
 		// 使えない環境では、使い方の説明も出さない
 		document.getElementById("helpPdfSection").style.display = htmlPdfEnabled ? "" : "none";
 		appShell.classList.add("visible");
@@ -7000,6 +7165,7 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 		subscribeDocumentEvents();
 		const linkedProjectId = new URLSearchParams(window.location.search).get(PROJECT_LINK_PARAM);
 		if (linkedProjectId) openLinkedProject(linkedProjectId);
+		openMiroResultIfReturned();
 	} else {
 		loginArea.classList.add("visible");
 		// プロジェクトのリンクで来た人は、ログインのあと同じリンクへ戻す(戻り先を渡さないと、

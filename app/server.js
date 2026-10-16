@@ -706,7 +706,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 		setHTTPHeaders(res);
 
 		if (AUTH_DISABLED) {
-			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled(), htmlPdfEnabled: HtmlPdf.isEnabled()});
+			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled(), htmlPdfEnabled: HtmlPdf.isEnabled(), miroEnabled: MiroConnection.isConfigured()});
 			return;
 		}
 
@@ -722,7 +722,9 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 					// 画面側はこれを見てモックアップの入口を出すか決める
 					mockupsEnabled: await mockupsEnabled(),
 					// 同じく、「PDFでダウンロード」を出すか
-					htmlPdfEnabled: HtmlPdf.isEnabled()
+					htmlPdfEnabled: HtmlPdf.isEnabled(),
+					// 同じく、Miro 連携の入口を出すか(アプリの値が設定されている環境だけ)
+					miroEnabled: MiroConnection.isConfigured()
 				});
 				return;
 			}
@@ -878,6 +880,7 @@ const {extractDrawioText} = require("./lib/drawio.js");
 const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 const OfficeRender = require("./lib/office-render.js");
 const HtmlPdf = require("./lib/html-pdf.js");
+const MiroConnection = require("./lib/miro-connection.js");
 const DbIntegrity = require("./lib/db-integrity.js");
 const StorageReconcile = require("./lib/storage-reconcile.js");
 const Mockups = require("./lib/mockups.js");
@@ -1949,6 +1952,132 @@ app.get(BASE_URL_PATH + 'api/office-render/health', requireAuth, requireAdmin, a
  * HTML→PDFの変換サービス(pdf-converter)の状態(要 admin ロール)。
  * Office用(上)とは別のコンテナなので、状態も別々に見る。
  */
+/**
+ * ---- Miro 連携(管理者) ----
+ * Document Manager が Miro のアプリとして、管理者が連携したアカウントの権限でボードへ資料を出す。
+ * ここは連携そのもの(許可・ボードの選択・解除)。トークンは応答に出さない(lib/miro-connection.js)。
+ * MIRO_CLIENT_ID / MIRO_CLIENT_SECRET が未設定の環境では、どれも404(機能ごと無い)。
+ */
+const requireMiroConfigured = (req, res, next) => {
+	if (MiroConnection.isConfigured()) {
+		next();
+		return;
+	}
+	res.status(404).json({error: "Miro 連携はこの環境では使えません(MIRO_CLIENT_ID / MIRO_CLIENT_SECRET が未設定)"});
+};
+
+/** Miro の失敗を、利用者に返すステータスへ直す(Miro 側の都合は 502、連携し直しが要るときは 409) */
+const sendMiroError = (res, err, where) => {
+	if (err.needsReconnect) {
+		res.status(409).json({error: err.message, needsReconnect: true});
+		return;
+	}
+	if (err.name === "MiroError") {
+		logger.warn({error: err.message, status: err.status}, where);
+		const status = err.status === 400 || err.status === 404 ? err.status : 502;
+		res.status(status).json({error: err.message});
+		return;
+	}
+	logger.error(err, where);
+	res.status(500).json({error: "Internal Error"});
+};
+
+app.get(BASE_URL_PATH + 'api/miro/status', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const status = await MiroConnection.status();
+		// 許可のあとの戻り先。Miro のアプリに登録する値と一致している必要があるため、管理画面に出す
+		res.status(200).json({...status, redirectUri: MiroConnection.isConfigured() ? MiroConnection.redirectUri(publicBaseUrl(req)) : null});
+	} catch (err) {
+		sendMiroError(res, err, "::api/miro/status");
+	}
+});
+
+/**
+ * 連携を始める。Miro の許可の画面へ移す(ブラウザで開くURL)。
+ * 戻ってきたのが送り出した本人か確かめるため、署名つきの state を渡し、乱数をセッションに覚える
+ */
+app.get(BASE_URL_PATH + 'api/miro/connect', requireAuth, requireAdmin, requireMiroConfigured, async (req, res) => {
+	try {
+		const user = req.authData.user_identifier;
+		const {state, nonce} = MiroConnection.issueState(user);
+		req.session.miroOAuthNonce = nonce;
+		const redirectUri = MiroConnection.redirectUri(publicBaseUrl(req));
+		res.redirect(MiroConnection.authorizeUrl({redirectUri, state}));
+	} catch (err) {
+		sendMiroError(res, err, "::api/miro/connect");
+	}
+});
+
+/**
+ * 許可の画面からの戻り先(Miro のアプリに登録する URL)。結果は画面へ戻して知らせる
+ * (?miro=connected / ?miro=error&reason=…)。理由の詳細はログにだけ残す
+ */
+app.get(BASE_URL_PATH + 'api/miro/callback', requireAuth, requireAdmin, requireMiroConfigured, async (req, res) => {
+	const back = (query) => res.redirect(BASE_URL_PATH + "?" + new URLSearchParams(query).toString());
+	const user = req.authData.user_identifier;
+	const expectedNonce = req.session.miroOAuthNonce;
+	delete req.session.miroOAuthNonce;
+	try {
+		if (req.query.error) {
+			// 利用者が許可しなかった
+			back({miro: "error", reason: "denied"});
+			return;
+		}
+		const claims = MiroConnection.readState(req.query.state);
+		if (claims == null || expectedNonce == null || claims.nonce !== expectedNonce || claims.user !== user) {
+			logger.warn({user}, "::api/miro/callback: state が一致しません(期限切れ・別のブラウザ・やり直し)");
+			back({miro: "error", reason: "state"});
+			return;
+		}
+		if (typeof req.query.code !== "string" || req.query.code === "") {
+			back({miro: "error", reason: "code"});
+			return;
+		}
+		await MiroConnection.connect({code: req.query.code, redirectUri: MiroConnection.redirectUri(publicBaseUrl(req)), user});
+		back({miro: "connected"});
+	} catch (err) {
+		logger.warn({error: err.message, status: err.status}, "::api/miro/callback: 連携できませんでした");
+		back({miro: "error", reason: "exchange"});
+	}
+});
+
+/** 貼り先の候補(連携しているチームのボード)。?q= で名前を絞れる */
+app.get(BASE_URL_PATH + 'api/miro/boards', requireAuth, requireAdmin, requireMiroConfigured, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const search = typeof req.query.q === "string" ? req.query.q.slice(0, 100) : undefined;
+		res.status(200).json({boards: await MiroConnection.listBoards({search})});
+	} catch (err) {
+		sendMiroError(res, err, "::api/miro/boards");
+	}
+});
+
+/** 貼り先のボードを決める。本体: {boardId} */
+app.put(BASE_URL_PATH + 'api/miro/settings', requireAuth, requireAdmin, requireMiroConfigured, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const boardId = req.body?.boardId;
+		if (typeof boardId !== "string" || !/^[A-Za-z0-9_=\-]{1,64}$/.test(boardId)) {
+			res.status(400).json({error: "boardId を指定してください"});
+			return;
+		}
+		res.status(200).json(await MiroConnection.setBoard(boardId, req.authData.user_identifier));
+	} catch (err) {
+		sendMiroError(res, err, "::api/miro/settings");
+	}
+});
+
+/** 連携を解除する(Miro 側のトークンも取り消す) */
+app.delete(BASE_URL_PATH + 'api/miro/connection', requireAuth, requireAdmin, requireMiroConfigured, async (req, res) => {
+	try {
+		await MiroConnection.disconnect(req.authData.user_identifier);
+		res.status(204).end();
+	} catch (err) {
+		sendMiroError(res, err, "::api/miro/connection");
+	}
+});
+
 app.get(BASE_URL_PATH + 'api/html-pdf/health', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);

@@ -40,6 +40,57 @@ const versionFiles = (dbDir) => fs.readdirSync(dbDir)
 	.filter(Boolean)
 	.map((m) => Number(m[1]));
 
+// 表を足したときに、移行のコピー対象へ入れ忘れる事故を防ぐ。1つ前の版の**すべての表**に行を入れ、
+// 最新化のあとも残っていることを確かめる(新しく足した表は、移行元に無いので空のままでよい)
+test("最新化で、すべての表の行が引き継がれる", () => {
+	const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dm-mig-all-"));
+	const dbDir = path.join(dataDir, "db");
+	try {
+		initDbInDir(dataDir);
+		const current = Math.max(...versionFiles(dbDir));
+		const currentPath = path.join(dbDir, `document_manager_v${current}.sqlite`);
+		const previousPath = path.join(dbDir, `document_manager_v${current - 1}.sqlite`);
+		fs.copyFileSync(currentPath, previousPath);
+
+		const old = new Database(previousPath);
+		// 全文検索の索引(仮想表とその内部表)と、移行の対象外の表(セッション。版が上がると空になる約束)は除く
+		const tables = old.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'documents_fts%' AND name <> 'sessions'").all();
+		const counts = {};
+		for (const {name} of tables) {
+			const columns = old.prepare(`PRAGMA table_info(${name})`).all();
+			// 列の型に合う値を入れる(主キーの CHECK (id = 1) にも合うよう、数値は 1。
+			// role は CHECK で決まった値しか入らないので、どちらの表でも通る readonly にする)
+			const values = columns.map((column) => (column.name === "role" ? "readonly"
+				: /INT|REAL|NUM/i.test(column.type) ? 1 : `v_${name}_${column.name}`));
+			old.prepare(`INSERT INTO ${name} (${columns.map((c) => c.name).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`).run(...values);
+			counts[name] = old.prepare(`SELECT COUNT(*) AS n FROM ${name}`).get().n;
+		}
+		old.pragma("wal_checkpoint(TRUNCATE)");
+		old.close();
+		for (const suffix of ["", "-wal", "-shm"]) {
+			try { fs.rmSync(currentPath + suffix); } catch {}
+		}
+
+		initDbInDir(dataDir);
+
+		const neu = new Database(currentPath, {readonly: true});
+		try {
+			// この版で新しく足した表は、移行元(1つ前の版)には無い。ここでは1つ前の版を最新と同形で作っているため、
+			// 新しい表にも行が入っているが、移行では空で作る約束なので数えない
+			const addedInThisVersion = new Set(["miro_connection", "miro_projects", "miro_items"]);
+			for (const [name, expected] of Object.entries(counts)) {
+				if (addedInThisVersion.has(name)) continue;
+				const actual = neu.prepare(`SELECT COUNT(*) AS n FROM ${name}`).get().n;
+				assert.equal(actual, expected, `表 ${name} の行が最新化で失われている(db.js の MIGRATIONS[${current}] にコピーを足すこと)`);
+			}
+		} finally {
+			neu.close();
+		}
+	} finally {
+		try { fs.rmSync(dataDir, {recursive: true, force: true, maxRetries: 3}); } catch {}
+	}
+});
+
 test("最新化でapp_settings(機能On/Off)が引き継がれる", () => {
 	const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dm-mig-"));
 	const dbDir = path.join(dataDir, "db");

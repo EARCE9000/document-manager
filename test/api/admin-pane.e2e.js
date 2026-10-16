@@ -78,7 +78,8 @@ test.describe.serial("管理ペイン(実ブラウザ)", () => {
 		await page.click("#allowedUsersManageLink");
 
 		const tabs = page.locator(".adminTab");
-		await expect(tabs).toHaveText(["アクセス許可ユーザー", "セッション", "サーバー", "データベース", "変換サービス"]);
+		// Miro 連携は、Miro のアプリの値が設定された環境だけに出る(テストのサーバーは設定してある)
+		await expect(tabs).toHaveText(["アクセス許可ユーザー", "セッション", "サーバー", "データベース", "変換サービス", "Miro 連携"]);
 		await expect(tabs.first()).toHaveClass(/active/);
 
 		// 選択中のパネルだけが見える

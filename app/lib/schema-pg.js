@@ -307,6 +307,63 @@ const MIGRATIONS = [
 			revoked_at TEXT NOT NULL,
 			revoked_by TEXT
 		);
+	`},
+	// Miroとの連携(SQLiteの v21 相当)。資料をMiroのボードへ並べ、版の更新を反映するための記録
+	{version: 13, sql: `
+		-- 連携(1行だけ)。トークンは暗号化して持つ(lib/miro-connection.js)
+		CREATE TABLE IF NOT EXISTS miro_connection (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			team_id TEXT,
+			team_name TEXT,
+			miro_user_id TEXT,
+			miro_user_name TEXT,
+			access_token TEXT,
+			refresh_token TEXT,
+			access_expires_at TEXT,
+			refresh_expires_at TEXT,
+			scopes TEXT,
+			board_id TEXT,
+			board_name TEXT,
+			board_url TEXT,
+			connected_by TEXT,
+			connected_at TEXT,
+			updated_at TEXT,
+			last_error TEXT,
+			last_error_at TEXT
+		);
+		-- プロジェクトごとの連動(ボード上の枠)
+		CREATE TABLE IF NOT EXISTS miro_projects (
+			project_id TEXT PRIMARY KEY,
+			board_id TEXT NOT NULL,
+			frame_id TEXT,
+			state TEXT NOT NULL,
+			linked_by TEXT,
+			linked_at TEXT,
+			stopped_by TEXT,
+			stopped_at TEXT,
+			last_synced_at TEXT,
+			last_error TEXT
+		);
+		-- 資料ごとに、ボードのどの項目に出したか。版をまたいで追いかけるため、資料は
+		-- 共有用のID(document_aliases.alias)で覚える
+		CREATE TABLE IF NOT EXISTS miro_items (
+			project_id TEXT NOT NULL,
+			alias TEXT NOT NULL,
+			board_id TEXT NOT NULL,
+			document_id TEXT,
+			item_id TEXT,
+			item_kind TEXT,
+			caption_id TEXT,
+			state TEXT NOT NULL,
+			reason TEXT,
+			x DOUBLE PRECISION,
+			y DOUBLE PRECISION,
+			width DOUBLE PRECISION,
+			height DOUBLE PRECISION,
+			updated_by TEXT,
+			updated_at TEXT,
+			PRIMARY KEY (project_id, alias)
+		);
 	`}
 ];
 
