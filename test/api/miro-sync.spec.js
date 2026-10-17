@@ -690,7 +690,7 @@ test.describe.serial("連動で並べるとき、人が動かした資料は動�
 		expect(check).toMatchObject({layout: "quadrant-cross", placed: 3, humanMoved: 0});
 	});
 
-	test("人が動かした資料は、タグが変わっても動かさない。置いたままの資料は型どおりに寄せる", async ({request}) => {
+	test("連動では、タグが変わってもボードにある資料は動かさない(人が動かした資料も、置いたままの資料も)", async ({request}) => {
 		const plan = file(await boardItems(request), `人-計画書${STAMP}.pdf`);
 		await control(request, {moveItem: {id: plan.id, x: 500, y: 300}});
 		await sync(request);
@@ -698,41 +698,54 @@ test.describe.serial("連動で並べるとき、人が動かした資料は動�
 		expect(check.humanMoved).toBe(1);
 		expect(check.documents[0].title).toBe(`人-計画書${STAMP}.pdf`);
 
-		// メモに 区分:管理 を付けると右上へ寄る。人が動かした計画書はそのまま
+		// メモに 区分:管理 を付けても、メモは枠の下の段のまま(並べ直すまで右上には移らない)
 		const memoBefore = file(await boardItems(request), `人-メモ${STAMP}.pdf`).position;
 		await request.put(`api/documents/${docs.memo.id}/tags`, {headers: rw, data: {tags: ["区分:管理"]}});
 		await sync(request);
 		const items = await boardItems(request);
 		expect(file(items, `人-計画書${STAMP}.pdf`).position).toMatchObject({x: 500, y: 300});
-		const memo = file(items, `人-メモ${STAMP}.pdf`).position;
-		expect(memo.y).toBeLessThan(memoBefore.y);
-		expect(memo.x).toBeGreaterThan(file(items, `人-基本設計${STAMP}.pdf`).position.x);
+		expect(file(items, `人-メモ${STAMP}.pdf`).position).toMatchObject(memoBefore);
+		expect(items.some((i) => i.type === "sticky_note")).toBe(false);
 	});
 
-	test("型どおりの場所が人の動かした資料とぶつかる新しい資料は、枠の下に置き、「並べ直すと整います」の付箋を出す", async ({request}) => {
-		// 計画書(人が動かした)を、次の管理の資料が入るはずの場所へ動かす
-		const memo = file(await boardItems(request), `人-メモ${STAMP}.pdf`);
-		const blocker = file(await boardItems(request), `人-計画書${STAMP}.pdf`);
-		await control(request, {moveItem: {id: blocker.id, x: memo.position.x + 420, y: memo.position.y}});
-		await sync(request);
+	test("新しい資料は、レイアウトどおりの場所が空いていればそこに置き、ふさがっていれば枠の下に置いて付箋を出す", async ({request}) => {
+		const design = file(await boardItems(request), `人-基本設計${STAMP}.pdf`).position;
+		const memoBefore = file(await boardItems(request), `人-メモ${STAMP}.pdf`).position;
 		docs.wbs = await tagged(request, "人-WBS", ["区分:管理"]);
 		await waitFor(request, projectId, (s) => itemOf(s, docs.wbs.id)?.state === "placed");
-		const items = await boardItems(request);
-		const wbs = file(items, `人-WBS${STAMP}.pdf`);
-		expect(wbs.position.y, "ぶつからない枠の下に置く").toBeGreaterThan(memo.position.y + 600);
+		let items = await boardItems(request);
+		const wbs = file(items, `人-WBS${STAMP}.pdf`).position;
+		expect(wbs.x, "右上(管理)に置く").toBeGreaterThan(design.x);
+		expect(wbs.y).toBeLessThan(memoBefore.y);
+		expect(items.some((i) => i.type === "sticky_note")).toBe(false);
+
+		// 次の管理の資料が入るはずの場所(右上の 2 段目の左)を、人が動かした資料でふさぐ
+		const plan = file(items, `人-計画書${STAMP}.pdf`);
+		await control(request, {moveItem: {id: plan.id, x: wbs.x - 2 * 420, y: wbs.y + 649}});
+		await sync(request);
+		docs.issue = await tagged(request, "人-課題一覧", ["区分:管理"]);
+		await waitFor(request, projectId, (s) => itemOf(s, docs.issue.id)?.state === "placed");
+		items = await boardItems(request);
+		const issue = file(items, `人-課題一覧${STAMP}.pdf`).position;
+		const lowest = Math.max(...["人-基本設計", "人-計画書", "人-メモ", "人-WBS"].map((n) => file(items, `${n}${STAMP}.pdf`).position.y));
+		expect(issue.y, "ぶつからない枠の下に置く").toBeGreaterThan(lowest);
 		const sticky = items.find((i) => i.type === "sticky_note");
 		expect(sticky?.data?.content).toContain("並べ直すと整います");
+		// 付箋は、並べ直すまで残す(次の反映でも消えない)
+		await sync(request);
+		expect((await boardItems(request)).some((i) => i.type === "sticky_note")).toBe(true);
 	});
 
-	test("並べ直すと、人が動かした資料も型どおりに戻し、付箋を片付ける", async ({request}) => {
-		const res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw});
+	test("並べ直すと、人が動かした資料も含めて全部レイアウトどおりにそろい、付箋を片付ける", async ({request}) => {
+		const res = await whenIdle(() => request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw}));
 		expect(res.status()).toBe(200);
 		const items = await boardItems(request);
 		expect(items.some((i) => i.type === "sticky_note")).toBe(false);
 		const check = await (await request.get(`api/projects/${projectId}/miro/arrange-check`, {headers: ro})).json();
 		expect(check.humanMoved).toBe(0);
 		const managed = ["人-計画書", "人-メモ", "人-WBS"].map((n) => file(items, `${n}${STAMP}.pdf`).position);
-		expect(new Set(managed.map((p) => p.y)).size, "右上の格子に 1 段で並ぶ").toBe(1);
+		expect(new Set(managed.map((p) => Math.round(p.y))).size, "右上の格子の 1 段目にそろう").toBe(1);
+		expect(file(items, `人-課題一覧${STAMP}.pdf`).position.y).toBeGreaterThan(managed[0].y);
 	});
 });
 

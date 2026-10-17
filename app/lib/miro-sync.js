@@ -378,6 +378,34 @@ const drawDecorations = async (projectId, link, board, frameId, {labels = [], sh
 };
 
 /**
+ * 十字型の中心の概要(プロジェクト名・資料の件数・最終更新)の文字だけを書き換える(位置は変えない)。
+ * 連動のたびに中身を新しくするため(layout-spec.md 7 章)。概要は、リンクを持ち中央寄せで背景のある見出しの文字
+ */
+const refreshSummaryLabel = async (projectId, link, board, layoutPlan) => {
+	const isSummary = (spec) => spec?.link && spec.align === "center" && spec.fillColor;
+	const wanted = (layoutPlan.labels ?? []).find(isSummary);
+	if (wanted == null) return;
+	const saved = parseJson(link.layout_plan, {});
+	const labels = saved.labels ?? [];
+	const index = labels.findIndex(isSummary);
+	if (index < 0 || labels[index].text === wanted.text) return;
+	const oldKey = decorationKey("label", labels[index]);
+	const entry = (saved.decor ?? []).find((d) => d.key === oldKey);
+	if (entry == null) return;
+	const updated = {...labels[index], text: wanted.text};
+	await MiroConnection.withToken((token) => Miro.updateText(token, board, entry.id, {
+		content: `<p>${linked(`<strong>${escapeHtml(updated.text)}</strong>`, updated.link)}</p>`
+	})).catch((err) => {
+		if (err.status !== 404) logger.warn({err: err.message, projectId}, "中心の概要を書き換えられませんでした");
+	});
+	labels[index] = updated;
+	const decor = (saved.decor ?? []).map((d) => (d === entry ? {...d, key: decorationKey("label", updated)} : d));
+	const layoutPlanJson = JSON.stringify({...saved, labels, decor});
+	await ds.run(SQL_SET_LAYOUT_PLAN, {project_id: projectId, layout_plan: layoutPlanJson});
+	link.layout_plan = layoutPlanJson;
+};
+
+/**
  * 「並べ直すと整います」の付箋を、要るときだけ枠の上(枠の外)に 1 枚出す。要らなくなったら消す。
  * 人が動かしたカードに阻まれて、型どおりに置けなかった資料があるときに出す(layout-spec.md 5 章)
  */
@@ -597,51 +625,74 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 			ready.push({...entry, payload, aspect: aspectOf(payload.file, payload.contentType)});
 		}
 
-		// 置く場所を決める(型どおり。lib/miro-layout-plan.js)。前に置いた資料は前の並びのまま、新しい資料はその後ろに足す。
-		// 動かしてよいのは、Document Manager が置いた位置のままの資料だけ(人が Miro で動かした資料は動かさない。layout-spec.md 5 章)
+		// 置く場所を決める(lib/miro-layout-plan.js)。
+		// 初めて並べるとき(ボードにまだ何も無い)だけ、レイアウトどおりに全部置き、区画の見出し・線も置く。
+		// そのあとの連動では、ボードにある資料・見出し・線は一切動かさない(配置がころころ変わらないように。
+		// 置き直すのは「このレイアウトにする」= miro-arrange を頼まれたときだけ)。新しい資料は、レイアウトどおりの場所が
+		// ほかの資料・見出しと重ならず枠の幅に収まるならそこに置き、そうでなければ枠の下の空いている所に置いて付箋で知らせる
 		const placedNow = new Map([...items.values()].filter((r) => r.state === STATES.PLACED && r.item_id != null).map((r) => [r.alias, r]));
+		const firstLayout = placedNow.size === 0;
 		const layoutPlan = await planWithLayout(layoutOf(link))(projectId, placedNow, {
 			added: ready.map((entry) => ({alias: entry.doc.alias, width: LAYOUT.itemWidth, height: LAYOUT.itemWidth * entry.aspect})),
-			incremental: placedNow.size > 0
+			incremental: !firstLayout
 		});
 		const plannedOf = new Map(layoutPlan.items.map((item) => [item.alias, item]));
-		const humanMoved = new Set([...placedNow.values()].filter(isHumanMoved).map((row) => row.alias));
-		// 人が動かした資料のいまの場所(重なりを避けるため)
-		const blockers = [...placedNow.values()].filter((row) => humanMoved.has(row.alias) && row.x != null).map((row) => rectOf(row.x, row.y, row.width, row.height));
-		const overlapsBlocker = (x, y, height) => blockers.some((b) => overlaps(b, rectOf(x, y, LAYOUT.itemWidth, height)));
+		const hiddenIds = new Set((layoutPlan.report?.overflow ?? []).flatMap((o) => o.documentIds));
+		// いまボードの上で場所を取っているもの(資料と見出し、Document Manager が置いた見出しの文字・図形)
+		const occupied = [...placedNow.values()].filter((row) => row.x != null).map((row) => rectOf(row.x, row.y, row.width, row.height));
+		const savedPlan = parseJson(link.layout_plan, {});
+		for (const spec of [...(savedPlan.labels ?? []), ...(savedPlan.customLabels ?? [])]) {
+			const h = (Number(spec.fontSize) || 36) * 1.6;
+			occupied.push({left: spec.x - spec.width / 2, right: spec.x + spec.width / 2, top: spec.y - h / 2, bottom: spec.y + h / 2});
+		}
+		for (const spec of [...(savedPlan.shapes ?? []), ...(savedPlan.customShapes ?? [])]) {
+			// 区切りの線(細い図形)は、またいで置いてよいものではないので含める。区画の背景のような大きな薄い図形は含めない
+			if (Math.min(spec.width, spec.height) > 40 && (spec.fillOpacity ?? 1) < 0.5 && !spec.text) continue;
+			occupied.push({left: spec.x - spec.width / 2, right: spec.x + spec.width / 2, top: spec.y - spec.height / 2, bottom: spec.y + spec.height / 2});
+		}
+		const frameWidthNow = Number(link.frame_width) || null;
 		let needsSticky = false;
 		const plan = [];
 		const aside = [];
 		for (const entry of ready) {
 			const planned = plannedOf.get(entry.doc.alias);
 			const height = LAYOUT.itemWidth * entry.aspect;
-			if (planned != null && !overlapsBlocker(planned.x, planned.y, height)) {
+			if (planned != null && firstLayout) {
 				plan.push({...entry, x: planned.x, y: planned.y, height, color: planned.color});
+				continue;
+			}
+			const box = planned == null ? null : rectOf(planned.x, planned.y, LAYOUT.itemWidth, height);
+			const fits = box != null && !hiddenIds.has(entry.doc.id)
+				&& (frameWidthNow == null || box.right + LAYOUT.padding <= frameWidthNow)
+				&& !occupied.some((o) => overlaps(o, box));
+			if (fits) {
+				plan.push({...entry, x: planned.x, y: planned.y, height, color: planned.color});
+				occupied.push(box);
 			} else {
 				aside.push({...entry, height, color: planned?.color ?? null});
 			}
 		}
-		// 型どおりの場所が人の動かした資料とぶつかる新しい資料は、枠の下の空いている所に置き、付箋で知らせる
+		// レイアウトどおりの場所に置けない新しい資料は、枠の下の空いている所に、枠の幅に収まるだけ並べる(枠は下へ伸びる)
 		if (aside.length > 0) {
 			needsSticky = true;
-			let bottom = layoutPlan.frame.height - LAYOUT.padding + LAYOUT.gapY;
-			for (const row of placedNow.values()) {
-				if (row.y != null) bottom = Math.max(bottom, Number(row.y) + Number(row.height || 0) / 2 + LAYOUT.captionHeight + LAYOUT.gapY);
-			}
-			for (let i = 0; i < aside.length; i += LAYOUT.columns) {
-				const line = aside.slice(i, i + LAYOUT.columns);
+			const width = frameWidthNow ?? layoutPlan.frame.width;
+			const columns = Math.max(1, Math.floor((width - LAYOUT.padding * 2 + LAYOUT.gapX) / (LAYOUT.itemWidth + LAYOUT.gapX)));
+			let bottom = LAYOUT.padding;
+			for (const o of occupied) bottom = Math.max(bottom, o.bottom + LAYOUT.gapY);
+			for (let i = 0; i < aside.length; i += columns) {
+				const line = aside.slice(i, i + columns);
 				line.forEach((entry, index) => plan.push({...entry, x: LAYOUT.padding + index * (LAYOUT.itemWidth + LAYOUT.gapX) + LAYOUT.itemWidth / 2, y: bottom + entry.height / 2}));
 				bottom += Math.max(...line.map((entry) => entry.height)) + LAYOUT.captionHeight + LAYOUT.gapY;
 			}
 		}
-		let contentRight = layoutPlan.frame.width - LAYOUT.padding;
-		let contentBottom = layoutPlan.frame.height - LAYOUT.padding;
+		let contentRight = firstLayout ? layoutPlan.frame.width - LAYOUT.padding : 0;
+		let contentBottom = firstLayout ? layoutPlan.frame.height - LAYOUT.padding : 0;
 		for (const entry of plan) {
 			contentRight = Math.max(contentRight, entry.x + LAYOUT.itemWidth / 2);
 			contentBottom = Math.max(contentBottom, entry.y + entry.height / 2 + LAYOUT.captionHeight);
 		}
 
-		// 枠を用意する(無ければ作る。中身が増えたら広げる。連動では縮めない)
+		// 枠を用意する(無ければ作る。連動では下へ伸ばすだけで、横には広げない。右隣の枠もずらさない)
 		if (frameId == null) {
 			const width = Math.ceil(contentRight + LAYOUT.padding);
 			const height = Math.ceil(Math.max(contentBottom + LAYOUT.padding, 600));
@@ -650,8 +701,10 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 			frameId = frame.id;
 			await ds.run(SQL_SET_FRAME, {project_id: projectId, frame_id: frameId, x: position.x, y: position.y, width, height});
 			Object.assign(link, {frame_id: frameId, frame_x: position.x, frame_y: position.y, frame_width: width, frame_height: height});
-		} else {
+		} else if (firstLayout) {
 			await resizeFrame(projectId, link, board, {width: contentRight + LAYOUT.padding, height: contentBottom + LAYOUT.padding, grow: true});
+		} else if (plan.length > 0) {
+			await resizeFrame(projectId, link, board, {width: Number(link.frame_width) || frameWidth(), height: contentBottom + LAYOUT.padding, grow: true});
 		}
 
 		// 資料を置く(中身 → 見出し → グループ)。置く場所は決めてあるので、数件ずつ同時に書き込む
@@ -687,66 +740,15 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 			}
 		});
 
-		// 前に置いた資料を型どおりの場所へ寄せる(人が動かした資料と、動かす先が人の動かした資料とぶつかるものは動かさない)。
-		// 動かす前に Miro からいまの位置を読み、前回の反映のあとで人が動かしていたら、それも動かさない
-		const moves = [];
-		for (const row of placedNow.values()) {
-			const planned = plannedOf.get(row.alias);
-			if (planned == null || humanMoved.has(row.alias)) continue;
-			if (Math.abs(planned.x - Number(row.placed_x)) <= MOVE_TOLERANCE && Math.abs(planned.y - Number(row.placed_y)) <= MOVE_TOLERANCE) continue;
-			if (overlapsBlocker(planned.x, planned.y, Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect)) {
-				needsSticky = true;
-				continue;
-			}
-			moves.push({row, planned});
+		// 見出しの文字・図形と「並べ直すと整います」の付箋。
+		// 初めて並べたときはレイアウトどおりに置く。そのあとは動かさず、十字型の中心の概要(件数・最終更新)の文字だけ書き換える。
+		// 付箋は、レイアウトどおりに置けなかった資料が出たときに出し、並べ直すまで残す
+		if (firstLayout) {
+			await drawDecorations(projectId, link, board, frameId, layoutPlan, {diff: true, tolerant: true});
+		} else {
+			await refreshSummaryLabel(projectId, link, board, layoutPlan);
+			if (needsSticky) await setSticky(projectId, link, board, true);
 		}
-		await forEachConcurrently(moves, CONCURRENCY, async ({row, planned}) => {
-			const now = await readPlacement(board, row).catch((err) => {
-				if (err.status === 404) return null;
-				throw err;
-			});
-			if (now == null) return;
-			if (Math.abs(Number(now.x) - Number(row.placed_x)) > MOVE_TOLERANCE || Math.abs(Number(now.y) - Number(row.placed_y)) > MOVE_TOLERANCE || now.parentId !== frameId) {
-				await save({...row, x: now.x, y: now.y});
-				return;
-			}
-			await placeAt(board, row, {x: planned.x, y: planned.y, parentId: frameId});
-			await setPosition(projectId, row, planned.x, planned.y, user);
-			counts.moved++;
-		});
-
-		// 見出しの色(区分などで塗る型)。変わったものだけ塗り直す。人が動かした資料も色は合わせる
-		const colors = {...(parseJson(link.layout_plan, {}).colors ?? {})};
-		const pinnedColors = parseJson(link.layout_plan, {}).pinnedColors ?? {};
-		let colorsChanged = false;
-		for (const entry of plan) {
-			if (entry.color === undefined) continue;
-			if (entry.color) colors[entry.doc.alias] = entry.color;
-			else delete colors[entry.doc.alias];
-			colorsChanged = true;
-		}
-		for (const row of placedNow.values()) {
-			const planned = plannedOf.get(row.alias);
-			// 色を決めない型(ユーザーカスタム)と、指示して塗った色(レイアウトを当てたもの)には触らない
-			if (planned == null || planned.color === undefined || pinnedColors[row.alias] || (colors[row.alias] ?? null) === (planned.color ?? null) || row.caption_id == null) continue;
-			await call((token) => Miro.updateText(token, board, row.caption_id, {
-				style: planned.color ? {fillColor: planned.color, fillOpacity: "1"} : {fillOpacity: "0"}
-			})).catch((err) => {
-				if (err.status !== 404) throw err;
-			});
-			if (planned.color) colors[row.alias] = planned.color;
-			else delete colors[row.alias];
-			colorsChanged = true;
-		}
-		if (colorsChanged) {
-			const merged = JSON.stringify({...parseJson(link.layout_plan, {}), colors});
-			await ds.run(SQL_SET_LAYOUT_PLAN, {project_id: projectId, layout_plan: merged});
-			link.layout_plan = merged;
-		}
-
-		// 区画の見出し・線など。前と同じものは残し、変わったものだけ置き直す
-		await drawDecorations(projectId, link, board, frameId, layoutPlan, {diff: true, tolerant: true});
-		await setSticky(projectId, link, board, needsSticky);
 
 		// プロジェクトから外れた・アーカイブされた資料。ボードからは消さず、見出しで知らせる
 		for (const row of items.values()) {
