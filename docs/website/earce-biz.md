@@ -10,6 +10,7 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
 - 以前のトップ(ツールのリンク一覧)は「孫の手で、とりあえずひと掻きを・・・」(page_id=35)に改題して残してある。
   ツールを足したらこちらの一覧を直す。既存の [Tool] ページの親もこのページのまま。
 - 紹介ページ「Document Manager」(page_id=2854、スラッグ `document-manager`)。
+  その子に構築ガイド(AWS 編、page_id=2867、下書き)。サイトでは投稿機能は使わず、すべて固定ページで作る。
 
 置き方:
 - (A) はフロントページの本文の**先頭**に置く入口。
