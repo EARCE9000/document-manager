@@ -71,3 +71,14 @@ test.describe.serial("Miro の並べ方の報告", () => {
 		expect((await request.get("api/projects/no-such-project/miro/layout-report", {headers: ro})).status()).toBe(404);
 	});
 });
+
+test("並べ方の型で使う共通のタグを、決まった順で返す(機能: は入れない)", async ({request}) => {
+	const res = await request.get("api/miro/layout-tags", {headers: ro});
+	expect(res.status()).toBe(200);
+	const body = await res.json();
+	expect(body.tags.slice(0, 3)).toEqual(["区分:管理", "区分:会議", "工程:要件定義"]);
+	expect(body.tags).toContain("段階:実施後");
+	expect(body.tags.at(-1)).toBe("会議:臨時");
+	expect(body.tags.some((t) => t.startsWith("機能:"))).toBe(false);
+	expect(body.values["対象外"]).toContain("運用");
+});

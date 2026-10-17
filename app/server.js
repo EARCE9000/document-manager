@@ -3866,6 +3866,15 @@ app.delete(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin
 });
 
 /**
+ * Miro の並べ方の型で使う共通のタグ(区分:・工程:・段階:・会議:)を、決まった順で返す(docs/miro-layouts/layout-spec.md 2 章)。
+ * タグ体系の管理画面の「Miro の並べ方のタグをそろえる」が使う。機能: はプロジェクトごとに決めるので入れない
+ */
+app.get(BASE_URL_PATH + 'api/miro/layout-tags', requireAuth, (req, res) => {
+	setHTTPHeaders(res);
+	res.status(200).json({tags: MiroLayout.commonTags(), values: MiroLayout.TAG_VALUES});
+});
+
+/**
  * タグ体系(タグツリー表示)の並び順取得。ツリー表示に使うためログイン済みなら誰でも取得可
  */
 app.get(BASE_URL_PATH + 'api/tag_order', requireAuth, async (req, res) => {

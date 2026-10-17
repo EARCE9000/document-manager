@@ -472,6 +472,13 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "getMiroLayoutTags", method: "get", path: "/api/miro/layout-tags", role: "readonly", tag: "プロジェクト",
+		summary: "Miro の並べ方の型で使う共通のタグ",
+		description: "`tags`: 区分:・工程:・段階:・会議: のタグを決まった順で(タグ体系 `/api/tag_order` に登録するとき、この順にそろえる)。"
+			+ "`values`: 見出しごとの値(`対象外:` は工程の値。`機能:` はプロジェクトごとに決めるので入らない)。値はこの一覧だけを正とし、ほかの値を作らない",
+		aiGuide: false
+	},
+	{
 		id: "getProjectMiroLayoutReport", method: "get", path: "/api/projects/:id/miro/layout-report", role: "readonly", tag: "プロジェクト",
 		summary: "並べ方の型で並べたらどうなるかの報告(タグの見直し用)",
 		description: "Miro には触らず、読むだけで出す(連動していなくても出せる)。型(`layout`)は `folder-columns`(フォルダ列型) / `timeline`(時系列型) / `split-shelves`(左右分割・棚型) / `quadrant-cross`(十字型) / `matrix`(マトリクス型)。"

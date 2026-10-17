@@ -2214,6 +2214,7 @@
 		<div class="toolbarRow" style="margin: 10px 0;">
 			<input type="text" id="tagOrderAddInput" placeholder="タグ名を入力">
 			<button id="tagOrderAddButton" type="button" class="modalButton save">追加</button>
+			<button id="tagOrderMiroButton" type="button" class="modalButton" title="Miro の並べ方の型で使うタグ(区分:・工程:・段階:・会議:)を決まった順で入れます。保存するまでは反映されません">Miro の並べ方のタグをそろえる</button>
 		</div>
 		<div id="tagOrderSuggestionsLabel" class="docMeta" style="display:none;">既存のタグから選択:</div>
 		<div id="tagOrderSuggestions"></div>
@@ -7212,6 +7213,22 @@ const addTagOrderDraftEntry = () => {
 	renderTagOrderList();
 };
 tagOrderAddButton.addEventListener("click", addTagOrderDraftEntry);
+// Miro の並べ方の型で使う共通のタグ(docs/miro-layouts/layout-spec.md 2 章)を、決まった順で下書きに入れる。
+// すでにあるものは、最初に出てくる位置にまとめて、決まった順に並べ直す(ほかのタグの順は変えない)。保存するまでは反映しない
+document.getElementById("tagOrderMiroButton").addEventListener("click", async () => {
+	const res = await fetch("./api/miro/layout-tags");
+	if (res.status !== 200) {
+		alert("タグの一覧を取得できませんでした");
+		return;
+	}
+	const {tags} = await res.json();
+	const common = new Set(tags);
+	const first = tagOrderDraft.findIndex((tag) => common.has(tag));
+	const rest = tagOrderDraft.filter((tag) => !common.has(tag));
+	const at = first < 0 ? rest.length : tagOrderDraft.slice(0, first).filter((tag) => !common.has(tag)).length;
+	tagOrderDraft = [...rest.slice(0, at), ...tags, ...rest.slice(at)];
+	renderTagOrderList();
+});
 tagOrderAddInput.addEventListener("keydown", (ev) => {
 	if (ev.key === "Enter") {
 		ev.preventDefault();
