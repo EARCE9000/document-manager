@@ -283,6 +283,15 @@ module.exports.start = (port) => new Promise((resolve) => {
 					}
 					const width = input?.geometry?.width ?? (kind === "frames" ? 800 : naturalWidth);
 					const height = kind === "frames" || kind === "shapes" ? (input?.geometry?.height ?? 600) : kind === "texts" ? 50 : heightFor(width);
+					// 本物と同じく、図形は幅・高さとも 8 以上、枠線の太さは 1 以上(0 は断られる)
+					if (kind === "shapes" && (width < 8 || height < 8)) {
+						send(res, 400, {message: "Unable to complete operation because of the validation errors."});
+						return;
+					}
+					if (kind === "shapes" && input?.style?.borderWidth != null && Number(input.style.borderWidth) < 1) {
+						send(res, 400, {message: "Invalid parameters"});
+						return;
+					}
 					const item = {
 						id: newId, type: typeOf[kind], boardId,
 						data: kind === "documents" || kind === "images" ? {title: input?.title ?? null} : (input?.data ?? {}),
@@ -342,6 +351,17 @@ module.exports.start = (port) => new Promise((resolve) => {
 						return;
 					}
 					const body = json();
+					// 本物と同じく、中の項目がはみ出す大きさには枠を縮められない(中の位置は枠の左上から)
+					if (item.type === "frame" && body.geometry) {
+						const width = body.geometry.width ?? item.geometry.width;
+						const height = body.geometry.height ?? item.geometry.height;
+						const outside = [...items.values()].some((child) => child.parent?.id === item.id
+							&& (child.position.x < 0 || child.position.y < 0 || child.position.x > width || child.position.y > height));
+						if (outside) {
+							send(res, 400, {message: "Child item cannot be placed outside the bounds of its parent"});
+							return;
+						}
+					}
 					if (body.position) item.position = {x: body.position.x ?? item.position.x, y: body.position.y ?? item.position.y};
 					if (body.parent !== undefined) item.parent = body.parent?.id ? {id: body.parent.id} : null;
 					if (body.geometry) item.geometry = {...item.geometry, ...Object.fromEntries(Object.entries(body.geometry).filter(([, v]) => v != null))};

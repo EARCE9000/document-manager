@@ -382,7 +382,7 @@ test.describe.serial("Miro のボードの上で資料を動かす", () => {
 		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.a.id}`, {headers: ro, data: {x: 1, y: 1}})).status()).toBe(403);
 	});
 
-	test("フォルダの順に並べ直すと、枠の外へ出した資料も戻り、格子に揃う", async ({request}) => {
+	test("フォルダ列型で並べ直すと、枠の外へ出した資料も戻り、列の中に 2 枚ずつ揃う", async ({request}) => {
 		const res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw});
 		expect(res.status()).toBe(200);
 		expect((await res.json()).moved).toBe(3);
@@ -390,11 +390,13 @@ test.describe.serial("Miro のボードの上で資料を動かす", () => {
 		const frame = items.find((i) => i.type === "frame" && i.data.title === `移動${STAMP}`);
 		const placed = ["A", "B", "C"].map((k) => file(items, `資料${k}${STAMP}.pdf`));
 		for (const item of placed) expect(item.parent.id).toBe(frame.id);
-		// 同じ行に、左から幅と間隔の分ずつ並ぶ
-		const xs = placed.map((i) => i.position.x).sort((p, q) => p - q);
-		expect(xs[1] - xs[0]).toBeCloseTo(360 + 60, 3);
-		expect(xs[2] - xs[1]).toBeCloseTo(360 + 60, 3);
-		expect(new Set(placed.map((i) => i.position.y)).size).toBe(1);
+		// フォルダに入っていない資料は「その他」の列に、おしながき順で 2 枚ずつ折り返す
+		const [a, b, c] = placed;
+		expect(b.position.x - a.position.x).toBeCloseTo(360 + 60, 3);
+		expect(b.position.y).toBeCloseTo(a.position.y, 3);
+		expect(c.position.x).toBeCloseTo(a.position.x, 3);
+		expect(c.position.y).toBeGreaterThan(a.position.y);
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("■ その他"))).toBe(true);
 	});
 });
 
@@ -597,10 +599,29 @@ test.describe.serial("Miro の並べ方の型と、元の型に戻す", () => {
 		expect((await request.post(`api/projects/${projectId}/miro/arrange/undo`, {headers: ro})).status()).toBe(403);
 	});
 
-	test("まだ並べ方の無い型は、並べ直しでは選べない(報告は出せる)", async ({request}) => {
-		const res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "matrix"}});
-		expect(res.status()).toBe(400);
-		expect((await res.json()).error).toContain("マトリクス型");
-		expect((await statusOf(request)).layout).toBe("timeline");
+	test("十字型に切り替えると、区画の見出し・十字の線・中心の概要カードを置き、資料を区画に並べる", async ({request}) => {
+		const tagged = await upload(request, `型-基本設計${STAMP}.pdf`, PDF);
+		await request.put(`api/documents/${tagged.id}/tags`, {headers: rw, data: {tags: ["工程:基本設計"]}});
+		const plan = await upload(request, `型-計画書${STAMP}.pdf`, PDF);
+		for (const d of [tagged, plan]) await request.put(`api/projects/${projectId}/documents/${d.id}`, {headers: rw, data: {folderId: null}});
+		await waitFor(request, projectId, (s) => itemOf(s, plan.id)?.state === "placed" && itemOf(s, tagged.id)?.state === "placed");
+		const res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "quadrant-cross"}});
+		expect(res.status()).toBe(200);
+		expect(await res.json()).toMatchObject({moved: 4, layout: "quadrant-cross", previousLayout: "timeline"});
+		const items = await boardItems(request);
+		const texts = items.filter((i) => i.type === "text").map((i) => i.data.content);
+		for (const title of ["左上: 要件定義〜設計", "右上: 管理系", "左下: テスト〜リリース", "右下: 会議", "未分類"]) {
+			expect(texts.some((t) => t.includes(title)), title).toBe(true);
+		}
+		expect(texts.some((t) => t.includes(`型${STAMP} / 資料 4 件`))).toBe(true);
+		expect(items.filter((i) => i.type === "shape").length).toBeGreaterThanOrEqual(2);
+		// 計画書は右上(管理)、基本設計書は左上、名前から分からない資料は枠の下の未分類
+		const designDoc = file(items, `型-基本設計${STAMP}.pdf`);
+		const planDoc = file(items, `型-計画書${STAMP}.pdf`);
+		const loose = file(items, `型-a${STAMP}.pdf`);
+		expect(planDoc.position.x).toBeGreaterThan(designDoc.position.x);
+		expect(loose.position.y).toBeGreaterThan(designDoc.position.y);
+		expect(caption(items, `型-計画書${STAMP}.pdf`).style).toMatchObject({fillColor: "#f1efe8"});
+		expect((await statusOf(request)).layout).toBe("quadrant-cross");
 	});
 });

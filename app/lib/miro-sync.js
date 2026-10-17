@@ -39,6 +39,7 @@ const Projects = require("./projects.js");
 const ProjectManifest = require("./project-manifest.js");
 const DocumentAliases = require("./document-aliases.js");
 const MiroLayout = require("./miro-layout.js");
+const MiroLayoutPlan = require("./miro-layout-plan.js");
 
 // ---- 並べ方(単位は Miro のボード上の長さ) ----
 const LAYOUT = Object.freeze({
@@ -251,6 +252,9 @@ const deleteHeaders = async (link, board) => {
 	if (ids.length > 0 && link?.project_id) await ds.run(SQL_SET_HEADERS, {project_id: link.project_id, header_ids: "[]"});
 };
 
+/** 見出しの文字・図形にリンクを付ける(http・https だけ) */
+const linked = (html, link) => (typeof link === "string" && /^https?:\/\//.test(link) ? `<a href="${escapeHtml(link)}">${html}</a>` : html);
+
 /**
  * Document Manager が置く見出しの文字・図形を置き、ID と中身を覚える(次に置き直すときに片付けるため、
  * 「元の型に戻す」で同じものを置き直すため)。keep のときは前に置いたものを残して足す。
@@ -278,7 +282,7 @@ const drawDecorations = async (projectId, link, board, frameId, {labels = [], sh
 	const createdShapes = [];
 	await forEachConcurrently(shapes, CONCURRENCY, async (shape) => {
 		const created = await MiroConnection.withToken((token) => Miro.createShape(token, board, {
-			shape: shape.shape, content: shape.text ? `<p>${escapeHtml(shape.text)}</p>` : "",
+			shape: shape.shape, content: shape.text ? `<p>${linked(escapeHtml(shape.text), shape.link)}</p>` : "",
 			x: shape.x, y: shape.y, width: shape.width, height: shape.height, parentId: frameId,
 			style: Object.fromEntries(Object.entries({
 				fillColor: shape.fillColor, fillOpacity: shape.fillOpacity == null ? null : String(shape.fillOpacity),
@@ -289,7 +293,7 @@ const drawDecorations = async (projectId, link, board, frameId, {labels = [], sh
 	});
 	const createdLabels = [];
 	await forEachConcurrently(labels, CONCURRENCY, async (label) => {
-		const body = label.bold ? `<strong>${escapeHtml(label.text)}</strong>` : escapeHtml(label.text);
+		const body = linked(label.bold ? `<strong>${escapeHtml(label.text)}</strong>` : escapeHtml(label.text), label.link);
 		const created = await MiroConnection.withToken((token) => Miro.createText(token, board, {
 			content: `<p>${body}</p>`, x: label.x, y: label.y, width: label.width, parentId: frameId,
 			style: Object.fromEntries(Object.entries({
@@ -882,10 +886,37 @@ const planFolderSections = async (projectId, rows) => {
 	return {items, labels, shapes: [], frame: {width: frameWidth(), height: Math.max(cursorY - LAYOUT.gapY + LAYOUT.padding, 600)}};
 };
 
-// 型ごとの並べ方。まだ無い型は、並べ直しでは選べない(報告は出せる)
-const PLANNERS = Object.freeze({
-	"folder-columns": planFolderSections
-});
+/**
+ * 型どおりの並べ方(lib/miro-layout-plan.js)。ボードに出ている資料だけを並べる(出せない形式の資料で穴が空かないように)。
+ * 見出しの色も型どおりに塗り直す(色の無い区画は外す)。
+ */
+const planWithLayout = (layout) => async (projectId, rows) => {
+	const input = await MiroLayout.loadInput(projectId);
+	const target = await MiroConnection.target();
+	const rowOf = new Map();
+	const documents = [];
+	for (const doc of input.documents) {
+		const alias = await DocumentAliases.aliasOf(doc.documentId);
+		const row = alias == null ? null : rows.get(alias);
+		if (row == null) continue;
+		rowOf.set(doc.documentId, row);
+		documents.push(doc);
+	}
+	const sizes = new Map([...rowOf].map(([id, row]) => [id, {width: Number(row.width) || LAYOUT.itemWidth, height: Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect}]));
+	const base = target?.publicBaseUrl ? String(target.publicBaseUrl).replace(/\/+$/, "") : null;
+	const plan = MiroLayoutPlan.buildPlan(layout, {...input, documents}, {
+		geometry: LAYOUT, sizes, projectUrl: base ? `${base}/?project=${encodeURIComponent(projectId)}` : null
+	});
+	return {
+		items: plan.items.map((item) => ({row: rowOf.get(item.documentId), x: item.x, y: item.y, color: item.color})),
+		labels: plan.labels,
+		shapes: plan.shapes,
+		frame: plan.frame
+	};
+};
+
+// 型ごとの並べ方
+const PLANNERS = Object.freeze(Object.fromEntries(MiroLayout.LAYOUT_IDS.map((id) => [id, planWithLayout(id)])));
 module.exports.arrangeableLayouts = () => Object.keys(PLANNERS);
 
 const layoutOf = (link) => (MiroLayout.LAYOUT_IDS.includes(link?.layout) ? link.layout : MiroLayout.DEFAULT_LAYOUT);
@@ -943,11 +974,12 @@ const executePlan = async (projectId, link, board, plan, user, {grow = false, ke
 		right = Math.max(right, shape.x + shape.width / 2);
 		bottom = Math.max(bottom, shape.y + shape.height / 2);
 	}
-	const frame = await resizeFrame(projectId, link, board, {
+	const wanted = {
 		width: Math.max(plan.frame?.width ?? (grow ? 0 : Number(link.frame_width) || frameWidth()), right + LAYOUT.padding),
-		height: Math.max(plan.frame?.height ?? (grow ? 0 : 600), bottom + LAYOUT.padding),
-		grow
-	});
+		height: Math.max(plan.frame?.height ?? (grow ? 0 : 600), bottom + LAYOUT.padding)
+	};
+	// 縮めるのは最後(先に縮めると、まだ動かしていない資料が枠の外に出てしまい、Miro が断る)
+	let frame = await resizeFrame(projectId, link, board, {...wanted, grow: true});
 	const drawn = await drawDecorations(projectId, link, board, link.frame_id, plan, {keep: keepDecorations});
 
 	// 資料を動かす(見出しも一緒に)。色の指定があれば見出しの背景を塗る
@@ -977,6 +1009,14 @@ const executePlan = async (projectId, link, board, plan, user, {grow = false, ke
 	const layoutPlan = {...parseJson(link.layout_plan, {}), colors};
 	await ds.run(SQL_SET_LAYOUT_PLAN, {project_id: projectId, layout_plan: JSON.stringify(layoutPlan)});
 	link.layout_plan = JSON.stringify(layoutPlan);
+	if (!grow && (frame.width > Math.ceil(wanted.width) || frame.height > Math.ceil(wanted.height))) {
+		// 人が枠の中に置いた付箋などがはみ出すときは縮められない。そのときは広いまま残す
+		frame = await resizeFrame(projectId, link, board, wanted).catch((err) => {
+			if (err.name !== "MiroError" || err.status !== 400) throw err;
+			logger.info({projectId, err: err.message}, "枠の中に人が置いたものがあるため、枠を縮めずに残しました");
+			return frame;
+		});
+	}
 	return {moved, labels: drawn.labels, shapes: drawn.shapes, frame};
 };
 
@@ -1099,6 +1139,11 @@ const normalizeLayout = (layout) => {
 		if (s.length === 0 || s.length > LAYOUT_LIMITS.textLength) errors.push(`${label} は 1〜${LAYOUT_LIMITS.textLength} 文字です`);
 		return s;
 	};
+	const url = (value, label) => {
+		const s = String(value);
+		if (!/^https?:\/\/\S+$/.test(s) || s.length > 2000) errors.push(`${label} は http:// か https:// で始まる URL です`);
+		return s;
+	};
 	const list = (value, key) => {
 		if (value == null) return [];
 		if (!Array.isArray(value)) {
@@ -1129,7 +1174,8 @@ const normalizeLayout = (layout) => {
 		color: color(label?.color, `labels[${i}].color`),
 		fillColor: color(label?.fillColor, `labels[${i}].fillColor`),
 		bold: label?.bold !== false,
-		align: ["left", "center", "right"].includes(label?.align) ? label.align : "left"
+		align: ["left", "center", "right"].includes(label?.align) ? label.align : "left",
+		...(label?.link == null ? {} : {link: url(label.link, `labels[${i}].link`)})
 	}));
 	const shapes = list(layout?.shapes, "shapes").map((shape, i) => {
 		const kind = shape?.shape ?? "rectangle";
@@ -1139,13 +1185,16 @@ const normalizeLayout = (layout) => {
 			text: shape?.text == null ? "" : String(shape.text).slice(0, LAYOUT_LIMITS.textLength),
 			x: number(shape?.x, `shapes[${i}].x`),
 			y: number(shape?.y, `shapes[${i}].y`),
-			width: number(shape?.width, `shapes[${i}].width`, {min: 1, max: 100000}),
-			height: number(shape?.height, `shapes[${i}].height`, {min: 1, max: 100000}),
+			// Miro の図形は幅・高さとも 8 以上
+			width: number(shape?.width, `shapes[${i}].width`, {min: 8, max: 100000}),
+			height: number(shape?.height, `shapes[${i}].height`, {min: 8, max: 100000}),
 			fillColor: color(shape?.fillColor, `shapes[${i}].fillColor`),
 			fillOpacity: shape?.fillOpacity == null ? null : number(shape.fillOpacity, `shapes[${i}].fillOpacity`, {min: 0, max: 1}),
 			borderColor: color(shape?.borderColor, `shapes[${i}].borderColor`),
-			borderWidth: shape?.borderWidth == null ? null : number(shape.borderWidth, `shapes[${i}].borderWidth`, {min: 0, max: 24}),
-			borderStyle: ["normal", "dotted", "dashed"].includes(shape?.borderStyle) ? shape.borderStyle : null
+			// 枠線の太さに 0 は指定できない(省けば枠線は見えない)
+			borderWidth: shape?.borderWidth == null ? null : number(shape.borderWidth, `shapes[${i}].borderWidth`, {min: 1, max: 24}),
+			borderStyle: ["normal", "dotted", "dashed"].includes(shape?.borderStyle) ? shape.borderStyle : null,
+			...(shape?.link == null ? {} : {link: url(shape.link, `shapes[${i}].link`)})
 		};
 	});
 	const frame = layout?.frame == null ? null : {

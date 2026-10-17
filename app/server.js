@@ -4300,6 +4300,11 @@ app.post(BASE_URL_PATH + 'api/projects/:id/miro/layout', requireAuth, requireWri
 			res.status(409).json({error: err.message, needsReconnect: true});
 			return;
 		}
+		// Miro が断った(指示の誤りではないので 400 にしない)
+		if (err.name === "MiroError") {
+			res.status(502).json({error: `${err.message}`});
+			return;
+		}
 		if ([400, 404, 409].includes(err.status)) {
 			res.status(err.status).json({error: err.message, ...(err.details ? {details: err.details} : {})});
 			return;
@@ -4322,6 +4327,11 @@ app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange', requireAuth, requireWr
 			res.status(409).json({error: err.message, needsReconnect: true});
 			return;
 		}
+		// Miro が断った(指示の誤りではないので 400 にしない)
+		if (err.name === "MiroError") {
+			res.status(502).json({error: `${err.message}(途中まで動いた配置は「元の型に戻す」で戻せます)`});
+			return;
+		}
 		if ([400, 404, 409].includes(err.status)) {
 			res.status(err.status).json({error: err.message});
 			return;
@@ -4339,6 +4349,11 @@ app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange/undo', requireAuth, requ
 	} catch (err) {
 		if (err.needsReconnect) {
 			res.status(409).json({error: err.message, needsReconnect: true});
+			return;
+		}
+		// Miro が断った(指示の誤りではないので 400 にしない)
+		if (err.name === "MiroError") {
+			res.status(502).json({error: `${err.message}`});
 			return;
 		}
 		if ([400, 404, 409].includes(err.status)) {
