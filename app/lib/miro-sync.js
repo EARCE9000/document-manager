@@ -700,13 +700,15 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 		const colors = {...(parseJson(link.layout_plan, {}).colors ?? {})};
 		let colorsChanged = false;
 		for (const entry of plan) {
+			if (entry.color === undefined) continue;
 			if (entry.color) colors[entry.doc.alias] = entry.color;
 			else delete colors[entry.doc.alias];
 			colorsChanged = true;
 		}
 		for (const row of placedNow.values()) {
 			const planned = plannedOf.get(row.alias);
-			if (planned == null || (colors[row.alias] ?? null) === (planned.color ?? null) || row.caption_id == null) continue;
+			// 色を決めない型(ユーザーカスタム)は、見出しの色に触らない(指示して塗った色を残す)
+			if (planned == null || planned.color === undefined || (colors[row.alias] ?? null) === (planned.color ?? null) || row.caption_id == null) continue;
 			await call((token) => Miro.updateText(token, board, row.caption_id, {
 				style: planned.color ? {fillColor: planned.color, fillOpacity: "1"} : {fillOpacity: "0"}
 			})).catch((err) => {
@@ -1049,10 +1051,12 @@ const planWithLayout = (layout) => async (projectId, rows, {added = [], incremen
 			: {width: fresh.width, height: fresh.height});
 		documents.push(doc);
 	}
-	// 連動で足すときは、前に置いた位置(Document Manager が置いた位置)の並びを崩さない
-	const previous = incremental ? new Map([...rowOf].flatMap(([id, row]) => {
-		const x = row.placed_x ?? row.x;
-		const y = row.placed_y ?? row.y;
+	// 連動で足すときは、前に置いた位置(Document Manager が置いた位置)の並びを崩さない。
+	// ユーザーカスタムは置き場所を指示する側が決めるので、並べ直し(切り替え)でも今の位置のまま
+	const previous = incremental || layout === "custom" ? new Map([...rowOf].flatMap(([id, row]) => {
+		// ユーザーカスタムは、人が動かした資料も含めて今の位置のまま(ほかの型は、型どおりの並びを決めるため置いた位置)
+		const x = layout === "custom" ? row.x ?? row.placed_x : row.placed_x ?? row.x;
+		const y = layout === "custom" ? row.y ?? row.placed_y : row.placed_y ?? row.y;
 		return x == null || y == null ? [] : [[id, {x: Number(x), y: Number(y)}]];
 	})) : null;
 	const base = target?.publicBaseUrl ? String(target.publicBaseUrl).replace(/\/+$/, "") : null;
@@ -1400,9 +1404,12 @@ module.exports.arrange = async (projectId, user, {layout} = {}) => {
 	try {
 		const board = target.boardId;
 		const rows = await placedRows(projectId);
-		const plan = await PLANNERS[nextLayout](projectId, rows);
 		await ds.run(SQL_SET_LAYOUT_UNDO, {project_id: projectId, layout_undo: JSON.stringify(await snapshotOf(link, board, rows))});
-		const result = await executePlan(projectId, link, board, plan, user);
+		// ユーザーカスタムに切り替えるときは、資料は動かさない(型の見出し・線を片付けるだけ。枠も縮めない)。
+		// 置き場所は指示する側が決める(miro-map で見て miro-move・miro-layout で置く)
+		const result = nextLayout === "custom"
+			? await executePlan(projectId, link, board, {items: [], labels: [], shapes: [], frame: null}, user, {grow: true})
+			: await executePlan(projectId, link, board, await PLANNERS[nextLayout](projectId, rows), user);
 		await ds.run(SQL_SET_LAYOUT, {project_id: projectId, layout: nextLayout});
 		logger.info({audit: "miro_project_arranged", user, projectId, layout: nextLayout, previousLayout, moved: result.moved}, "audit");
 		return {moved: result.moved, layout: nextLayout, previousLayout, frame: result.frame};

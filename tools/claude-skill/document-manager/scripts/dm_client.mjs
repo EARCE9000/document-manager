@@ -39,7 +39,7 @@
  *   node dm_client.mjs miro-layout <プロジェクト> <JSONファイル|->  (位置・色・見出し・図形をまとめて当てる)
  *   node dm_client.mjs miro-arrange <プロジェクト> [--layout <型>] [--check] [--yes] / miro-arrange-undo <プロジェクト>
  *   node dm_client.mjs miro-layout-report <プロジェクト> [--layout <型>] / miro-map <プロジェクト>
- *     型: folder-columns / timeline / split-shelves / quadrant-cross / matrix
+ *     レイアウト: folder-columns / timeline / split-shelves / quadrant-cross / matrix / custom(ユーザーカスタム)
  *       プロジェクトの資料を Miro のボードへ並べる(連携とボードの設定は管理者が画面で行う)
  *   node dm_client.mjs folder-create <プロジェクト> <名前> [--parent 親フォルダ]
  *   node dm_client.mjs place <プロジェクト> <文書ID> [--folder フォルダ] / unplace <プロジェクト> <文書ID>
@@ -541,7 +541,7 @@ const MIRO_WAIT_MS = 600 * 1000;
 const miroPath = (projectId, rest = "") => `api/projects/${encodeURIComponent(projectId)}/miro${rest}`;
 const miroStatus = (projectId) => request("GET", miroPath(projectId));
 // Miro に並べる型(docs/miro-layouts/layout-spec.md)
-const MIRO_LAYOUTS = Object.freeze(["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]);
+const MIRO_LAYOUTS = Object.freeze(["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]);
 const miroLayoutOf = (opts) => {
 	if (opts.layout == null) return undefined;
 	if (!MIRO_LAYOUTS.includes(opts.layout)) throw new DmError(`--layout は ${MIRO_LAYOUTS.join(" / ")} のどれかです`);

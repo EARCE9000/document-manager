@@ -21,14 +21,16 @@
 
 const path = require("path");
 
-const LAYOUT_IDS = Object.freeze(["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]);
+// custom はユーザーカスタム: AI に指示を出しながら自由に配置する。Document Manager は資料を型どおりに寄せず、見出し・線も置かない
+const LAYOUT_IDS = Object.freeze(["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]);
 const DEFAULT_LAYOUT = "folder-columns";
 const LAYOUT_NAMES = Object.freeze({
 	"folder-columns": "フォルダ列型",
 	"timeline": "時系列型",
 	"split-shelves": "左右分割・棚型",
 	"quadrant-cross": "十字型",
-	"matrix": "マトリクス型"
+	"matrix": "マトリクス型",
+	"custom": "ユーザーカスタム"
 });
 module.exports.LAYOUT_IDS = LAYOUT_IDS;
 module.exports.DEFAULT_LAYOUT = DEFAULT_LAYOUT;
@@ -424,7 +426,11 @@ module.exports.buildReport = (layout, input, {previous = null} = {}) => {
 	};
 	let areaOrder = [];
 
-	if (layout === "folder-columns") {
+	if (layout === "custom") {
+		// 区画は無い(置き場所は指示する側が決める)
+		areaOrder = ["custom"];
+		for (const entry of classified) place(entry, "custom", null, {basis: "custom"});
+	} else if (layout === "folder-columns") {
 		const columns = new Map();
 		for (const entry of classified) {
 			const top = entry.doc.topFolder;

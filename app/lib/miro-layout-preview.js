@@ -69,6 +69,15 @@ const toSvg = (plan) => {
 	for (const s of plan.shapes) {
 		const dash = s.borderStyle === "dashed" ? ' stroke-dasharray="24 14"' : "";
 		const stroke = s.borderColor ? ` stroke="${escapeXml(s.borderColor)}" stroke-width="${(s.borderWidth ?? 1) * 3}"${dash}` : "";
+		if (s.shape === "right_arrow") {
+			const l = s.x - s.width / 2;
+			const r = s.x + s.width / 2;
+			const t = s.y - s.height / 2;
+			const b = s.y + s.height / 2;
+			const head = r - s.height * 0.6;
+			parts.push(`<polygon points="${l},${t + s.height * 0.25} ${head},${t + s.height * 0.25} ${head},${t} ${r},${s.y} ${head},${b} ${head},${b - s.height * 0.25} ${l},${b - s.height * 0.25}" fill="${escapeXml(s.fillColor ?? "#94a3b8")}"/>`);
+			continue;
+		}
 		parts.push(`<rect x="${s.x - s.width / 2}" y="${s.y - s.height / 2}" width="${s.width}" height="${s.height}" rx="${s.shape === "round_rectangle" ? 24 : 0}" fill="${escapeXml(s.fillColor ?? "none")}" fill-opacity="${s.fillOpacity ?? 1}"${stroke}/>`);
 		if (s.text) parts.push(`<text x="${s.x}" y="${s.y + 18}" font-size="56" text-anchor="middle" fill="#475569">${escapeXml(s.text)}</text>`);
 	}
@@ -90,6 +99,33 @@ const toSvg = (plan) => {
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 ${width + 40} ${height + 40}" font-family="sans-serif">${parts.join("")}</svg>`;
 };
 
+/**
+ * ユーザーカスタムの見本(型どおりの並びが無いので、手で組む)。AI に指示して置いた資料・囲み・矢印・見出しの例
+ */
+const customSample = () => {
+	const C = MiroLayoutPlan.COLORS;
+	const label = (text, x, y, width, extra = {}) => ({text, x, y, width, fontSize: null, color: null, fillColor: null, bold: true, align: "left", ...extra});
+	const shape = (extra) => ({shape: "rectangle", text: "", fillColor: null, fillOpacity: null, borderColor: null, borderWidth: null, borderStyle: null, ...extra});
+	return {
+		frame: {width: 2400, height: 2000},
+		items: [
+			{x: 340, y: 520, color: C.purple}, {x: 760, y: 520, color: C.purple},
+			{x: 1500, y: 640, color: C.pink}, {x: 1980, y: 820, color: null},
+			{x: 520, y: 1480, color: C.gray}, {x: 1300, y: 1500, color: C.green}
+		].map((item, i) => ({documentId: `custom-${i}`, ...item})),
+		labels: [
+			label("AI に指示して自由に配置", 1200, 110, 2200, {fontSize: 60, color: "#1e3a8a", align: "center"}),
+			label("まとめ", 300, 200, 400, {fontSize: 40, color: "#b91c1c"}),
+			label("「設計の横に置いて」など", 1960, 1260, 700, {fontSize: 40, color: "#475569"})
+		],
+		shapes: [
+			shape({x: 550, y: 560, width: 940, height: 640, fillOpacity: 0, borderColor: "#dc2626", borderWidth: 3, borderStyle: "dashed"}),
+			shape({shape: "right_arrow", x: 1130, y: 600, width: 180, height: 90, fillColor: "#94a3b8"})
+		],
+		areas: []
+	};
+};
+
 const cache = new Map();
 /**
  * 型の見本の図(SVG の文字列)
@@ -98,7 +134,7 @@ const cache = new Map();
 module.exports.previewSvg = (layout) => {
 	if (!MiroLayout.LAYOUT_IDS.includes(layout)) return null;
 	if (!cache.has(layout)) {
-		const plan = MiroLayoutPlan.buildPlan(layout, {project: {id: "sample", name: "見本のプロジェクト"}, documents: sampleDocuments(), featureOrder: []},
+		const plan = layout === "custom" ? customSample() : MiroLayoutPlan.buildPlan(layout, {project: {id: "sample", name: "見本のプロジェクト"}, documents: sampleDocuments(), featureOrder: []},
 			{geometry: GEOMETRY});
 		cache.set(layout, toSvg(plan));
 	}

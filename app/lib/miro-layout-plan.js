@@ -126,7 +126,37 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 	let width = 0;
 	let height = 0;
 
-	if (layout === "folder-columns") {
+	if (layout === "custom") {
+		// ユーザーカスタム: 前に置いた資料はその場所のまま(Document Manager は動かさない)。
+		// 新しい資料は、いまある資料の下に 6 枚ずつ並べて足す(置き場所は AI に指示して決めてもらう)。見出しの色は変えない
+		const columns = 6;
+		let right = G.padding;
+		let bottom = G.padding;
+		const fresh = [];
+		for (const p of report.placements) {
+			const before = previous?.get(p.documentId);
+			if (before == null) {
+				fresh.push(p.documentId);
+				continue;
+			}
+			items.push({documentId: p.documentId, x: before.x, y: before.y, color: undefined});
+			placedIds.add(p.documentId);
+			right = Math.max(right, before.x + W / 2);
+			bottom = Math.max(bottom, before.y + heightOf(p.documentId) / 2 + G.captionHeight + G.gapY);
+		}
+		let y = previous != null && placedIds.size > 0 ? bottom : G.padding;
+		for (let i = 0; i < fresh.length; i += columns) {
+			const row = fresh.slice(i, i + columns);
+			row.forEach((id, index) => {
+				items.push({documentId: id, x: G.padding + index * cw + W / 2, y: y + heightOf(id) / 2, color: undefined});
+				placedIds.add(id);
+			});
+			right = Math.max(right, G.padding + row.length * cw - G.gapX);
+			y += lineHeight(row);
+		}
+		width = Math.max(right + G.padding, G.padding * 2 + columns * cw - G.gapX);
+		height = Math.max(Math.max(y, bottom) - G.gapY + G.padding, 600);
+	} else if (layout === "folder-columns") {
 		const colWidth = 2 * W + G.gapX;
 		const colGap = 120;
 		const columns = [];

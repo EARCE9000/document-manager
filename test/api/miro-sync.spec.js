@@ -875,3 +875,70 @@ test.describe.serial("Miro のボードの地図", () => {
 		expect((await request.get(`api/projects/${other}/miro/map`, {headers: ro})).status()).toBe(409);
 	});
 });
+
+// ユーザーカスタム: AI に指示して自由に配置する。Document Manager は資料を動かさず、型の見出しも置かない
+test.describe.serial("ユーザーカスタムのレイアウト", () => {
+	let projectId;
+	const file = (items, title) => items.find((i) => (i.type === "document" || i.type === "image") && i.data?.title === title);
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `自由${STAMP}`}})).json()).id;
+		await request.post(`api/projects/${projectId}/unlock`, {headers: rw});
+		for (const name of ["a", "b"]) {
+			const doc = await upload(request, `自由-${name}${STAMP}.pdf`, PDF);
+			await request.put(`api/documents/${doc.id}/tags`, {headers: rw, data: {tags: ["区分:管理"]}});
+			await request.put(`api/projects/${projectId}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
+		}
+		await request.post(`api/projects/${projectId}/miro`, {headers: rw, data: {layout: "quadrant-cross"}});
+		await settled(request, projectId);
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("切り替えても資料は動かず型の見出しが片付く。足した資料は下に置き、AI が置いた位置・色は連動で変えない", async ({request}) => {
+		// AI が場所と色を指示して置いた
+		const status0 = await (await request.get(`api/projects/${projectId}/miro`, {headers: rw})).json();
+		const docA = status0.items.find((i) => i.title === `自由-a${STAMP}.pdf`).documentId;
+		await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {items: [{documentId: docA, x: 2600, y: 900, color: "#fde68a"}]}});
+		const before = await boardItems(request);
+		// 裏の反映(資料やタグを足した通知から少しまとめて動く)と重なると 409 になるので、終わるまで待ってやり直す
+		let res;
+		await expect.poll(async () => {
+			res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "custom"}});
+			if (res.status() === 409) console.log("arrange 409:", (await res.json()).error);
+			return res.status();
+		}, {timeout: 15000, intervals: [500]}).toBe(200);
+		let items = await boardItems(request);
+		for (const name of ["a", "b"]) expect(file(items, `自由-${name}${STAMP}.pdf`).position).toMatchObject(file(before, `自由-${name}${STAMP}.pdf`).position);
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("右上: 管理系"))).toBe(false);
+		// 資料を足す: 今ある資料の下に置き、ほかは動かさない。色も変えない
+		const added = await upload(request, `自由-c${STAMP}.pdf`, PDF);
+		await request.put(`api/projects/${projectId}/documents/${added.id}`, {headers: rw, data: {folderId: null}});
+		await waitFor(request, projectId, (s) => itemOf(s, added.id)?.state === "placed");
+		items = await boardItems(request);
+		expect(file(items, `自由-a${STAMP}.pdf`).position).toMatchObject({x: 2600, y: 900});
+		const caption = items.find((i) => i.type === "text" && i.data.content.includes(`自由-a${STAMP}.pdf`));
+		expect(caption.style).toMatchObject({fillColor: "#fde68a"});
+		const others = ["a", "b"].map((n) => file(items, `自由-${n}${STAMP}.pdf`));
+		const newcomer = file(items, `自由-c${STAMP}.pdf`);
+		expect(newcomer.position.y).toBeGreaterThan(Math.max(...others.map((o) => o.position.y)));
+		const map = await (await request.get(`api/projects/${projectId}/miro/map`, {headers: ro})).json();
+		expect(map.layout).toBe("custom");
+		expect(map.decorations.layout).toEqual([]);
+	});
+
+	test("見本の図と報告もユーザーカスタムに対応する", async ({request}) => {
+		const svg = await request.get("api/miro/layout-preview/custom", {headers: ro});
+		expect(svg.status()).toBe(200);
+		expect(await svg.text()).toContain("AI に指示して自由に配置");
+		const report = await (await request.get(`api/projects/${projectId}/miro/layout-report?layout=custom`, {headers: ro})).json();
+		expect(report).toMatchObject({layout: "custom", layoutName: "ユーザーカスタム"});
+		expect(report.summary.unclassified).toBe(0);
+	});
+});

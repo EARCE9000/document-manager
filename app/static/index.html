@@ -410,17 +410,14 @@
 	.adminStatus.bad { background: #fdecea; color: #c0392b; }
 	/* Miro 連携: 許可の画面から戻ってきたときの結果 */
 	/* プロジェクトの Miro 連動 */
-	/* 画面全体を使う(FHD のブラウザが前提)。左に状態と操作・並べ方の型、右に資料の一覧(ここだけスクロール) */
+	/* 画面全体を使う(FHD のブラウザが前提)。レイアウトは見本の図を 3 列 × 2 行で大きく見せて選ぶ */
 	#miroProjectModalBox { position: fixed; inset: 16px; width: auto; max-width: none; max-height: none; padding: 16px 24px 20px;
 		display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; }
 	#miroProjectHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 	#miroProjectHeader p#miroProjectTitle { margin: 0; font-size: 1.15em; font-weight: bold; }
 	#miroProjectModalBox > .docMeta { margin: 6px 0 12px; }
-	#miroProjectBody { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 24px; min-height: 0; }
 	#miroProjectMain { overflow: auto; min-height: 0; padding-right: 4px; }
-	#miroProjectSide { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid #eee; padding-left: 24px; }
 	.miroSectionTitle { font-weight: bold; margin: 16px 0 8px; font-size: 0.95em; color: #24292f; }
-	#miroProjectSide .miroSectionTitle { margin-top: 0; }
 	#miroProjectStatus { margin: 0 0 8px; line-height: 1.7; }
 	#miroProjectActions { gap: 8px; margin: 0; flex-wrap: wrap; }
 	#miroProjectActions a.modalButton { text-decoration: none; }
@@ -428,30 +425,17 @@
 	#miroProjectLayout { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; }
 	#miroProjectLayout .layoutCurrent { font-weight: bold; }
 	#miroProjectLayout .layoutNote { color: #666; font-size: 12px; flex-basis: 100%; }
-	/* 型の選択: 見本の図のタイルを並べ、押して選ぶ */
-	#miroLayoutTiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin: 0 0 12px; }
+	#miroLayoutTiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0 0 14px; }
 	#miroLayoutTiles:empty { display: none; }
-	.miroLayoutTile { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 8px; cursor: pointer; background: #fff; }
+	.miroLayoutTile { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 10px; border: 2px solid #e5e7eb; border-radius: 10px; cursor: pointer; background: #fff; }
 	.miroLayoutTile:hover { border-color: #93c5fd; }
 	.miroLayoutTile.selected { border-color: #2563eb; background: #eff6ff; }
-	.miroLayoutTile.current .miroLayoutTileName::after { content: "(いまの型)"; color: #2563eb; font-weight: normal; font-size: 0.85em; margin-left: 4px; }
+	.miroLayoutTile.current .miroLayoutTileName::after { content: "(いまのレイアウト)"; color: #2563eb; font-weight: normal; font-size: 0.85em; margin-left: 4px; }
 	.miroLayoutTile input { position: absolute; opacity: 0; pointer-events: none; }
-	.miroLayoutTile img { width: 100%; height: 200px; object-fit: contain; background: #f8fafc; border-radius: 4px; }
-	.miroLayoutTileName { font-size: 0.9em; font-weight: bold; text-align: center; }
-	#miroProjectItemsWrap { overflow: auto; flex: 1; min-height: 0; border-top: 1px solid #eee; }
-	@media (max-width: 1000px) {
-		#miroProjectBody { grid-template-columns: minmax(0, 1fr); overflow: auto; }
-		#miroProjectMain { overflow: visible; }
-		#miroProjectSide { border-left: none; padding-left: 0; min-height: 400px; }
-	}
-	.miroItemTable { width: 100%; border-collapse: collapse; font-size: 0.88em; }
-	.miroItemTable th, .miroItemTable td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
-	.miroItemTable td.reason { color: #666; }
-	.miroState { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.85em; white-space: nowrap; }
-	.miroState.placed { background: #e6f4ea; color: #1e7e34; }
-	.miroState.skipped, .miroState.excluded, .miroState.detached { background: #eee; color: #555; }
-	.miroState.failed, .miroState.removed { background: #fdecea; color: #c0392b; }
-	.miroItemTable button { font-size: 0.85em; padding: 2px 10px; }
+	.miroLayoutTile img { width: 100%; height: clamp(160px, 26vh, 300px); object-fit: contain; background: #f8fafc; border-radius: 6px; }
+	.miroLayoutTileName { font-size: 0.95em; font-weight: bold; text-align: center; }
+	.miroLayoutTileNote { font-size: 0.8em; color: #666; text-align: center; line-height: 1.4; }
+	@media (max-width: 1000px) { #miroLayoutTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 	.miroFlash { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px; max-width: 900px; }
 	.miroFlash.ok { background: #e6f4ea; color: #1e7e34; }
 	.miroFlash.bad { background: #fdecea; color: #c0392b; }
@@ -2225,20 +2209,14 @@
 			<p id="miroProjectTitle">Miro と連動</p>
 			<button id="miroProjectCloseButton" type="button" class="modalButton">閉じる</button>
 		</div>
-		<div class="docMeta">このプロジェクトの資料を、Miro のボードの枠に、選んだ並べ方の型どおりに並べます。連動しているあいだ、新しい版はボード上の同じ場所で差し替わり、増えた資料は型どおりの場所に足されます(人が Miro で動かした資料は動かしません。Miro に出すのは写しで、正本は Document Manager のままです)。</div>
-		<div id="miroProjectBody">
-			<div id="miroProjectMain">
-				<div id="miroProjectStatus"></div>
-				<div id="miroProjectActions" class="toolbarRow"></div>
-				<div id="miroProjectLayoutSection">
-					<div class="miroSectionTitle">並べ方の型</div>
-					<div id="miroLayoutTiles" role="radiogroup" aria-label="並べ方の型"></div>
-					<div id="miroProjectLayout"></div>
-				</div>
-			</div>
-			<div id="miroProjectSide">
-				<div class="miroSectionTitle">資料ごとの状態</div>
-				<div id="miroProjectItemsWrap"></div>
+		<div class="docMeta">このプロジェクトの資料を、Miro のボードの枠に、選んだレイアウトで並べます。連動しているあいだ、新しい版はボード上の同じ場所で差し替わり、増えた資料はレイアウトどおりの場所に足されます(人が Miro で動かした資料は動かしません。Miro に出すのは写しで、正本は Document Manager のままです)。</div>
+		<div id="miroProjectMain">
+			<div id="miroProjectStatus"></div>
+			<div id="miroProjectActions" class="toolbarRow"></div>
+			<div id="miroProjectLayoutSection">
+				<div class="miroSectionTitle">レイアウト</div>
+				<div id="miroLayoutTiles" role="radiogroup" aria-label="レイアウト"></div>
+				<div id="miroProjectLayout"></div>
 			</div>
 		</div>
 	</div>
@@ -6554,33 +6532,24 @@ const projectMiroButton = document.getElementById("projectMiroButton");
 const miroProjectOverlay = document.getElementById("miroProjectOverlay");
 const miroProjectStatus = document.getElementById("miroProjectStatus");
 const miroProjectActions = document.getElementById("miroProjectActions");
-const miroProjectItemsWrap = document.getElementById("miroProjectItemsWrap");
 let miroProjectTimer = null;
 let miroProjectId = null;
 
-const MIRO_STATE_LABELS = {
-	placed: "出ている",
-	skipped: "出せない",
-	failed: "失敗",
-	excluded: "出さない",
-	removed: "Miro で消された",
-	detached: "外れた"
-};
-
 const miroCanEdit = () => !appShell.classList.contains("readOnlyMode");
 
-// 並べ方の型(docs/miro-layouts/layout-spec.md)
+// レイアウト(docs/miro-layouts/layout-spec.md)。ユーザーカスタムは、AI に指示を出しながら自由に配置するモード
 const MIRO_LAYOUTS = [
-	{id: "folder-columns", name: "フォルダ列型", note: "一番上のフォルダごとに 1 列。タグは使いません"},
-	{id: "timeline", name: "時系列型", note: "1 か月 = 1 行。題名・ファイル名の日付(無ければ初版の登録日)で並べます"},
-	{id: "split-shelves", name: "左右分割・棚型", note: "左に管理、右に段階(準備 → 実施 → 実施後)の棚。タグ 区分: 段階: 会議: を使います"},
-	{id: "quadrant-cross", name: "十字型", note: "左上 要件定義〜設計、左下 テスト〜リリース、右上 管理、右下 会議。タグ 区分: 工程: 会議: を使います"},
-	{id: "matrix", name: "マトリクス型", note: "行 = 機能、列 = 工程。資料の無いマスに「無し」。タグ 区分: 機能: 工程: を使います"}
+	{id: "folder-columns", name: "フォルダ列", note: "一番上のフォルダごとに 1 列。タグは使いません"},
+	{id: "timeline", name: "時系列", note: "1 か月 = 1 行。題名・ファイル名の日付(無ければ初版の登録日)で並べます"},
+	{id: "split-shelves", name: "左右分割・棚", note: "左に管理、右に段階(準備 → 実施 → 実施後)の棚。タグ 区分: 段階: 会議: を使います"},
+	{id: "quadrant-cross", name: "十字", note: "左上 要件定義〜設計、左下 テスト〜リリース、右上 管理、右下 会議。タグ 区分: 工程: 会議: を使います"},
+	{id: "matrix", name: "マトリクス", note: "行 = 機能、列 = 工程。資料の無いマスに「無し」。タグ 区分: 機能: 工程: を使います"},
+	{id: "custom", name: "ユーザーカスタム", note: "Claude Code などの AI に指示を出しながら、自由に配置します。Document Manager は資料を動かさず、新しい資料は枠の下に足すだけです"}
 ];
 const miroLayoutName = (id) => MIRO_LAYOUTS.find((l) => l.id === id)?.name || id;
 const miroProjectLayout = document.getElementById("miroProjectLayout");
 
-/** 並べ方の型の行。連動前は「この型で連動」、連動中は「この型で並べ直す」と「元の型に戻す」 */
+/** レイアウトの選択(見本の図のタイル)。連動前は「Miro と連動」で選んだレイアウトにし、連動中は「このレイアウトにする」 */
 const renderMiroLayout = (status) => {
 	const tiles = document.getElementById("miroLayoutTiles");
 	if (!status.available) {
@@ -6590,41 +6559,45 @@ const renderMiroLayout = (status) => {
 	}
 	const current = status.layout || "folder-columns";
 	if (!miroCanEdit()) {
-		miroProjectLayout.innerHTML = '並べ方: <strong>' + escapeHtml(miroLayoutName(current)) + '</strong>';
+		miroProjectLayout.innerHTML = 'レイアウト: <strong>' + escapeHtml(miroLayoutName(current)) + '</strong>';
 		tiles.innerHTML = "";
 		return;
 	}
-	// 見本の図のタイル(押して選ぶ)。図は見本の資料を実際の並べ方にかけて描いたもの
+	// 選びかけのレイアウトは、反映中の読み直しでは保つ。別のプロジェクトを開いた・いまのレイアウトが変わったときは、いまのものに合わせ直す
 	const previous = tiles.querySelector('input[name="miroLayout"]:checked')?.value;
-	// 選びかけの型は、反映中の読み直しでは保つ。別のプロジェクトを開いた・いまの型が変わった(並べ直した・戻した)ときは、いまの型に合わせ直す
 	const keep = MIRO_LAYOUTS.some((l) => l.id === previous) && tiles.dataset.project === miroProjectId && tiles.dataset.current === current;
 	const chosen = keep ? previous : current;
 	tiles.dataset.project = miroProjectId;
 	tiles.dataset.current = current;
-	tiles.innerHTML = MIRO_LAYOUTS.map((l) => '<label class="miroLayoutTile' + (l.id === chosen ? " selected" : "") + (l.id === current ? " current" : "") + '" title="' + escapeHtml(l.note) + '">'
+	tiles.innerHTML = MIRO_LAYOUTS.map((l) => '<label class="miroLayoutTile' + (l.id === chosen ? " selected" : "") + (status.linked && l.id === current ? " current" : "") + '" title="' + escapeHtml(l.note) + '">'
 		+ '<input type="radio" name="miroLayout" value="' + l.id + '"' + (l.id === chosen ? " checked" : "") + (status.syncing ? " disabled" : "") + '>'
 		+ '<img src="./api/miro/layout-preview/' + l.id + '" alt="' + escapeHtml(l.name) + 'の見本の図" loading="lazy">'
-		+ '<span class="miroLayoutTileName">' + escapeHtml(l.name) + '</span></label>').join("");
+		+ '<span class="miroLayoutTileName">' + escapeHtml(l.name) + '</span>'
+		+ '<span class="miroLayoutTileNote">' + escapeHtml(l.note) + '</span></label>').join("");
 	const disabled = status.syncing ? " disabled" : "";
-	miroProjectLayout.innerHTML = '<span>並べ方: <span class="layoutCurrent" id="miroLayoutChosen"></span></span>'
-		+ (status.linked ? '<button type="button" class="modalButton" id="miroArrangeButton"' + disabled + '>この型で並べ直す</button>' : '')
+	miroProjectLayout.innerHTML = '<span>選んでいるレイアウト: <span class="layoutCurrent" id="miroLayoutChosen"></span></span>'
+		+ (status.linked ? '<button type="button" class="modalButton save" id="miroArrangeButton"' + disabled + '>このレイアウトにする</button>' : '')
 		+ (status.linked && status.undo ? '<button type="button" class="modalButton" id="miroUndoButton"' + disabled + '>'
-			+ (status.undo.layout === current ? '並べ直す前の配置に戻す' : '元の型(' + escapeHtml(miroLayoutName(status.undo.layout)) + ')に戻す') + '</button>' : '')
+			+ (status.undo.layout === current ? '前の配置に戻す' : '元のレイアウト(' + escapeHtml(miroLayoutName(status.undo.layout)) + ')に戻す') + '</button>' : '')
 		+ '<div class="layoutNote" id="miroLayoutNote"></div>';
 	const note = document.getElementById("miroLayoutNote");
 	const chosenLayout = () => tiles.querySelector('input[name="miroLayout"]:checked')?.value || current;
 	const showNote = () => {
 		const id = chosenLayout();
-		document.getElementById("miroLayoutChosen").textContent = miroLayoutName(id) + (id === current ? "" : "(いまは " + miroLayoutName(current) + ")");
-		note.textContent = (MIRO_LAYOUTS.find((l) => l.id === id)?.note || "")
-			+ (status.linked ? "" : "(「Miro と連動」で、この型で並べます)");
+		// 「いまは〜」は連動しているときだけ(連動前は、いまのレイアウトが無い)
+		document.getElementById("miroLayoutChosen").textContent = miroLayoutName(id) + (id === current || !status.linked ? "" : "(いまは " + miroLayoutName(current) + ")");
+		note.textContent = status.linked
+			? "ボードの細かな配置は、Claude Code などの AI に頼めます(Document Manager の Skill の miro-map で配置を読み、miro-move・miro-layout で置きます)。"
+			: "「Miro と連動」を押すと、選んだレイアウトで並べます。";
 		tiles.querySelectorAll(".miroLayoutTile").forEach((tile) => tile.classList.toggle("selected", tile.querySelector("input").checked));
+		const button = document.getElementById("miroArrangeButton");
+		if (button) button.disabled = status.syncing || id === current;
 	};
 	tiles.querySelectorAll('input[name="miroLayout"]').forEach((input) => input.addEventListener("change", showNote));
 	showNote();
 	document.getElementById("miroArrangeButton")?.addEventListener("click", () => arrangeMiroProject(chosenLayout(), current));
 	document.getElementById("miroUndoButton")?.addEventListener("click", async () => {
-		const ok = await showConfirmDialog("直前の並べ直しを取り消して、前の配置(" + miroLayoutName(status.undo.layout) + ")に戻しますか?\n\n戻せるのは 1 世代だけです。");
+		const ok = await showConfirmDialog("直前にレイアウトを変える前の配置(" + miroLayoutName(status.undo.layout) + ")に戻しますか?\n\n戻せるのは 1 世代だけです。");
 		if (!ok) return;
 		const res = await fetch("./api/projects/" + encodeURIComponent(miroProjectId) + "/miro/arrange/undo", {method: "POST"});
 		if (!res.ok) alert((await res.json().catch(() => ({}))).error || "戻せませんでした");
@@ -6632,7 +6605,7 @@ const renderMiroLayout = (status) => {
 	});
 };
 
-/** 型どおりに並べ直す。人が動かした資料の枚数と、未分類の割合を見せて確かめてから */
+/** レイアウトを変える(ボードの資料をそのレイアウトで置き直す)。人が動かした資料の枚数と、未分類の割合を見せて確かめてから */
 const arrangeMiroProject = async (layout, current) => {
 	const base = "./api/projects/" + encodeURIComponent(miroProjectId) + "/miro";
 	const checkRes = await fetch(base + "/arrange-check?layout=" + encodeURIComponent(layout));
@@ -6641,16 +6614,20 @@ const arrangeMiroProject = async (layout, current) => {
 		alert(check.error || "確かめられませんでした");
 		return;
 	}
-	const lines = [(layout === current ? miroLayoutName(layout) + "で並べ直しますか?" : miroLayoutName(current) + " から " + miroLayoutName(layout) + " に切り替えて並べ直しますか?")];
-	if (check.humanMoved > 0) lines.push("", "Miro で人が動かした資料が " + check.humanMoved + " 枚あります。型どおりの位置に戻ります。");
-	if (check.reviewRecommended) {
-		lines.push("", "この型では未分類が " + Math.round(check.unclassifiedRatio * 100) + "% になります。先にタグを見直すと、きれいに並びます"
-			+ "(Claude の Document Manager Skill に「" + miroLayoutName(layout) + "で並べたいのでタグを見直して」と頼めます)。");
+	const lines = [miroLayoutName(current) + " から " + miroLayoutName(layout) + " に変えますか?"];
+	if (layout === "custom") {
+		lines.push("", "資料は今の場所のまま動かしません(レイアウトの見出し・線だけ片付けます)。このあとの配置は AI に指示してください。");
+	} else {
+		if (check.humanMoved > 0) lines.push("", "Miro で人が動かした資料が " + check.humanMoved + " 枚あります。レイアウトどおりの位置に戻ります。");
+		if (check.reviewRecommended) {
+			lines.push("", "このレイアウトでは未分類が " + Math.round(check.unclassifiedRatio * 100) + "% になります。先にタグを見直すと、きれいに並びます"
+				+ "(Claude の Document Manager Skill に「" + miroLayoutName(layout) + "で並べたいのでタグを見直して」と頼めます)。");
+		}
 	}
-	lines.push("", "人が足した付箋や図形には触りません。前の配置は「元の型に戻す」で 1 世代だけ戻せます。");
+	lines.push("", "人が足した付箋や図形、AI に指示して置いた見出しには触りません。前の配置は 1 世代だけ戻せます。");
 	if (!(await showConfirmDialog(lines.join("\n")))) return;
 	const res = await fetch(base + "/arrange", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({layout})});
-	if (!res.ok) alert((await res.json().catch(() => ({}))).error || "並べ直せませんでした");
+	if (!res.ok) alert((await res.json().catch(() => ({}))).error || "変えられませんでした");
 	loadMiroProject();
 };
 
@@ -6672,7 +6649,7 @@ const renderMiroProject = (status) => {
 	} else if (status.state === "stopped") {
 		line = '<span class="adminStatus unknown">止めています</span> ボードには前に出した資料が残っています。';
 	} else {
-		line = '<span class="adminStatus unknown">未連動</span> 「Miro と連動」を押すと、このプロジェクトの枠を作って資料を並べます。';
+		line = '<span class="adminStatus unknown">未連動</span> レイアウトを選んで「Miro と連動」を押すと、このプロジェクトの枠を作って資料を並べます。';
 	}
 	if (status.lastError) line += '<div class="adminSectionNote" style="color:#c0392b;margin-top:4px;">' + escapeHtml(status.lastError) + '</div>';
 	miroProjectStatus.innerHTML = line;
@@ -6680,43 +6657,11 @@ const renderMiroProject = (status) => {
 	const buttons = [];
 	if (status.frameUrl) buttons.push('<a class="modalButton" href="' + escapeHtml(status.frameUrl) + '" target="_blank" rel="noopener noreferrer">Miro で開く</a>');
 	if (canEdit && status.available && !status.linked) buttons.push('<button type="button" class="modalButton save" data-miro-action="link">Miro と連動</button>');
-	if (canEdit && status.linked) {
-		buttons.push('<button type="button" class="modalButton" data-miro-action="sync"' + (status.syncing ? " disabled" : "") + '>今すぐ反映</button>');
-		buttons.push('<button type="button" class="modalButton primary" data-miro-action="unlink">連動をやめる</button>');
-	}
+	if (canEdit && status.linked) buttons.push('<button type="button" class="modalButton primary" data-miro-action="unlink">連動をやめる</button>');
 	miroProjectActions.innerHTML = buttons.join("");
 	renderMiroLayout(status);
 	miroProjectActions.querySelectorAll("button[data-miro-action]").forEach((button) => {
 		button.addEventListener("click", () => runMiroProjectAction(button.dataset.miroAction));
-	});
-
-	const items = (status.items || []).slice().sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "ja"));
-	if (items.length === 0) {
-		miroProjectItemsWrap.innerHTML = "";
-		return;
-	}
-	miroProjectItemsWrap.innerHTML = '<table class="miroItemTable"><thead><tr><th>資料</th><th>状態</th><th>理由</th>' + (canEdit ? '<th></th>' : '') + '</tr></thead><tbody>'
-		+ items.map((item) => {
-			const toggle = !canEdit || !item.documentId ? ""
-				: item.state === "excluded" || item.state === "removed"
-					? '<button type="button" class="modalButton" data-miro-publish="true" data-document-id="' + escapeHtml(item.documentId) + '">出す</button>'
-					: item.state === "detached" ? ""
-						: '<button type="button" class="modalButton" data-miro-publish="false" data-document-id="' + escapeHtml(item.documentId) + '">出さない</button>';
-			return '<tr><td>' + escapeHtml(item.title || "") + '</td>'
-				+ '<td><span class="miroState ' + escapeHtml(item.state) + '">' + escapeHtml(MIRO_STATE_LABELS[item.state] || item.state) + '</span></td>'
-				+ '<td class="reason">' + escapeHtml(item.reason || "") + '</td>'
-				+ (canEdit ? '<td>' + toggle + '</td>' : '') + '</tr>';
-		}).join("")
-		+ '</tbody></table>';
-	miroProjectItemsWrap.querySelectorAll("button[data-miro-publish]").forEach((button) => {
-		button.addEventListener("click", async () => {
-			button.disabled = true;
-			const res = await fetch("./api/projects/" + encodeURIComponent(miroProjectId) + "/miro/documents/" + encodeURIComponent(button.dataset.documentId), {
-				method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({publish: button.dataset.miroPublish === "true"})
-			});
-			if (!res.ok) alert((await res.json().catch(() => ({}))).error || "変更できませんでした");
-			loadMiroProject();
-		});
 	});
 };
 
@@ -6741,8 +6686,6 @@ const runMiroProjectAction = async (action) => {
 	if (action === "link") {
 		const layout = document.querySelector('#miroLayoutTiles input[name="miroLayout"]:checked')?.value;
 		res = await fetch(base, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(layout ? {layout} : {})});
-	} else if (action === "sync") {
-		res = await fetch(base + "/sync", {method: "POST"});
 	} else if (action === "unlink") {
 		const stop = await showConfirmDialog("Miro との連動をやめますか?\n\nボードはそのまま残し、これからの変更だけ反映しなくなります(資料も消すかは、次に選びます)。");
 		if (!stop) return;
@@ -6760,7 +6703,6 @@ const openMiroProject = () => {
 	miroProjectActions.innerHTML = "";
 	miroProjectLayout.innerHTML = "";
 	document.getElementById("miroLayoutTiles").innerHTML = "";
-	miroProjectItemsWrap.innerHTML = "";
 	miroProjectOverlay.style.display = "flex";
 	loadMiroProject();
 };

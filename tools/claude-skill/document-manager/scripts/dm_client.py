@@ -49,7 +49,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py miro-arrange-undo <プロジェクト>   直前の並べ直しを取り消す(元の型に戻す。1 世代だけ)
   python dm_client.py miro-map <プロジェクト>     ボードの地図(区画の範囲・資料の位置・見出し・人が足したもの・空いている所)
   python dm_client.py miro-layout-report <プロジェクト> [--layout <型>]   その型で並べたらどうなるか(タグの見直し用。Miro は変えない)
-    型: folder-columns(フォルダ列) / timeline(時系列) / split-shelves(左右分割・棚) / quadrant-cross(十字) / matrix(マトリクス)
+    レイアウト: folder-columns(フォルダ列) / timeline(時系列) / split-shelves(左右分割・棚) / quadrant-cross(十字) / matrix(マトリクス) / custom(ユーザーカスタム)
   python dm_client.py project-create <名前>        プロジェクトの作成
   python dm_client.py folder-create <プロジェクト> <名前> [--parent 親フォルダ]
   python dm_client.py tree <プロジェクト>          フォルダ階層と文書の配置
@@ -959,7 +959,7 @@ MIRO_WAIT_SECONDS = 600
 
 
 # Miro に並べる型(docs/miro-layouts/layout-spec.md)
-MIRO_LAYOUTS = ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]
+MIRO_LAYOUTS = ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]
 
 
 def miro_status(project_id):

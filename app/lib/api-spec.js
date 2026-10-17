@@ -488,7 +488,7 @@ const OPERATIONS = [
 	{
 		id: "getProjectMiroLayoutReport", method: "get", path: "/api/projects/:id/miro/layout-report", role: "readonly", tag: "プロジェクト",
 		summary: "並べ方の型で並べたらどうなるかの報告(タグの見直し用)",
-		description: "Miro には触らず、読むだけで出す(連動していなくても出せる)。型(`layout`)は `folder-columns`(フォルダ列型) / `timeline`(時系列型) / `split-shelves`(左右分割・棚型) / `quadrant-cross`(十字型) / `matrix`(マトリクス型)。"
+		description: "Miro には触らず、読むだけで出す(連動していなくても出せる)。レイアウト(`layout`)は `folder-columns`(フォルダ列) / `timeline`(時系列) / `split-shelves`(左右分割・棚) / `quadrant-cross`(十字) / `matrix`(マトリクス) / `custom`(ユーザーカスタム: AI に指示して自由に配置。区画は無い)。"
 			+ "`summary`: 区画ごとの件数と未分類の割合(`reviewRecommended` が true なら、並べる前にタグを見直す)。"
 			+ "`placements`: 資料ごとの区画(`area`・`slot`)と根拠(`basis`: `tag` / `inferred` / `unclassified` / `folder`。推定なら `inferredTags` と `matchedWords`)。"
 			+ "`unclassified`(理由 `no_phase_tag` / `no_process_tag` / `no_feature_tag` / `unknown_value`)・`unknownValues`(表に無い値と近い値の候補)・`duplicateTags`・`overriddenTags`・`gaps`(マトリクスの無いマス)・`overflow`(「ほか n 件」)・`notes`(フォルダに入っていない・初版の登録日を日付にした)。"
@@ -501,7 +501,7 @@ const OPERATIONS = [
 		id: "linkProjectMiro", method: "post", path: "/api/projects/:id/miro", role: "readwrite", tag: "プロジェクト",
 		summary: "プロジェクトを Miro と連動する(資料をボードに並べる)",
 		description: "連携で選んだボードにプロジェクトの枠を作り、資料をフォルダごとに並べる。並べるのは裏で行い、すぐ202を返す(`GET`の`syncing`で進み具合が分かる)。連動しているあいだ、新しい版は同じ場所のまま差し替え、増えた資料は下に足す。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.ioはPDFにして、Officeは体裁つきPDFで出す(1件6MBまで)。`layout` で並べ方の型を選べる(省略すると前に選んだ型。初めてならフォルダ列型)",
-		body: {schema: {type: "object", properties: {layout: {type: "string", enum: ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]}}}},
+		body: {schema: {type: "object", properties: {layout: {type: "string", enum: ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]}}}},
 		responses: {400: "知らない型", 409: "Miro と連携していないか、貼り先のボードが決まっていない"},
 		aiGuide: false
 	},
@@ -561,7 +561,7 @@ const OPERATIONS = [
 		description: "プロジェクトに選んである型で、見出しの文字・図形も置き直して並べ直す。`layout` を渡すと、その型に切り替えてから並べる。"
 			+ "**人が Miro で並べた配置は上書きされる**ので、頼まれたときだけ使う。人が足した付箋や図形には触らない。"
 			+ "並べる前の配置を 1 世代だけ覚えておき、`POST /api/projects/:id/miro/arrange/undo` で戻せる。切り替える前に `layout-report` で未分類の割合を見る",
-		body: {schema: {type: "object", properties: {layout: {type: "string", enum: ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]}}}},
+		body: {schema: {type: "object", properties: {layout: {type: "string", enum: ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]}}}},
 		responses: {400: "知らない型・まだ並べられない型", 409: "連動していない・いま反映しているところ"},
 		aiGuide: false
 	},

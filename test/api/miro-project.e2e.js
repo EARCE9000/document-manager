@@ -58,7 +58,7 @@ test.describe.serial("プロジェクトの Miro 連動(実ブラウザ)", () =>
 		await context.addCookies([{name: keys.sessionCookieName, value: keys.sessionCookie, url: BASE_URL}]);
 	});
 
-	test("連動すると資料がボードに並び、状態と出せない理由が出る", async ({page}) => {
+	test("レイアウトを選んで連動すると資料がボードに並び、状態が出る", async ({page}) => {
 		await page.goto(`./?project=${projectId}`);
 		const button = page.locator("#projectMiroButton");
 		await expect(button).toBeVisible();
@@ -69,62 +69,71 @@ test.describe.serial("プロジェクトの Miro 連動(実ブラウザ)", () =>
 		await expect(page.locator("#miroProjectTitle")).toContainText(`画面からMiro${STAMP}`);
 		await expect(page.locator("#miroProjectStatus")).toContainText("未連動");
 
-		// 並べ方の型を、見本の図のタイルで選んでから連動する(既定はフォルダ列型)
+		// レイアウトを、見本の図のタイル(3 列 × 2 行。6 つ目はユーザーカスタム)で選んでから連動する(既定はフォルダ列)
 		const chosen = page.locator('#miroLayoutTiles input[name="miroLayout"]:checked');
 		await expect(chosen).toHaveValue("folder-columns");
-		await expect(page.locator("#miroLayoutTiles .miroLayoutTile")).toHaveCount(5);
-		const cross = page.locator(".miroLayoutTile", {hasText: "十字型"});
+		await expect(page.locator("#miroLayoutTiles .miroLayoutTile")).toHaveCount(6);
+		await expect(page.locator("#miroLayoutTiles .miroLayoutTile").last()).toContainText("ユーザーカスタム");
+		const cross = page.locator(".miroLayoutTile", {hasText: "十字"});
 		await expect(cross.locator("img")).toHaveAttribute("src", /layout-preview\/quadrant-cross/);
 		expect(await cross.locator("img").evaluate((img) => img.complete && img.naturalWidth > 0), "見本の図が読み込めていない").toBe(true);
 		await cross.click();
 		await expect(cross).toHaveClass(/selected/);
-		await expect(page.locator("#miroLayoutNote")).toContainText("左上 要件定義〜設計");
+		await expect(cross).toContainText("左上 要件定義〜設計");
+		await expect(page.locator("#miroLayoutChosen")).toHaveText("十字");
 		await overlay.locator('button[data-miro-action="link"]').click();
 		await expect(page.locator("#miroProjectStatus")).toContainText("連動中", {timeout: 15000});
 		await expect(page.locator("#miroProjectStatus")).toContainText("出ている 2 件");
 		// 枠を Miro で開くリンク
 		await expect(overlay.locator("a", {hasText: "Miro で開く"})).toHaveAttribute("href", /moveToWidget=/);
-		// 資料ごとの状態。出せないものは理由つき
-		const rows = overlay.locator(".miroItemTable tbody tr");
-		await expect(rows).toHaveCount(3);
-		await expect(rows.filter({hasText: `メモ${STAMP}.txt`})).toContainText("出せない");
-		await expect(rows.filter({hasText: `メモ${STAMP}.txt`})).toContainText("出せない形式");
-		await expect(rows.filter({hasText: `要件${STAMP}.pdf`}).locator(".miroState")).toHaveText("出ている");
+		await expect(page.locator("#miroProjectStatus")).toContainText("出せない/失敗 1 件");
+		// 資料ごとの一覧・今すぐ反映は画面に出さない(AI から CLI で扱う)
+		await expect(overlay.locator('button[data-miro-action="sync"]')).toHaveCount(0);
 		await expect(chosen).toHaveValue("quadrant-cross");
-		await expect(page.locator(".miroLayoutTile.current")).toContainText("十字型");
+		await expect(page.locator(".miroLayoutTile.current")).toContainText("十字");
+		// いまのレイアウトを選んでいるあいだは「このレイアウトにする」は押せない
+		await expect(page.locator("#miroArrangeButton")).toBeDisabled();
 		// 区画の見出しがボードに置かれている
 		const items = await (await page.request.get(`${STUB_URL}/__items`)).json();
 		expect(items.some((i) => i.type === "text" && String(i.data?.content).includes("右上: 管理系"))).toBe(true);
 	});
 
-	test("型を切り替えて並べ直し(確かめてから)、元の型に戻せる", async ({page}) => {
+	test("レイアウトを変え(確かめてから)、元のレイアウトに戻せる", async ({page}) => {
 		await page.goto(`./?project=${projectId}`);
 		await page.locator("#projectMiroButton").click();
 		const chosen = page.locator('#miroLayoutTiles input[name="miroLayout"]:checked');
 		await expect(chosen).toHaveValue("quadrant-cross");
 		await expect(page.locator("#miroUndoButton")).toHaveCount(0);
-		await page.locator(".miroLayoutTile", {hasText: "時系列型"}).click();
+		await page.locator(".miroLayoutTile", {hasText: "時系列"}).click();
 		await page.locator("#miroArrangeButton").click();
-		await expect(page.locator("#confirmMessage")).toContainText("十字型 から 時系列型 に切り替えて");
+		await expect(page.locator("#confirmMessage")).toContainText("十字 から 時系列 に変えますか");
 		await page.locator("#confirmYesButton").click();
-		await expect(page.locator("#miroUndoButton")).toContainText("元の型(十字型)に戻す", {timeout: 15000});
+		await expect(page.locator("#miroUndoButton")).toContainText("元のレイアウト(十字)に戻す", {timeout: 15000});
 		await expect(chosen).toHaveValue("timeline");
 
 		await page.locator("#miroUndoButton").click();
-		await expect(page.locator("#confirmMessage")).toContainText("前の配置(十字型)に戻しますか");
+		await expect(page.locator("#confirmMessage")).toContainText("前の配置(十字)に戻しますか");
 		await page.locator("#confirmYesButton").click();
 		await expect(page.locator("#miroUndoButton")).toHaveCount(0, {timeout: 15000});
 		await expect(chosen).toHaveValue("quadrant-cross");
 	});
 
-	test("資料ごとに「出さない」にでき、もう一度「出す」にもできる", async ({page}) => {
+	test("ユーザーカスタムに変えると、資料は動かさずにレイアウトの見出しだけ片付く", async ({page}) => {
 		await page.goto(`./?project=${projectId}`);
 		await page.locator("#projectMiroButton").click();
-		const row = page.locator(".miroItemTable tbody tr", {hasText: `計画${STAMP}.pdf`});
-		await row.locator('button[data-miro-publish="false"]').click();
-		await expect(row.locator(".miroState")).toHaveText("出さない", {timeout: 15000});
-		await row.locator('button[data-miro-publish="true"]').click();
-		await expect(row.locator(".miroState")).toHaveText("出ている", {timeout: 15000});
+		const before = (await (await page.request.get(`${STUB_URL}/__items`)).json()).filter((i) => i.type === "document").map((i) => [i.id, i.position]);
+		await page.locator(".miroLayoutTile", {hasText: "ユーザーカスタム"}).click();
+		await page.locator("#miroArrangeButton").click();
+		await expect(page.locator("#confirmMessage")).toContainText("資料は今の場所のまま動かしません");
+		await page.locator("#confirmYesButton").click();
+		await expect(page.locator(".miroLayoutTile.current")).toContainText("ユーザーカスタム", {timeout: 15000});
+		const items = await (await page.request.get(`${STUB_URL}/__items`)).json();
+		for (const [id, position] of before) expect(items.find((i) => i.id === id).position).toMatchObject(position);
+		expect(items.some((i) => i.type === "text" && String(i.data?.content).includes("右上: 管理系"))).toBe(false);
+		// 元に戻しておく
+		await page.locator("#miroUndoButton").click();
+		await page.locator("#confirmYesButton").click();
+		await expect(page.locator(".miroLayoutTile.current")).toContainText("十字", {timeout: 15000});
 	});
 
 	test("連動をやめると「止めています」になり、ボードの資料を残すか選べる", async ({page, request}) => {
@@ -150,7 +159,7 @@ test.describe.serial("プロジェクトの Miro 連動(実ブラウザ)", () =>
 		await expect(page.locator("#miroProjectStatus")).toContainText("止めています");
 		await expect(page.locator('button[data-miro-action]')).toHaveCount(0);
 		await expect(page.locator("button[data-miro-publish]")).toHaveCount(0);
-		await expect(page.locator("#miroProjectLayout")).toContainText("並べ方: 十字型");
+		await expect(page.locator("#miroProjectLayout")).toContainText("レイアウト: 十字");
 		await expect(page.locator(".miroLayoutTile")).toHaveCount(0);
 	});
 
