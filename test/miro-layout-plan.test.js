@@ -169,19 +169,17 @@ test("連動で足すとき: フォルダ列型は、おしながきの途中に
 	assert.ok(itemOf(after, inserted).y >= itemOf(after, c).y);
 });
 
-test("連動で足すとき: 時系列型は、過去の月に足した資料を折り返さず右へ延ばし、下の月を押し下げない。最新の月は折り返す", () => {
+test("連動で足すとき: 時系列型は、どの月も 7 枚で折り返す(過去の月も右へ延ばさない。枠の幅は変わらない)", () => {
 	const july = Array.from({length: 7}, (_, i) => doc(`設計 2026-07-0${i + 1}.md`));
-	const august = Array.from({length: 7}, (_, i) => doc(`設計 2026-08-0${i + 1}.md`));
+	const august = Array.from({length: 3}, (_, i) => doc(`設計 2026-08-0${i + 1}.md`));
 	const before = planOf("timeline", [...july, ...august]);
 	const lateJuly = doc("追加 2026-07-20.md");
-	const lateAugust = doc("追加 2026-08-20.md");
-	const after = Plan.buildPlan("timeline", {project: {id: "p", name: "試し"}, documents: [...july, lateJuly, ...august, lateAugust], featureOrder: []},
+	const after = Plan.buildPlan("timeline", {project: {id: "p", name: "試し"}, documents: [...july, lateJuly, ...august], featureOrder: []},
 		{geometry, previous: previousOf(before)});
-	assert.equal(itemOf(after, lateJuly).y, itemOf(after, july[0]).y, "7 月は同じ段の右へ延ばす");
-	assert.ok(itemOf(after, lateJuly).x > itemOf(after, july[6]).x);
-	for (const d of august) assert.equal(itemOf(after, d).y, itemOf(before, d).y, "8 月は押し下げない");
-	assert.ok(itemOf(after, lateAugust).y > itemOf(after, august[0]).y, "最新の月(8 月)は折り返す");
-	assert.ok(after.frame.width > before.frame.width);
+	for (const d of july) assert.deepEqual({x: itemOf(after, d).x, y: itemOf(after, d).y}, {x: itemOf(before, d).x, y: itemOf(before, d).y}, "7 月の 7 枚は前のまま");
+	assert.equal(itemOf(after, lateJuly).x, itemOf(after, july[0]).x, "8 枚目は次の段の左(連動では、ここが空いていなければ枠の下に置く)");
+	assert.ok(itemOf(after, lateJuly).y > itemOf(after, july[0]).y);
+	assert.equal(after.frame.width, before.frame.width, "横には広がらない");
 });
 
 test("連動で足すとき: マトリクス型は、新しい工程の列を右に足し、前の列は動かさない", () => {

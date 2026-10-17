@@ -204,47 +204,12 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		let y = G.padding;
 		const months = Object.keys(report.summary.areas);
 		const colorOf = (id) => colorHex[byId.get(id).color] ?? null;
-		/**
-		 * 連動で資料を足すとき、最新の月以外は折り返さず右へ延ばす(下の月を押し下げない。layout-spec.md 5 章)。
-		 * 前に置いた資料は前の段のまま(同じ高さに置いたものを同じ段とみなす)、新しい資料は最後の段の右に足す
-		 */
-		const extendRows = (ids) => {
-			const rows = [];
-			let rowY = null;
-			for (const id of ids) {
-				const before = previous?.get(id);
-				if (before == null) {
-					if (rows.length === 0) rows.push([]);
-					rows[rows.length - 1].push(id);
-					continue;
-				}
-				// 同じ段かどうかは上の端で見る(中心は資料の縦横の比で少しずれる)
-				const top = before.top ?? before.y;
-				if (rowY == null || Math.abs(top - rowY) > 1) {
-					rows.push([]);
-					rowY = top;
-				}
-				rows[rows.length - 1].push(id);
-			}
-			return rows;
-		};
 		const rowsOf = [];
-		months.forEach((month, index) => {
+		months.forEach((month) => {
 			const ids = placementsIn(month).map((p) => p.documentId);
 			labels.push(label(month, G.padding + labelWidth / 2, y + 40, labelWidth - 20, {fontSize: 36}));
-			let bottom;
-			if (ids.length === 0) {
-				bottom = y + 200;
-			} else if (previous != null && index < months.length - 1) {
-				bottom = y;
-				for (const row of extendRows(ids)) {
-					row.forEach((id, i) => put(id, x0 + i * cw + W / 2, bottom + heightOf(id) / 2, colorOf(id)));
-					width = Math.max(width, x0 + row.length * cw - G.gapX + G.padding);
-					bottom += lineHeight(row);
-				}
-			} else {
-				bottom = grid(ids, x0, y, perRow, colorOf);
-			}
+			// どの月も 7 枚で折り返す(連動で足すときは、空いていればここ、無ければ枠の下。miro-sync.js が決める)
+			const bottom = ids.length === 0 ? y + 200 : grid(ids, x0, y, perRow, colorOf);
 			rowsOf.push({month, top: y, bottom});
 			y = bottom;
 		});
