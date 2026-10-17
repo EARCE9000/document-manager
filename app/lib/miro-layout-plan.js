@@ -245,22 +245,26 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 	} else if (layout === "quadrant-cross") {
 		colorOfPlacement = (p) => ({upper_left: COLORS.purple, lower_left: COLORS.pink, upper_right: COLORS.gray}[p.area] ?? (p.area === "lower_right" ? meetingColor(p) : null));
 		const stepCapacity = MiroLayout.RULES.crossStepCapacity;
-		const areaLabel = 90;
 		const stepLabel = 60;
+		// 区画の見出しは十字の中心の周りに、外向きの矢印を付けて置く(どちらに何があるか分かるように)。
+		// そのため横線の上下に帯を空ける(見出しと中心の概要カードが資料と重ならないように)
+		const band = 170;
+		const areaLabelOffset = 105;
+		const areaLabelWidth = 900;
+		const areaLabelStyle = {fontSize: 40, color: "#1e3a8a"};
 		const stepHeight = stepLabel + fixedLine;
 		const upperLeftWidth = (stepCapacity + 2) * cw - G.gapX;
 		const upperRightColumns = 3;
 		const upperRightWidth = upperRightColumns * cw - G.gapX;
-		const upperHeight = Math.max(areaLabel + 3 * stepHeight, areaLabel + 3 * fixedLine);
+		const upperHeight = 3 * stepHeight;
 		const cx = G.padding + upperLeftWidth + 100;
 		const rightLeft = cx + 100;
 		// 横線の位置は、上の 2 区画を置いてから決める(縦長の資料で段が高くなることがあるため)
-		let cy = G.padding + upperHeight + 100;
-		let lowerTop = cy + 100;
+		let cy = G.padding + upperHeight - G.gapY + band;
+		let lowerTop = cy + band;
 		const colorOf = (id) => colorOfPlacement(byId.get(id));
 
 		// 左上: 中心へ下りる階段(要件定義 → 基本設計 → 詳細設計)。段の大きさは固定で、入りきらない分は「ほか n 件」
-		labels.push(label(AREA_TITLES.upper_left, G.padding + upperLeftWidth / 2, G.padding + areaLabel / 2, upperLeftWidth, {fontSize: 40}));
 		const stepRows = (steps, top, offsets, fixed) => {
 			let y = top;
 			steps.forEach((step, index) => {
@@ -281,12 +285,11 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 			});
 			return y;
 		};
-		const upperLeftBottom = stepRows(["要件定義", "基本設計", "詳細設計"], G.padding + areaLabel, [0, 1, 2], true);
+		const upperLeftBottom = stepRows(["要件定義", "基本設計", "詳細設計"], G.padding, [0, 1, 2], true);
 		// 右上: 管理系の格子(大きさ固定)
-		labels.push(label(AREA_TITLES.upper_right, rightLeft + upperRightWidth / 2, G.padding + areaLabel / 2, upperRightWidth, {fontSize: 40}));
 		const upperRight = placementsIn("upper_right").filter((p) => !hidden.has(p.documentId)).map((p) => p.documentId);
 		const rightOverflow = (report.overflow ?? []).find((o) => o.area === "upper_right");
-		let upperRightY = G.padding + areaLabel;
+		let upperRightY = G.padding;
 		for (let i = 0; i < upperRight.length + (rightOverflow ? 1 : 0); i += upperRightColumns) {
 			const row = upperRight.slice(i, i + upperRightColumns);
 			row.forEach((id, index) => put(id, rightLeft + index * cw + W / 2, upperRightY + heightOf(id) / 2, COLORS.gray));
@@ -294,11 +297,16 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 			upperRightY += Math.max(fixedLine, lineHeight(row));
 		}
 
-		cy = Math.max(cy, upperLeftBottom + 40, upperRightY + 40);
-		lowerTop = cy + 100;
+		cy = Math.max(cy, upperLeftBottom - G.gapY + band, upperRightY - G.gapY + band);
+		lowerTop = cy + band;
+		// 区画の見出し: 中心の縦線をはさんで、左は右寄せ・右は左寄せ。横線のすぐ上と下
+		const leftOfCentre = cx - 40 - areaLabelWidth / 2;
+		const rightOfCentre = cx + 40 + areaLabelWidth / 2;
+		labels.push(label(`↖ ${AREA_TITLES.upper_left}`, leftOfCentre, cy - areaLabelOffset, areaLabelWidth, {...areaLabelStyle, align: "right"}));
+		labels.push(label(`${AREA_TITLES.upper_right} ↗`, rightOfCentre, cy - areaLabelOffset, areaLabelWidth, {...areaLabelStyle, align: "left"}));
+		labels.push(label(`↙ ${AREA_TITLES.lower_left}`, leftOfCentre, cy + areaLabelOffset, areaLabelWidth, {...areaLabelStyle, align: "right"}));
 		// 左下: 横線で上下対称に、中心から外へ戻る階段(単体テスト → 結合テスト → 受入テスト → リリース → 運用)。下へ伸びる
-		labels.push(label(AREA_TITLES.lower_left, G.padding + upperLeftWidth / 2, lowerTop + areaLabel / 2, upperLeftWidth, {fontSize: 40}));
-		const lowerLeftBottom = stepRows(["単体テスト", "結合テスト", "受入テスト", "リリース", "運用"], lowerTop + areaLabel, [2, 1, 0, 0, 0], false);
+		const lowerLeftBottom = stepRows(["単体テスト", "結合テスト", "受入テスト", "リリース", "運用"], lowerTop, [2, 1, 0, 0, 0], false);
 
 		// 右下: 縦 = 週(古い週が上)、横 = 月〜金(土日に会議があれば列を足す)。同じ日は縦に重ねる
 		const meetings = placementsIn("lower_right");
@@ -306,8 +314,8 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		const days = weekend ? ["月", "火", "水", "木", "金", "土", "日"] : ["月", "火", "水", "木", "金"];
 		const weekLabel = 200;
 		const lowerRightWidth = weekLabel + days.length * cw - G.gapX;
-		labels.push(label(AREA_TITLES.lower_right, rightLeft + lowerRightWidth / 2, lowerTop + areaLabel / 2, lowerRightWidth, {fontSize: 40}));
-		const dayTop = lowerTop + areaLabel;
+		labels.push(label(`${AREA_TITLES.lower_right}(週 × 曜日) ↘`, rightOfCentre, cy + areaLabelOffset, areaLabelWidth, {...areaLabelStyle, align: "left"}));
+		const dayTop = lowerTop;
 		days.forEach((day, i) => labels.push(label(day, rightLeft + weekLabel + i * cw + W / 2, dayTop + 30, W, {align: "center"})));
 		let y = dayTop + 70;
 		const weeks = [];
