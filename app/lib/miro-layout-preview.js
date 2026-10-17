@@ -93,8 +93,13 @@ const toSvg = (plan) => {
 		const x = l.align === "center" ? l.x : l.align === "right" ? l.x + l.width / 2 : l.x - l.width / 2;
 		// 区画の見出し(大きい文字)は、縮めても読めるようにさらに大きくする
 		const size = (l.fontSize ?? 34) >= 36 ? l.fontSize * 2 : (l.fontSize ?? 34) * 1.4;
-		if (l.fillColor) parts.push(`<rect x="${l.x - l.width / 2}" y="${l.y - size}" width="${l.width}" height="${size * 2}" fill="${escapeXml(l.fillColor)}" stroke="#334155" stroke-width="4" rx="8"/>`);
-		parts.push(`<text x="${x}" y="${l.y + size / 3}" font-size="${size}" font-weight="${l.bold ? 700 : 400}" text-anchor="${anchor}" fill="${escapeXml(l.color ?? "#1e293b")}">${escapeXml(l.text)}</text>`);
+		// 改行のある見出し(十字型の中心の概要)は、行ごとに描く
+		const lines = String(l.text).split("\n");
+		const lineHeight = size * 1.3;
+		const top = l.y - (lines.length - 1) * lineHeight / 2;
+		if (l.fillColor) parts.push(`<rect x="${l.x - l.width / 2}" y="${top - size}" width="${l.width}" height="${(lines.length - 1) * lineHeight + size * 2}" fill="${escapeXml(l.fillColor)}" stroke="#334155" stroke-width="4" rx="8"/>`);
+		parts.push(`<text x="${x}" y="${top + size / 3}" font-size="${size}" font-weight="${l.bold ? 700 : 400}" text-anchor="${anchor}" fill="${escapeXml(l.color ?? "#1e293b")}">`
+			+ lines.map((line, i) => `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`).join("") + `</text>`);
 	}
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 ${width + 40} ${height + 40}" font-family="sans-serif">${parts.join("")}</svg>`;
 };
@@ -134,7 +139,7 @@ const cache = new Map();
 module.exports.previewSvg = (layout) => {
 	if (!MiroLayout.LAYOUT_IDS.includes(layout)) return null;
 	if (!cache.has(layout)) {
-		const plan = layout === "custom" ? customSample() : MiroLayoutPlan.buildPlan(layout, {project: {id: "sample", name: "見本のプロジェクト"}, documents: sampleDocuments(), featureOrder: []},
+		const plan = layout === "custom" ? customSample() : MiroLayoutPlan.buildPlan(layout, {project: {id: "sample", name: "見本のプロジェクト", description: "受注管理システムの再構築(2026 年度)"}, documents: sampleDocuments(), featureOrder: []},
 			{geometry: GEOMETRY});
 		cache.set(layout, toSvg(plan));
 	}

@@ -1020,3 +1020,39 @@ test.describe.serial("見回りは枠の中の一覧でまとめて読む", () =
 		expect(moved?.position).toMatchObject({x: 777, y: 888});
 	});
 });
+
+// 十字型の中心の概要カード: プロジェクト名・説明・資料の件数・最終更新。説明を変えると、位置を変えずに文字だけ書き換える
+test.describe.serial("十字型の中心の概要カードに説明を出す", () => {
+	let projectId;
+	const summaryOf = async (request) => (await boardItems(request)).find((i) => i.type === "text" && String(i.data?.content).includes(`中心${STAMP}`));
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `中心${STAMP}`, description: "受注管理の再構築"}})).json()).id;
+		await request.post(`api/projects/${projectId}/unlock`, {headers: rw});
+		const doc = await upload(request, `中心-a${STAMP}.pdf`, PDF);
+		await request.put(`api/projects/${projectId}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
+		await request.post(`api/projects/${projectId}/miro`, {headers: rw, data: {layout: "quadrant-cross"}});
+		await settled(request, projectId);
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("名前・説明・件数を行を分けて出し、説明を変えると位置はそのままで文字だけ変わる。長い説明は 100 文字で切る", async ({request}) => {
+		const before = await summaryOf(request);
+		expect(before.data.content).toContain(`中心${STAMP}<br>受注管理の再構築<br>資料 1 件`);
+		await request.put(`api/projects/${projectId}`, {headers: rw, data: {description: "あ".repeat(120)}});
+		await expect.poll(async () => (await summaryOf(request)).data.content, {timeout: 15000}).toContain(`${"あ".repeat(100)}…<br>`);
+		const after = await summaryOf(request);
+		expect(after.position).toMatchObject(before.position);
+		expect(after.id).toBe(before.id);
+		// 説明を消すと 1 行に戻る
+		await request.put(`api/projects/${projectId}`, {headers: rw, data: {description: ""}});
+		await expect.poll(async () => (await summaryOf(request)).data.content, {timeout: 15000}).toContain(`中心${STAMP} / 資料 1 件`);
+	});
+});

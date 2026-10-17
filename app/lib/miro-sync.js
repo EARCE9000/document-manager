@@ -260,6 +260,9 @@ const deleteHeaders = async (link, board) => {
 	if (ids.length > 0 && link?.project_id) await ds.run(SQL_SET_HEADERS, {project_id: link.project_id, header_ids: "[]"});
 };
 
+/** 見出しの文字(改行は Miro の改行にする) */
+const textHtml = (text) => escapeHtml(text).replace(/\n/g, "<br>");
+
 /** 見出しの文字・図形にリンクを付ける(http・https だけ) */
 const linked = (html, link) => (typeof link === "string" && /^https?:\/\//.test(link) ? `<a href="${escapeHtml(link)}">${html}</a>` : html);
 
@@ -344,7 +347,7 @@ const drawDecorations = async (projectId, link, board, frameId, {labels = [], sh
 					}).filter(([, v]) => v != null))
 				})).catch(skip("図形"))
 				: await MiroConnection.withToken((token) => Miro.createText(token, board, {
-					content: `<p>${linked(spec.bold ? `<strong>${escapeHtml(spec.text)}</strong>` : escapeHtml(spec.text), spec.link)}</p>`,
+					content: `<p>${linked(spec.bold ? `<strong>${textHtml(spec.text)}</strong>` : textHtml(spec.text), spec.link)}</p>`,
 					x: spec.x, y: spec.y, width: spec.width, parentId: frameId,
 					style: Object.fromEntries(Object.entries({
 						fontSize: spec.fontSize == null ? null : String(spec.fontSize), color: spec.color,
@@ -394,7 +397,7 @@ const refreshSummaryLabel = async (projectId, link, board, layoutPlan) => {
 	if (entry == null) return;
 	const updated = {...labels[index], text: wanted.text};
 	await MiroConnection.withToken((token) => Miro.updateText(token, board, entry.id, {
-		content: `<p>${linked(`<strong>${escapeHtml(updated.text)}</strong>`, updated.link)}</p>`
+		content: `<p>${linked(`<strong>${textHtml(updated.text)}</strong>`, updated.link)}</p>`
 	})).catch((err) => {
 		if (err.status !== 404) logger.warn({err: err.message, projectId}, "中心の概要を書き換えられませんでした");
 	});

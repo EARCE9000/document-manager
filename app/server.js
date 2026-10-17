@@ -3964,10 +3964,10 @@ app.get(BASE_URL_PATH + 'api/projects/archived', requireAuth, async (req, res) =
 app.post(BASE_URL_PATH + 'api/projects', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const project = await Projects.createProject(req.body.name, req.authData.user_identifier);
+		const project = await Projects.createProject(req.body.name, req.authData.user_identifier, {description: req.body.description});
 		res.status(200).json(project);
 	} catch (err) {
-		if (err.message === "project name is required") {
+		if (err.message === "project name is required" || String(err.message).startsWith("description is too long")) {
 			res.status(400).json({error: err.message});
 			return;
 		}
@@ -3977,7 +3977,7 @@ app.post(BASE_URL_PATH + 'api/projects', requireAuth, requireWrite, async (req, 
 });
 
 /**
- * プロジェクト名変更 (admin/readwrite)
+ * プロジェクト名・説明の変更 (admin/readwrite)。本体: {name?, description?}(どちらか。説明は空文字で消す)
  */
 app.put(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (req, res) => {
 	try {
@@ -3991,11 +3991,20 @@ app.put(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (re
 			respondProjectLocked(res);
 			return;
 		}
-		await Projects.renameProject(req.params.id, req.body.name);
+		const hasName = req.body?.name !== undefined;
+		const hasDescription = req.body?.description !== undefined;
+		if (!hasName && !hasDescription) {
+			res.status(400).json({error: "name か description を指定してください"});
+			return;
+		}
+		if (hasName) await Projects.renameProject(req.params.id, req.body.name);
+		if (hasDescription) await Projects.updateProjectDescription(req.params.id, req.body.description);
 		broadcastProjectsChanged();
+		// 説明は Miro の十字型の中心のカードに出すので、連動していれば反映する
+		if (hasDescription || hasName) MiroSync.runProject(req.params.id, {user: req.authData.user_identifier});
 		res.status(200).json(await Projects.getProject(req.params.id));
 	} catch (err) {
-		if (err.message === "project name is required") {
+		if (err.message === "project name is required" || String(err.message).startsWith("description is too long")) {
 			res.status(400).json({error: err.message});
 			return;
 		}

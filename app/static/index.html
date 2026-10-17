@@ -1035,6 +1035,11 @@
 	/* 確認の文は改行で段落を分けて書いている(\n)。詰めずにそのまま見せる */
 	#confirmOverlay .modalBox { max-width: 520px; }
 	#confirmMessage { white-space: pre-line; }
+	/* プロジェクトの作成・編集(名前と説明) */
+	#projectEditModalBox { max-width: 560px; }
+	#projectEditModalBox .projectEditLabel { display: block; font-size: 0.85em; color: #555; margin: 0 0 4px; }
+	#projectEditName, #projectEditDescription { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; margin-bottom: 14px; font-family: inherit; }
+	#projectEditDescription { resize: vertical; line-height: 1.5; }
 	.modalBox {
 		background: #fff;
 		border-radius: 8px;
@@ -1618,7 +1623,7 @@
 						<button type="button" id="projectAddRootFolderButton" class="iconButton" title="フォルダ追加" aria-label="フォルダ追加" style="display:none;">
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
 						</button>
-						<button type="button" id="projectRenameButton" class="iconButton" title="プロジェクト名を変更" aria-label="プロジェクト名を変更" style="display:none;">
+						<button type="button" id="projectRenameButton" class="iconButton" title="プロジェクト名・説明を変更" aria-label="プロジェクト名・説明を変更" style="display:none;">
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .622.622l4.353-1.32a2 2 0 0 0 .83-.497Z"/><path d="m15 5 4 4"/></svg>
 						</button>
 						<span class="toolbarDivider" aria-hidden="true"></span>
@@ -2117,6 +2122,20 @@
 		<div class="modalButtons">
 			<button id="promptCancelButton" type="button" class="modalButton">キャンセル</button>
 			<button id="promptOkButton" type="button" class="modalButton save">OK</button>
+		</div>
+	</div>
+</div>
+
+<div id="projectEditOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="projectEditModalBox">
+		<p id="projectEditTitle">プロジェクト</p>
+		<label for="projectEditName" class="projectEditLabel">プロジェクト名</label>
+		<input type="text" id="projectEditName" maxlength="200">
+		<label for="projectEditDescription" class="projectEditLabel">説明(空でもよい。Miro の十字のレイアウトの中心に出ます)</label>
+		<textarea id="projectEditDescription" rows="4" maxlength="2000" placeholder="例: 受注管理システムの再構築(2026 年度)"></textarea>
+		<div class="modalButtons">
+			<button id="projectEditCancelButton" type="button" class="modalButton">キャンセル</button>
+			<button id="projectEditOkButton" type="button" class="modalButton save">OK</button>
 		</div>
 	</div>
 </div>
@@ -4950,13 +4969,60 @@ const moveDocumentInFolder = async (documentId, folderId, direction) => {
 	await loadProjectTree();
 };
 
+/**
+ * プロジェクトの名前と説明を入れるダイアログ。OK で {name, description}、キャンセルで null。
+ * 名前が空のときは OK を押せない(説明は空でもよい)
+ */
+const showProjectEditDialog = ({title, name = "", description = ""}) => new Promise((resolve) => {
+	const overlay = document.getElementById("projectEditOverlay");
+	const nameInput = document.getElementById("projectEditName");
+	const descriptionInput = document.getElementById("projectEditDescription");
+	const okButton = document.getElementById("projectEditOkButton");
+	const cancelButton = document.getElementById("projectEditCancelButton");
+	document.getElementById("projectEditTitle").textContent = title;
+	nameInput.value = name;
+	descriptionInput.value = description;
+	const syncOk = () => {
+		okButton.disabled = nameInput.value.trim() === "";
+	};
+	syncOk();
+	overlay.style.display = "flex";
+	nameInput.focus();
+	nameInput.select();
+	const cleanup = (result) => {
+		overlay.style.display = "none";
+		okButton.removeEventListener("click", onOk);
+		cancelButton.removeEventListener("click", onCancel);
+		overlay.removeEventListener("click", onOverlayClick);
+		nameInput.removeEventListener("input", syncOk);
+		nameInput.removeEventListener("keydown", onNameKeydown);
+		overlay.removeEventListener("keydown", onEscape);
+		resolve(result);
+	};
+	const onOk = () => {
+		if (nameInput.value.trim() === "") return;
+		cleanup({name: nameInput.value.trim(), description: descriptionInput.value.trim()});
+	};
+	const onCancel = () => cleanup(null);
+	const onOverlayClick = (ev) => { if (ev.target === overlay) cleanup(null); };
+	// 名前の欄で Enter は OK(説明の欄の Enter は改行)
+	const onNameKeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); onOk(); } };
+	const onEscape = (ev) => { if (ev.key === "Escape") { ev.preventDefault(); onCancel(); } };
+	okButton.addEventListener("click", onOk);
+	cancelButton.addEventListener("click", onCancel);
+	overlay.addEventListener("click", onOverlayClick);
+	nameInput.addEventListener("input", syncOk);
+	nameInput.addEventListener("keydown", onNameKeydown);
+	overlay.addEventListener("keydown", onEscape);
+});
+
 projectAddButton.addEventListener("click", async () => {
-	const name = await showPromptDialog("プロジェクト名を入力してください");
-	if (!name) return;
+	const input = await showProjectEditDialog({title: "プロジェクトを作る"});
+	if (!input) return;
 	const res = await fetch("./api/projects", {
 		method: "POST",
 		headers: {"Content-Type": "application/json"},
-		body: JSON.stringify({name})
+		body: JSON.stringify(input)
 	});
 	if (res.status !== 200) {
 		const body = await res.json().catch(() => ({}));
@@ -4971,16 +5037,16 @@ projectAddButton.addEventListener("click", async () => {
 projectRenameButton.addEventListener("click", async () => {
 	if (currentProjectId == null) return;
 	const project = currentProjects.find((p) => p.id === currentProjectId);
-	const name = await showPromptDialog("プロジェクト名を入力してください", project ? project.name : "");
-	if (!name) return;
+	const input = await showProjectEditDialog({title: "プロジェクト名・説明を変える", name: project ? project.name : "", description: project?.description ?? ""});
+	if (!input) return;
 	const res = await fetch(`./api/projects/${encodeURIComponent(currentProjectId)}`, {
 		method: "PUT",
 		headers: {"Content-Type": "application/json"},
-		body: JSON.stringify({name})
+		body: JSON.stringify(input)
 	});
 	if (res.status !== 200) {
 		const body = await res.json().catch(() => ({}));
-		alert(body.error || "名前の変更に失敗しました");
+		alert(body.error || "変更に失敗しました");
 		return;
 	}
 	await loadProjects();

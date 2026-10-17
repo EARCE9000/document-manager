@@ -13,15 +13,27 @@ const crypto = require("crypto");
 const logger = require("./logger.js")(path.basename(__filename));
 const ds = require("./datastore.js");
 
-const PROJECT_COLUMNS = "id, name, created_by, created_at, sort_order, archived_by, archived_at, locked";
+const PROJECT_COLUMNS = "id, name, created_by, created_at, sort_order, archived_by, archived_at, locked, description";
 const SQL_LIST_PROJECTS = `SELECT ${PROJECT_COLUMNS} FROM projects WHERE archived_at IS NULL ORDER BY sort_order ASC, created_at ASC`;
 const SQL_LIST_ARCHIVED_PROJECTS = `SELECT ${PROJECT_COLUMNS} FROM projects WHERE archived_at IS NOT NULL ORDER BY archived_at DESC`;
 const SQL_GET_PROJECT = `SELECT ${PROJECT_COLUMNS} FROM projects WHERE id = ?`;
 const SQL_INSERT_PROJECT = `
-	INSERT INTO projects (id, name, created_by, created_at, sort_order)
-	VALUES (@id, @name, @created_by, @created_at, @sort_order)
+	INSERT INTO projects (id, name, created_by, created_at, sort_order, description)
+	VALUES (@id, @name, @created_by, @created_at, @sort_order, @description)
 `;
 const SQL_UPDATE_PROJECT_NAME = `UPDATE projects SET name = ? WHERE id = ?`;
+const SQL_UPDATE_PROJECT_DESCRIPTION = `UPDATE projects SET description = ? WHERE id = ?`;
+// 説明の長さの上限(画面・API の応答すべてに載るため)
+const DESCRIPTION_MAX_CHARS = 2000;
+module.exports.DESCRIPTION_MAX_CHARS = DESCRIPTION_MAX_CHARS;
+/** 説明をそろえる。空・空白だけは「説明なし」(null)。長すぎるものは断る */
+const normalizeDescription = (value) => {
+	if (value == null) return null;
+	const text = String(value).replace(/\r\n?/g, "\n").trim();
+	if (text === "") return null;
+	if (text.length > DESCRIPTION_MAX_CHARS) throw new Error(`description is too long (max ${DESCRIPTION_MAX_CHARS})`);
+	return text;
+};
 const SQL_ARCHIVE_PROJECT = `UPDATE projects SET archived_by = ?, archived_at = ? WHERE id = ? AND archived_at IS NULL`;
 const SQL_RESTORE_PROJECT = `UPDATE projects SET archived_by = NULL, archived_at = NULL WHERE id = ? AND archived_at IS NOT NULL`;
 const SQL_UPDATE_PROJECT_LOCKED = `UPDATE projects SET locked = ? WHERE id = ?`;
@@ -98,7 +110,8 @@ const toProjectResponse = (row) => ({
 	sortOrder: row.sort_order,
 	archivedBy: row.archived_by,
 	archivedAt: row.archived_at,
-	locked: row.locked === 1
+	locked: row.locked === 1,
+	description: row.description ?? null
 });
 
 const toFolderResponse = (row) => ({
@@ -159,11 +172,12 @@ module.exports.setProjectLocked = async (id, locked) => {
 	return result.changes > 0;
 };
 
-module.exports.createProject = async (name, createdBy) => {
+module.exports.createProject = async (name, createdBy, {description = null} = {}) => {
 	const trimmed = String(name || "").trim();
 	if (trimmed === "") {
 		throw new Error("project name is required");
 	}
+	const normalizedDescription = normalizeDescription(description);
 	const id = crypto.randomUUID();
 	const maxRow = await ds.get(SQL_MAX_PROJECT_SORT_ORDER);
 	const nextOrder = (maxRow.maxOrder ?? -1) + 1;
@@ -172,9 +186,16 @@ module.exports.createProject = async (name, createdBy) => {
 		name: trimmed,
 		created_by: createdBy,
 		created_at: new Date().toISOString(),
-		sort_order: nextOrder
+		sort_order: nextOrder,
+		description: normalizedDescription
 	});
 	return module.exports.getProject(id);
+};
+
+/** プロジェクトの説明を変える(空文字・空白だけで消す)。対象が無ければ false */
+module.exports.updateProjectDescription = async (id, description) => {
+	const result = await ds.run(SQL_UPDATE_PROJECT_DESCRIPTION, [normalizeDescription(description), id]);
+	return result.changes > 0;
 };
 
 module.exports.renameProject = async (id, name) => {

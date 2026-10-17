@@ -96,7 +96,7 @@ APIキーをチャットの応答やコミットに書き出さない(`config` �
 | `archive <文書ID>` / `restore <文書ID>` | アーカイブ(論理削除)と復元 |
 | `links <文書ID>` / `link <文書ID> <相手ID>` / `unlink <文書ID> <相手ID>` | 関連文書(対等な紐付け)の一覧・追加・解除 |
 | `link-previous <新版ID> <旧版ID>` / `unlink-previous <文書ID>` | 後からの版の紐づけ・解除(旧版はアーカイブされる) |
-| `projects [--archived]` / `project-create <名前>` | プロジェクトの一覧・作成 |
+| `projects [--archived]` / `project-create <名前> [--description 説明]` / `project-update <プロジェクト> [--name 名前] [--description 説明]` | プロジェクトの一覧・作成・名前と説明の変更(説明は Miro の十字のレイアウトの中心に出る。`""` で消す) |
 | `project-url <プロジェクト>` | **人に渡す、プロジェクトを開くURL**(開くとおしながきが表示される。下記) |
 | `tree <プロジェクト>` | フォルダ階層と文書の配置 |
 | `miro <プロジェクト>` / `miro-link [--layout 型]` / `miro-sync` / `miro-unlink [--remove-documents]` | プロジェクトの資料を **Miro のボードに並べる**(連動の状態・開始・今すぐ反映・やめる。下記) |

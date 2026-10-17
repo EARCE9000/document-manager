@@ -924,7 +924,14 @@ const commands = {
 		return {id, previousId: null, note: "アーカイブされた旧版は元に戻りません。必要なら restore してください"};
 	},
 	projects: async (_rest, opts) => request("GET", opts.archived ? "api/projects/archived" : "api/projects"),
-	"project-create": async ([name]) => request("POST", "api/projects", {json: {name: requireArg(name, "プロジェクト名")}}),
+	"project-create": async ([name], opts) => request("POST", "api/projects", {json: {name: requireArg(name, "プロジェクト名"), ...(opts.description != null ? {description: opts.description} : {})}}),
+	// プロジェクトの名前・説明を変える。説明は Miro の十字のレイアウトの中心のカードに出る("" で消す)
+	"project-update": async ([project], opts) => {
+		const body = {...(opts.name != null ? {name: opts.name} : {}), ...(opts.description != null ? {description: opts.description} : {})};
+		if (Object.keys(body).length === 0) throw new DmError("--name か --description を指定してください");
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		return request("PUT", `api/projects/${encodeURIComponent(id)}`, {json: body});
+	},
 	"folder-create": async ([project, name], opts) => {
 		requireArg(name, "フォルダ名");
 		const resolved = await resolveProject(project);
@@ -1128,6 +1135,7 @@ const main = async () => {
 			x: {type: "string"},
 			y: {type: "string"},
 			layout: {type: "string"},
+			description: {type: "string"},
 			check: {type: "boolean"},
 			yes: {type: "boolean"}
 		}

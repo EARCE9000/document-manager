@@ -39,8 +39,26 @@ const AREA_TITLES = Object.freeze({
 
 const LINE_COLOR = "#333333";
 
+// 十字型の中心の概要カードに出す説明の長さの上限(超えたら切って「…」。カードからはみ出さないように)
+const SUMMARY_DESCRIPTION_MAX = 100;
+module.exports.SUMMARY_DESCRIPTION_MAX = SUMMARY_DESCRIPTION_MAX;
+/**
+ * 十字型の中心の概要カードの文字。説明があれば「名前 / 説明 / 件数・最終更新」の 3 行、無ければ 1 行
+ * (改行は Miro の見出しの文字の中で改行になる)
+ */
+const summaryText = (project, total, latest) => {
+	const name = project?.name ?? "";
+	const stats = `資料 ${total} 件${latest ? ` / 最終更新 ${latest}` : ""}`;
+	const description = String(project?.description ?? "").replace(/\s+/g, " ").trim();
+	if (description === "") return `${name} / ${stats}`;
+	const chars = [...description];
+	const short = chars.length > SUMMARY_DESCRIPTION_MAX ? `${chars.slice(0, SUMMARY_DESCRIPTION_MAX).join("")}…` : description;
+	return `${name}\n${short}\n${stats}`;
+};
+module.exports.summaryText = summaryText;
+
 const label = (text, x, y, width, {fontSize = null, color = null, fillColor = null, bold = true, align = "left", link = null} = {}) =>
-	({text: String(text).slice(0, 300), x, y, width: Math.max(40, width), fontSize, color, fillColor, bold, align, ...(link ? {link} : {})});
+	({text: [...String(text)].slice(0, 300).join(""), x, y, width: Math.max(40, width), fontSize, color, fillColor, bold, align, ...(link ? {link} : {})});
 // Miro の図形は幅・高さとも 8 以上。枠線の太さに 0 は指定できない(指定しなければ枠線は見えない)
 const MIN_SHAPE = 8;
 const shape = ({x, y, width, height, kind = "rectangle", text = "", fillColor = null, fillOpacity = null, borderColor = null, borderWidth = null, borderStyle = null, link = null}) =>
@@ -257,8 +275,9 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		const stepLabel = 60;
 		// 区画の見出しは十字の中心の周りに、外向きの矢印を付けて置く(どちらに何があるか分かるように)。
 		// そのため横線の上下に帯を空ける(見出しと中心の概要カードが資料と重ならないように)
-		const band = 170;
-		const areaLabelOffset = 105;
+		// 中心の概要カードは説明が入ると数行になるので、その分も空ける
+		const band = 230;
+		const areaLabelOffset = 160;
 		const areaLabelWidth = 900;
 		const areaLabelStyle = {fontSize: 40, color: "#1e3a8a"};
 		const stepHeight = stepLabel + fixedLine;
@@ -359,7 +378,7 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		shapes.push(line(G.padding, cy, right, cy));
 		const total = input.documents.length;
 		const latest = input.documents.map((d) => String(d.modified ?? "")).sort().pop()?.slice(0, 10) ?? "";
-		labels.push(label(`${input.project?.name ?? ""} / 資料 ${total} 件${latest ? ` / 最終更新 ${latest}` : ""}`, cx, cy, 640,
+		labels.push(label(summaryText(input.project, total, latest), cx, cy, 900,
 			{fontSize: 28, fillColor: "#ffffff", align: "center", link: projectUrl}));
 
 		width = right + G.padding;

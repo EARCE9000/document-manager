@@ -50,7 +50,8 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py miro-map <プロジェクト>     ボードの地図(区画の範囲・資料の位置・見出し・人が足したもの・空いている所)
   python dm_client.py miro-layout-report <プロジェクト> [--layout <型>]   その型で並べたらどうなるか(タグの見直し用。Miro は変えない)
     レイアウト: folder-columns(フォルダ列) / timeline(時系列) / split-shelves(左右分割・棚) / quadrant-cross(十字) / matrix(マトリクス) / custom(ユーザーカスタム)
-  python dm_client.py project-create <名前>        プロジェクトの作成
+  python dm_client.py project-create <名前> [--description 説明]   プロジェクトの作成
+  python dm_client.py project-update <プロジェクト> [--name 名前] [--description 説明]   名前・説明の変更(説明は "" で消す)
   python dm_client.py folder-create <プロジェクト> <名前> [--parent 親フォルダ]
   python dm_client.py tree <プロジェクト>          フォルダ階層と文書の配置
   python dm_client.py place <プロジェクト> <文書ID> [--folder フォルダ]   プロジェクトへ登録・移動
@@ -773,7 +774,23 @@ def cmd_projects(args):
 
 
 def cmd_project_create(args):
-    return request("POST", "api/projects", body={"name": args.name})
+    body = {"name": args.name}
+    if args.description is not None:
+        body["description"] = args.description
+    return request("POST", "api/projects", body=body)
+
+
+def cmd_project_update(args):
+    """プロジェクトの名前・説明を変える。説明は Miro の十字のレイアウトの中心のカードに出る("" で消す)"""
+    body = {}
+    if args.name is not None:
+        body["name"] = args.name
+    if args.description is not None:
+        body["description"] = args.description
+    if not body:
+        raise DmError("--name か --description を指定してください")
+    project_id = resolve_project(args.project)["id"]
+    return request("PUT", f"api/projects/{quote_id(project_id)}", body=body)
 
 
 def cmd_folder_create(args):
@@ -1311,7 +1328,13 @@ def main():
     p.set_defaults(func=cmd_projects)
     p = sub.add_parser("project-create", help="プロジェクトの作成")
     p.add_argument("name")
+    p.add_argument("--description", help="説明(空でもよい。Miro の十字のレイアウトの中心に出る)")
     p.set_defaults(func=cmd_project_create)
+    p = sub.add_parser("project-update", help="プロジェクトの名前・説明の変更")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("--name", help="新しい名前")
+    p.add_argument("--description", help="説明(\"\" で消す)")
+    p.set_defaults(func=cmd_project_update)
     p = sub.add_parser("folder-create", help="プロジェクト内にフォルダを作る")
     p.add_argument("project", help="プロジェクトのIDまたは名前")
     p.add_argument("name")

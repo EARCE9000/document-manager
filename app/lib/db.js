@@ -194,7 +194,9 @@ const createSchema = (targetDb) => {
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			archived_by TEXT,
 			archived_at TEXT,
-			locked INTEGER NOT NULL DEFAULT 0
+			locked INTEGER NOT NULL DEFAULT 0,
+			-- プロジェクトの説明(空でもよい。Miro の十字型の中心のカードなどに出す)
+			description TEXT
 		)
 	`);
 
@@ -399,7 +401,8 @@ const createSchema = (targetDb) => {
 // 無ければ足す(足すだけなので、何度呼んでも安全)
 const ADDED_COLUMNS = Object.freeze({
 	miro_projects: {layout: "TEXT", layout_plan: "TEXT", layout_undo: "TEXT", last_checked_at: "TEXT"},
-	miro_items: {placed_x: "REAL", placed_y: "REAL"}
+	miro_items: {placed_x: "REAL", placed_y: "REAL"},
+	projects: {description: "TEXT"}
 });
 const addMissingColumns = (targetDb) => {
 	for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {

@@ -393,6 +393,10 @@ const MIGRATIONS = [
 	// 最後に Miro 側を見回った時刻(複数台で同じ間隔のうちに 2 回見回らないため。SQLite の v21 に後から足した列)
 	{version: 15, sql: `
 		ALTER TABLE miro_projects ADD COLUMN IF NOT EXISTS last_checked_at TEXT;
+	`},
+	// プロジェクトの説明(空でもよい。SQLite の v21 に後から足した列)
+	{version: 16, sql: `
+		ALTER TABLE projects ADD COLUMN IF NOT EXISTS description TEXT;
 	`}
 ];
 

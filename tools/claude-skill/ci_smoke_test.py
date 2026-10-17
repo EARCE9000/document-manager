@@ -516,7 +516,9 @@ def setup_miro():
 def smoke_miro(kind, env, workdir):
     """プロジェクトの資料を Miro のボードに並べる(Miro にはスタブが繋がっている)"""
     project_name = f"smoke-miro-{kind}"
-    run_client(kind, ["project-create", project_name], env)
+    run_client(kind, ["project-create", project_name, "--description", "見本の説明"], env)
+    updated = json.loads(run_client(kind, ["project-update", project_name, "--description", "説明を変えた"], env).stdout)
+    check(updated.get("description") == "説明を変えた", f"project-update --description: プロジェクトの説明を変えられる ({updated.get('description')})")
     ids = []
     for label in ("a", "b"):
         path = os.path.join(workdir, f"miro-{kind}-{label}.pdf")

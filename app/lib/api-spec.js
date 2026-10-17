@@ -206,11 +206,13 @@ const OPERATIONS = [
 	{id: "listArchivedProjects", method: "get", path: "/api/projects/archived", role: "readonly", tag: "プロジェクト", summary: "アーカイブ済みプロジェクト一覧"},
 	{
 		id: "createProject", method: "post", path: "/api/projects", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの作成",
-		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}}, example: {name: "顧客管理システム再構築"}}}
+		description: "`description` は説明(空でもよい。2000 文字まで)。Miro の十字のレイアウトの中心のカードに出る",
+		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}, description: {type: "string"}}, example: {name: "顧客管理システム再構築", description: "2026 年度の受注管理の作り直し"}}}
 	},
 	{
-		id: "renameProject", method: "put", path: "/api/projects/:id", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの名前変更",
-		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}}}}
+		id: "renameProject", method: "put", path: "/api/projects/:id", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの名前・説明の変更",
+		description: "`name`・`description` のどちらか(両方でもよい)。説明は空文字で消す(2000 文字まで)。説明は Miro の十字のレイアウトの中心のカードに出る(連動していれば反映する)",
+		body: {schema: {type: "object", properties: {name: {type: "string"}, description: {type: "string"}}}}
 	},
 	{id: "archiveProject", method: "post", path: "/api/projects/:id/archive", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトのアーカイブ(一覧から隠す。復元可能)"},
 	{id: "restoreProject", method: "post", path: "/api/projects/:id/restore", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトをアーカイブから戻す"},
