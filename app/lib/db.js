@@ -356,7 +356,13 @@ const createSchema = (targetDb) => {
 			sync_lock_owner TEXT,
 			sync_lock_until TEXT,
 			-- 枠の中に置いたフォルダの見出し(文字の項目のID。JSONの配列)。資料を片付けるときに一緒に消す
-			header_ids TEXT
+			header_ids TEXT,
+			-- 並べ方の型(lib/miro-layout.js の LAYOUT_IDS。NULL はフォルダ列型)
+			layout TEXT,
+			-- Document Manager が置いた見出しの文字・図形の中身(JSON)。「元の型に戻す」で置き直すため
+			layout_plan TEXT,
+			-- 直前の配置(1世代だけ。型・資料の位置・見出しの文字・図形の JSON)。「元の型に戻す」に使う
+			layout_undo TEXT
 		);
 		-- 資料ごとに、ボードのどの項目に出したか。版をまたいで追いかけるため、資料は
 		-- 共有用のID(document_aliases.alias)で覚える
@@ -378,9 +384,28 @@ const createSchema = (targetDb) => {
 			height REAL,
 			updated_by TEXT,
 			updated_at TEXT,
+			-- Document Manager が最後に置いた位置(x・y は Miro から読み直した今の位置)。違えば人が動かしたとみなす
+			placed_x REAL,
+			placed_y REAL,
 			PRIMARY KEY (project_id, alias)
 		);
 	`);
+	addMissingColumns(targetDb);
+};
+
+// v21 のうちに足した列。v21 を出したあとで足したため、先に v21 で作られたデータベースには無い。
+// 無ければ足す(足すだけなので、何度呼んでも安全)
+const ADDED_COLUMNS = Object.freeze({
+	miro_projects: {layout: "TEXT", layout_plan: "TEXT", layout_undo: "TEXT"},
+	miro_items: {placed_x: "REAL", placed_y: "REAL"}
+});
+const addMissingColumns = (targetDb) => {
+	for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {
+		const existing = new Set(targetDb.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
+		for (const [name, type] of Object.entries(columns)) {
+			if (!existing.has(name)) targetDb.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+		}
+	}
 };
 
 // 旧バージョンのファイルをATTACHし、テーブルごとに列を明示してデータをコピーする。

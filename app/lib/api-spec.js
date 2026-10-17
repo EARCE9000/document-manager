@@ -468,7 +468,7 @@ const OPERATIONS = [
 	{
 		id: "getProjectMiro", method: "get", path: "/api/projects/:id/miro", role: "readonly", tag: "プロジェクト",
 		summary: "プロジェクトの Miro 連動の状態",
-		description: "連動しているか、Miro の枠を開くURL(`frameUrl`)、最後に反映した時刻と失敗、資料ごとの状態(`placed` 出ている / `skipped` 出せない形式など / `failed` Miroが断った / `excluded` 出さない設定 / `removed` Miroで消された / `detached` プロジェクトから外れた・アーカイブ)と理由を返す。`available:false`は Miro との連携が無いか、貼り先のボードが決まっていない",
+		description: "連動しているか、Miro の枠を開くURL(`frameUrl`)、最後に反映した時刻と失敗、資料ごとの状態(`placed` 出ている / `skipped` 出せない形式など / `failed` Miroが断った / `excluded` 出さない設定 / `removed` Miroで消された / `detached` プロジェクトから外れた・アーカイブ)と理由を返す。`layout` は並べ方の型、`undo` は「元の型に戻す」で戻れる型(並べ直したあとだけ。無ければ null)。`available:false`は Miro との連携が無いか、貼り先のボードが決まっていない",
 		aiGuide: false
 	},
 	{
@@ -479,15 +479,16 @@ const OPERATIONS = [
 			+ "`placements`: 資料ごとの区画(`area`・`slot`)と根拠(`basis`: `tag` / `inferred` / `unclassified` / `folder`。推定なら `inferredTags` と `matchedWords`)。"
 			+ "`unclassified`(理由 `no_phase_tag` / `no_process_tag` / `no_feature_tag` / `unknown_value`)・`unknownValues`(表に無い値と近い値の候補)・`duplicateTags`・`overriddenTags`・`gaps`(マトリクスの無いマス)・`overflow`(「ほか n 件」)・`notes`(フォルダに入っていない・初版の登録日を日付にした)。"
 			+ "タグの値と推定の決まりは docs/miro-layouts/layout-spec.md",
-		params: [{name: "layout", in: "query", description: "型(省略時は folder-columns)"}],
+		params: [{name: "layout", in: "query", description: "型(省略時はプロジェクトに選んである型。連動していなければ folder-columns)"}],
 		responses: {400: "知らない型"},
 		aiGuide: false
 	},
 	{
 		id: "linkProjectMiro", method: "post", path: "/api/projects/:id/miro", role: "readwrite", tag: "プロジェクト",
 		summary: "プロジェクトを Miro と連動する(資料をボードに並べる)",
-		description: "連携で選んだボードにプロジェクトの枠を作り、資料をフォルダごとに並べる。並べるのは裏で行い、すぐ202を返す(`GET`の`syncing`で進み具合が分かる)。連動しているあいだ、新しい版は同じ場所のまま差し替え、増えた資料は下に足す。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.ioはPDFにして、Officeは体裁つきPDFで出す(1件6MBまで)",
-		responses: {409: "Miro と連携していないか、貼り先のボードが決まっていない"},
+		description: "連携で選んだボードにプロジェクトの枠を作り、資料をフォルダごとに並べる。並べるのは裏で行い、すぐ202を返す(`GET`の`syncing`で進み具合が分かる)。連動しているあいだ、新しい版は同じ場所のまま差し替え、増えた資料は下に足す。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.ioはPDFにして、Officeは体裁つきPDFで出す(1件6MBまで)。`layout` で並べ方の型を選べる(省略すると前に選んだ型。初めてならフォルダ列型)",
+		body: {schema: {type: "object", properties: {layout: {type: "string", enum: ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]}}}},
+		responses: {400: "知らない型", 409: "Miro と連携していないか、貼り先のボードが決まっていない"},
 		aiGuide: false
 	},
 	{
@@ -541,9 +542,19 @@ const OPERATIONS = [
 	},
 	{
 		id: "arrangeProjectMiro", method: "post", path: "/api/projects/:id/miro/arrange", role: "readwrite", tag: "プロジェクト",
-		summary: "Miro の枠の中を、フォルダの順に並べ直す",
-		description: "おしながきと同じ順に、フォルダごとの見出しを付けて並べ直す。**人が Miro で並べた配置は上書きされる**ので、頼まれたときだけ使う",
-		responses: {409: "連動していない・いま反映しているところ"},
+		summary: "Miro の枠の中を、型どおりに並べ直す(型の切り替え)",
+		description: "プロジェクトに選んである型で、見出しの文字・図形も置き直して並べ直す。`layout` を渡すと、その型に切り替えてから並べる。"
+			+ "**人が Miro で並べた配置は上書きされる**ので、頼まれたときだけ使う。人が足した付箋や図形には触らない。"
+			+ "並べる前の配置を 1 世代だけ覚えておき、`POST /api/projects/:id/miro/arrange/undo` で戻せる。切り替える前に `layout-report` で未分類の割合を見る",
+		body: {schema: {type: "object", properties: {layout: {type: "string", enum: ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]}}}},
+		responses: {400: "知らない型・まだ並べられない型", 409: "連動していない・いま反映しているところ"},
+		aiGuide: false
+	},
+	{
+		id: "undoArrangeProjectMiro", method: "post", path: "/api/projects/:id/miro/arrange/undo", role: "readwrite", tag: "プロジェクト",
+		summary: "Miro の並べ直しを取り消す(元の型に戻す)",
+		description: "直前の並べ直しの前の配置(型・資料の位置・見出しの文字・図形・見出しの色・枠の大きさ)に戻す。戻せるのは 1 世代だけで、戻したら消える。そのあとで増えた資料は、いまの場所のまま",
+		responses: {409: "連動していない・戻せる配置が無い・いま反映しているところ"},
 		aiGuide: false
 	},
 	{

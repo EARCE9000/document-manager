@@ -531,3 +531,76 @@ test.describe.serial("Miro の枠にレイアウトをまとめて当てる", ()
 		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.design.id}`, {headers: rw, data: {x: -10, y: 300}})).status()).toBe(400);
 	});
 });
+
+// 並べ方の型はプロジェクトごとに持つ。並べ直し(型の切り替え)の前の配置を 1 世代だけ覚え、元に戻せる(docs/miro-layouts/layout-spec.md 6 章)
+test.describe.serial("Miro の並べ方の型と、元の型に戻す", () => {
+	let projectId;
+	const docs = {};
+	const file = (items, title) => items.find((i) => (i.type === "document" || i.type === "image") && i.data?.title === title);
+	const caption = (items, title) => items.find((i) => i.type === "text" && i.data.content.includes(title));
+	const statusOf = async (request) => (await request.get(`api/projects/${projectId}/miro`, {headers: rw})).json();
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `型${STAMP}`}})).json()).id;
+		await request.post(`api/projects/${projectId}/unlock`, {headers: rw});
+		for (const key of ["a", "b"]) {
+			docs[key] = await upload(request, `型-${key}${STAMP}.pdf`, PDF);
+			await request.put(`api/projects/${projectId}/documents/${docs[key].id}`, {headers: rw, data: {folderId: null}});
+		}
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("連動を始めるときに型を選べ、報告の既定もその型になる。知らない型は断る", async ({request}) => {
+		expect((await request.post(`api/projects/${projectId}/miro`, {headers: rw, data: {layout: "kanban"}})).status()).toBe(400);
+		expect((await request.post(`api/projects/${projectId}/miro`, {headers: rw, data: {layout: "timeline"}})).status()).toBe(202);
+		const status = await settled(request, projectId);
+		expect(status).toMatchObject({layout: "timeline", layoutName: "時系列型", undo: null});
+		const report = await (await request.get(`api/projects/${projectId}/miro/layout-report`, {headers: ro})).json();
+		expect(report.layout).toBe("timeline");
+	});
+
+	test("型を渡して並べ直すと、その型に切り替わり、前の型に戻せるようになる", async ({request}) => {
+		// 人が並べた(ここではレイアウトを当てた)配置: 位置・見出しの色・区画の見出し
+		await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {
+			items: [{documentId: docs.a.id, x: 3000, y: 3000, color: "#fde68a"}],
+			labels: [{text: "前の区画", x: 600, y: 100}]
+		}});
+		expect((await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "kanban"}})).status()).toBe(400);
+		const res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "folder-columns"}});
+		expect(res.status()).toBe(200);
+		expect(await res.json()).toMatchObject({moved: 2, layout: "folder-columns", previousLayout: "timeline"});
+		const items = await boardItems(request);
+		expect(file(items, `型-a${STAMP}.pdf`).position.x).toBeLessThan(3000);
+		expect(caption(items, `型-a${STAMP}.pdf`).style).toMatchObject({fillOpacity: "0"});
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("前の区画"))).toBe(false);
+		const status = await statusOf(request);
+		expect(status).toMatchObject({layout: "folder-columns", undo: {layout: "timeline", layoutName: "時系列型"}});
+	});
+
+	test("元の型に戻すと、型・位置・見出しの色・区画の見出しが戻る。戻せるのは 1 世代だけ", async ({request}) => {
+		const res = await request.post(`api/projects/${projectId}/miro/arrange/undo`, {headers: rw});
+		expect(res.status()).toBe(200);
+		expect(await res.json()).toMatchObject({layout: "timeline"});
+		const items = await boardItems(request);
+		expect(file(items, `型-a${STAMP}.pdf`).position).toMatchObject({x: 3000, y: 3000});
+		expect(caption(items, `型-a${STAMP}.pdf`).style).toMatchObject({fillColor: "#fde68a"});
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("前の区画"))).toBe(true);
+		expect(await statusOf(request)).toMatchObject({layout: "timeline", undo: null});
+		expect((await request.post(`api/projects/${projectId}/miro/arrange/undo`, {headers: rw})).status()).toBe(409);
+		expect((await request.post(`api/projects/${projectId}/miro/arrange/undo`, {headers: ro})).status()).toBe(403);
+	});
+
+	test("まだ並べ方の無い型は、並べ直しでは選べない(報告は出せる)", async ({request}) => {
+		const res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "matrix"}});
+		expect(res.status()).toBe(400);
+		expect((await res.json()).error).toContain("マトリクス型");
+		expect((await statusOf(request)).layout).toBe("timeline");
+	});
+});

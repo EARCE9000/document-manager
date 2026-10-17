@@ -4157,12 +4157,13 @@ app.get(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, async (req, res) =
 
 /**
  * 並べ方の型で並べたらどうなるかの報告(LLM でタグを見直すため。docs/miro-layouts/layout-spec.md 8 章)。
- * Miro には触らず、読むだけで出す(連動していなくても出せる)。?layout= で型を選ぶ(省略時はフォルダ列型)
+ * Miro には触らず、読むだけで出す(連動していなくても出せる)。?layout= で型を選ぶ(省略時はプロジェクトに選んである型)
  */
 app.get(BASE_URL_PATH + 'api/projects/:id/miro/layout-report', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const layout = String(req.query.layout ?? MiroLayout.DEFAULT_LAYOUT);
+		// 型を省略すると、プロジェクトに選んである型(連動していなければフォルダ列型)
+		const layout = req.query.layout != null ? String(req.query.layout) : await MiroSync.layoutOf(req.params.id);
 		if (!MiroLayout.LAYOUT_IDS.includes(layout)) {
 			res.status(400).json({error: `layout は ${MiroLayout.LAYOUT_IDS.join(" / ")} のどれかです`});
 			return;
@@ -4181,14 +4182,17 @@ app.get(BASE_URL_PATH + 'api/projects/:id/miro/layout-report', requireAuth, asyn
 	}
 });
 
-/** 連動を始める(または止めていたものを再開する)。並べるのは裏で行い、すぐ返す(202) */
+/**
+ * 連動を始める(または止めていたものを再開する)。並べるのは裏で行い、すぐ返す(202)。
+ * 本体: {layout?} 並べ方の型(省略すると前に選んだ型。初めてならフォルダ列型)
+ */
 app.post(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		await MiroSync.link(req.params.id, req.authData.user_identifier);
+		await MiroSync.link(req.params.id, req.authData.user_identifier, {layout: req.body?.layout ?? undefined});
 		res.status(202).json(await MiroSync.status(req.params.id));
 	} catch (err) {
-		if (err.status === 404 || err.status === 409) {
+		if ([400, 404, 409].includes(err.status)) {
 			res.status(err.status).json({error: err.message});
 			return;
 		}
@@ -4305,11 +4309,14 @@ app.post(BASE_URL_PATH + 'api/projects/:id/miro/layout', requireAuth, requireWri
 	}
 });
 
-/** 枠の中を、フォルダの順に並べ直す(人が並べた配置は上書きされる。フォルダの見出しも置き直す) */
+/**
+ * 枠の中を、型どおりに並べ直す(人が並べた配置は上書きされる。見出しの文字・図形も置き直す)。
+ * 本体: {layout?} を渡すと、その型に切り替えてから並べる。並べる前の配置は 1 世代だけ覚え、.../arrange/undo で戻せる
+ */
 app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(await MiroSync.arrange(req.params.id, req.authData.user_identifier));
+		res.status(200).json(await MiroSync.arrange(req.params.id, req.authData.user_identifier, {layout: req.body?.layout ?? undefined}));
 	} catch (err) {
 		if (err.needsReconnect) {
 			res.status(409).json({error: err.message, needsReconnect: true});
@@ -4320,6 +4327,25 @@ app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange', requireAuth, requireWr
 			return;
 		}
 		logger.error(err, "::api/projects/:id/miro/arrange");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 「元の型に戻す」: 直前の並べ直しの前の配置(型・位置・見出しの文字・図形)に戻す。戻せるのは 1 世代だけ */
+app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange/undo', requireAuth, requireWrite, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(await MiroSync.undoArrange(req.params.id, req.authData.user_identifier));
+	} catch (err) {
+		if (err.needsReconnect) {
+			res.status(409).json({error: err.message, needsReconnect: true});
+			return;
+		}
+		if ([400, 404, 409].includes(err.status)) {
+			res.status(err.status).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/projects/:id/miro/arrange/undo");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

@@ -381,6 +381,14 @@ const MIGRATIONS = [
 			updated_at TEXT,
 			PRIMARY KEY (project_id, alias)
 		);
+	`},
+	// Miro に並べる型と、置いた位置の記憶(SQLite の v21 に後から足した列)。「元の型に戻す」と、人が動かしたかの見分けに使う
+	{version: 14, sql: `
+		ALTER TABLE miro_projects ADD COLUMN IF NOT EXISTS layout TEXT;
+		ALTER TABLE miro_projects ADD COLUMN IF NOT EXISTS layout_plan TEXT;
+		ALTER TABLE miro_projects ADD COLUMN IF NOT EXISTS layout_undo TEXT;
+		ALTER TABLE miro_items ADD COLUMN IF NOT EXISTS placed_x DOUBLE PRECISION;
+		ALTER TABLE miro_items ADD COLUMN IF NOT EXISTS placed_y DOUBLE PRECISION;
 	`}
 ];
 

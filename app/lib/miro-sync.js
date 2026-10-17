@@ -38,6 +38,7 @@ const MiroConnection = require("./miro-connection.js");
 const Projects = require("./projects.js");
 const ProjectManifest = require("./project-manifest.js");
 const DocumentAliases = require("./document-aliases.js");
+const MiroLayout = require("./miro-layout.js");
 
 // ---- 並べ方(単位は Miro のボード上の長さ) ----
 const LAYOUT = Object.freeze({
@@ -100,6 +101,10 @@ const SQL_UPSERT_PROJECT = `
 `;
 const SQL_SET_FRAME = `UPDATE miro_projects SET frame_id = @frame_id, frame_x = @x, frame_y = @y, frame_width = @width, frame_height = @height WHERE project_id = @project_id`;
 const SQL_SET_HEADERS = `UPDATE miro_projects SET header_ids = @header_ids WHERE project_id = @project_id`;
+const SQL_SET_DECORATIONS = `UPDATE miro_projects SET header_ids = @header_ids, layout_plan = @layout_plan WHERE project_id = @project_id`;
+const SQL_SET_LAYOUT_PLAN = `UPDATE miro_projects SET layout_plan = @layout_plan WHERE project_id = @project_id`;
+const SQL_SET_LAYOUT = `UPDATE miro_projects SET layout = @layout WHERE project_id = @project_id`;
+const SQL_SET_LAYOUT_UNDO = `UPDATE miro_projects SET layout_undo = @layout_undo WHERE project_id = @project_id`;
 const SQL_SET_SYNCED = `UPDATE miro_projects SET last_synced_at = @now, last_error = @error WHERE project_id = @project_id`;
 const SQL_STOP_PROJECT = `UPDATE miro_projects SET state = 'stopped', stopped_by = @user, stopped_at = @now, last_error = @error WHERE project_id = @project_id`;
 const SQL_TAKE_LOCK = `
@@ -109,12 +114,12 @@ const SQL_TAKE_LOCK = `
 const SQL_RELEASE_LOCK = `UPDATE miro_projects SET sync_lock_owner = NULL, sync_lock_until = NULL WHERE project_id = @project_id AND sync_lock_owner = @owner`;
 const SQL_LIST_ITEMS = `SELECT * FROM miro_items WHERE project_id = ?`;
 const SQL_UPSERT_ITEM = `
-	INSERT INTO miro_items (project_id, alias, board_id, document_id, item_id, item_kind, caption_id, group_id, title, state, reason, x, y, width, height, updated_by, updated_at)
-	VALUES (@project_id, @alias, @board_id, @document_id, @item_id, @item_kind, @caption_id, @group_id, @title, @state, @reason, @x, @y, @width, @height, @updated_by, @updated_at)
+	INSERT INTO miro_items (project_id, alias, board_id, document_id, item_id, item_kind, caption_id, group_id, title, state, reason, x, y, width, height, placed_x, placed_y, updated_by, updated_at)
+	VALUES (@project_id, @alias, @board_id, @document_id, @item_id, @item_kind, @caption_id, @group_id, @title, @state, @reason, @x, @y, @width, @height, @placed_x, @placed_y, @updated_by, @updated_at)
 	ON CONFLICT(project_id, alias) DO UPDATE SET board_id = excluded.board_id, document_id = excluded.document_id, item_id = excluded.item_id,
 		item_kind = excluded.item_kind, caption_id = excluded.caption_id, group_id = excluded.group_id, title = excluded.title, state = excluded.state,
 		reason = excluded.reason, x = excluded.x, y = excluded.y, width = excluded.width, height = excluded.height,
-		updated_by = excluded.updated_by, updated_at = excluded.updated_at
+		placed_x = excluded.placed_x, placed_y = excluded.placed_y, updated_by = excluded.updated_by, updated_at = excluded.updated_at
 `;
 const SQL_SELECT_DOCUMENT = `SELECT id, entry_file, preview_file, size, uploaded_at, deleted_at, render_status, render_file FROM documents WHERE id = ?`;
 
@@ -246,6 +251,61 @@ const deleteHeaders = async (link, board) => {
 	if (ids.length > 0 && link?.project_id) await ds.run(SQL_SET_HEADERS, {project_id: link.project_id, header_ids: "[]"});
 };
 
+/**
+ * Document Manager が置く見出しの文字・図形を置き、ID と中身を覚える(次に置き直すときに片付けるため、
+ * 「元の型に戻す」で同じものを置き直すため)。keep のときは前に置いたものを残して足す。
+ * tolerant のときは、置けなかったものを飛ばして続ける(初めて並べるときのフォルダの見出し)。
+ * labels・shapes は normalizeLayout() と同じ形。
+ */
+const drawDecorations = async (projectId, link, board, frameId, {labels = [], shapes = []}, {keep = false, tolerant = false} = {}) => {
+	const previous = parseJson(link.layout_plan, {});
+	let ids = [];
+	let keptLabels = [];
+	let keptShapes = [];
+	if (keep) {
+		ids = parseJson(link.header_ids, []);
+		keptLabels = previous.labels ?? [];
+		keptShapes = previous.shapes ?? [];
+	} else {
+		await deleteHeaders(link, board);
+	}
+	const skip = (what) => (err) => {
+		if (!tolerant || err.needsReconnect) throw err;
+		logger.warn({err: err.message, projectId}, `${what}を置けませんでした`);
+		return null;
+	};
+	// 図形 → 見出しの文字の順に置く(あとから置いたものが上に重なる)
+	const createdShapes = [];
+	await forEachConcurrently(shapes, CONCURRENCY, async (shape) => {
+		const created = await MiroConnection.withToken((token) => Miro.createShape(token, board, {
+			shape: shape.shape, content: shape.text ? `<p>${escapeHtml(shape.text)}</p>` : "",
+			x: shape.x, y: shape.y, width: shape.width, height: shape.height, parentId: frameId,
+			style: Object.fromEntries(Object.entries({
+				fillColor: shape.fillColor, fillOpacity: shape.fillOpacity == null ? null : String(shape.fillOpacity),
+				borderColor: shape.borderColor, borderWidth: shape.borderWidth == null ? null : String(shape.borderWidth), borderStyle: shape.borderStyle
+			}).filter(([, v]) => v != null))
+		})).catch(skip("図形"));
+		if (created != null) createdShapes.push(created.id);
+	});
+	const createdLabels = [];
+	await forEachConcurrently(labels, CONCURRENCY, async (label) => {
+		const body = label.bold ? `<strong>${escapeHtml(label.text)}</strong>` : escapeHtml(label.text);
+		const created = await MiroConnection.withToken((token) => Miro.createText(token, board, {
+			content: `<p>${body}</p>`, x: label.x, y: label.y, width: label.width, parentId: frameId,
+			style: Object.fromEntries(Object.entries({
+				fontSize: label.fontSize == null ? null : String(label.fontSize), color: label.color,
+				fillColor: label.fillColor, fillOpacity: label.fillColor ? "1" : null, textAlign: label.align
+			}).filter(([, v]) => v != null))
+		})).catch(skip("見出し"));
+		if (created != null) createdLabels.push(created.id);
+	});
+	const headerIds = JSON.stringify([...ids, ...createdShapes, ...createdLabels]);
+	const layoutPlan = JSON.stringify({...previous, labels: [...keptLabels, ...labels], shapes: [...keptShapes, ...shapes]});
+	await ds.run(SQL_SET_DECORATIONS, {project_id: projectId, header_ids: headerIds, layout_plan: layoutPlan});
+	Object.assign(link, {header_ids: headerIds, layout_plan: layoutPlan});
+	return {labels: createdLabels.length, shapes: createdShapes.length};
+};
+
 // ---- 1プロジェクトの同期 ----
 
 /**
@@ -277,7 +337,7 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 		const now = () => new Date().toISOString();
 		const save = (row) => ds.run(SQL_UPSERT_ITEM, {
 			project_id: projectId, board_id: board, document_id: null, item_id: null, item_kind: null, caption_id: null, group_id: null,
-			title: null, reason: null, x: null, y: null, width: null, height: null, updated_by: user, updated_at: now(), ...row
+			title: null, reason: null, x: null, y: null, width: null, height: null, placed_x: null, placed_y: null, updated_by: user, updated_at: now(), ...row
 		});
 
 		// 枠。Miro 側で消されていたら、連動をやめる(消したのは人の判断なので、作り直さない)
@@ -458,19 +518,7 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 
 		// フォルダの見出し。並べ直すとき(初めて・全部片付けたあと)は、前の見出しを消してから置く
 		if (headers.length > 0) {
-			await deleteHeaders(link, board);
-			const headerIds = [];
-			for (const header of headers) {
-				const text = await call((token) => Miro.createText(token, board, {
-					content: `<p><strong>■ ${escapeHtml(header.title)}</strong></p>`,
-					x: frameWidth() / 2, y: header.y, width: frameWidth() - LAYOUT.padding * 2, parentId: frameId
-				})).catch((err) => {
-					logger.warn({err: err.message, projectId}, "フォルダの見出しを置けませんでした");
-					return null;
-				});
-				if (text != null) headerIds.push(text.id);
-			}
-			await ds.run(SQL_SET_HEADERS, {project_id: projectId, header_ids: JSON.stringify(headerIds)});
+			await drawDecorations(projectId, link, board, frameId, {labels: headers.map((header) => headerLabel(header.title, header.y))}, {tolerant: true});
 		}
 
 		// 資料を置く(中身 → 見出し → グループ)。置く場所は決めてあるので、数件ずつ同時に書き込む
@@ -493,7 +541,7 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 					return null;
 				});
 				await save({alias: doc.alias, document_id: doc.id, item_id: item.id, item_kind: payload.kind, caption_id: caption.id, group_id: group?.id ?? null,
-					title: doc.entry_file, state: STATES.PLACED, reason: null, x: entry.x, y: entry.y, width: item.geometry?.width ?? LAYOUT.itemWidth, height});
+					title: doc.entry_file, state: STATES.PLACED, reason: null, x: entry.x, y: entry.y, placed_x: entry.x, placed_y: entry.y, width: item.geometry?.width ?? LAYOUT.itemWidth, height});
 				counts.created++;
 				counts.placed++;
 			} catch (err) {
@@ -596,20 +644,25 @@ module.exports.startPeriodic = () => {
 
 // ---- 連動の開始・終了・状態 ----
 
-/** 連動を始める(または止めていたものを再開する)。並べるのは裏で行う */
-module.exports.link = async (projectId, user) => {
+/**
+ * 連動を始める(または止めていたものを再開する)。並べるのは裏で行う。
+ * @param {{layout?: string}} [options] layout: 並べ方の型(省略すると、前に選んだ型。初めてならフォルダ列型)
+ */
+module.exports.link = async (projectId, user, {layout} = {}) => {
+	checkLayout(layout);
 	const target = await MiroConnection.target();
 	if (target == null) throw Object.assign(new Error("Miro と連携していないか、貼り先のボードが決まっていません(管理画面の「Miro 連携」)"), {status: 409});
 	const project = await Projects.getProject(projectId);
 	if (project == null) throw Object.assign(new Error("not found"), {status: 404});
 	const previous = await ds.get(SQL_GET_PROJECT, [projectId]);
 	await ds.run(SQL_UPSERT_PROJECT, {project_id: projectId, board_id: target.boardId, user, now: new Date().toISOString()});
+	if (layout != null) await ds.run(SQL_SET_LAYOUT, {project_id: projectId, layout});
 	// ボードが変わった・枠が消されて止まっていた場合は、新しい枠に並べ直す(前の記録は使わない)
 	if (previous != null && (previous.board_id !== target.boardId || previous.last_error?.includes("枠が消された"))) {
 		await ds.run(`UPDATE miro_projects SET frame_id = NULL, frame_x = NULL, frame_y = NULL, frame_width = NULL, frame_height = NULL WHERE project_id = ?`, [projectId]);
 		await ds.run(`DELETE FROM miro_items WHERE project_id = ? AND state <> 'excluded'`, [projectId]);
 	}
-	logger.info({audit: "miro_project_linked", user, projectId}, "audit");
+	logger.info({audit: "miro_project_linked", user, projectId, layout: layout ?? null}, "audit");
 	runProject(projectId, {user});
 };
 
@@ -657,7 +710,7 @@ module.exports.setPublish = async (projectId, documentId, publish, user) => {
 		}
 		await ds.run(SQL_UPSERT_ITEM, {project_id: projectId, alias, board_id: target?.boardId ?? row?.board_id ?? "", document_id: documentId, item_id: null, item_kind: null,
 			caption_id: null, group_id: null, title: row?.title ?? null, state: STATES.EXCLUDED, reason: "「出さない」に設定されています", x: null, y: null, width: null, height: null,
-			updated_by: user, updated_at: new Date().toISOString()});
+			placed_x: null, placed_y: null, updated_by: user, updated_at: new Date().toISOString()});
 	} else if (row != null && (row.state === STATES.EXCLUDED || row.state === STATES.REMOVED)) {
 		await ds.run(`DELETE FROM miro_items WHERE project_id = ? AND alias = ?`, [projectId, alias]);
 	}
@@ -698,7 +751,10 @@ const readPlacement = async (board, row) => {
 };
 
 const SQL_GET_ITEM = `SELECT * FROM miro_items WHERE project_id = ? AND alias = ?`;
-const SQL_SET_POSITION = `UPDATE miro_items SET x = ?, y = ?, width = ?, height = ?, updated_by = ?, updated_at = ? WHERE project_id = ? AND alias = ?`;
+const SQL_SET_POSITION = `UPDATE miro_items SET x = ?, y = ?, placed_x = ?, placed_y = ?, width = ?, height = ?, updated_by = ?, updated_at = ? WHERE project_id = ? AND alias = ?`;
+/** Document Manager が資料を置いた位置を覚える(今の位置と、置いた位置の両方。違ってきたら人が動かしたとみなす) */
+const setPosition = (projectId, row, x, y, user) =>
+	ds.run(SQL_SET_POSITION, [x, y, x, y, row.width, row.height, user, new Date().toISOString(), projectId, row.alias]);
 
 /** プロジェクトの資料(出ているもの)を、文書IDから引く。版が変わっていても、同じ資料なら引ける */
 const placedRowOf = async (projectId, documentId) => {
@@ -767,74 +823,244 @@ module.exports.moveDocument = async (projectId, documentId, instruction, user) =
 		// はみ出す位置なら、いまの枠(自分のプロジェクトの枠に入っているとき)を広げる
 		const link = await ds.get(SQL_GET_PROJECT, [projectId]);
 		if (link?.frame_id != null && current.parentId === link.frame_id) {
-			await growFrameToFit(projectId, link, board, {right: destination.x + current.width / 2, bottom: destination.y + current.height / 2 + LAYOUT.captionHeight});
+			await resizeFrame(projectId, link, board, {
+				width: destination.x + current.width / 2 + LAYOUT.padding,
+				height: destination.y + current.height / 2 + LAYOUT.captionHeight + LAYOUT.padding,
+				grow: true
+			});
 		}
 	} else {
 		throw moveError("nextTo(と side)・project・x と y のどれかを指定してください");
 	}
 	await placeAt(board, row, destination);
-	await ds.run(SQL_SET_POSITION, [destination.x, destination.y, row.width, row.height, user, new Date().toISOString(), projectId, row.alias]);
+	await setPosition(projectId, row, destination.x, destination.y, user);
 	logger.info({audit: "miro_document_moved", user, projectId, documentId, instruction}, "audit");
 	return {x: destination.x, y: destination.y, frameId: destination.parentId};
 };
 
+const parseJson = (text, fallback) => {
+	if (text == null || text === "") return fallback;
+	try {
+		return JSON.parse(text);
+	} catch {
+		return fallback;
+	}
+};
+
+/** フォルダの見出し(■ フォルダ名)の文字。初めて並べるときと、フォルダの順で並べ直すときに置く */
+const headerLabel = (title, y) => ({
+	text: `■ ${title}`, x: frameWidth() / 2, y, width: frameWidth() - LAYOUT.padding * 2,
+	fontSize: null, color: null, fillColor: null, bold: true, align: "left"
+});
+
 /**
- * 枠の中を、フォルダの順(おしながきと同じ順)に並べ直す。人が並べた配置は上書きされる。
- * フォルダの見出しも置き直す。枠の外へ出した資料も枠に戻す。
+ * フォルダ列型(いまの並べ方): おしながき順に、フォルダごとの見出しを付けて格子に並べる。
+ * @returns {Promise<{items: Array<{row: object, x: number, y: number, color: ?string}>, labels: object[], shapes: object[], frame: {width: number, height: number}}>}
  */
-module.exports.arrange = async (projectId, user) => {
+const planFolderSections = async (projectId, rows) => {
+	const desired = await desiredDocuments(projectId);
+	let cursorY = LAYOUT.padding;
+	const items = [];
+	const labels = [];
+	for (const section of desired.sections) {
+		const entries = section.documents.map((doc) => rows.get(doc.alias)).filter(Boolean);
+		if (entries.length === 0) continue;
+		if (section.title) {
+			labels.push(headerLabel(section.title, cursorY + LAYOUT.headerHeight / 2));
+			cursorY += LAYOUT.headerHeight;
+		}
+		for (let i = 0; i < entries.length; i += LAYOUT.columns) {
+			const line = entries.slice(i, i + LAYOUT.columns);
+			const heightOf = (r) => Number(r.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
+			const rowHeight = Math.max(...line.map(heightOf));
+			line.forEach((r, index) => {
+				items.push({row: r, x: LAYOUT.padding + index * (LAYOUT.itemWidth + LAYOUT.gapX) + LAYOUT.itemWidth / 2, y: cursorY + heightOf(r) / 2, color: null});
+			});
+			cursorY += rowHeight + LAYOUT.captionHeight + LAYOUT.gapY;
+		}
+	}
+	return {items, labels, shapes: [], frame: {width: frameWidth(), height: Math.max(cursorY - LAYOUT.gapY + LAYOUT.padding, 600)}};
+};
+
+// 型ごとの並べ方。まだ無い型は、並べ直しでは選べない(報告は出せる)
+const PLANNERS = Object.freeze({
+	"folder-columns": planFolderSections
+});
+module.exports.arrangeableLayouts = () => Object.keys(PLANNERS);
+
+const layoutOf = (link) => (MiroLayout.LAYOUT_IDS.includes(link?.layout) ? link.layout : MiroLayout.DEFAULT_LAYOUT);
+/** プロジェクトに選んである型(連動していなければフォルダ列型) */
+module.exports.layoutOf = async (projectId) => layoutOf(await ds.get(SQL_GET_PROJECT, [projectId]));
+
+const checkLayout = (layout) => {
+	if (layout != null && !MiroLayout.LAYOUT_IDS.includes(layout)) {
+		throw moveError(`型(layout)は ${MiroLayout.LAYOUT_IDS.join(" / ")} のどれかです`);
+	}
+};
+module.exports.checkLayout = checkLayout;
+
+/**
+ * 枠の大きさを変える。左上の角は動かさない(中の項目は左上からの位置なので、中心を動かさずに変えると、
+ * 中身ごと上や左へずれて見える)。grow のときは縮めない
+ */
+const resizeFrame = async (projectId, link, board, {width, height, grow = false}) => {
+	const currentWidth = Number(link.frame_width) || frameWidth();
+	const currentHeight = Number(link.frame_height) || 600;
+	const nextWidth = Math.ceil(grow ? Math.max(currentWidth, width) : width);
+	const nextHeight = Math.ceil(grow ? Math.max(currentHeight, height) : height);
+	if (nextWidth === currentWidth && nextHeight === currentHeight) return {width: nextWidth, height: nextHeight};
+	const left = Number(link.frame_x) - currentWidth / 2;
+	const top = Number(link.frame_y) - currentHeight / 2;
+	const x = left + nextWidth / 2;
+	const y = top + nextHeight / 2;
+	await MiroConnection.withToken((token) => Miro.updateFrame(token, board, link.frame_id, {width: nextWidth, height: nextHeight, x, y}));
+	await ds.run(SQL_SET_FRAME, {project_id: projectId, frame_id: link.frame_id, x, y, width: nextWidth, height: nextHeight});
+	Object.assign(link, {frame_x: x, frame_y: y, frame_width: nextWidth, frame_height: nextHeight});
+	return {width: nextWidth, height: nextHeight};
+};
+
+/**
+ * 決まった配置をボードへ置く: 枠の大きさ → 見出しの文字・図形 → 資料の位置と見出しの色。
+ * items の color は、undefined なら見出しの色を変えず、null なら色を外す。
+ * @param {{items: Array<{row: object, x: number, y: number, color?: ?string}>, labels: object[], shapes: object[], frame?: ?{width: number, height: number}}} plan
+ * @param {{grow?: boolean, keepDecorations?: boolean}} options grow: 枠を縮めない(レイアウトを当てるとき)
+ */
+const executePlan = async (projectId, link, board, plan, user, {grow = false, keepDecorations = false} = {}) => {
+	const heightOf = (row) => Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
+	const widthOf = (row) => Number(row.width) || LAYOUT.itemWidth;
+	// 枠を先に合わせる(はみ出した位置に置くと、枠の外に出たように見えるため)。中身がはみ出すなら、その分は広げる
+	let right = 0;
+	let bottom = 0;
+	for (const item of plan.items) {
+		right = Math.max(right, item.x + widthOf(item.row) / 2);
+		bottom = Math.max(bottom, item.y + heightOf(item.row) / 2 + LAYOUT.captionHeight);
+	}
+	for (const label of plan.labels) {
+		right = Math.max(right, label.x + label.width / 2);
+		bottom = Math.max(bottom, label.y + (label.fontSize ?? 36));
+	}
+	for (const shape of plan.shapes) {
+		right = Math.max(right, shape.x + shape.width / 2);
+		bottom = Math.max(bottom, shape.y + shape.height / 2);
+	}
+	const frame = await resizeFrame(projectId, link, board, {
+		width: Math.max(plan.frame?.width ?? (grow ? 0 : Number(link.frame_width) || frameWidth()), right + LAYOUT.padding),
+		height: Math.max(plan.frame?.height ?? (grow ? 0 : 600), bottom + LAYOUT.padding),
+		grow
+	});
+	const drawn = await drawDecorations(projectId, link, board, link.frame_id, plan, {keep: keepDecorations});
+
+	// 資料を動かす(見出しも一緒に)。色の指定があれば見出しの背景を塗る
+	const colors = {...(parseJson(link.layout_plan, {}).colors ?? {})};
+	let moved = 0;
+	await forEachConcurrently(plan.items, CONCURRENCY, async (item) => {
+		const {row} = item;
+		try {
+			await placeAt(board, row, {x: item.x, y: item.y, parentId: link.frame_id});
+		} catch (err) {
+			// Miro で消されていた資料は飛ばす(次の定期の反映で「消された」になる)
+			if (err.status === 404) return;
+			throw err;
+		}
+		if (item.color !== undefined && row.caption_id) {
+			await MiroConnection.withToken((token) => Miro.updateText(token, board, row.caption_id, {
+				style: item.color ? {fillColor: item.color, fillOpacity: "1"} : {fillOpacity: "0"}
+			})).catch((err) => {
+				if (err.status !== 404) throw err;
+			});
+			if (item.color) colors[row.alias] = item.color;
+			else delete colors[row.alias];
+		}
+		await setPosition(projectId, row, item.x, item.y, user);
+		moved++;
+	});
+	const layoutPlan = {...parseJson(link.layout_plan, {}), colors};
+	await ds.run(SQL_SET_LAYOUT_PLAN, {project_id: projectId, layout_plan: JSON.stringify(layoutPlan)});
+	link.layout_plan = JSON.stringify(layoutPlan);
+	return {moved, labels: drawn.labels, shapes: drawn.shapes, frame};
+};
+
+/** 直前の配置(型・資料の位置・見出しの文字・図形・見出しの色・枠の大きさ)。位置は Miro から読み直す */
+const snapshotOf = async (link, board, rows) => {
+	const items = [];
+	await forEachConcurrently([...rows.values()], CONCURRENCY, async (row) => {
+		const now = await readPlacement(board, row).catch((err) => (err.status === 404 ? null : {x: row.x, y: row.y}));
+		if (now?.x != null && now?.y != null) items.push({alias: row.alias, x: Number(now.x), y: Number(now.y)});
+	});
+	const plan = parseJson(link.layout_plan, {});
+	return {
+		layout: layoutOf(link),
+		items,
+		labels: plan.labels ?? [],
+		shapes: plan.shapes ?? [],
+		colors: plan.colors ?? {},
+		frame: {width: Number(link.frame_width) || frameWidth(), height: Number(link.frame_height) || 600},
+		savedAt: new Date().toISOString()
+	};
+};
+
+/** 並べ直す・戻すの前に確かめること(連携していて、このプロジェクトが連動していること) */
+const activeLink = async (projectId) => {
 	const target = await MiroConnection.target();
 	if (target == null) throw moveError("Miro と連携していないか、貼り先のボードが決まっていません", 409);
 	const link = await ds.get(SQL_GET_PROJECT, [projectId]);
 	if (link == null || link.state !== "active" || link.frame_id == null) throw moveError("このプロジェクトは Miro と連動していません", 409);
+	return {target, link};
+};
+const placedRows = async (projectId) => new Map((await ds.all(SQL_LIST_ITEMS, [projectId]))
+	.filter((r) => r.state === STATES.PLACED && r.item_id != null).map((r) => [r.alias, r]));
+
+/**
+ * 枠の中を、型どおりに並べ直す。人が並べた配置は上書きされる。見出しの文字・図形も置き直し、枠の外へ出した資料も枠に戻す。
+ * 型を渡すと、その型に切り替えてから並べる。並べる前の配置を 1 世代だけ覚えておき、undoArrange で戻せる。
+ * 人が足した付箋や図形には触らない(片付けるのは Document Manager が置いたものだけ)。
+ * @param {{layout?: string}} [options]
+ */
+module.exports.arrange = async (projectId, user, {layout} = {}) => {
+	checkLayout(layout);
+	const {target, link} = await activeLink(projectId);
+	const previousLayout = layoutOf(link);
+	const nextLayout = layout ?? previousLayout;
+	if (PLANNERS[nextLayout] == null) throw moveError(`${MiroLayout.LAYOUT_NAMES[nextLayout]}で並べるのは、まだできません(報告 layout-report は出せます)`);
 	if (!(await takeLock(projectId))) throw moveError("いま Miro へ反映しているところです。終わってからやり直してください", 409);
 	try {
 		const board = target.boardId;
-		const desired = await desiredDocuments(projectId);
-		const rows = new Map((await ds.all(SQL_LIST_ITEMS, [projectId])).filter((r) => r.state === STATES.PLACED && r.item_id != null).map((r) => [r.alias, r]));
-		let cursorY = LAYOUT.padding;
-		const moves = [];
-		const headers = [];
-		for (const section of desired.sections) {
-			const entries = section.documents.map((doc) => rows.get(doc.alias)).filter(Boolean);
-			if (entries.length === 0) continue;
-			if (section.title) {
-				headers.push({title: section.title, y: cursorY + LAYOUT.headerHeight / 2});
-				cursorY += LAYOUT.headerHeight;
-			}
-			for (let i = 0; i < entries.length; i += LAYOUT.columns) {
-				const line = entries.slice(i, i + LAYOUT.columns);
-				const heightOf = (r) => Number(r.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
-				const rowHeight = Math.max(...line.map(heightOf));
-				line.forEach((r, index) => {
-					moves.push({row: r, x: LAYOUT.padding + index * (LAYOUT.itemWidth + LAYOUT.gapX) + LAYOUT.itemWidth / 2, y: cursorY + heightOf(r) / 2});
-				});
-				cursorY += rowHeight + LAYOUT.captionHeight + LAYOUT.gapY;
-			}
+		const rows = await placedRows(projectId);
+		const plan = await PLANNERS[nextLayout](projectId, rows);
+		await ds.run(SQL_SET_LAYOUT_UNDO, {project_id: projectId, layout_undo: JSON.stringify(await snapshotOf(link, board, rows))});
+		const result = await executePlan(projectId, link, board, plan, user);
+		await ds.run(SQL_SET_LAYOUT, {project_id: projectId, layout: nextLayout});
+		logger.info({audit: "miro_project_arranged", user, projectId, layout: nextLayout, previousLayout, moved: result.moved}, "audit");
+		return {moved: result.moved, layout: nextLayout, previousLayout, frame: result.frame};
+	} finally {
+		await releaseLock(projectId);
+	}
+};
+
+/**
+ * 「元の型に戻す」: 直前の並べ直しの前の配置(型・資料の位置・見出しの文字・図形・見出しの色・枠の大きさ)に戻す。
+ * 覚えるのは 1 世代だけで、戻したら消す。そのあとで増えた資料は、いまの場所のまま(色だけ外す)。
+ */
+module.exports.undoArrange = async (projectId, user) => {
+	const {target, link} = await activeLink(projectId);
+	const snapshot = parseJson(link.layout_undo, null);
+	if (snapshot == null) throw moveError("戻せる配置がありません(並べ直したあとだけ戻せます)", 409);
+	if (!(await takeLock(projectId))) throw moveError("いま Miro へ反映しているところです。終わってからやり直してください", 409);
+	try {
+		const board = target.boardId;
+		const rows = await placedRows(projectId);
+		const items = (snapshot.items ?? []).filter((i) => rows.has(i.alias))
+			.map((i) => ({row: rows.get(i.alias), x: i.x, y: i.y, color: snapshot.colors?.[i.alias] ?? null}));
+		const restored = new Set(items.map((i) => i.row.alias));
+		for (const row of rows.values()) {
+			if (!restored.has(row.alias)) items.push({row, x: Number(row.x), y: Number(row.y), color: null});
 		}
-		const height = Math.max(cursorY - LAYOUT.gapY + LAYOUT.padding, 600);
-		// 枠の高さを中身に合わせる(上の端は動かさない)
-		const frameY = Number(link.frame_y) + (height - Number(link.frame_height || height)) / 2;
-		await MiroConnection.withToken((token) => Miro.updateFrame(token, board, link.frame_id, {width: Number(link.frame_width) || frameWidth(), height, x: Number(link.frame_x), y: frameY}));
-		await ds.run(SQL_SET_FRAME, {project_id: projectId, frame_id: link.frame_id, x: Number(link.frame_x), y: frameY, width: Number(link.frame_width) || frameWidth(), height});
-		await forEachConcurrently(moves, CONCURRENCY, async ({row, x, y}) => {
-			await placeAt(board, row, {x, y, parentId: link.frame_id}).catch((err) => {
-				if (err.status !== 404) throw err;
-			});
-			await ds.run(SQL_SET_POSITION, [x, y, row.width, row.height, user, new Date().toISOString(), projectId, row.alias]);
-		});
-		await deleteHeaders(link, board);
-		const headerIds = [];
-		for (const header of headers) {
-			const text = await MiroConnection.withToken((token) => Miro.createText(token, board, {
-				content: `<p><strong>■ ${escapeHtml(header.title)}</strong></p>`,
-				x: frameWidth() / 2, y: header.y, width: frameWidth() - LAYOUT.padding * 2, parentId: link.frame_id
-			})).catch(() => null);
-			if (text != null) headerIds.push(text.id);
-		}
-		await ds.run(SQL_SET_HEADERS, {project_id: projectId, header_ids: JSON.stringify(headerIds)});
-		logger.info({audit: "miro_project_arranged", user, projectId, moved: moves.length}, "audit");
-		return {moved: moves.length};
+		const result = await executePlan(projectId, link, board, {items, labels: snapshot.labels ?? [], shapes: snapshot.shapes ?? [], frame: snapshot.frame}, user);
+		const restoredLayout = MiroLayout.LAYOUT_IDS.includes(snapshot.layout) ? snapshot.layout : MiroLayout.DEFAULT_LAYOUT;
+		await ds.run(SQL_SET_LAYOUT, {project_id: projectId, layout: restoredLayout});
+		await ds.run(SQL_SET_LAYOUT_UNDO, {project_id: projectId, layout_undo: null});
+		logger.info({audit: "miro_project_arrange_undone", user, projectId, layout: restoredLayout, moved: result.moved}, "audit");
+		return {moved: result.moved, layout: restoredLayout, frame: result.frame};
 	} finally {
 		await releaseLock(projectId);
 	}
@@ -934,37 +1160,14 @@ const normalizeLayout = (layout) => {
 module.exports.normalizeLayout = normalizeLayout;
 
 /**
- * 枠を、中身(右端・下端)が収まる大きさまで広げる。左上の角は動かさない(中の項目は左上からの位置なので、
- * 中心を動かさずに広げると、中身ごと上や左へずれて見える)。縮めはしない
- */
-const growFrameToFit = async (projectId, link, board, {right, bottom, width: requestedWidth, height: requestedHeight}) => {
-	const currentWidth = Number(link.frame_width) || frameWidth();
-	const currentHeight = Number(link.frame_height) || 600;
-	const width = Math.max(currentWidth, Math.ceil(right + LAYOUT.padding), requestedWidth ?? 0);
-	const height = Math.max(currentHeight, Math.ceil(bottom + LAYOUT.padding), requestedHeight ?? 0);
-	if (width === currentWidth && height === currentHeight) return {width, height};
-	const left = Number(link.frame_x) - currentWidth / 2;
-	const top = Number(link.frame_y) - currentHeight / 2;
-	const x = left + width / 2;
-	const y = top + height / 2;
-	await MiroConnection.withToken((token) => Miro.updateFrame(token, board, link.frame_id, {width, height, x, y}));
-	await ds.run(SQL_SET_FRAME, {project_id: projectId, frame_id: link.frame_id, x, y, width, height});
-	Object.assign(link, {frame_x: x, frame_y: y, frame_width: width, frame_height: height});
-	return {width, height};
-};
-
-/**
- * レイアウトをまとめて当てる。位置はすべて、枠の左上からの中心の位置。
+ * レイアウトをまとめて当てる。位置はすべて、枠の左上からの中心の位置。枠は広げるだけで縮めない(左上は動かさない)。
  * @param {{items?: Array<{documentId: string, x: number, y: number, color?: ?string}>,
  *          labels?: Array<{text: string, x: number, y: number, width?: number, fontSize?: number, color?: string, fillColor?: string, bold?: boolean, align?: string}>,
  *          shapes?: Array<{shape?: string, x: number, y: number, width: number, height: number, text?: string, fillColor?: string, fillOpacity?: number, borderColor?: string, borderWidth?: number, borderStyle?: string}>,
  *          frame?: {width: number, height: number}, keepDecorations?: boolean}} layout
  */
 module.exports.applyLayout = async (projectId, layout, user) => {
-	const target = await MiroConnection.target();
-	if (target == null) throw moveError("Miro と連携していないか、貼り先のボードが決まっていません", 409);
-	const link = await ds.get(SQL_GET_PROJECT, [projectId]);
-	if (link == null || link.state !== "active" || link.frame_id == null) throw moveError("このプロジェクトは Miro と連動していません", 409);
+	const {target, link} = await activeLink(projectId);
 	const plan = normalizeLayout(layout);
 	// 資料は、このプロジェクトの枠に出ているものだけ(版が変わっていても同じ資料なら引ける)
 	const rows = new Map();
@@ -976,83 +1179,11 @@ module.exports.applyLayout = async (projectId, layout, user) => {
 	if (plan.errors.length > 0) throw Object.assign(moveError("レイアウトの指示に正しくないところがあります(何も動かしていません)"), {details: plan.errors.slice(0, 50)});
 	if (!(await takeLock(projectId))) throw moveError("いま Miro へ反映しているところです。終わってからやり直してください", 409);
 	try {
-		const board = target.boardId;
-		const heightOf = (row) => Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
-		const widthOf = (row) => Number(row.width) || LAYOUT.itemWidth;
-		// 枠を先に広げる(はみ出した位置に置くと、枠の外に出たように見えるため)
-		let right = 0;
-		let bottom = 0;
-		for (const item of plan.items) {
-			const row = rows.get(item.documentId);
-			right = Math.max(right, item.x + widthOf(row) / 2);
-			bottom = Math.max(bottom, item.y + heightOf(row) / 2 + LAYOUT.captionHeight);
-		}
-		for (const label of plan.labels) {
-			right = Math.max(right, label.x + label.width / 2);
-			bottom = Math.max(bottom, label.y + (label.fontSize ?? 36));
-		}
-		for (const shape of plan.shapes) {
-			right = Math.max(right, shape.x + shape.width / 2);
-			bottom = Math.max(bottom, shape.y + shape.height / 2);
-		}
-		const frame = await growFrameToFit(projectId, link, board, {right, bottom, width: plan.frame?.width, height: plan.frame?.height});
-
-		// 前に置いた見出しの文字・図形を片付ける(当て直すたびに重ならないように)
-		let decorations = [];
-		if (plan.keepDecorations) {
-			try {
-				decorations = JSON.parse(link.header_ids || "[]");
-			} catch {
-				decorations = [];
-			}
-		} else {
-			await deleteHeaders(link, board);
-		}
-
-		// 図形 → 見出しの文字の順に置く(あとから置いたものが上に重なる)
-		const createdShapes = [];
-		await forEachConcurrently(plan.shapes, CONCURRENCY, async (shape) => {
-			const created = await MiroConnection.withToken((token) => Miro.createShape(token, board, {
-				shape: shape.shape, content: shape.text ? `<p>${escapeHtml(shape.text)}</p>` : "",
-				x: shape.x, y: shape.y, width: shape.width, height: shape.height, parentId: link.frame_id,
-				style: Object.fromEntries(Object.entries({
-					fillColor: shape.fillColor, fillOpacity: shape.fillOpacity == null ? null : String(shape.fillOpacity),
-					borderColor: shape.borderColor, borderWidth: shape.borderWidth == null ? null : String(shape.borderWidth), borderStyle: shape.borderStyle
-				}).filter(([, v]) => v != null))
-			}));
-			createdShapes.push(created.id);
-		});
-		const createdLabels = [];
-		await forEachConcurrently(plan.labels, CONCURRENCY, async (label) => {
-			const body = label.bold ? `<strong>${escapeHtml(label.text)}</strong>` : escapeHtml(label.text);
-			const created = await MiroConnection.withToken((token) => Miro.createText(token, board, {
-				content: `<p>${body}</p>`, x: label.x, y: label.y, width: label.width, parentId: link.frame_id,
-				style: Object.fromEntries(Object.entries({
-					fontSize: label.fontSize == null ? null : String(label.fontSize), color: label.color,
-					fillColor: label.fillColor, fillOpacity: label.fillColor ? "1" : null, textAlign: label.align
-				}).filter(([, v]) => v != null))
-			}));
-			createdLabels.push(created.id);
-		});
-		await ds.run(SQL_SET_HEADERS, {project_id: projectId, header_ids: JSON.stringify([...decorations, ...createdShapes, ...createdLabels])});
-
-		// 資料を動かす(見出しも一緒に)。色の指定があれば見出しの背景を塗る
-		let moved = 0;
-		await forEachConcurrently(plan.items, CONCURRENCY, async (item) => {
-			const row = rows.get(item.documentId);
-			await placeAt(board, row, {x: item.x, y: item.y, parentId: link.frame_id});
-			if (item.setColor && row.caption_id) {
-				await MiroConnection.withToken((token) => Miro.updateText(token, board, row.caption_id, {
-					style: item.color ? {fillColor: item.color, fillOpacity: "1"} : {fillOpacity: "0"}
-				})).catch((err) => {
-					if (err.status !== 404) throw err;
-				});
-			}
-			await ds.run(SQL_SET_POSITION, [item.x, item.y, row.width, row.height, user, new Date().toISOString(), projectId, row.alias]);
-			moved++;
-		});
-		logger.info({audit: "miro_layout_applied", user, projectId, moved, labels: createdLabels.length, shapes: createdShapes.length}, "audit");
-		return {moved, labels: createdLabels.length, shapes: createdShapes.length, frame};
+		const items = plan.items.map((item) => ({row: rows.get(item.documentId), x: item.x, y: item.y, ...(item.setColor ? {color: item.color} : {})}));
+		const result = await executePlan(projectId, link, target.boardId, {items, labels: plan.labels, shapes: plan.shapes, frame: plan.frame}, user,
+			{grow: true, keepDecorations: plan.keepDecorations});
+		logger.info({audit: "miro_layout_applied", user, projectId, moved: result.moved, labels: result.labels, shapes: result.shapes}, "audit");
+		return result;
 	} finally {
 		await releaseLock(projectId);
 	}
@@ -1075,6 +1206,13 @@ module.exports.status = async (projectId) => {
 		frameUrl: boardUrl && link?.frame_id ? `${boardUrl}${boardUrl.includes("?") ? "&" : "?"}moveToWidget=${link.frame_id}` : null,
 		// 枠の大きさ(レイアウトを組むときの目安。中身に合わせて広がる)
 		frame: link?.frame_id ? {width: Number(link.frame_width) || null, height: Number(link.frame_height) || null} : null,
+		// 並べ方の型と、「元の型に戻す」で戻れる型(並べ直したあとだけ)
+		layout: layoutOf(link),
+		layoutName: MiroLayout.LAYOUT_NAMES[layoutOf(link)],
+		undo: (() => {
+			const snapshot = parseJson(link?.layout_undo, null);
+			return snapshot == null ? null : {layout: layoutOf(snapshot), layoutName: MiroLayout.LAYOUT_NAMES[layoutOf(snapshot)], savedAt: snapshot.savedAt ?? null};
+		})(),
 		linkedBy: link?.linked_by ?? null,
 		linkedAt: link?.linked_at ?? null,
 		lastSyncedAt: link?.last_synced_at ?? null,
