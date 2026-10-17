@@ -4370,6 +4370,32 @@ app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange', requireAuth, requireWr
 });
 
 /**
+ * ボードの地図: 型の区画の範囲・資料の位置と区画・Document Manager が置いた見出しと図形・人が足したもの・空いている所。
+ * LLM が置き場所を考えてから miro-layout・miro-move で置くための材料。Miro から読むだけで、ボードは変えない
+ */
+app.get(BASE_URL_PATH + 'api/projects/:id/miro/map', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(await MiroSync.boardMap(req.params.id));
+	} catch (err) {
+		if (err.needsReconnect) {
+			res.status(409).json({error: err.message, needsReconnect: true});
+			return;
+		}
+		if (err.name === "MiroError") {
+			res.status(502).json({error: err.message});
+			return;
+		}
+		if ([400, 404, 409].includes(err.status)) {
+			res.status(err.status).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/projects/:id/miro/map");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * 並べ直す前の確かめ: 並べ直すと上書きされる、人が Miro で動かした資料の枚数と一覧、並べる型での未分類の割合。
  * ?layout= で切り替え先の型(省略するといまの型)。ボードは変えない
  */

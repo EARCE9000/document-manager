@@ -102,6 +102,7 @@ APIキーをチャットの応答やコミットに書き出さない(`config` �
 | `miro <プロジェクト>` / `miro-link [--layout 型]` / `miro-sync` / `miro-unlink [--remove-documents]` | プロジェクトの資料を **Miro のボードに並べる**(連動の状態・開始・今すぐ反映・やめる。下記) |
 | `miro-publish <プロジェクト> <文書ID> [--off]` / `miro-move <プロジェクト> <文書ID> ...` | Miro に出す資料の選択・ボードの上での移動(下記) |
 | `miro-layout-report <プロジェクト> [--layout 型]` / `miro-arrange <プロジェクト> [--layout 型] [--check] [--yes]` / `miro-arrange-undo <プロジェクト>` | **並べ方の型**: 並べたらどうなるかの報告(タグの見直し用)・型どおりの並べ直し(型の切り替え)・元の型に戻す(下記) |
+| `miro-map <プロジェクト>` / `miro-layout <プロジェクト> <JSONファイル\|->` | **自分で置き場所を決めて置く**: ボードの地図(区画・資料・見出し・人が足したもの・空いている所)と、見出しの文字・図形・資料の位置をまとめて当てる(下記) |
 | `folder-create <プロジェクト> <名前> [--parent 親]` | フォルダの作成 |
 | `place <プロジェクト> <文書ID> [--folder フォルダ]` / `unplace <プロジェクト> <文書ID>` | プロジェクトへの登録・移動と解除(文書自体は消えない) |
 | `manifest <プロジェクト> [--markdown] [--folder <フォルダ>] [--no-links]` | おしながき(資料一覧＋説明書き)。`--markdown` は人にそのまま渡せる形(**各資料を開くリンクつき**)、`--folder` はその章だけ、`--no-links` はリンクなし |
@@ -317,6 +318,31 @@ HTMLをそのままメールに添付すると、相手の環境では文字の�
   頼まれたときだけ使う(勝手に実行しない)。人が動かした資料があると、並べ直さずに `needsConfirmation: true` と枚数(`humanMoved`)・一覧を返す。
   **その枚数を利用者に伝えて確かめ**、了承を得てから `--yes` を付けて呼び直す
 - **元に戻す**: `miro-arrange-undo <プロジェクト>` で、直前の並べ直しの前の配置(型・位置・見出し)に戻る(1 世代だけ)
+
+#### 自分で置き場所を決めて置く(「この図を〇〇の横に貼って」「ここに枠を作って」「見出しを付けて」)
+
+型どおりではなく、頼まれた場所に置くときは、**先に地図を見て置き場所を決めてから置く**(当てずっぽうの座標で置かない)。
+
+1. `miro-map <プロジェクト>` で地図を取る(Miro は変わらない)。位置はすべて**枠の左上から**(x・y は中心、left・top・right・bottom は端)
+   - `areas`: 型の区画の範囲(十字型の `upper_left` 左上・`upper_right` 右上・`lower_left` 左下・`lower_right` 右下、マトリクスのマス `cell:…`、
+     棚 `shelf:…`、列 `column:…`、月 `month:…`、枠の下の段 `strip:…`)
+   - `documents`: 資料ごとの位置と大きさ、型での区画(`area`・`slot`)、人が動かしたか(`humanMoved`)。資料の下には見出しが付くので、下端は `bottomWithCaption`
+   - `decorations.layout`: 型の見出し・線(Document Manager が置き直す)。`decorations.custom`: 前に指示して置いた見出し・図形
+   - `others`: **人が Miro で足したもの**(付箋・図形・文字)。これに重ねない
+   - `freeSpace`: 何とも重ならない場所(`below` 中身の下・`right` 中身の右)。区画の中に空きが無いときに使う
+2. 置き場所を決める: 置きたい区画(`areas`)の範囲の中で、`documents`(`bottomWithCaption` まで)・`decorations`・`others` のどれとも重ならない所。
+   カードの幅は 360、見出しの高さは 80(`cardSize`)。決めた場所と理由を、置く前に利用者へ短く伝える
+3. 置く:
+   - **図や資料を貼る**: draw.io・PDF・画像などは、まず `upload <ファイル> --project <プロジェクト>` で登録する(連動中なら自動でボードに出る)。
+     `miro-map` でその資料が出たのを確かめ、`miro-move <プロジェクト> <文書ID> --x <x> --y <y>` で決めた場所へ動かす
+   - **見出しの文字・囲みの枠(図形)**: `miro-layout <プロジェクト> -` に JSON を渡す。`{"labels": [{"text", "x", "y", "width", "fontSize", "color", "fillColor"}],
+     "shapes": [{"x", "y", "width", "height", "text", "fillColor", "fillOpacity", "borderColor", "borderWidth", "borderStyle": "dashed"}], "keepDecorations": true}`。
+     前に指示して置いたものを残すときは**必ず `keepDecorations: true`**(付けないと前のものは片付く)。図形は幅・高さ 8 以上、枠線の太さは 1 以上。
+     区画の囲みは、塗りを薄く(`fillOpacity` 0〜0.2)するか点線の枠だけにする(あとから置いた図形は資料の上に重なるため)
+4. 置いたら、もう一度 `miro-map` で重なりが無いか確かめ、`frameUrl` を利用者に伝える
+
+- 指示して置いた見出し・図形は、連動・並べ直し・元に戻すでは消えない。消すときは `{"clearDecorations": true}` を `miro-layout` に渡す
+- まだできないこと: 付箋を置く、線(コネクタ)でつなぐ、枠(フレーム)を足す。枠の代わりは点線の図形で囲む
 
 #### 並べ方の型(「十字型で並べて」「時系列にして」「どの型がいい?」)
 

@@ -569,6 +569,10 @@ def smoke_miro(kind, env, workdir):
                "labels": [{"text": "左上: 要件定義", "x": 400, "y": 100}],
                "shapes": [{"x": 1200, "y": 600, "width": 8, "height": 1000, "fillColor": "#333333"}]},
               open(layout_path, "w", encoding="utf-8"), ensure_ascii=False)
+    # 置き場所を考えるための地図(区画・資料の位置・見出し・人が足したもの・空いている所)
+    board_map = json.loads(run_client(kind, ["miro-map", project_name], env).stdout)
+    check(len(board_map.get("documents", [])) == 2 and len(board_map.get("areas", [])) > 0 and "below" in board_map.get("freeSpace", {}),
+          f"miro-map: ボードの地図を返す ({len(board_map.get('documents', []))} 件)")
     applied = json.loads(run_client(kind, ["miro-layout", project_name, layout_path], env).stdout)
     check(applied.get("moved") == 2 and applied.get("labels") == 1 and applied.get("shapes") == 1,
           f"miro-layout: レイアウトをまとめて当てられる ({applied})")

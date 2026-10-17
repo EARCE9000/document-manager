@@ -112,9 +112,17 @@ module.exports.start = (port) => new Promise((resolve) => {
 					const item = items.get(String(body.moveItem.id));
 					item.position = {...item.position, x: body.moveItem.x, y: body.moveItem.y};
 				}
+				// 人が Miro で付箋などを足したのと同じ: {"addItem": {"id", "type", "parentId", "x", "y", "width", "height", "content"}}
+				if (body.addItem != null) {
+					const a = body.addItem;
+					items.set(String(a.id), {id: String(a.id), type: a.type || "sticky_note", boardId: a.boardId || "uXjVStubBoard1=",
+						data: {content: a.content || ""}, position: {x: a.x, y: a.y}, geometry: {width: a.width || 200, height: a.height || 200},
+						parent: a.parentId ? {id: String(a.parentId)} : null});
+				}
 				delete body.failUploads;
 				delete body.deleteItem;
 				delete body.moveItem;
+				delete body.addItem;
 				control = {...control, ...body};
 				delete control.reset;
 				delete control.expireAccess;

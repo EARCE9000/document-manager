@@ -47,6 +47,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py miro-layout <プロジェクト> <JSONファイル|->   レイアウト(位置・色・見出し・図形)をまとめて当てる
   python dm_client.py miro-arrange <プロジェクト> [--layout <型>] [--check] [--yes]   型どおりに並べ直す(型の切り替え。人が動かした資料があれば --yes が要る)
   python dm_client.py miro-arrange-undo <プロジェクト>   直前の並べ直しを取り消す(元の型に戻す。1 世代だけ)
+  python dm_client.py miro-map <プロジェクト>     ボードの地図(区画の範囲・資料の位置・見出し・人が足したもの・空いている所)
   python dm_client.py miro-layout-report <プロジェクト> [--layout <型>]   その型で並べたらどうなるか(タグの見直し用。Miro は変えない)
     型: folder-columns(フォルダ列) / timeline(時系列) / split-shelves(左右分割・棚) / quadrant-cross(十字) / matrix(マトリクス)
   python dm_client.py project-create <名前>        プロジェクトの作成
@@ -1067,6 +1068,12 @@ def cmd_miro_arrange(args):
     return {"arranged": True, **result, "humanMoved": check.get("humanMoved", 0), "unclassifiedRatio": check.get("unclassifiedRatio")}
 
 
+def cmd_miro_map(args):
+    """置き場所を考えるための地図(Miro から読むだけ)。位置は枠の左上から。これで重ならない場所を決めてから miro-layout・miro-move で置く"""
+    project_id = resolve_project(args.project)["id"]
+    return request("GET", f"api/projects/{quote_id(project_id)}/miro/map")
+
+
 def cmd_miro_arrange_undo(args):
     project_id = resolve_project(args.project)["id"]
     return request("POST", f"api/projects/{quote_id(project_id)}/miro/arrange/undo")
@@ -1424,6 +1431,9 @@ def main():
     p.add_argument("--check", action="store_true", help="並べ直さずに、人が動かした資料の枚数と未分類の割合だけを返す")
     p.add_argument("--yes", action="store_true", help="人が動かした資料があっても並べ直す(利用者に確かめてから付ける)")
     p.set_defaults(func=cmd_miro_arrange)
+    p = sub.add_parser("miro-map", help="ボードの地図(区画の範囲・資料の位置・見出し・人が足したもの・空いている所。Miro は変えない)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.set_defaults(func=cmd_miro_map)
     p = sub.add_parser("miro-arrange-undo", help="直前の並べ直しを取り消す(元の型に戻す。1 世代だけ)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.set_defaults(func=cmd_miro_arrange_undo)

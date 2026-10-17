@@ -69,6 +69,11 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 	const lineHeight = (ids) => Math.max(...ids.map(heightOf), 1) + G.captionHeight + G.gapY;
 	const fixedLine = defaultHeight + G.captionHeight + G.gapY;
 	const items = [];
+	// 区画の範囲(枠の左上から。LLM が置き場所を考えるときの地図に使う)
+	const areas = [];
+	const addArea = (id, title, left, top, right, bottom) => areas.push({
+		id, title, left: Math.round(left), top: Math.round(top), right: Math.round(right), bottom: Math.round(Math.max(top, bottom))
+	});
 	const labels = [];
 	const shapes = [];
 	const placedIds = new Set();
@@ -103,9 +108,11 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		let y = top;
 		for (const strip of strips) {
 			if (strip.ids.length === 0 && !strip.always) continue;
+			const stripTop = y;
 			labels.push(label(strip.title, G.padding + (width - G.padding * 2) / 2, y + G.headerHeight / 2, width - G.padding * 2, {fontSize: strip.small ? null : 36}));
 			y += G.headerHeight;
 			y = strip.ids.length === 0 ? y + 120 : grid(strip.ids, G.padding, y, columns, strip.colorOf);
+			addArea(`strip:${strip.title}`, strip.title, G.padding, stripTop, width - G.padding, y - G.gapY);
 		}
 		return y;
 	};
@@ -154,6 +161,7 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 				y = grid(group, left, y, 2);
 			}
 			bottom = Math.max(bottom, y);
+			addArea(`column:${column.name}`, `■ ${column.name}`, left, G.padding, left + colWidth, y - G.gapY);
 		});
 		width = G.padding * 2 + Math.max(1, columns.length) * colWidth + Math.max(0, columns.length - 1) * colGap;
 		height = bottom - G.gapY + G.padding;
@@ -205,11 +213,12 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 			} else {
 				bottom = grid(ids, x0, y, perRow, colorOf);
 			}
-			rowsOf.push(bottom);
+			rowsOf.push({month, top: y, bottom});
 			y = bottom;
 		});
+		for (const row of rowsOf) addArea(`month:${row.month}`, row.month, G.padding, row.top, width - G.padding, row.bottom - G.gapY / 2);
 		// 月の区切りの線は、いちばん長い行に合わせる
-		for (const bottom of rowsOf) shapes.push(line(G.padding, bottom - G.gapY / 2, width - G.padding, bottom - G.gapY / 2, {color: "#dddddd"}));
+		for (const {bottom} of rowsOf) shapes.push(line(G.padding, bottom - G.gapY / 2, width - G.padding, bottom - G.gapY / 2, {color: "#dddddd"}));
 		height = Math.max(y - G.gapY + G.padding, 600);
 	} else if (layout === "split-shelves") {
 		const leftColumns = 3;
@@ -224,6 +233,7 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		let leftY = G.padding;
 		labels.push(label(AREA_TITLES.left, G.padding + leftWidth / 2, leftY + G.headerHeight / 2, leftWidth, {fontSize: 36}));
 		leftY = grid(placementsIn("left").map((p) => p.documentId), G.padding, leftY + G.headerHeight, leftColumns, () => COLORS.gray);
+		addArea("left", AREA_TITLES.left, G.padding, G.padding, G.padding + leftWidth, leftY - G.gapY);
 		let rightY = G.padding;
 		labels.push(label("右半分: 棚(準備 → 実施 → 実施後)", rightLeft + rightWidth / 2, rightY + G.headerHeight / 2, rightWidth, {fontSize: 36}));
 		rightY += G.headerHeight;
@@ -235,7 +245,9 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		for (const shelf of shelves) {
 			if (shelf.ids.length === 0) continue;
 			labels.push(label(shelf.title, rightLeft + rightWidth / 2, rightY + G.headerHeight / 2, rightWidth, {bold: true}));
+			const shelfTop = rightY;
 			rightY = grid(shelf.ids, rightLeft, rightY + G.headerHeight, perRow, (id) => colorOfPlacement(byId.get(id)));
+			addArea(`shelf:${shelf.title}`, `棚: ${shelf.title}`, rightLeft, shelfTop, rightLeft + rightWidth, rightY - G.gapY / 2);
 			// 棚の板
 			shapes.push(line(rightLeft, rightY - G.gapY / 2, rightLeft + rightWidth, rightY - G.gapY / 2, {thickness: 10}));
 		}
@@ -343,6 +355,10 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		const right = rightLeft + Math.max(upperRightWidth, lowerRightWidth);
 		const lowerBottom = Math.max(lowerLeftBottom, lowerRightBottom, lowerTop + 400);
 		shapes.push(line(cx, G.padding, cx, lowerBottom));
+		addArea("upper_left", AREA_TITLES.upper_left, G.padding, G.padding, cx, cy);
+		addArea("upper_right", AREA_TITLES.upper_right, cx, G.padding, right, cy);
+		addArea("lower_left", AREA_TITLES.lower_left, G.padding, cy, cx, lowerBottom);
+		addArea("lower_right", AREA_TITLES.lower_right, cx, cy, right, lowerBottom);
 		shapes.push(line(G.padding, cy, right, cy));
 		const total = input.documents.length;
 		const latest = input.documents.map((d) => String(d.modified ?? "")).sort().pop()?.slice(0, 10) ?? "";
@@ -377,6 +393,7 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 			processes.forEach((process, c) => {
 				const left = left0 + c * cellWidth;
 				const cellCentre = {x: left + cellWidth / 2 - G.gapX / 2, y: top + (rowHeight - G.gapY) / 2};
+				addArea(`cell:機能:${feature} × 工程:${process}`, `機能:${feature} × 工程:${process}`, left, top, left + cellWidth - G.gapX, top + rowHeight - G.gapY);
 				const excluded = (report.excludedCells ?? []).some((e) => e.feature === feature && e.process === process);
 				const entries = report.placements.filter((p) => p.area === "table" && p.feature === feature && p.process === process);
 				if (entries.length === 0) {
@@ -395,6 +412,7 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		});
 		width = Math.max(left0 + processes.length * cellWidth - G.gapX + G.padding, G.padding * 2 + 4 * cw);
 		const tableBottom = top;
+		addArea("table", "表(行 = 機能、列 = 工程)", G.padding, G.padding, left0 + processes.length * cellWidth - G.gapX, tableBottom - G.gapY);
 		const bottom = bottomStrips(tableBottom + 80, width, [
 			{title: AREA_TITLES.management, ids: placementsIn("management").map((p) => p.documentId), colorOf: () => COLORS.gray},
 			{title: AREA_TITLES.meeting, ids: placementsIn("meeting").map((p) => p.documentId), colorOf: (id) => meetingColor(byId.get(id))},
@@ -411,5 +429,5 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		const bottom = bottomStrips(top, Math.max(width, contentRight), [{title: "そのほか", ids: leftovers}]);
 		height = bottom - G.gapY + G.padding;
 	}
-	return {items, labels, shapes, frame: {width: Math.ceil(width), height: Math.ceil(height)}, report};
+	return {items, labels, shapes, areas, frame: {width: Math.ceil(width), height: Math.ceil(height)}, report};
 };

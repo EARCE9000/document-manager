@@ -38,7 +38,7 @@
  *   node dm_client.mjs miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
  *   node dm_client.mjs miro-layout <プロジェクト> <JSONファイル|->  (位置・色・見出し・図形をまとめて当てる)
  *   node dm_client.mjs miro-arrange <プロジェクト> [--layout <型>] [--check] [--yes] / miro-arrange-undo <プロジェクト>
- *   node dm_client.mjs miro-layout-report <プロジェクト> [--layout <型>]
+ *   node dm_client.mjs miro-layout-report <プロジェクト> [--layout <型>] / miro-map <プロジェクト>
  *     型: folder-columns / timeline / split-shelves / quadrant-cross / matrix
  *       プロジェクトの資料を Miro のボードへ並べる(連携とボードの設定は管理者が画面で行う)
  *   node dm_client.mjs folder-create <プロジェクト> <名前> [--parent 親フォルダ]
@@ -878,6 +878,8 @@ const commands = {
 		const result = await request("POST", miroPath(id, "/arrange"), {json: layout ? {layout} : {}});
 		return {arranged: true, ...result, humanMoved: check.humanMoved, unclassifiedRatio: check.unclassifiedRatio};
 	},
+	// 置き場所を考えるための地図(Miro から読むだけ)。位置は枠の左上から。これで重ならない場所を決めてから miro-layout・miro-move で置く
+	"miro-map": async ([project]) => request("GET", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id, "/map")),
 	"miro-arrange-undo": async ([project]) => request("POST", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id, "/arrange/undo")),
 	// その型で並べたらどうなるか(未分類・推定・表に無い値)。Miro は変えない。タグの見直しに使う
 	"miro-layout-report": async ([project], opts) => {

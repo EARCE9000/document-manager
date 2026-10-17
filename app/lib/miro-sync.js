@@ -1063,7 +1063,9 @@ const planWithLayout = (layout) => async (projectId, rows, {added = [], incremen
 		items: plan.items.map((item) => ({alias: aliasOfId.get(item.documentId), row: rowOf.get(item.documentId) ?? null, x: item.x, y: item.y, color: item.color})),
 		labels: plan.labels,
 		shapes: plan.shapes,
-		frame: plan.frame
+		frame: plan.frame,
+		areas: plan.areas,
+		report: plan.report
 	};
 };
 
@@ -1255,6 +1257,98 @@ const activeLink = async (projectId) => {
 };
 const placedRows = async (projectId) => new Map((await ds.all(SQL_LIST_ITEMS, [projectId]))
 	.filter((r) => r.state === STATES.PLACED && r.item_id != null).map((r) => [r.alias, r]));
+
+/**
+ * ボードの地図(LLM が置き場所を考えるための材料)。Miro から枠の中のものを読み、次を返す。ボードは変えない。
+ *   areas        型の区画の範囲(十字型の 4 区画・マトリクスのマス・棚・列・月・枠の下の段)
+ *   documents    資料ごとの位置と大きさ、型での区画(area・slot)、人が動かしたか
+ *   decorations  Document Manager が置いた見出しの文字・図形(型のもの・指示したもの)
+ *   others       人が Miro で足したもの(付箋・図形・文字など。Document Manager は触らない)
+ *   freeSpace    中身の右と下の空いている所の目安
+ * 位置はすべて枠の左上から。x・y は中心、left・top・right・bottom は端。
+ */
+const plainText = (html) => String(html ?? "").replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ")
+	.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&").trim();
+const boxOf = (item) => {
+	const x = Number(item?.position?.x);
+	const y = Number(item?.position?.y);
+	const width = Number(item?.geometry?.width) || 0;
+	const height = Number(item?.geometry?.height) || 0;
+	return {x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height),
+		left: Math.round(x - width / 2), top: Math.round(y - height / 2), right: Math.round(x + width / 2), bottom: Math.round(y + height / 2)};
+};
+module.exports.boardMap = async (projectId) => {
+	const {target, link} = await activeLink(projectId);
+	const board = target.boardId;
+	const rows = await placedRows(projectId);
+	const layout = layoutOf(link);
+	const plan = await planWithLayout(layout)(projectId, rows, {incremental: true});
+	const children = [];
+	let cursor;
+	do {
+		const page = await MiroConnection.withToken((token) => Miro.listItems(token, board, {parentId: link.frame_id, cursor}));
+		children.push(...(page.data || []));
+		cursor = page.cursor;
+	} while (cursor && children.length < 5000);
+	const byId = new Map(children.map((item) => [String(item.id), item]));
+	const known = new Set();
+	const placementOf = new Map((plan.report?.placements ?? []).map((p) => [p.documentId, p]));
+
+	const documents = [];
+	for (const row of rows.values()) {
+		known.add(String(row.item_id));
+		if (row.caption_id) known.add(String(row.caption_id));
+		const item = byId.get(String(row.item_id));
+		const box = item ? boxOf(item) : boxOf({position: {x: row.x, y: row.y}, geometry: {width: row.width, height: row.height}});
+		const caption = row.caption_id ? byId.get(String(row.caption_id)) : null;
+		const placement = placementOf.get(row.document_id);
+		documents.push({
+			documentId: row.document_id, title: row.title, ...box,
+			// 見出し(名前・更新日・リンク)は資料の下に付いている。資料と見出しを合わせた下端
+			bottomWithCaption: caption ? boxOf(caption).bottom : box.bottom + LAYOUT.captionHeight,
+			area: placement?.area ?? null, slot: placement?.slot ?? null,
+			humanMoved: item == null ? null : isHumanMoved({...row, x: item.position?.x, y: item.position?.y})
+		});
+	}
+	const planJson = parseJson(link.layout_plan, {});
+	const decorationsOf = (entries) => (Array.isArray(entries) ? entries : []).map((d) => {
+		known.add(String(d.id));
+		const item = byId.get(String(d.id));
+		if (item == null) return null;
+		return {id: String(d.id), kind: item.type === "shape" ? "shape" : "label", text: plainText(item.data?.content), ...boxOf(item)};
+	}).filter(Boolean);
+	const decorations = {layout: decorationsOf(planJson.decor), custom: decorationsOf(planJson.custom)};
+	if (planJson.stickyId) known.add(String(planJson.stickyId));
+	const others = children.filter((item) => !known.has(String(item.id)) && item.type !== "group").map((item) => ({
+		id: String(item.id), type: item.type, text: plainText(item.data?.content ?? item.data?.title ?? ""), ...boxOf(item)
+	}));
+
+	let right = 0;
+	let bottom = 0;
+	for (const box of [...documents.map((d) => ({...d, bottom: d.bottomWithCaption})), ...decorations.layout, ...decorations.custom, ...others]) {
+		right = Math.max(right, box.right);
+		bottom = Math.max(bottom, box.bottom);
+	}
+	const frame = {width: Number(link.frame_width) || null, height: Number(link.frame_height) || null};
+	return {
+		project: plan.report?.project ?? null,
+		layout,
+		layoutName: MiroLayout.LAYOUT_NAMES[layout],
+		coordinates: "位置はすべて枠の左上から。x・y は中心、left・top・right・bottom は端。miro-layout・miro-move にも同じ座標で渡す",
+		frame,
+		frameUrl: target.boardUrl && link.frame_id ? `${target.boardUrl}${target.boardUrl.includes("?") ? "&" : "?"}moveToWidget=${link.frame_id}` : null,
+		areas: plan.areas ?? [],
+		documents,
+		decorations,
+		others,
+		freeSpace: {
+			// 中身(資料・見出し・図形・人が足したもの)の下と右。ここに置けば何とも重ならない(枠は広がる)
+			below: {left: LAYOUT.padding, top: Math.round(bottom + LAYOUT.gapY * 2)},
+			right: {left: Math.round(right + LAYOUT.gapX * 2), top: LAYOUT.padding}
+		},
+		cardSize: {width: LAYOUT.itemWidth, captionHeight: LAYOUT.captionHeight}
+	};
+};
 
 /**
  * 並べ直す前の確かめ(layout-spec.md 5・6 章)。並べ直すと上書きされる、人が Miro で動かした資料の枚数と、

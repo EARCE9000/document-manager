@@ -566,6 +566,18 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "getProjectMiroMap", method: "get", path: "/api/projects/:id/miro/map", role: "readonly", tag: "プロジェクト",
+		summary: "Miro のボードの地図(置き場所を考えるための材料)",
+		description: "Miro から枠の中のものを読んで返す(ボードは変えない)。位置はすべて枠の左上から(x・y は中心、left・top・right・bottom は端)。"
+			+ "`areas`: 型の区画の範囲(十字型の upper_left など・マトリクスの cell:・棚の shelf:・列の column:・月の month:・枠の下の段 strip:)。"
+			+ "`documents`: 資料ごとの位置と大きさ・型での区画(`area`・`slot`)・人が動かしたか(`humanMoved`)。"
+			+ "`decorations`: Document Manager が置いた見出しの文字・図形(`layout` 型のもの / `custom` 指示したもの)。"
+			+ "`others`: 人が Miro で足したもの(付箋・図形・文字など)。`freeSpace`: 中身の下(`below`)と右(`right`)の空いている所。"
+			+ "置くときは、ここで重ならない場所を決めてから `POST .../miro/layout`(labels・shapes)や `PATCH .../miro/items/:documentId` を呼ぶ",
+		responses: {409: "連動していない"},
+		aiGuide: false
+	},
+	{
 		id: "checkArrangeProjectMiro", method: "get", path: "/api/projects/:id/miro/arrange-check", role: "readonly", tag: "プロジェクト",
 		summary: "Miro で並べ直す前の確かめ(人が動かした資料の枚数)",
 		description: "並べ直すと上書きされる、人が Miro で動かした資料の枚数(`humanMoved`)と一覧(`documents`)、並べる型での未分類の割合(`unclassifiedRatio`・`reviewRecommended`)を返す。"

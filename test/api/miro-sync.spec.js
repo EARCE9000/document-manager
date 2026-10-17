@@ -818,3 +818,60 @@ test.describe.serial("指示して置いた見出し・図形は、連動と並�
 		expect((await shapesOf(request)).some((i) => String(i.data?.content).includes("メモ枠"))).toBe(false);
 	});
 });
+
+// LLM が置き場所を考えるための地図: 区画の範囲・資料の位置と区画・見出しと図形・人が足したもの・空いている所
+test.describe.serial("Miro のボードの地図", () => {
+	let projectId;
+	const docs = {};
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `地図${STAMP}`}})).json()).id;
+		await request.post(`api/projects/${projectId}/unlock`, {headers: rw});
+		for (const [key, tags] of [["design", ["工程:基本設計"]], ["plan", ["区分:管理"]]]) {
+			docs[key] = await upload(request, `地図-${key}${STAMP}.pdf`, PDF);
+			await request.put(`api/documents/${docs[key].id}/tags`, {headers: rw, data: {tags}});
+			await request.put(`api/projects/${projectId}/documents/${docs[key].id}`, {headers: rw, data: {folderId: null}});
+		}
+		await request.post(`api/projects/${projectId}/miro`, {headers: rw, data: {layout: "quadrant-cross"}});
+		await settled(request, projectId);
+		await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {labels: [{text: "要確認", x: 500, y: 300}], keepDecorations: true}});
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("区画の範囲・資料の区画・型の見出し・指示した見出し・人が足した付箋・空いている所を返す(読み取りの鍵で)", async ({request}) => {
+		const frame = (await boardItems(request)).find((i) => i.type === "frame" && i.data.title === `地図${STAMP}`);
+		await control(request, {addItem: {id: `human-${STAMP}`, type: "sticky_note", parentId: frame.id, x: 900, y: 700, content: "<p>人のメモ</p>"}});
+		const res = await request.get(`api/projects/${projectId}/miro/map`, {headers: ro});
+		expect(res.status()).toBe(200);
+		const map = await res.json();
+		expect(map.layout).toBe("quadrant-cross");
+		expect(map.coordinates).toContain("枠の左上");
+		const areas = Object.fromEntries(map.areas.map((a) => [a.id, a]));
+		expect(Object.keys(areas)).toEqual(expect.arrayContaining(["upper_left", "upper_right", "lower_left", "lower_right"]));
+		expect(areas.upper_left.right).toBe(areas.upper_right.left);
+		const design = map.documents.find((d) => d.documentId === docs.design.id);
+		expect(design).toMatchObject({area: "upper_left", slot: "工程:基本設計", humanMoved: false});
+		// 資料は、その区画の範囲の中にある
+		expect(design.x).toBeGreaterThanOrEqual(areas.upper_left.left);
+		expect(design.x).toBeLessThanOrEqual(areas.upper_left.right);
+		expect(map.documents.find((d) => d.documentId === docs.plan.id).area).toBe("upper_right");
+		expect(map.decorations.layout.some((d) => d.text.includes("右上: 管理系"))).toBe(true);
+		expect(map.decorations.custom.map((d) => d.text)).toEqual(["要確認"]);
+		expect(map.others).toEqual([expect.objectContaining({id: `human-${STAMP}`, type: "sticky_note", text: "人のメモ", x: 900, y: 700})]);
+		// 空いている所は、どの中身よりも下・右
+		const all = [...map.documents.map((d) => d.bottomWithCaption), ...map.decorations.layout.map((d) => d.bottom), ...map.others.map((o) => o.bottom)];
+		expect(map.freeSpace.below.top).toBeGreaterThan(Math.max(...all));
+	});
+
+	test("連動していないプロジェクトは 409", async ({request}) => {
+		const other = (await (await request.post("api/projects", {headers: rw, data: {name: `地図なし${STAMP}`}})).json()).id;
+		expect((await request.get(`api/projects/${other}/miro/map`, {headers: ro})).status()).toBe(409);
+	});
+});
