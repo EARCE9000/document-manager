@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 900" width="1040" height="900" font-family="'Segoe UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif">
+	<title>Document Manager の AWS 構成(ECS Fargate + S3 + RDS for PostgreSQL)</title>
+	<desc>deploy/aws/document-manager-ecs.yaml が作る構成。外から見えるのは ALB だけで、アプリと DB はプライベートサブネットに置く。文書ファイルは S3 にゲートウェイ型エンドポイント経由で置く。</desc>
+
+	<rect x="0" y="0" width="1040" height="900" fill="#ffffff"/>
+
+	<defs>
+		<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+			<path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b7c"/>
+		</marker>
+	</defs>
+
+	<text x="24" y="34" font-size="17" font-weight="600" fill="#24292f">Document Manager の AWS 構成(ECS Fargate + S3 + RDS for PostgreSQL)</text>
+	<text x="24" y="56" font-size="12.5" fill="#57606a">CloudFormation テンプレート(deploy/aws/document-manager-ecs.yaml)が作るもの。外から見えるのは ALB だけ。</text>
+
+	<!-- ===== AWS の外 ===== -->
+	<g>
+		<rect x="24" y="96" width="150" height="54" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+		<text x="99" y="118" font-size="12.5" font-weight="600" fill="#24292f" text-anchor="middle">OpenID Connect</text>
+		<text x="99" y="137" font-size="11" fill="#57606a" text-anchor="middle">Entra ID・Google など</text>
+
+		<rect x="24" y="162" width="150" height="54" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+		<text x="99" y="184" font-size="12.5" font-weight="600" fill="#24292f" text-anchor="middle">Docker Hub</text>
+		<text x="99" y="203" font-size="11" fill="#57606a" text-anchor="middle">公式イメージ</text>
+
+		<rect x="24" y="262" width="150" height="48" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+		<text x="99" y="282" font-size="12.5" font-weight="600" fill="#24292f" text-anchor="middle">ブラウザ</text>
+		<text x="99" y="299" font-size="11" fill="#57606a" text-anchor="middle">画面から使う人</text>
+
+		<rect x="24" y="326" width="150" height="48" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+		<text x="99" y="346" font-size="12.5" font-weight="600" fill="#24292f" text-anchor="middle">AI エージェント</text>
+		<text x="99" y="363" font-size="11" fill="#57606a" text-anchor="middle">API キーで使う</text>
+	</g>
+
+	<!-- ===== AWS ===== -->
+	<rect x="200" y="80" width="816" height="700" rx="4" fill="none" stroke="#232f3e" stroke-width="1.5"/>
+	<rect x="200" y="80" width="150" height="24" fill="#232f3e"/>
+	<text x="210" y="97" font-size="12" font-weight="600" fill="#ffffff">AWS(1 つのリージョン)</text>
+
+	<!-- VPC -->
+	<rect x="220" y="230" width="580" height="530" rx="4" fill="none" stroke="#8c4fff" stroke-width="1.5"/>
+	<text x="232" y="250" font-size="12" font-weight="600" fill="#8c4fff">VPC(10.20.0.0/16)</text>
+
+	<!-- パブリックサブネット -->
+	<rect x="240" y="262" width="540" height="122" rx="4" fill="#f2f8e9" stroke="#7aa116"/>
+	<text x="252" y="280" font-size="11.5" font-weight="600" fill="#5a7a10">パブリックサブネット(2 つの AZ)</text>
+
+	<rect x="270" y="292" width="220" height="76" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+	<rect x="270" y="292" width="6" height="76" rx="2" fill="#8c4fff"/>
+	<text x="290" y="314" font-size="13" font-weight="600" fill="#24292f">Application Load Balancer</text>
+	<text x="290" y="333" font-size="11" fill="#57606a">443 で受けて 8080 へ(80 は 443 へ)</text>
+	<text x="290" y="352" font-size="11" fill="#57606a">SG: dm-alb</text>
+
+	<rect x="560" y="292" width="190" height="76" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+	<rect x="560" y="292" width="6" height="76" rx="2" fill="#8c4fff"/>
+	<text x="580" y="314" font-size="13" font-weight="600" fill="#24292f">NAT ゲートウェイ</text>
+	<text x="580" y="333" font-size="11" fill="#57606a">プライベートサブネットから</text>
+	<text x="580" y="352" font-size="11" fill="#57606a">外へ出るための出口</text>
+
+	<!-- プライベートサブネット -->
+	<rect x="240" y="420" width="540" height="320" rx="4" fill="#e6f2f8" stroke="#147eba"/>
+	<text x="560" y="438" font-size="11.5" font-weight="600" fill="#0f6697">プライベートサブネット(2 つの AZ)</text>
+
+	<rect x="270" y="456" width="230" height="100" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+	<rect x="270" y="456" width="6" height="100" rx="2" fill="#ed7100"/>
+	<text x="290" y="479" font-size="13" font-weight="600" fill="#24292f">ECS on Fargate</text>
+	<text x="290" y="499" font-size="12" fill="#24292f">document-manager</text>
+	<text x="290" y="519" font-size="11" fill="#57606a">タスク 1〜N 台(:8080)</text>
+	<text x="290" y="538" font-size="11" fill="#57606a">SG: dm-app / 永続ボリューム不要</text>
+
+	<rect x="270" y="636" width="230" height="84" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+	<rect x="270" y="636" width="6" height="84" rx="2" fill="#2e73b8"/>
+	<text x="290" y="659" font-size="13" font-weight="600" fill="#24292f">RDS for PostgreSQL 17</text>
+	<text x="290" y="679" font-size="11" fill="#57606a">文書の情報・タグ・セッション</text>
+	<text x="290" y="698" font-size="11" fill="#57606a">SG: dm-db / 削除時はスナップショット</text>
+
+	<rect x="560" y="456" width="190" height="50" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+	<rect x="560" y="456" width="6" height="50" rx="2" fill="#8c4fff"/>
+	<text x="580" y="476" font-size="12" font-weight="600" fill="#24292f">S3 ゲートウェイ型</text>
+	<text x="580" y="494" font-size="12" font-weight="600" fill="#24292f">VPC エンドポイント</text>
+
+	<!-- ===== VPC の外(リージョン内のサービス) ===== -->
+	<g>
+		<rect x="830" y="120" width="170" height="52" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+		<rect x="830" y="120" width="6" height="52" rx="2" fill="#8c4fff"/>
+		<text x="848" y="141" font-size="12.5" font-weight="600" fill="#24292f">Route 53</text>
+		<text x="848" y="160" font-size="11" fill="#57606a">公開するホスト名 → ALB</text>
+
+		<rect x="830" y="186" width="170" height="52" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+		<rect x="830" y="186" width="6" height="52" rx="2" fill="#dd344c"/>
+		<text x="848" y="207" font-size="12.5" font-weight="600" fill="#24292f">ACM</text>
+		<text x="848" y="226" font-size="11" fill="#57606a">証明書(DNS で自動検証)</text>
+
+		<rect x="830" y="456" width="170" height="76" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+		<rect x="830" y="456" width="6" height="76" rx="2" fill="#7aa116"/>
+		<text x="848" y="479" font-size="13" font-weight="600" fill="#24292f">S3 バケット</text>
+		<text x="848" y="499" font-size="11" fill="#57606a">文書ファイル本体</text>
+		<text x="848" y="518" font-size="11" fill="#57606a">スタック削除後も残る</text>
+
+		<rect x="830" y="590" width="170" height="60" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+		<rect x="830" y="590" width="6" height="60" rx="2" fill="#dd344c"/>
+		<text x="848" y="613" font-size="12.5" font-weight="600" fill="#24292f">Secrets Manager</text>
+		<text x="848" y="632" font-size="11" fill="#57606a">DB のパスワード・鍵など</text>
+
+		<rect x="830" y="672" width="170" height="60" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+		<rect x="830" y="672" width="6" height="60" rx="2" fill="#e7157b"/>
+		<text x="848" y="695" font-size="12.5" font-weight="600" fill="#24292f">CloudWatch Logs</text>
+		<text x="848" y="714" font-size="11" fill="#57606a">アプリのログ(30 日)</text>
+	</g>
+
+	<!-- ===== 通信(実線: 使っているとき) ===== -->
+	<g fill="none" stroke="#5b6b7c" stroke-width="1.6">
+		<!-- 利用者 → ALB -->
+		<path d="M 174 286 L 222 286 L 222 316 L 270 316" marker-end="url(#arrow)"/>
+		<path d="M 174 350 L 222 350 L 222 340 L 270 340" marker-end="url(#arrow)"/>
+		<!-- ALB → ECS -->
+		<path d="M 380 368 L 380 456" marker-end="url(#arrow)"/>
+		<!-- ECS → RDS -->
+		<path d="M 385 556 L 385 636" marker-end="url(#arrow)"/>
+		<!-- ECS → エンドポイント → S3 -->
+		<path d="M 500 481 L 560 481" marker-end="url(#arrow)"/>
+		<path d="M 750 481 L 830 481" marker-end="url(#arrow)"/>
+		<!-- ECS → NAT → OpenID Connect -->
+		<path d="M 470 456 L 470 402 L 655 402 L 655 368" marker-end="url(#arrow)"/>
+		<path d="M 680 292 L 680 123 L 174 123" marker-end="url(#arrow)"/>
+		<!-- ECS → ログ -->
+		<path d="M 500 548 L 812 548 L 812 702 L 830 702" marker-end="url(#arrow)"/>
+	</g>
+	<!-- ===== 通信(点線: コンテナの起動時だけ) ===== -->
+	<g fill="none" stroke="#5b6b7c" stroke-width="1.4" stroke-dasharray="5 4">
+		<path d="M 630 292 L 630 189 L 174 189" marker-end="url(#arrow)"/>
+		<path d="M 500 530 L 795 530 L 795 620 L 830 620" marker-end="url(#arrow)"/>
+	</g>
+
+	<!-- 通信のラベル -->
+	<g font-size="11" fill="#24292f">
+		<text x="180" y="278">HTTPS</text>
+		<text x="390" y="416">HTTP :8080</text>
+		<text x="395" y="602">:5432</text>
+		<text x="756" y="474">S3 へ</text>
+		<text x="480" y="396">外への通信</text>
+		<text x="420" y="116">ログインの確認(NAT 経由)</text>
+		<text x="400" y="182" fill="#57606a">イメージの取得・起動時(NAT 経由)</text>
+		<text x="600" y="524" fill="#57606a">秘密情報の取得(起動時)</text>
+		<text x="600" y="566">ログ</text>
+	</g>
+
+	<!-- ===== 読み方 ===== -->
+	<rect x="24" y="796" width="992" height="88" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+	<text x="36" y="816" font-size="12" font-weight="600" fill="#24292f">読み方</text>
+	<text x="36" y="834" font-size="11" fill="#57606a">・実線は使っているときの通信、点線はコンテナの起動時だけの通信</text>
+	<text x="36" y="852" font-size="11" fill="#57606a">・SG(セキュリティグループ)は、dm-alb が 443 と 80、dm-app は dm-alb からの 8080、dm-db は dm-app からの 5432 だけを受け付ける</text>
+	<text x="36" y="870" font-size="11" fill="#57606a">・最小構成のため、変換サービス(体裁つき表示・PDF でダウンロード)と意味検索(Weaviate)は含まない。どちらも無くても、登録・プレビュー・全文検索・版管理は使える</text>
+</svg>
