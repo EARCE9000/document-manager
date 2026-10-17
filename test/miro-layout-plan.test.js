@@ -135,3 +135,46 @@ test("マトリクス型: 資料の無いマスに「無し」、対象外のマ
 	const titles = plan.labels.map((l) => l.text);
 	assert.ok(titles.indexOf("管理") < titles.indexOf("会議") && titles.indexOf("会議") < titles.indexOf("未分類"));
 });
+
+// 連動で資料を足すとき(前に置いた位置を渡す)は、押し下げを減らす(layout-spec.md 5 章)
+const previousOf = (plan) => new Map(plan.items.map((i) => [i.documentId, {x: i.x, y: i.y}]));
+
+test("連動で足すとき: フォルダ列型は、おしながきの途中に入った資料も列の後ろに足し、前の資料は動かさない", () => {
+	const folder = {id: "f1", name: "要件"};
+	const a = doc("a.md", {topFolder: folder});
+	const b = doc("b.md", {topFolder: folder});
+	const c = doc("c.md", {topFolder: folder});
+	const before = planOf("folder-columns", [a, b, c]);
+	const inserted = doc("a2.md", {topFolder: folder});
+	const after = Plan.buildPlan("folder-columns", {project: {id: "p", name: "試し"}, documents: [a, inserted, b, c], featureOrder: []},
+		{geometry, previous: previousOf(before)});
+	for (const d of [a, b, c]) assert.deepEqual({x: itemOf(after, d).x, y: itemOf(after, d).y}, {x: itemOf(before, d).x, y: itemOf(before, d).y});
+	assert.ok(itemOf(after, inserted).y >= itemOf(after, c).y);
+});
+
+test("連動で足すとき: 時系列型は、過去の月に足した資料を折り返さず右へ延ばし、下の月を押し下げない。最新の月は折り返す", () => {
+	const july = Array.from({length: 7}, (_, i) => doc(`設計 2026-07-0${i + 1}.md`));
+	const august = Array.from({length: 7}, (_, i) => doc(`設計 2026-08-0${i + 1}.md`));
+	const before = planOf("timeline", [...july, ...august]);
+	const lateJuly = doc("追加 2026-07-20.md");
+	const lateAugust = doc("追加 2026-08-20.md");
+	const after = Plan.buildPlan("timeline", {project: {id: "p", name: "試し"}, documents: [...july, lateJuly, ...august, lateAugust], featureOrder: []},
+		{geometry, previous: previousOf(before)});
+	assert.equal(itemOf(after, lateJuly).y, itemOf(after, july[0]).y, "7 月は同じ段の右へ延ばす");
+	assert.ok(itemOf(after, lateJuly).x > itemOf(after, july[6]).x);
+	for (const d of august) assert.equal(itemOf(after, d).y, itemOf(before, d).y, "8 月は押し下げない");
+	assert.ok(itemOf(after, lateAugust).y > itemOf(after, august[0]).y, "最新の月(8 月)は折り返す");
+	assert.ok(after.frame.width > before.frame.width);
+});
+
+test("連動で足すとき: マトリクス型は、新しい工程の列を右に足し、前の列は動かさない", () => {
+	const a = doc("認証の要件.md", {tags: ["機能:認証", "工程:要件定義"]});
+	const b = doc("認証の結合テスト.md", {tags: ["機能:認証", "工程:結合テスト"]});
+	const before = planOf("matrix", [a, b]);
+	const middle = doc("認証の基本設計.md", {tags: ["機能:認証", "工程:基本設計"]});
+	const after = Plan.buildPlan("matrix", {project: {id: "p", name: "試し"}, documents: [a, middle, b], featureOrder: []},
+		{geometry, previous: previousOf(before)});
+	assert.equal(itemOf(after, b).x, itemOf(before, b).x);
+	assert.ok(itemOf(after, middle).x > itemOf(after, b).x, "新しい工程は右に足す");
+	assert.deepEqual(after.report.processes, ["要件定義", "結合テスト", "基本設計"]);
+});

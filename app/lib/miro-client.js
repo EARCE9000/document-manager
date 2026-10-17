@@ -241,6 +241,12 @@ module.exports.createShape = (token, boardId, {shape = "rectangle", content = ""
 		data: {shape, content}, position: {x, y}, geometry: {width, height}, ...(style ? {style} : {}), ...(parentId ? {parent: {id: parentId}} : {})
 	}});
 
+/** 付箋を置く(位置はボードの上の中心。枠には入れない) */
+module.exports.createStickyNote = (token, boardId, {content, x, y, width, fillColor = "light_yellow"}) =>
+	call("POST", `${boardPath(boardId)}/sticky_notes`, {token, body: {
+		data: {content, shape: "rectangle"}, style: {fillColor}, position: {x, y}, ...(width ? {geometry: {width}} : {})
+	}});
+
 /** 項目をまとめる(人が画面で動かすと一緒に動く。APIで動かすときは1つずつ動かす必要がある) */
 module.exports.createGroup = (token, boardId, itemIds) =>
 	call("POST", `${boardPath(boardId)}/groups`, {token, body: {data: {items: itemIds}}});

@@ -376,11 +376,23 @@ const unknownReason = (classification, headings) => classification.unknown.some(
  * @param {string} layout LAYOUT_IDS のどれか
  * @param {{project: {id: string, name: string}, documents: object[], featureOrder?: string[]}} input
  *   documents はおしながき順。各要素: {documentId, entryFile, modified, firstUploaded, tags, folderId, folderNames(近い順), topFolder: ?{id, name}, subFolders: string[]}
+ * @param {{previous?: Map<string, {x: number, y: number}>}} [options]
+ *   previous: 前に置いた位置(連動で資料を足すとき)。渡すと、押し下げを減らすため、どの区画の中でも
+ *   **前に置いた資料は前の並びのまま**(上から・左から)にし、新しい資料はその後ろに足す(layout-spec.md 5 章)。
+ *   区画の並び(フォルダ列型の列・マトリクスの行と列)も前のまま、新しいものは右・下に足す。
  */
-module.exports.buildReport = (layout, input) => {
+module.exports.buildReport = (layout, input, {previous = null} = {}) => {
 	if (!LAYOUT_IDS.includes(layout)) throw Object.assign(new Error(`型は ${LAYOUT_IDS.join(" / ")} のどれかです`), {status: 400});
 	const documents = input.documents ?? [];
-	const classified = documents.map((doc, order) => ({doc, order, c: classify(doc), ...documentDate(doc)}));
+	let classified = documents.map((doc, order) => ({doc, order, c: classify(doc), ...documentDate(doc)}));
+	const previousOf = (entry) => previous?.get(entry.doc.documentId) ?? null;
+	if (previous != null) {
+		// 前に置いた資料を前の並び(上から・左から)で先に、新しい資料をそのあとに(新しい資料どうしは型の並び)
+		const known = classified.filter((e) => previousOf(e) != null)
+			.sort((a, b) => previousOf(a).y - previousOf(b).y || previousOf(a).x - previousOf(b).x);
+		const added = classified.filter((e) => previousOf(e) == null);
+		classified = [...known, ...added].map((e, order) => ({...e, order}));
+	}
 	const placements = [];
 	const unclassified = [];
 	const overridden = [];
@@ -394,7 +406,11 @@ module.exports.buildReport = (layout, input) => {
 	const noteUploadDate = (entry) => {
 		if (entry.dateSource === "first_upload") notes.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), kind: "date_from_first_upload", date: entry.date});
 	};
-	const byDate = (a, b) => (a.date ?? "").localeCompare(b.date ?? "") || a.order - b.order;
+	// 区画の中の並び。前の位置を渡されたときは、前の並びを崩さない(新しい資料は日付にかかわらず後ろへ足す)
+	const isNew = (e) => (previousOf(e) == null ? 1 : 0);
+	const byDate = previous != null
+		? (a, b) => isNew(a) - isNew(b) || (isNew(a) === 1 && isNew(b) === 1 ? (a.date ?? "").localeCompare(b.date ?? "") : 0) || a.order - b.order
+		: (a, b) => (a.date ?? "").localeCompare(b.date ?? "") || a.order - b.order;
 	const markUnclassified = (entry, reasons, fields = {}) => {
 		unclassified.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), reason: reasons[0], ...(reasons.length > 1 ? {reasons} : {})});
 		place(entry, "unclassified", null, {basis: "unclassified", ...fields});
@@ -435,7 +451,8 @@ module.exports.buildReport = (layout, input) => {
 			if (process == null) return "gray";
 			return UPPER_PROCESSES.includes(process) ? "purple" : "pink";
 		};
-		const dated = classified.filter((e) => e.date != null).sort(byDate);
+		const dated = classified.filter((e) => e.date != null)
+			.sort((a, b) => a.date.slice(0, 7).localeCompare(b.date.slice(0, 7)) || byDate(a, b));
 		if (dated.length > 0) areaOrder = monthsBetween(dated[0].date.slice(0, 7), dated[dated.length - 1].date.slice(0, 7));
 		for (const entry of dated) {
 			place(entry, entry.date.slice(0, 7), null, {...dateFields(entry), color: colorOf(entry.c), ...basisOf(entry.c, ["区分", "工程", "会議"])});
@@ -562,9 +579,15 @@ module.exports.buildReport = (layout, input) => {
 			cells.get(key).push(entry);
 		}
 		// 機能の並び: タグ体系(/api/tag_order)に登録した順 → まだ無いものは、おしながき順で最初に出てきた順
-		const registered = (input.featureOrder ?? []).filter((f) => featureSeen.includes(f));
+		// 前に置いた位置があれば、行(機能)と列(工程)は前の並びのまま、新しいものを下・右に足す
+		const registered = previous != null ? [] : (input.featureOrder ?? []).filter((f) => featureSeen.includes(f));
 		const features = [...registered, ...featureSeen.filter((f) => !registered.includes(f))];
-		const processes = PROCESSES.filter((p) => features.some((f) => cells.has(`${f}\u0000${p}`)));
+		let processes = PROCESSES.filter((p) => features.some((f) => cells.has(`${f}\u0000${p}`)));
+		if (previous != null) {
+			const leftOf = (p) => Math.min(...features.flatMap((f) => (cells.get(`${f}\u0000${p}`) ?? []).map((e) => previousOf(e)?.x ?? Infinity)));
+			const known = processes.filter((p) => Number.isFinite(leftOf(p))).sort((a, b) => leftOf(a) - leftOf(b));
+			processes = [...known, ...processes.filter((p) => !known.includes(p))];
+		}
 		const gaps = [];
 		const excludedCells = [];
 		for (const feature of features) {

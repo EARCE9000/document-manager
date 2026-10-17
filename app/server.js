@@ -4341,6 +4341,32 @@ app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange', requireAuth, requireWr
 	}
 });
 
+/**
+ * 並べ直す前の確かめ: 並べ直すと上書きされる、人が Miro で動かした資料の枚数と一覧、並べる型での未分類の割合。
+ * ?layout= で切り替え先の型(省略するといまの型)。ボードは変えない
+ */
+app.get(BASE_URL_PATH + 'api/projects/:id/miro/arrange-check', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(await MiroSync.arrangeCheck(req.params.id, {layout: req.query.layout != null ? String(req.query.layout) : undefined}));
+	} catch (err) {
+		if (err.needsReconnect) {
+			res.status(409).json({error: err.message, needsReconnect: true});
+			return;
+		}
+		if (err.name === "MiroError") {
+			res.status(502).json({error: err.message});
+			return;
+		}
+		if ([400, 404, 409].includes(err.status)) {
+			res.status(err.status).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/projects/:id/miro/arrange-check");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 /** 「元の型に戻す」: 直前の並べ直しの前の配置(型・位置・見出しの文字・図形)に戻す。戻せるのは 1 世代だけ */
 app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange/undo', requireAuth, requireWrite, async (req, res) => {
 	try {

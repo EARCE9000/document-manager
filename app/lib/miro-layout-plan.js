@@ -58,8 +58,8 @@ const line = (x1, y1, x2, y2, {thickness = 8, color = LINE_COLOR} = {}) => shape
  * @param {{geometry: {itemWidth: number, gapX: number, gapY: number, captionHeight: number, padding: number, headerHeight: number, defaultAspect: number},
  *          sizes?: Map<string, {width: number, height: number}>, projectUrl?: ?string}} options
  */
-module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), projectUrl = null} = {}) => {
-	const report = MiroLayout.buildReport(layout, input);
+module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), projectUrl = null, previous = null} = {}) => {
+	const report = MiroLayout.buildReport(layout, input, {previous});
 	const G = geometry;
 	const W = G.itemWidth;
 	const cw = W + G.gapX;
@@ -164,13 +164,52 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 		width = x0 + perRow * cw - G.gapX + G.padding;
 		const colorHex = {purple: COLORS.purple, pink: COLORS.pink, gray: COLORS.gray, green: COLORS.green, orange: COLORS.orange};
 		let y = G.padding;
-		for (const month of Object.keys(report.summary.areas)) {
+		const months = Object.keys(report.summary.areas);
+		const colorOf = (id) => colorHex[byId.get(id).color] ?? null;
+		/**
+		 * 連動で資料を足すとき、最新の月以外は折り返さず右へ延ばす(下の月を押し下げない。layout-spec.md 5 章)。
+		 * 前に置いた資料は前の段のまま(同じ高さに置いたものを同じ段とみなす)、新しい資料は最後の段の右に足す
+		 */
+		const extendRows = (ids) => {
+			const rows = [];
+			let rowY = null;
+			for (const id of ids) {
+				const before = previous?.get(id);
+				if (before == null) {
+					if (rows.length === 0) rows.push([]);
+					rows[rows.length - 1].push(id);
+					continue;
+				}
+				if (rowY == null || Math.abs(before.y - rowY) > 1) {
+					rows.push([]);
+					rowY = before.y;
+				}
+				rows[rows.length - 1].push(id);
+			}
+			return rows;
+		};
+		const rowsOf = [];
+		months.forEach((month, index) => {
 			const ids = placementsIn(month).map((p) => p.documentId);
 			labels.push(label(month, G.padding + labelWidth / 2, y + 40, labelWidth - 20, {fontSize: 36}));
-			const bottom = ids.length === 0 ? y + 200 : grid(ids, x0, y, perRow, (id) => colorHex[byId.get(id).color] ?? null);
-			shapes.push(line(G.padding, bottom - G.gapY / 2, width - G.padding, bottom - G.gapY / 2, {color: "#dddddd"}));
+			let bottom;
+			if (ids.length === 0) {
+				bottom = y + 200;
+			} else if (previous != null && index < months.length - 1) {
+				bottom = y;
+				for (const row of extendRows(ids)) {
+					row.forEach((id, i) => put(id, x0 + i * cw + W / 2, bottom + heightOf(id) / 2, colorOf(id)));
+					width = Math.max(width, x0 + row.length * cw - G.gapX + G.padding);
+					bottom += lineHeight(row);
+				}
+			} else {
+				bottom = grid(ids, x0, y, perRow, colorOf);
+			}
+			rowsOf.push(bottom);
 			y = bottom;
-		}
+		});
+		// 月の区切りの線は、いちばん長い行に合わせる
+		for (const bottom of rowsOf) shapes.push(line(G.padding, bottom - G.gapY / 2, width - G.padding, bottom - G.gapY / 2, {color: "#dddddd"}));
 		height = Math.max(y - G.gapY + G.padding, 600);
 	} else if (layout === "split-shelves") {
 		const leftColumns = 3;

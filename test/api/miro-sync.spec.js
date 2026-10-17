@@ -144,7 +144,7 @@ test.describe.serial("プロジェクトの資料を Miro に出す", () => {
 	test("新しい版は、人が動かした位置と大きさのまま、同じ項目の中身だけを差し替える", async ({request}) => {
 		const before = (await boardItems(request)).find((i) => i.data?.title === `仕様書${STAMP}.pdf`);
 		// Miro で人が動かした・大きさを変えた
-		await control(request, {moveItem: {id: before.id, x: 2000, y: 1500}});
+		await control(request, {moveItem: {id: before.id, x: 1400, y: 1100}});
 		await request.post(`api/projects/${projectId}/miro/sync`, {headers: rw});
 		await settled(request, projectId);
 
@@ -153,24 +153,29 @@ test.describe.serial("プロジェクトの資料を Miro に出す", () => {
 		const after = (await boardItems(request)).find((i) => i.id === before.id);
 		expect(after, "別の項目として作り直している").toBeTruthy();
 		expect(after.replacedAt).toBeTruthy();
-		expect(after.position).toMatchObject({x: 2000, y: 1500});
+		expect(after.position).toMatchObject({x: 1400, y: 1100});
 		expect(after.geometry.width, "差し替えで元の大きさに戻っている").toBe(360);
 		expect(status.counts.placed).toBe(5);
 		docs.pdf = v2;
 	});
 
-	test("増えた資料は、並んでいるものの下に足し、枠を下へ伸ばす", async ({request}) => {
-		const frameBefore = (await boardItems(request)).find((i) => i.type === "frame");
+	test("増えた資料は、その列(フォルダ列型の「その他」)の後ろに足し、前に置いた資料は動かさない。枠の上の端は動かさない", async ({request}) => {
+		const before = await boardItems(request);
+		const frameBefore = before.find((i) => i.type === "frame");
+		const positionsBefore = new Map(before.filter((i) => i.type === "document" || i.type === "image").map((i) => [i.id, i.position]));
 		const added = await upload(request, `テスト計画${STAMP}.pdf`, PDF);
 		await request.put(`api/projects/${projectId}/documents/${added.id}`, {headers: rw, data: {folderId: null}});
 		await waitFor(request, projectId, (s) => itemOf(s, added.id)?.state === "placed");
 		const items = await boardItems(request);
 		const placed = items.find((i) => i.data?.title === `テスト計画${STAMP}.pdf`);
-		const others = items.filter((i) => (i.type === "document" || i.type === "image") && i.id !== placed.id && i.position.x !== 2000);
-		expect(placed.position.y, "下に足していない").toBeGreaterThan(Math.max(...others.map((i) => i.position.y)));
+		const others = items.filter((i) => (i.type === "document" || i.type === "image") && i.id !== placed.id);
+		for (const other of others) expect(other.position, "前に置いた資料が動いた").toMatchObject(positionsBefore.get(other.id));
+		// 同じ列(x が同じ・右隣)の資料より後ろ(下、または同じ段の右)
+		const column = others.filter((i) => Math.abs(i.position.x - placed.position.x) <= 420 && i.position.x !== 1400);
+		for (const other of column) {
+			expect(placed.position.y > other.position.y || (placed.position.y === other.position.y && placed.position.x > other.position.x), "後ろに足していない").toBe(true);
+		}
 		const frameAfter = items.find((i) => i.type === "frame");
-		expect(frameAfter.geometry.height).toBeGreaterThan(frameBefore.geometry.height);
-		// 枠の上の端は動かさない(中心を、伸ばした分の半分だけ下げる)
 		expect(frameAfter.position.y - frameAfter.geometry.height / 2).toBeCloseTo(frameBefore.position.y - frameBefore.geometry.height / 2, 3);
 		docs.added = added;
 	});
@@ -623,5 +628,97 @@ test.describe.serial("Miro の並べ方の型と、元の型に戻す", () => {
 		expect(loose.position.y).toBeGreaterThan(designDoc.position.y);
 		expect(caption(items, `型-計画書${STAMP}.pdf`).style).toMatchObject({fillColor: "#f1efe8"});
 		expect((await statusOf(request)).layout).toBe("quadrant-cross");
+	});
+});
+
+// 連動のあいだ、Document Manager が置いた位置のままの資料だけを型どおりに寄せ、人が Miro で動かした資料は動かさない(layout-spec.md 5 章)
+test.describe.serial("連動で並べるとき、人が動かした資料は動かさない", () => {
+	let projectId;
+	const docs = {};
+	const file = (items, title) => items.find((i) => (i.type === "document" || i.type === "image") && i.data?.title === title);
+	const tagged = async (request, name, tags) => {
+		const doc = await upload(request, `${name}${STAMP}.pdf`, PDF);
+		if (tags.length > 0) await request.put(`api/documents/${doc.id}/tags`, {headers: rw, data: {tags}});
+		await request.put(`api/projects/${projectId}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
+		return doc;
+	};
+	const sync = async (request) => {
+		await request.post(`api/projects/${projectId}/miro/sync`, {headers: rw});
+		return settled(request, projectId);
+	};
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `人が動かす${STAMP}`}})).json()).id;
+		await request.post(`api/projects/${projectId}/unlock`, {headers: rw});
+		docs.design = await tagged(request, "人-基本設計", ["工程:基本設計"]);
+		docs.plan = await tagged(request, "人-計画書", []);
+		docs.memo = await tagged(request, "人-メモ", []);
+		await request.post(`api/projects/${projectId}/miro`, {headers: rw, data: {layout: "quadrant-cross"}});
+		await settled(request, projectId);
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("連動を始めたときから、選んだ型どおりに並ぶ", async ({request}) => {
+		const items = await boardItems(request);
+		const design = file(items, `人-基本設計${STAMP}.pdf`);
+		const plan = file(items, `人-計画書${STAMP}.pdf`);
+		const memo = file(items, `人-メモ${STAMP}.pdf`);
+		expect(plan.position.x, "計画書(管理)は右上").toBeGreaterThan(design.position.x);
+		expect(memo.position.y, "メモは枠の下の未分類").toBeGreaterThan(plan.position.y);
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("右上: 管理系"))).toBe(true);
+		const check = await (await request.get(`api/projects/${projectId}/miro/arrange-check`, {headers: ro})).json();
+		expect(check).toMatchObject({layout: "quadrant-cross", placed: 3, humanMoved: 0});
+	});
+
+	test("人が動かした資料は、タグが変わっても動かさない。置いたままの資料は型どおりに寄せる", async ({request}) => {
+		const plan = file(await boardItems(request), `人-計画書${STAMP}.pdf`);
+		await control(request, {moveItem: {id: plan.id, x: 500, y: 300}});
+		await sync(request);
+		const check = await (await request.get(`api/projects/${projectId}/miro/arrange-check`, {headers: ro})).json();
+		expect(check.humanMoved).toBe(1);
+		expect(check.documents[0].title).toBe(`人-計画書${STAMP}.pdf`);
+
+		// メモに 区分:管理 を付けると右上へ寄る。人が動かした計画書はそのまま
+		const memoBefore = file(await boardItems(request), `人-メモ${STAMP}.pdf`).position;
+		await request.put(`api/documents/${docs.memo.id}/tags`, {headers: rw, data: {tags: ["区分:管理"]}});
+		await sync(request);
+		const items = await boardItems(request);
+		expect(file(items, `人-計画書${STAMP}.pdf`).position).toMatchObject({x: 500, y: 300});
+		const memo = file(items, `人-メモ${STAMP}.pdf`).position;
+		expect(memo.y).toBeLessThan(memoBefore.y);
+		expect(memo.x).toBeGreaterThan(file(items, `人-基本設計${STAMP}.pdf`).position.x);
+	});
+
+	test("型どおりの場所が人の動かした資料とぶつかる新しい資料は、枠の下に置き、「並べ直すと整います」の付箋を出す", async ({request}) => {
+		// 計画書(人が動かした)を、次の管理の資料が入るはずの場所へ動かす
+		const memo = file(await boardItems(request), `人-メモ${STAMP}.pdf`);
+		const blocker = file(await boardItems(request), `人-計画書${STAMP}.pdf`);
+		await control(request, {moveItem: {id: blocker.id, x: memo.position.x + 420, y: memo.position.y}});
+		await sync(request);
+		docs.wbs = await tagged(request, "人-WBS", ["区分:管理"]);
+		await waitFor(request, projectId, (s) => itemOf(s, docs.wbs.id)?.state === "placed");
+		const items = await boardItems(request);
+		const wbs = file(items, `人-WBS${STAMP}.pdf`);
+		expect(wbs.position.y, "ぶつからない枠の下に置く").toBeGreaterThan(memo.position.y + 600);
+		const sticky = items.find((i) => i.type === "sticky_note");
+		expect(sticky?.data?.content).toContain("並べ直すと整います");
+	});
+
+	test("並べ直すと、人が動かした資料も型どおりに戻し、付箋を片付ける", async ({request}) => {
+		const res = await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw});
+		expect(res.status()).toBe(200);
+		const items = await boardItems(request);
+		expect(items.some((i) => i.type === "sticky_note")).toBe(false);
+		const check = await (await request.get(`api/projects/${projectId}/miro/arrange-check`, {headers: ro})).json();
+		expect(check.humanMoved).toBe(0);
+		const managed = ["人-計画書", "人-メモ", "人-WBS"].map((n) => file(items, `${n}${STAMP}.pdf`).position);
+		expect(new Set(managed.map((p) => p.y)).size, "右上の格子に 1 段で並ぶ").toBe(1);
 	});
 });

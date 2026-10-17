@@ -551,6 +551,15 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "checkArrangeProjectMiro", method: "get", path: "/api/projects/:id/miro/arrange-check", role: "readonly", tag: "プロジェクト",
+		summary: "Miro で並べ直す前の確かめ(人が動かした資料の枚数)",
+		description: "並べ直すと上書きされる、人が Miro で動かした資料の枚数(`humanMoved`)と一覧(`documents`)、並べる型での未分類の割合(`unclassifiedRatio`・`reviewRecommended`)を返す。"
+			+ "Miro からいまの位置を読むだけで、ボードは変えない。並べ直しを頼まれたら、先にこれで枚数を伝えて確かめる",
+		params: [{name: "layout", in: "query", description: "切り替え先の型(省略するといまの型)"}],
+		responses: {400: "知らない型", 409: "連動していない"},
+		aiGuide: false
+	},
+	{
 		id: "undoArrangeProjectMiro", method: "post", path: "/api/projects/:id/miro/arrange/undo", role: "readwrite", tag: "プロジェクト",
 		summary: "Miro の並べ直しを取り消す(元の型に戻す)",
 		description: "直前の並べ直しの前の配置(型・資料の位置・見出しの文字・図形・見出しの色・枠の大きさ)に戻す。戻せるのは 1 世代だけで、戻したら消える。そのあとで増えた資料は、いまの場所のまま",

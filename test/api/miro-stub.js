@@ -222,7 +222,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 				return;
 			}
 			// ---- ボードの項目 ----
-			const itemPath = /^\/v2\/boards\/([^/]+)\/(frames|documents|images|texts|shapes|groups|items)(?:\/([^/]+))?$/.exec(url.pathname);
+			const itemPath = /^\/v2\/boards\/([^/]+)\/(frames|documents|images|texts|shapes|sticky_notes|groups|items)(?:\/([^/]+))?$/.exec(url.pathname);
 			if (itemPath) {
 				const boardId = decodeURIComponent(itemPath[1]);
 				const kind = itemPath[2];
@@ -231,7 +231,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 					send(res, 404, {code: "boardNotFound", message: "Board not found", status: 404});
 					return;
 				}
-				const typeOf = {frames: "frame", documents: "document", images: "image", texts: "text", shapes: "shape", groups: "group"};
+				const typeOf = {frames: "frame", documents: "document", images: "image", texts: "text", shapes: "shape", sticky_notes: "sticky_note", groups: "group"};
 				// multipart の data(JSON)と resource(ファイル)を取り出す
 				const multipart = () => {
 					const boundary = /boundary=(.+)$/.exec(String(req.headers["content-type"] || ""))?.[1];
@@ -355,7 +355,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 					if (item.type === "frame" && body.geometry) {
 						const width = body.geometry.width ?? item.geometry.width;
 						const height = body.geometry.height ?? item.geometry.height;
-						const outside = [...items.values()].some((child) => child.parent?.id === item.id
+						const outside = [...items.values()].find((child) => child.parent?.id === item.id
 							&& (child.position.x < 0 || child.position.y < 0 || child.position.x > width || child.position.y > height));
 						if (outside) {
 							send(res, 400, {message: "Child item cannot be placed outside the bounds of its parent"});
