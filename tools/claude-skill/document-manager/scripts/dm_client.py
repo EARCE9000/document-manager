@@ -39,13 +39,16 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py projects [--archived]        プロジェクト一覧
   python dm_client.py project-url <プロジェクト>   人に渡す、プロジェクトを開くリンク
   python dm_client.py miro <プロジェクト>          Miro 連動の状態(出ている資料・出せない理由・Miro で開くURL)
-  python dm_client.py miro-link <プロジェクト>     Miro と連動する(ボードの枠に資料を並べる。並び終わるまで待つ)
+  python dm_client.py miro-link <プロジェクト> [--layout <型>]   Miro と連動する(ボードの枠に型どおりに並べる。並び終わるまで待つ)
   python dm_client.py miro-sync <プロジェクト>     Miro へ今すぐ反映する(普段は自動)
   python dm_client.py miro-unlink <プロジェクト> [--remove-documents]   連動をやめる(既定ではボードに残す)
   python dm_client.py miro-publish <プロジェクト> <文書ID> [--off]      資料ごとに出す・出さない
   python dm_client.py miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
   python dm_client.py miro-layout <プロジェクト> <JSONファイル|->   レイアウト(位置・色・見出し・図形)をまとめて当てる
-  python dm_client.py miro-arrange <プロジェクト>  Miro の枠の中をフォルダの順に並べ直す
+  python dm_client.py miro-arrange <プロジェクト> [--layout <型>] [--check] [--yes]   型どおりに並べ直す(型の切り替え。人が動かした資料があれば --yes が要る)
+  python dm_client.py miro-arrange-undo <プロジェクト>   直前の並べ直しを取り消す(元の型に戻す。1 世代だけ)
+  python dm_client.py miro-layout-report <プロジェクト> [--layout <型>]   その型で並べたらどうなるか(タグの見直し用。Miro は変えない)
+    型: folder-columns(フォルダ列) / timeline(時系列) / split-shelves(左右分割・棚) / quadrant-cross(十字) / matrix(マトリクス)
   python dm_client.py project-create <名前>        プロジェクトの作成
   python dm_client.py folder-create <プロジェクト> <名前> [--parent 親フォルダ]
   python dm_client.py tree <プロジェクト>          フォルダ階層と文書の配置
@@ -79,7 +82,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.10.0"
+CLIENT_VERSION = "1.11.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -954,6 +957,10 @@ def cmd_manifest(args):
 MIRO_WAIT_SECONDS = 600
 
 
+# Miro に並べる型(docs/miro-layouts/layout-spec.md)
+MIRO_LAYOUTS = ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]
+
+
 def miro_status(project_id):
     return request("GET", f"api/projects/{quote_id(project_id)}/miro")
 
@@ -975,7 +982,7 @@ def summarize_miro(status):
     items = status.get("items") or []
     problems = [{"title": i.get("title"), "state": i.get("state"), "reason": i.get("reason")}
                 for i in items if i.get("state") in ("skipped", "failed", "removed")]
-    result = {k: status.get(k) for k in ("available", "linked", "state", "syncing", "frameUrl", "lastSyncedAt", "lastError", "counts")}
+    result = {k: status.get(k) for k in ("available", "linked", "state", "syncing", "frameUrl", "layout", "layoutName", "undo", "lastSyncedAt", "lastError", "counts")}
     result["notPlaced"] = problems
     result["items"] = items
     if status.get("syncing"):
@@ -989,7 +996,7 @@ def cmd_miro(args):
 
 def cmd_miro_link(args):
     project_id = resolve_project(args.project)["id"]
-    request("POST", f"api/projects/{quote_id(project_id)}/miro")
+    request("POST", f"api/projects/{quote_id(project_id)}/miro", body={"layout": args.layout} if args.layout else {})
     return summarize_miro(wait_miro(project_id, not args.no_wait))
 
 
@@ -1043,8 +1050,32 @@ def cmd_miro_layout(args):
 
 
 def cmd_miro_arrange(args):
+    """
+    型どおりに並べ直す(--layout で型を切り替える)。人が Miro で動かした資料も上書きするので、先に枚数を確かめ、
+    1 枚でもあれば --yes が無いかぎり並べ直さずに一覧を返す(利用者に確かめてから --yes を付けて呼び直す)
+    """
     project_id = resolve_project(args.project)["id"]
-    return request("POST", f"api/projects/{quote_id(project_id)}/miro/arrange")
+    query = {"layout": args.layout} if args.layout else None
+    check = request("GET", f"api/projects/{quote_id(project_id)}/miro/arrange-check", query=query)
+    if args.check:
+        return check
+    if check.get("humanMoved", 0) > 0 and not args.yes:
+        return {"arranged": False, "needsConfirmation": True, **check,
+                "note": f"人が Miro で動かした資料が {check['humanMoved']} 枚あり、並べ直すと型どおりの位置へ戻ります。"
+                        "利用者に確かめてから --yes を付けて呼び直してください(元の型に戻すで 1 世代だけ戻せます)"}
+    result = request("POST", f"api/projects/{quote_id(project_id)}/miro/arrange", body={"layout": args.layout} if args.layout else {})
+    return {"arranged": True, **result, "humanMoved": check.get("humanMoved", 0), "unclassifiedRatio": check.get("unclassifiedRatio")}
+
+
+def cmd_miro_arrange_undo(args):
+    project_id = resolve_project(args.project)["id"]
+    return request("POST", f"api/projects/{quote_id(project_id)}/miro/arrange/undo")
+
+
+def cmd_miro_layout_report(args):
+    """その型で並べたらどうなるか(未分類・推定・表に無い値)。Miro は変えない。タグの見直しに使う"""
+    project_id = resolve_project(args.project)["id"]
+    return request("GET", f"api/projects/{quote_id(project_id)}/miro/layout-report", query={"layout": args.layout} if args.layout else None)
 
 
 def cmd_folder_reorder(args):
@@ -1356,8 +1387,9 @@ def main():
     p = sub.add_parser("miro", help="プロジェクトの Miro 連動の状態(出ている資料・出せない理由・Miro で開くURL)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.set_defaults(func=cmd_miro)
-    p = sub.add_parser("miro-link", help="プロジェクトを Miro と連動する(ボードの枠に資料を並べる。並び終わるまで待つ)")
+    p = sub.add_parser("miro-link", help="プロジェクトを Miro と連動する(ボードの枠に型どおりに並べる。並び終わるまで待つ)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("--layout", choices=MIRO_LAYOUTS, help="並べ方の型(省略すると前に選んだ型。初めてならフォルダ列型)")
     p.add_argument("--no-wait", action="store_true", help="並び終わるのを待たずに返す")
     p.set_defaults(func=cmd_miro_link)
     p = sub.add_parser("miro-sync", help="Miro へ今すぐ反映する(普段は自動)")
@@ -1386,9 +1418,19 @@ def main():
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("file", help="レイアウトの JSON ファイル(- で標準入力)")
     p.set_defaults(func=cmd_miro_layout)
-    p = sub.add_parser("miro-arrange", help="Miro の枠の中をフォルダの順に並べ直す(人が並べた配置は上書きされる)")
+    p = sub.add_parser("miro-arrange", help="Miro の枠の中を型どおりに並べ直す(型の切り替え。人が動かした資料も上書きする)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("--layout", choices=MIRO_LAYOUTS, help="この型に切り替えて並べる(省略するといまの型)")
+    p.add_argument("--check", action="store_true", help="並べ直さずに、人が動かした資料の枚数と未分類の割合だけを返す")
+    p.add_argument("--yes", action="store_true", help="人が動かした資料があっても並べ直す(利用者に確かめてから付ける)")
     p.set_defaults(func=cmd_miro_arrange)
+    p = sub.add_parser("miro-arrange-undo", help="直前の並べ直しを取り消す(元の型に戻す。1 世代だけ)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.set_defaults(func=cmd_miro_arrange_undo)
+    p = sub.add_parser("miro-layout-report", help="その型で並べたらどうなるか(未分類・推定・表に無い値。Miro は変えない)")
+    p.add_argument("project", help="プロジェクトIDまたは名前")
+    p.add_argument("--layout", choices=MIRO_LAYOUTS, help="型(省略するといま選んである型)")
+    p.set_defaults(func=cmd_miro_layout_report)
 
     p = sub.add_parser("spec", help="APIの仕様を出力する(同梱コマンドに無い操作を呼ぶとき)")
     p.add_argument("--openapi", action="store_true", help="OpenAPI 3.1のJSONを出力する(既定はAI向けMarkdown)")

@@ -33,11 +33,13 @@
  *   node dm_client.mjs projects [--archived] / project-create <名前> / tree <プロジェクト>
  *   node dm_client.mjs project-url <プロジェクト>
  *       人に渡す、プロジェクトを開くリンク
- *   node dm_client.mjs miro <プロジェクト> / miro-link <プロジェクト> [--no-wait] / miro-sync <プロジェクト>
+ *   node dm_client.mjs miro <プロジェクト> / miro-link <プロジェクト> [--layout <型>] [--no-wait] / miro-sync <プロジェクト>
  *   node dm_client.mjs miro-unlink <プロジェクト> [--remove-documents] / miro-publish <プロジェクト> <文書ID> [--off]
  *   node dm_client.mjs miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
  *   node dm_client.mjs miro-layout <プロジェクト> <JSONファイル|->  (位置・色・見出し・図形をまとめて当てる)
- *   node dm_client.mjs miro-arrange <プロジェクト>
+ *   node dm_client.mjs miro-arrange <プロジェクト> [--layout <型>] [--check] [--yes] / miro-arrange-undo <プロジェクト>
+ *   node dm_client.mjs miro-layout-report <プロジェクト> [--layout <型>]
+ *     型: folder-columns / timeline / split-shelves / quadrant-cross / matrix
  *       プロジェクトの資料を Miro のボードへ並べる(連携とボードの設定は管理者が画面で行う)
  *   node dm_client.mjs folder-create <プロジェクト> <名前> [--parent 親フォルダ]
  *   node dm_client.mjs place <プロジェクト> <文書ID> [--folder フォルダ] / unplace <プロジェクト> <文書ID>
@@ -62,7 +64,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.10.0";
+const CLIENT_VERSION = "1.11.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -538,6 +540,13 @@ const mockupViewUrl = (id) => new URL(mockupPath(id, "/view"), loadConfig().base
 const MIRO_WAIT_MS = 600 * 1000;
 const miroPath = (projectId, rest = "") => `api/projects/${encodeURIComponent(projectId)}/miro${rest}`;
 const miroStatus = (projectId) => request("GET", miroPath(projectId));
+// Miro に並べる型(docs/miro-layouts/layout-spec.md)
+const MIRO_LAYOUTS = Object.freeze(["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]);
+const miroLayoutOf = (opts) => {
+	if (opts.layout == null) return undefined;
+	if (!MIRO_LAYOUTS.includes(opts.layout)) throw new DmError(`--layout は ${MIRO_LAYOUTS.join(" / ")} のどれかです`);
+	return opts.layout;
+};
 
 /** 並べ終わる(syncing が偽になる)まで待って、状態を返す。資料が多いと数分かかる */
 const waitMiro = async (projectId, wait) => {
@@ -553,7 +562,7 @@ const waitMiro = async (projectId, wait) => {
 /** AI が利用者へ伝えやすい形に整える(出せなかった資料は理由つきで並べる) */
 const summarizeMiro = (status) => {
 	const items = status.items || [];
-	const result = Object.fromEntries(["available", "linked", "state", "syncing", "frameUrl", "lastSyncedAt", "lastError", "counts"].map((k) => [k, status[k] ?? null]));
+	const result = Object.fromEntries(["available", "linked", "state", "syncing", "frameUrl", "layout", "layoutName", "undo", "lastSyncedAt", "lastError", "counts"].map((k) => [k, status[k] ?? null]));
 	result.notPlaced = items.filter((i) => ["skipped", "failed", "removed"].includes(i.state)).map((i) => ({title: i.title, state: i.state, reason: i.reason}));
 	result.items = items;
 	if (status.syncing) result.note = "まだボードに並べている途中です。しばらくしてから miro で確かめてください";
@@ -813,8 +822,9 @@ const commands = {
 	},
 	miro: async ([project]) => summarizeMiro(await miroStatus((await resolveProject(requireArg(project, "プロジェクト"))).id)),
 	"miro-link": async ([project], opts) => {
+		const layout = miroLayoutOf(opts);
 		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
-		await request("POST", miroPath(id));
+		await request("POST", miroPath(id), {json: layout ? {layout} : {}});
 		return summarizeMiro(await waitMiro(id, !opts["no-wait"]));
 	},
 	"miro-sync": async ([project], opts) => {
@@ -854,7 +864,27 @@ const commands = {
 		}
 		return request("POST", miroPath(id, "/layout"), {json: layout});
 	},
-	"miro-arrange": async ([project]) => request("POST", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id, "/arrange")),
+	// 型どおりに並べ直す(--layout で型を切り替える)。人が Miro で動かした資料も上書きするので、先に枚数を確かめ、
+	// 1 枚でもあれば --yes が無いかぎり並べ直さずに一覧を返す(利用者に確かめてから --yes を付けて呼び直す)
+	"miro-arrange": async ([project], opts) => {
+		const layout = miroLayoutOf(opts);
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		const check = await request("GET", miroPath(id, "/arrange-check"), {query: layout ? {layout} : {}});
+		if (opts.check) return check;
+		if (check.humanMoved > 0 && !opts.yes) {
+			return {arranged: false, needsConfirmation: true, ...check,
+				note: `人が Miro で動かした資料が ${check.humanMoved} 枚あり、並べ直すと型どおりの位置へ戻ります。利用者に確かめてから --yes を付けて呼び直してください(元の型に戻すで 1 世代だけ戻せます)`};
+		}
+		const result = await request("POST", miroPath(id, "/arrange"), {json: layout ? {layout} : {}});
+		return {arranged: true, ...result, humanMoved: check.humanMoved, unclassifiedRatio: check.unclassifiedRatio};
+	},
+	"miro-arrange-undo": async ([project]) => request("POST", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id, "/arrange/undo")),
+	// その型で並べたらどうなるか(未分類・推定・表に無い値)。Miro は変えない。タグの見直しに使う
+	"miro-layout-report": async ([project], opts) => {
+		const layout = miroLayoutOf(opts);
+		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
+		return request("GET", miroPath(id, "/layout-report"), {query: layout ? {layout} : {}});
+	},
 	"alias-move": async ([alias, id]) => {
 		requireArg(alias, "Alias");
 		requireArg(id, "指す先にしたい文書ID");
@@ -1094,7 +1124,10 @@ const main = async () => {
 			side: {type: "string"},
 			"to-project": {type: "string"},
 			x: {type: "string"},
-			y: {type: "string"}
+			y: {type: "string"},
+			layout: {type: "string"},
+			check: {type: "boolean"},
+			yes: {type: "boolean"}
 		}
 	});
 	const [command, ...rest] = positionals;

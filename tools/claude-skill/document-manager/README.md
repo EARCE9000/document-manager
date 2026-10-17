@@ -125,6 +125,9 @@ python scripts/dm_client.py download <文書ID> --pdf                   # HTML�
 python scripts/dm_client.py search 権限の考え方 --semantic            # 意味検索(言い換え・表記ゆれを含む)
 python scripts/dm_client.py miro-link 案件A                          # プロジェクトの資料を Miro のボードに並べる(連動を始める)
 python scripts/dm_client.py miro-move 案件A <文書ID> --next-to <文書ID> --side right   # Miro の上で資料を動かす
+python scripts/dm_client.py miro-layout-report 案件A --layout quadrant-cross   # 十字型で並べたらどうなるか(Miro は変えない)
+python scripts/dm_client.py miro-arrange 案件A --layout quadrant-cross          # 十字型に切り替えて並べ直す(人が動かした資料があれば --yes が要る)
+python scripts/dm_client.py miro-arrange-undo 案件A                             # 元の型に戻す
 python scripts/dm_client.py tags <文書ID> --add 経理                  # タグの追加(--remove / --set もある)
 python scripts/dm_client.py memo <文書ID> "次回レビューで確認"         # メモの更新
 python scripts/dm_client.py archive <文書ID>                         # アーカイブ(restore で戻せる)

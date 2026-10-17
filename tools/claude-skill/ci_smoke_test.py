@@ -544,8 +544,24 @@ def smoke_miro(kind, env, workdir):
     on = json.loads(run_client(kind, ["miro-publish", project_name, ids[1]], env).stdout)
     check(on["counts"]["placed"] == 2, "miro-publish: もう一度出せる")
 
-    arranged = json.loads(run_client(kind, ["miro-arrange", project_name], env).stdout)
-    check(arranged.get("moved") == 2, "miro-arrange: 枠の中を並べ直せる")
+    # 並べ直しは、人が動かした資料(ここでは miro-move で場所を指示した資料)があると、確かめるまで動かさない
+    run_client(kind, ["miro-move", project_name, ids[1], "--next-to", ids[0], "--side", "right"], env)
+    pending = json.loads(run_client(kind, ["miro-arrange", project_name], env).stdout)
+    check(pending.get("arranged") is False and pending.get("needsConfirmation") is True and pending.get("humanMoved") == 1,
+          f"miro-arrange: 人が動かした資料があれば、枚数を返して確かめる ({pending.get('humanMoved')})")
+    arranged = json.loads(run_client(kind, ["miro-arrange", project_name, "--yes"], env).stdout)
+    check(arranged.get("arranged") is True and arranged.get("moved") == 2, "miro-arrange --yes: 枠の中を並べ直せる")
+
+    # 並べ方の型: 報告(Miro は変えない)・切り替え・元に戻す
+    report = json.loads(run_client(kind, ["miro-layout-report", project_name, "--layout", "quadrant-cross"], env).stdout)
+    check(report.get("layout") == "quadrant-cross" and report["summary"]["total"] == 2 and report["summary"]["unclassified"] == 2,
+          f"miro-layout-report: 型で並べたらどうなるかを返す ({report.get('summary')})")
+    switched = json.loads(run_client(kind, ["miro-arrange", project_name, "--layout", "timeline", "--yes"], env).stdout)
+    check(switched.get("layout") == "timeline" and switched.get("previousLayout") == "folder-columns", f"miro-arrange --layout: 型を切り替えられる ({switched})")
+    undone = json.loads(run_client(kind, ["miro-arrange-undo", project_name], env).stdout)
+    check(undone.get("layout") == "folder-columns", "miro-arrange-undo: 元の型に戻せる")
+    bad_layout = run_client(kind, ["miro-layout-report", project_name, "--layout", "kanban"], env, expect_ok=False)
+    check(bad_layout.returncode != 0, "miro-layout-report: 知らない型はエラー")
 
     # 並べ方は AI が決め、まとめて当てる(位置と色・見出しの文字・図形)
     layout_path = os.path.join(workdir, f"miro-layout-{kind}.json")

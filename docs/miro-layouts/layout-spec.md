@@ -4,8 +4,8 @@ Miro 連携([../miro.md](../miro.md))で、プロジェクトの枠の中に資�
 図は [miro-layouts.drawio](miro-layouts.drawio) にあります(採用の型はシート名が「採用:」)。
 **決まりごとは、図の右側の説明よりこの文書を正とします。**
 
-- まだ実装していない仕様です。いまの実装(フォルダの見出しごとに並べる)は、下の「フォルダ列型」に近い形です。
-- API 名・JSON の項目名は案です。実装側で既存の API の作法に合わせて決めてください。
+- 実装済み(`app/lib/miro-layout.js`・`app/lib/miro-layout-plan.js`・`app/lib/miro-sync.js`)。実装で決めたことは 9 章の末尾。
+- API 名・JSON の項目名は 9 章の末尾「実装で決めたこと」のとおり(8 章の表と例は案のときの名前。項目名は camelCase にした)。
 
 ## 1. 採用する型
 
