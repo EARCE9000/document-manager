@@ -248,7 +248,7 @@ const DATE_PATTERNS = Object.freeze([
 	{re: /(?<![\d年])(\d{1,2})月(\d{1,2})日/g, year: false}
 ]);
 
-/** 文字列の中で最初に見つかった日付。年の無いものは基準日(最新版の登録日)の年を補い、基準日より後なら前の年にする */
+/** 文字列の中で最初に見つかった日付。年の無いものは基準日(初版の登録日)の年を補い、基準日より後なら前の年にする */
 const findDate = (text, baseDate) => {
 	const folded = String(text ?? "").normalize("NFKC").replace(/\s+/g, "");
 	const found = [];
@@ -274,15 +274,17 @@ const findDate = (text, baseDate) => {
 };
 
 /**
- * 資料の日付。題名 → ファイル名 の順に探し、無ければ最新版の登録日(dateSource: "upload")。
+ * 資料の日付。題名 → ファイル名 の順に探し、無ければ初版(最初の版)の登録日(dateSource: "first_upload")。
+ * 版を上げても変わらないよう、基準は最新版ではなく初版の登録日にする(何も覚えなくても報告と配置が一致する)。
  * Document Manager では題名がファイル名なので、拡張子を除いたファイル名 → ファイル名の順に見る。
- * @returns {{date: ?string, dateSource: "title"|"upload"|null}}
+ * @param {{entryFile: string, firstUploaded?: string, modified?: string}} doc firstUploaded が無ければ modified を使う
+ * @returns {{date: ?string, dateSource: "title"|"first_upload"|null}}
  */
 const documentDate = (doc) => {
-	const base = localDate(doc.modified);
+	const base = localDate(doc.firstUploaded ?? doc.modified);
 	const fromTitle = findDate(titleOf(doc), base) ?? findDate(path.basename(String(doc.entryFile ?? "")), base);
 	if (fromTitle) return {date: fromTitle, dateSource: "title"};
-	return {date: base, dateSource: base ? "upload" : null};
+	return {date: base, dateSource: base ? "first_upload" : null};
 };
 module.exports.documentDate = documentDate;
 module.exports.findDate = findDate;
@@ -373,7 +375,7 @@ const unknownReason = (classification, headings) => classification.unknown.some(
  * 型で並べたらどうなるか(Miro には触らない)。
  * @param {string} layout LAYOUT_IDS のどれか
  * @param {{project: {id: string, name: string}, documents: object[], featureOrder?: string[]}} input
- *   documents はおしながき順。各要素: {documentId, entryFile, modified, tags, folderId, folderNames(近い順), topFolder: ?{id, name}, subFolders: string[]}
+ *   documents はおしながき順。各要素: {documentId, entryFile, modified, firstUploaded, tags, folderId, folderNames(近い順), topFolder: ?{id, name}, subFolders: string[]}
  */
 module.exports.buildReport = (layout, input) => {
 	if (!LAYOUT_IDS.includes(layout)) throw Object.assign(new Error(`型は ${LAYOUT_IDS.join(" / ")} のどれかです`), {status: 400});
@@ -390,7 +392,7 @@ module.exports.buildReport = (layout, input) => {
 	});
 	const dateFields = (entry) => ({date: entry.date, dateSource: entry.dateSource});
 	const noteUploadDate = (entry) => {
-		if (entry.dateSource === "upload") notes.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), kind: "date_from_upload", date: entry.date});
+		if (entry.dateSource === "first_upload") notes.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), kind: "date_from_first_upload", date: entry.date});
 	};
 	const byDate = (a, b) => (a.date ?? "").localeCompare(b.date ?? "") || a.order - b.order;
 	const markUnclassified = (entry, reasons, fields = {}) => {
@@ -660,6 +662,21 @@ module.exports.buildReport = (layout, input) => {
 
 // ---- データベースから報告の材料を集める ----
 
+// 版の鎖(previous_id)を最初の版までさかのぼり、その登録日を返す。壊れた鎖で回り続けないよう上限を設ける
+const firstUploadedAt = async (ds, documentId, fallback) => {
+	let uploaded = fallback;
+	let id = documentId;
+	const seen = new Set();
+	while (id != null && !seen.has(id) && seen.size < 1000) {
+		seen.add(id);
+		const row = await ds.get(`SELECT previous_id, uploaded_at FROM documents WHERE id = ?`, [id]);
+		if (row == null) break;
+		uploaded = row.uploaded_at ?? uploaded;
+		id = row.previous_id;
+	}
+	return uploaded;
+};
+
 /**
  * プロジェクトの資料を、おしながき順に、タグ・フォルダ名付きで集める。
  * アーカイブ済みの資料と、Miro に「出さない」にした資料は入れない(ボードに並ばないため)。
@@ -699,6 +716,7 @@ module.exports.loadInput = async (projectId) => {
 			documentId: doc.documentId,
 			entryFile: doc.entryFile,
 			modified: doc.modified,
+			firstUploaded: await firstUploadedAt(ds, doc.documentId, doc.modified),
 			tags,
 			folderId: doc.folderId ?? null,
 			folderNames: chain.map((f) => f.name).reverse(),

@@ -75,8 +75,10 @@ test("日付は題名の最初の日付。年の無いものは登録日の年�
 	assert.equal(Layout.findDate("定例 12月24日", base), "2025-12-24");
 	assert.equal(Layout.findDate("v1.2 設計", base), null);
 	assert.equal(Layout.findDate("2026-13-01", base), null);
-	// 題名に無ければ最新版の登録日
-	assert.deepEqual(Layout.documentDate(doc("設計.md", {modified: "2026-10-10T03:00:00.000Z"})), {date: "2026-10-10", dateSource: "upload"});
+	// 題名に無ければ初版の登録日(版を上げても変わらない)
+	assert.deepEqual(Layout.documentDate(doc("設計.md", {modified: "2026-10-10T03:00:00.000Z", firstUploaded: "2026-08-03T03:00:00.000Z"})), {date: "2026-08-03", dateSource: "first_upload"});
+	// 年の無い日付は初版の登録日の年を補う
+	assert.deepEqual(Layout.documentDate(doc("定例 12月24日.md", {modified: "2027-01-10T03:00:00.000Z", firstUploaded: "2026-12-25T03:00:00.000Z"})), {date: "2026-12-24", dateSource: "title"});
 });
 
 test("フォルダ列型: 一番上のフォルダごとの列、下の階層は小見出し、フォルダに入っていない資料は右端の「その他」列", () => {
