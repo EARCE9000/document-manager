@@ -218,9 +218,11 @@ module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), project
 					rows[rows.length - 1].push(id);
 					continue;
 				}
-				if (rowY == null || Math.abs(before.y - rowY) > 1) {
+				// 同じ段かどうかは上の端で見る(中心は資料の縦横の比で少しずれる)
+				const top = before.top ?? before.y;
+				if (rowY == null || Math.abs(top - rowY) > 1) {
 					rows.push([]);
-					rowY = before.y;
+					rowY = top;
 				}
 				rows[rows.length - 1].push(id);
 			}

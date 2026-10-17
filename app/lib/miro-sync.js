@@ -22,7 +22,7 @@
  * ---- いつ同期するか ----
  *   - 連動を始めたとき・「今すぐ反映」
  *   - 文書・プロジェクトが変わったとき(server.js の変更通知から。少しまとめてから動く)
- *   - 定期的(既定15分。Miro 側で消された・動かされたことは、こちらからは分からないので見に行く)
+ *   - 定期的(既定60分。Miro 側で消された・動かされたことは、こちらからは分からないので見に行く。複数台でも 1 回)
  * 1つのプロジェクトを同時に2台が同期しないよう、データベースの上で順番を取る(miro-connection.js と同じ考え方)。
  *
  * ファイルの取り出しや PDF への変換は、呼び出し側(server.js)から渡される preparePayload が行う。
@@ -83,7 +83,8 @@ const forEachConcurrently = async (list, limit, fn) => {
 	await Promise.all(Array.from({length: Math.min(limit, list.length)}, worker));
 	if (stop != null) throw stop;
 };
-const INTERVAL_MS = Number(process.env.MIRO_SYNC_INTERVAL_MINUTES || 15) * 60 * 1000;
+// 定期の見回りの間隔(既定 60 分)。Miro 側で消された・動かされたことは知らせが来ないので見に行く。急ぐときは「今すぐ反映」
+const INTERVAL_MS = Number(process.env.MIRO_SYNC_INTERVAL_MINUTES ?? 60) * 60 * 1000;
 const DEBOUNCE_MS = Number(process.env.MIRO_SYNC_DEBOUNCE_SECONDS || 5) * 1000;
 const INSTANCE_ID = `${os.hostname()}:${process.pid}:${crypto.randomBytes(4).toString("hex")}`;
 
@@ -108,6 +109,12 @@ const SQL_SET_DECORATIONS = `UPDATE miro_projects SET header_ids = @header_ids, 
 const SQL_SET_LAYOUT_PLAN = `UPDATE miro_projects SET layout_plan = @layout_plan WHERE project_id = @project_id`;
 const SQL_SET_LAYOUT = `UPDATE miro_projects SET layout = @layout WHERE project_id = @project_id`;
 const SQL_SET_LAYOUT_UNDO = `UPDATE miro_projects SET layout_undo = @layout_undo WHERE project_id = @project_id`;
+// 定期の見回りの順番取り: 間隔のうちに、ほかの台がまだ見回っていなければ自分が見回る(複数台で 2 回見回らない)
+const SQL_CLAIM_CHECK = `
+	UPDATE miro_projects SET last_checked_at = @now
+	WHERE project_id = @project_id AND state = 'active' AND (last_checked_at IS NULL OR last_checked_at < @since)
+`;
+const SQL_SET_CHECKED = `UPDATE miro_projects SET last_checked_at = @now WHERE project_id = @project_id`;
 const SQL_SET_SYNCED = `UPDATE miro_projects SET last_synced_at = @now, last_error = @error WHERE project_id = @project_id`;
 const SQL_STOP_PROJECT = `UPDATE miro_projects SET state = 'stopped', stopped_by = @user, stopped_at = @now, last_error = @error WHERE project_id = @project_id`;
 const SQL_TAKE_LOCK = `
@@ -474,12 +481,23 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 			}
 		}
 
-		// Miro 側で消された資料を見つける(定期の同期だけ)。位置も読み直して覚える(動かす指示の基準にするため)
+		// Miro 側で消された資料を見つける(定期の同期だけ)。位置も読み直して覚える(動かす指示の基準にするため)。
+		// 枠の中の一覧でまとめて読み(1 回で 50 件)、一覧に無い資料(消された・枠の外へ出された)だけを 1 件ずつ確かめる
 		if (checkMiro) {
+			const inFrame = new Map();
+			if (frameId != null) {
+				let cursor;
+				let pages = 0;
+				do {
+					const page = await call((token) => Miro.listItems(token, board, {parentId: frameId, cursor}));
+					for (const child of page.data || []) inFrame.set(String(child.id), child);
+					cursor = page.cursor;
+				} while (cursor && ++pages < 200);
+			}
 			for (const row of items.values()) {
 				if (row.state !== STATES.PLACED || row.item_id == null) continue;
 				try {
-					const item = await call((token) => Miro.getItem(token, board, row.item_id));
+					const item = inFrame.get(String(row.item_id)) ?? await call((token) => Miro.getItem(token, board, row.item_id));
 					const sameParent = item.parent?.id == null || item.parent.id === frameId;
 					row.x = item.position?.x ?? row.x;
 					row.y = item.position?.y ?? row.y;
@@ -494,6 +512,7 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 					counts.removed++;
 				}
 			}
+			await ds.run(SQL_SET_CHECKED, {project_id: projectId, now: now()});
 		}
 
 		// どの資料をどうするか決める
@@ -698,6 +717,7 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 
 		// 見出しの色(区分などで塗る型)。変わったものだけ塗り直す。人が動かした資料も色は合わせる
 		const colors = {...(parseJson(link.layout_plan, {}).colors ?? {})};
+		const pinnedColors = parseJson(link.layout_plan, {}).pinnedColors ?? {};
 		let colorsChanged = false;
 		for (const entry of plan) {
 			if (entry.color === undefined) continue;
@@ -707,8 +727,8 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 		}
 		for (const row of placedNow.values()) {
 			const planned = plannedOf.get(row.alias);
-			// 色を決めない型(ユーザーカスタム)は、見出しの色に触らない(指示して塗った色を残す)
-			if (planned == null || planned.color === undefined || (colors[row.alias] ?? null) === (planned.color ?? null) || row.caption_id == null) continue;
+			// 色を決めない型(ユーザーカスタム)と、指示して塗った色(レイアウトを当てたもの)には触らない
+			if (planned == null || planned.color === undefined || pinnedColors[row.alias] || (colors[row.alias] ?? null) === (planned.color ?? null) || row.caption_id == null) continue;
 			await call((token) => Miro.updateText(token, board, row.caption_id, {
 				style: planned.color ? {fillColor: planned.color, fillOpacity: "1"} : {fillOpacity: "0"}
 			})).catch((err) => {
@@ -768,20 +788,26 @@ const syncProject = async (projectId, {checkMiro = false, user = "system"} = {})
 // ---- 同期の予約(同じプロジェクトを重ねて動かさない・変更はまとめてから) ----
 
 const running = new Map();
-const pending = new Set();
+const pending = new Map();
 let debounceTimer = null;
 
 /** 1つのプロジェクトを同期する(動いていれば、終わったあとにもう1回) */
-const runProject = (projectId, options) => {
+const runProject = (projectId, options = {}) => {
 	if (running.has(projectId)) {
-		pending.add(projectId);
+		// 反映中に頼まれたら、終わってからもう一度。頼まれた指定は合わせる(「Miro 側も見に行く」を落とさない)
+		const waiting = pending.get(projectId) ?? {};
+		pending.set(projectId, {...waiting, ...options, checkMiro: Boolean(waiting.checkMiro || options.checkMiro)});
 		return running.get(projectId);
 	}
 	const job = syncProject(projectId, options)
 		.catch(() => null)
 		.finally(() => {
 			running.delete(projectId);
-			if (pending.delete(projectId)) runProject(projectId, options);
+			const next = pending.get(projectId);
+			if (next != null) {
+				pending.delete(projectId);
+				runProject(projectId, next);
+			}
 		});
 	running.set(projectId, job);
 	return job;
@@ -790,12 +816,34 @@ module.exports.runProject = runProject;
 module.exports.syncProject = syncProject;
 
 /** 連動しているプロジェクトをすべて同期する */
+/**
+ * 連動しているプロジェクトを全部反映する。
+ * @param {{checkMiro?: boolean, periodic?: boolean}} [options] periodic: 定期の見回り。間隔のうちに、ほかの台
+ *   (または手で頼んだ「今すぐ反映」)がもう見回ったプロジェクトは飛ばす(台数が増えても、見回りの回数は増えない)
+ */
 const syncAll = async (options = {}) => {
 	const target = await MiroConnection.target().catch(() => null);
 	if (target == null) return;
 	const rows = await ds.all(SQL_LIST_ACTIVE);
-	for (const row of rows) await runProject(row.project_id, options);
+	const {periodic = false, ...rest} = options;
+	for (const row of rows) {
+		if (periodic && !(await claimPeriodicCheck(row.project_id))) continue;
+		await runProject(row.project_id, rest);
+	}
 };
+
+/**
+ * 定期の見回りの順番を取る。間隔の 9 割のうちに、ほかの台(または「今すぐ反映」)がもう見回っていれば取れない。
+ * データベースの上で 1 つの UPDATE で取り合うので、何台あっても 1 台だけが取れる
+ * @returns {Promise<boolean>} 自分が見回ってよいか
+ */
+const claimPeriodicCheck = async (projectId, now = Date.now()) => {
+	const since = new Date(now - INTERVAL_MS * 0.9).toISOString();
+	const claimed = await ds.run(SQL_CLAIM_CHECK, {project_id: projectId, now: new Date(now).toISOString(), since});
+	return Boolean(claimed?.changes);
+};
+module.exports.claimPeriodicCheck = claimPeriodicCheck;
+module.exports.INTERVAL_MS = INTERVAL_MS;
 module.exports.syncAll = syncAll;
 
 /** 文書・プロジェクトが変わったとき(server.js の変更通知)。少しまとめてから動く */
@@ -812,7 +860,7 @@ module.exports.scheduleAll = () => {
 module.exports.startPeriodic = () => {
 	if (INTERVAL_MS <= 0) return;
 	const timer = setInterval(() => {
-		syncAll({checkMiro: true}).catch((err) => logger.warn({err: err.message}, "Miro への定期の反映に失敗しました"));
+		syncAll({checkMiro: true, periodic: true}).catch((err) => logger.warn({err: err.message}, "Miro への定期の反映に失敗しました"));
 	}, INTERVAL_MS);
 	timer.unref?.();
 };
@@ -1057,7 +1105,9 @@ const planWithLayout = (layout) => async (projectId, rows, {added = [], incremen
 		// ユーザーカスタムは、人が動かした資料も含めて今の位置のまま(ほかの型は、型どおりの並びを決めるため置いた位置)
 		const x = layout === "custom" ? row.x ?? row.placed_x : row.placed_x ?? row.x;
 		const y = layout === "custom" ? row.y ?? row.placed_y : row.placed_y ?? row.y;
-		return x == null || y == null ? [] : [[id, {x: Number(x), y: Number(y)}]];
+		// 上の端も渡す(同じ段の資料は上の端がそろう。中心は資料の縦横の比で少しずれるので、段の見分けには使わない)
+		const height = Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
+		return x == null || y == null ? [] : [[id, {x: Number(x), y: Number(y), top: Number(y) - height / 2}]];
 	})) : null;
 	const base = target?.publicBaseUrl ? String(target.publicBaseUrl).replace(/\/+$/, "") : null;
 	const plan = MiroLayoutPlan.buildPlan(layout, {...input, documents}, {
@@ -1164,7 +1214,11 @@ const resizeFrame = async (projectId, link, board, {width, height, grow = false}
  * @param {{items: Array<{row: object, x: number, y: number, color?: ?string}>, labels: object[], shapes: object[], frame?: ?{width: number, height: number}}} plan
  * @param {{grow?: boolean, keepDecorations?: boolean}} options grow: 枠を縮めない(レイアウトを当てるとき)
  */
-const executePlan = async (projectId, link, board, plan, user, {grow = false, keepDecorations = false, custom = false} = {}) => {
+/**
+ * pinColors: 塗った色を「指示した色」として覚える(レイアウトを当てるとき。連動では塗り直さない)。
+ * pinnedColors: 指示した色の覚えを、この中身に置き換える(並べ直しは {} で全部忘れる。元に戻すは前の覚え)。省くと今のまま
+ */
+const executePlan = async (projectId, link, board, plan, user, {grow = false, keepDecorations = false, custom = false, pinColors = false, pinnedColors} = {}) => {
 	const heightOf = (row) => Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
 	const widthOf = (row) => Number(row.width) || LAYOUT.itemWidth;
 	// 枠を先に合わせる(はみ出した位置に置くと、枠の外に出たように見えるため)。中身がはみ出すなら、その分は広げる
@@ -1192,6 +1246,7 @@ const executePlan = async (projectId, link, board, plan, user, {grow = false, ke
 
 	// 資料を動かす(見出しも一緒に)。色の指定があれば見出しの背景を塗る
 	const colors = {...(parseJson(link.layout_plan, {}).colors ?? {})};
+	const pinned = {...(pinnedColors ?? parseJson(link.layout_plan, {}).pinnedColors ?? {})};
 	let moved = 0;
 	await forEachConcurrently(plan.items, CONCURRENCY, async (item) => {
 		const {row} = item;
@@ -1210,11 +1265,12 @@ const executePlan = async (projectId, link, board, plan, user, {grow = false, ke
 			});
 			if (item.color) colors[row.alias] = item.color;
 			else delete colors[row.alias];
+			if (pinColors) pinned[row.alias] = true;
 		}
 		await setPosition(projectId, row, item.x, item.y, user, item.placed === undefined ? {x: item.x, y: item.y} : item.placed);
 		moved++;
 	});
-	const layoutPlan = {...parseJson(link.layout_plan, {}), colors};
+	const layoutPlan = {...parseJson(link.layout_plan, {}), colors, pinnedColors: pinned};
 	await ds.run(SQL_SET_LAYOUT_PLAN, {project_id: projectId, layout_plan: JSON.stringify(layoutPlan)});
 	link.layout_plan = JSON.stringify(layoutPlan);
 	if (!grow && (frame.width > Math.ceil(wanted.width) || frame.height > Math.ceil(wanted.height))) {
@@ -1246,6 +1302,7 @@ const snapshotOf = async (link, board, rows) => {
 		labels: plan.labels ?? [],
 		shapes: plan.shapes ?? [],
 		colors: plan.colors ?? {},
+		pinnedColors: plan.pinnedColors ?? {},
 		frame: {width: Number(link.frame_width) || frameWidth(), height: Number(link.frame_height) || 600},
 		savedAt: new Date().toISOString()
 	};
@@ -1409,7 +1466,7 @@ module.exports.arrange = async (projectId, user, {layout} = {}) => {
 		// 置き場所は指示する側が決める(miro-map で見て miro-move・miro-layout で置く)
 		const result = nextLayout === "custom"
 			? await executePlan(projectId, link, board, {items: [], labels: [], shapes: [], frame: null}, user, {grow: true})
-			: await executePlan(projectId, link, board, await PLANNERS[nextLayout](projectId, rows), user);
+			: await executePlan(projectId, link, board, await PLANNERS[nextLayout](projectId, rows), user, {pinnedColors: {}});
 		await ds.run(SQL_SET_LAYOUT, {project_id: projectId, layout: nextLayout});
 		logger.info({audit: "miro_project_arranged", user, projectId, layout: nextLayout, previousLayout, moved: result.moved}, "audit");
 		return {moved: result.moved, layout: nextLayout, previousLayout, frame: result.frame};
@@ -1436,7 +1493,8 @@ module.exports.undoArrange = async (projectId, user) => {
 		for (const row of rows.values()) {
 			if (!restored.has(row.alias)) items.push({row, x: Number(row.x), y: Number(row.y), color: null});
 		}
-		const result = await executePlan(projectId, link, board, {items, labels: snapshot.labels ?? [], shapes: snapshot.shapes ?? [], frame: snapshot.frame}, user);
+		const result = await executePlan(projectId, link, board, {items, labels: snapshot.labels ?? [], shapes: snapshot.shapes ?? [], frame: snapshot.frame}, user,
+			{pinnedColors: snapshot.pinnedColors ?? {}});
 		const restoredLayout = MiroLayout.LAYOUT_IDS.includes(snapshot.layout) ? snapshot.layout : MiroLayout.DEFAULT_LAYOUT;
 		await ds.run(SQL_SET_LAYOUT, {project_id: projectId, layout: restoredLayout});
 		await ds.run(SQL_SET_LAYOUT_UNDO, {project_id: projectId, layout_undo: null});
@@ -1575,7 +1633,7 @@ module.exports.applyLayout = async (projectId, layout, user) => {
 		const items = plan.items.map((item) => ({row: rows.get(item.documentId), x: item.x, y: item.y, placed: null, ...(item.setColor ? {color: item.color} : {})}));
 		// 見出しの文字・図形は「指示したもの」として置く(連動・並べ直し・元に戻すでは消えない)
 		const result = await executePlan(projectId, link, target.boardId, {items, labels: plan.labels, shapes: plan.shapes, frame: plan.frame}, user,
-			{grow: true, keepDecorations: plan.keepDecorations, custom: true});
+			{grow: true, keepDecorations: plan.keepDecorations, custom: true, pinColors: true});
 		logger.info({audit: "miro_layout_applied", user, projectId, moved: result.moved, labels: result.labels, shapes: result.shapes}, "audit");
 		return result;
 	} finally {

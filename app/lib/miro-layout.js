@@ -378,7 +378,7 @@ const unknownReason = (classification, headings) => classification.unknown.some(
  * @param {string} layout LAYOUT_IDS のどれか
  * @param {{project: {id: string, name: string}, documents: object[], featureOrder?: string[]}} input
  *   documents はおしながき順。各要素: {documentId, entryFile, modified, firstUploaded, tags, folderId, folderNames(近い順), topFolder: ?{id, name}, subFolders: string[]}
- * @param {{previous?: Map<string, {x: number, y: number}>}} [options]
+ * @param {{previous?: Map<string, {x: number, y: number, top?: number}>}} [options]
  *   previous: 前に置いた位置(連動で資料を足すとき)。渡すと、押し下げを減らすため、どの区画の中でも
  *   **前に置いた資料は前の並びのまま**(上から・左から)にし、新しい資料はその後ろに足す(layout-spec.md 5 章)。
  *   区画の並び(フォルダ列型の列・マトリクスの行と列)も前のまま、新しいものは右・下に足す。
@@ -388,10 +388,15 @@ module.exports.buildReport = (layout, input, {previous = null} = {}) => {
 	const documents = input.documents ?? [];
 	let classified = documents.map((doc, order) => ({doc, order, c: classify(doc), ...documentDate(doc)}));
 	const previousOf = (entry) => previous?.get(entry.doc.documentId) ?? null;
+	// 上から・左から。同じ段かどうかは上の端で見る(中心は資料の縦横の比で少しずれる)
+	const rowCompare = (a, b) => {
+		const dy = (a.top ?? a.y) - (b.top ?? b.y);
+		return Math.abs(dy) > 1 ? dy : a.x - b.x;
+	};
 	if (previous != null) {
 		// 前に置いた資料を前の並び(上から・左から)で先に、新しい資料をそのあとに(新しい資料どうしは型の並び)
 		const known = classified.filter((e) => previousOf(e) != null)
-			.sort((a, b) => previousOf(a).y - previousOf(b).y || previousOf(a).x - previousOf(b).x);
+			.sort((a, b) => rowCompare(previousOf(a), previousOf(b)));
 		const added = classified.filter((e) => previousOf(e) == null);
 		classified = [...known, ...added].map((e, order) => ({...e, order}));
 	}

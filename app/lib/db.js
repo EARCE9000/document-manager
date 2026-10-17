@@ -362,7 +362,9 @@ const createSchema = (targetDb) => {
 			-- Document Manager が置いた見出しの文字・図形の中身(JSON)。「元の型に戻す」で置き直すため
 			layout_plan TEXT,
 			-- 直前の配置(1世代だけ。型・資料の位置・見出しの文字・図形の JSON)。「元の型に戻す」に使う
-			layout_undo TEXT
+			layout_undo TEXT,
+			-- 最後に Miro 側を見回った時刻(複数台で同じ間隔のうちに 2 回見回らないため)
+			last_checked_at TEXT
 		);
 		-- 資料ごとに、ボードのどの項目に出したか。版をまたいで追いかけるため、資料は
 		-- 共有用のID(document_aliases.alias)で覚える
@@ -396,7 +398,7 @@ const createSchema = (targetDb) => {
 // v21 のうちに足した列。v21 を出したあとで足したため、先に v21 で作られたデータベースには無い。
 // 無ければ足す(足すだけなので、何度呼んでも安全)
 const ADDED_COLUMNS = Object.freeze({
-	miro_projects: {layout: "TEXT", layout_plan: "TEXT", layout_undo: "TEXT"},
+	miro_projects: {layout: "TEXT", layout_plan: "TEXT", layout_undo: "TEXT", last_checked_at: "TEXT"},
 	miro_items: {placed_x: "REAL", placed_y: "REAL"}
 });
 const addMissingColumns = (targetDb) => {

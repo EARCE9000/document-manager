@@ -137,7 +137,24 @@ test("マトリクス型: 資料の無いマスに「無し」、対象外のマ
 });
 
 // 連動で資料を足すとき(前に置いた位置を渡す)は、押し下げを減らす(layout-spec.md 5 章)
-const previousOf = (plan) => new Map(plan.items.map((i) => [i.documentId, {x: i.x, y: i.y}]));
+const previousOf = (plan, sizes = new Map()) => new Map(plan.items.map((i) => [i.documentId,
+	{x: i.x, y: i.y, top: i.y - (sizes.get(i.documentId)?.height ?? CARD_HEIGHT) / 2}]));
+
+test("連動で足すとき: 同じ段に高さの違う資料があっても、左から右の並びを崩さない(段は上の端で見る)", () => {
+	const a = doc("計画書.md", {tags: ["区分:管理"]});
+	const b = doc("メモ.md", {tags: ["区分:管理"]});
+	// a は少し背が高い(中心が下にずれる)。b は a の右
+	const sizes = new Map([[a.documentId, {width: 360, height: CARD_HEIGHT + 1}]]);
+	const before = Plan.buildPlan("quadrant-cross", {project: {id: "p", name: "試し"}, documents: [a, b], featureOrder: []}, {geometry, sizes});
+	assert.ok(itemOf(before, a).x < itemOf(before, b).x);
+	assert.ok(itemOf(before, a).y > itemOf(before, b).y, "中心は a のほうが下");
+	const c = doc("WBS.md", {tags: ["区分:管理"]});
+	const after = Plan.buildPlan("quadrant-cross", {project: {id: "p", name: "試し"}, documents: [a, b, c], featureOrder: []},
+		{geometry, sizes, previous: previousOf(before, sizes)});
+	assert.equal(itemOf(after, a).x, itemOf(before, a).x, "a は左のまま");
+	assert.equal(itemOf(after, b).x, itemOf(before, b).x, "b は右のまま");
+	assert.ok(itemOf(after, c).x > itemOf(after, b).x, "新しい資料はその後ろ");
+});
 
 test("連動で足すとき: フォルダ列型は、おしながきの途中に入った資料も列の後ろに足し、前の資料は動かさない", () => {
 	const folder = {id: "f1", name: "要件"};

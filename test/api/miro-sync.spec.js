@@ -69,6 +69,18 @@ const waitFor = async (request, projectId, predicate) => {
 	return status;
 };
 const itemOf = (status, documentId) => status.items.find((i) => i.documentId === documentId);
+/**
+ * 並べ方を変える指示(レイアウトを当てる・並べ直す)。資料やタグを足した直後は裏の反映と重なって 409(いま反映中)になるので、
+ * 終わるまで待ってやり直す(Document Manager は重ねて動かさない決まり)
+ */
+const whenIdle = async (send) => {
+	let res;
+	await expect.poll(async () => {
+		res = await send();
+		return res.status();
+	}, {timeout: 15000, intervals: [300]}).not.toBe(409);
+	return res;
+};
 
 test.describe.serial("プロジェクトの資料を Miro に出す", () => {
 	let projectId;
@@ -411,7 +423,7 @@ test.describe.serial("Miro の枠にレイアウトをまとめて当てる", ()
 	const docs = {};
 	const file = (items, title) => items.find((i) => (i.type === "document" || i.type === "image") && i.data?.title === title);
 	const caption = (items, title) => items.find((i) => i.type === "text" && i.data.content.includes(title));
-	const layout = (body) => request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: body});
+	const layout = (body) => whenIdle(() => request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: body}));
 	let request;
 
 	test.beforeAll(async ({playwright}) => {
@@ -808,8 +820,18 @@ test.describe.serial("指示して置いた見出し・図形は、連動と並�
 		expect((await texts(request)).some((t) => t.includes("ここは要確認"))).toBe(true);
 		expect((await shapesOf(request)).some((i) => String(i.data?.content).includes("メモ枠"))).toBe(true);
 		expect((await texts(request)).some((t) => t.includes("右上: 管理系"))).toBe(true);
+		// 指示して塗った見出しの色は、連動では塗り直さない(並べ直すとレイアウトの色に戻る)
+		const status = await (await request.get(`api/projects/${projectId}/miro`, {headers: rw})).json();
+		const target = status.items.find((i) => i.state === "placed");
+		expect((await whenIdle(() => request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {items: [{documentId: target.documentId, x: 1200, y: 2400, color: "#fde68a"}], keepDecorations: true}}))).status()).toBe(200);
+		await request.put(`api/documents/${target.documentId}/tags`, {headers: rw, data: {tags: ["区分:管理"]}});
+		await request.post(`api/projects/${projectId}/miro/sync`, {headers: rw});
+		await settled(request, projectId);
+		const captionOf = async () => (await boardItems(request)).find((i) => i.type === "text" && i.data.content.includes(target.title));
+		expect((await captionOf()).style).toMatchObject({fillColor: "#fde68a"});
 		// 型を切り替えて並べ直しても残る
-		expect((await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "matrix"}})).status()).toBe(200);
+		expect((await whenIdle(() => request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "matrix"}}))).status()).toBe(200);
+		expect((await captionOf()).style?.fillColor, "並べ直すとレイアウトの色に戻る").not.toBe("#fde68a");
 		expect((await texts(request)).some((t) => t.includes("ここは要確認"))).toBe(true);
 		expect((await texts(request)).some((t) => t.includes("右上: 管理系")), "前の型の見出しは片付く").toBe(false);
 		// 片付ける
@@ -905,7 +927,7 @@ test.describe.serial("ユーザーカスタムのレイアウト", () => {
 		// AI が場所と色を指示して置いた
 		const status0 = await (await request.get(`api/projects/${projectId}/miro`, {headers: rw})).json();
 		const docA = status0.items.find((i) => i.title === `自由-a${STAMP}.pdf`).documentId;
-		await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {items: [{documentId: docA, x: 2600, y: 900, color: "#fde68a"}]}});
+		expect((await whenIdle(() => request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {items: [{documentId: docA, x: 2600, y: 900, color: "#fde68a"}]}}))).status()).toBe(200);
 		const before = await boardItems(request);
 		// 裏の反映(資料やタグを足した通知から少しまとめて動く)と重なると 409 になるので、終わるまで待ってやり直す
 		let res;
@@ -940,5 +962,48 @@ test.describe.serial("ユーザーカスタムのレイアウト", () => {
 		const report = await (await request.get(`api/projects/${projectId}/miro/layout-report?layout=custom`, {headers: ro})).json();
 		expect(report).toMatchObject({layout: "custom", layoutName: "ユーザーカスタム"});
 		expect(report.summary.unclassified).toBe(0);
+	});
+});
+
+// 見回り(Miro 側で消された・動かされたかを見る)は、枠の中の一覧でまとめて読む(資料 1 件ずつ読まない)
+test.describe.serial("見回りは枠の中の一覧でまとめて読む", () => {
+	let projectId;
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `見回り${STAMP}`}})).json()).id;
+		await request.post(`api/projects/${projectId}/unlock`, {headers: rw});
+		for (const n of [1, 2, 3, 4]) {
+			const doc = await upload(request, `見回り-${n}${STAMP}.pdf`, PDF);
+			await request.put(`api/projects/${projectId}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
+		}
+		// 資料が消えても残りを並べ直さないユーザーカスタムで確かめる(並べ直すときは、動かす直前に 1 件ずつ今の位置を確かめるため)
+		await request.post(`api/projects/${projectId}/miro`, {headers: rw, data: {layout: "custom"}});
+		await settled(request, projectId);
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("資料ごとの読み出しをせず、消された資料と動かされた位置は見つけられる", async ({request}) => {
+		const items = await boardItems(request);
+		const docs = items.filter((i) => i.type === "document");
+		await control(request, {deleteItem: docs[0].id, moveItem: {id: docs[1].id, x: 777, y: 888}});
+		const before = (await (await request.get(`${STUB_URL}/__requests`)).json()).length;
+		await request.post(`api/projects/${projectId}/miro/sync`, {headers: rw});
+		const status = await settled(request, projectId);
+		const calls = (await (await request.get(`${STUB_URL}/__requests`)).json()).slice(before);
+		const singleReads = new Set(calls.filter((c) => c.method === "GET" && /\/items\/[^/]+$/.test(c.path)).map((c) => decodeURIComponent(c.path.split("/").pop())));
+		// 1 件ずつ読むのは、枠そのものと、一覧に無かった(消された)資料だけ(残りの 3 件は読まない)
+		const frame = items.find((i) => i.type === "frame" && i.data.title === `見回り${STAMP}`);
+		expect([...singleReads].sort(), "資料を 1 件ずつ読んでいる").toEqual([frame.id, docs[0].id].sort());
+		expect(calls.some((c) => c.method === "GET" && c.path.endsWith("/items") && c.query.parent_item_id)).toBe(true);
+		expect(status.counts.removed).toBe(1);
+		const moved = status.items.find((i) => i.position && i.position.x === 777);
+		expect(moved?.position).toMatchObject({x: 777, y: 888});
 	});
 });

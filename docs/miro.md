@@ -80,7 +80,7 @@ Compose で動かす場合は、`deploy/compose.env` に `MIRO_CLIENT_ID` / `MIR
 | Miro で枠を消した | 連動を止めて理由を出す(もう一度「Miro と連動」を押すと、新しい枠に並べ直す) |
 | Miro の一時的な失敗 | 待ってやり直す。それでも断られた資料は「失敗」にして、次の反映でもう一度試す |
 
-反映は、文書・プロジェクトが変わったとき(数秒まとめてから)と、15分ごと(Miro 側で消された・動かされたことを見に行く)に
+反映は、文書・プロジェクトが変わったとき(数秒まとめてから)と、60分ごと(Miro 側で消された・動かされたことを見に行く)に
 自動で行います。急ぐときは `POST .../miro/sync`(Skill の `miro-sync`)。
 
 ### 資料ごとに出す・出さない、連動をやめる
@@ -228,7 +228,7 @@ node tools/dev/miro-setup.mjs
 | `MIRO_REDIRECT_URI` | 公開URL + `/api/miro/callback` | 許可のあとの戻り先 |
 | `MIRO_REFRESH_LOCK_SECONDS` | `45` | トークンを更新する順番を、1台が持っていられる時間 |
 | `MIRO_TIMEOUT_SECONDS` | `30` | Miro の応答を待つ上限 |
-| `MIRO_SYNC_INTERVAL_MINUTES` | `15` | 定期の反映の間隔(`0` で止める) |
+| `MIRO_SYNC_INTERVAL_MINUTES` | `60` | 定期の見回りの間隔(`0` で止める)。Miro 側で消された・動かされたことを見に行く。枠の中の一覧でまとめて読み、複数台でも同じ間隔のうちに 2 回は見回らない |
 | `MIRO_SYNC_CONCURRENCY` | `4` | 資料を置くとき、同時に書き込む件数 |
 | `MIRO_SYNC_LOCK_SECONDS` | `600` | 1つのプロジェクトを同期する順番を、1台が持っていられる時間 |
 | `MIRO_RETRY_DELAYS_MS` | `2000,8000,30000` | Miro の一時的な失敗のやり直しの待ち時間 |
