@@ -476,8 +476,8 @@ test.describe.serial("Miro の枠にレイアウトをまとめて当てる", ()
 		const shapes = items.filter((i) => i.type === "shape");
 		expect(shapes).toHaveLength(2);
 		expect(shapes.find((i) => i.geometry.width === 2000).style).toMatchObject({fillColor: "#e0f2fe", fillOpacity: "0.2"});
-		// 初めて並べたときのフォルダの見出しは片付けて、指示どおりのものだけにする
-		expect(items.some((i) => i.type === "text" && i.data.content.includes("■ 設計"))).toBe(false);
+		// 型の見出し(フォルダ列型の ■ 設計)は残す。指示して置いた見出し・図形は、型のものとは別に覚える
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("■ 設計"))).toBe(true);
 	});
 
 	test("当て直すと、前の見出しの文字と図形を片付けてから置く(残すこともできる)", async () => {
@@ -586,12 +586,13 @@ test.describe.serial("Miro の並べ方の型と、元の型に戻す", () => {
 		const items = await boardItems(request);
 		expect(file(items, `型-a${STAMP}.pdf`).position.x).toBeLessThan(3000);
 		expect(caption(items, `型-a${STAMP}.pdf`).style).toMatchObject({fillOpacity: "0"});
-		expect(items.some((i) => i.type === "text" && i.data.content.includes("前の区画"))).toBe(false);
+		// 指示して置いた見出しは、並べ直しでは消さない
+		expect(items.some((i) => i.type === "text" && i.data.content.includes("前の区画"))).toBe(true);
 		const status = await statusOf(request);
 		expect(status).toMatchObject({layout: "folder-columns", undo: {layout: "timeline", layoutName: "時系列型"}});
 	});
 
-	test("元の型に戻すと、型・位置・見出しの色・区画の見出しが戻る。戻せるのは 1 世代だけ", async ({request}) => {
+	test("元の型に戻すと、型・位置・見出しの色が戻る(指示して置いた見出しはそのまま)。戻せるのは 1 世代だけ", async ({request}) => {
 		const res = await request.post(`api/projects/${projectId}/miro/arrange/undo`, {headers: rw});
 		expect(res.status()).toBe(200);
 		expect(await res.json()).toMatchObject({layout: "timeline"});
@@ -720,5 +721,100 @@ test.describe.serial("連動で並べるとき、人が動かした資料は動�
 		expect(check.humanMoved).toBe(0);
 		const managed = ["人-計画書", "人-メモ", "人-WBS"].map((n) => file(items, `${n}${STAMP}.pdf`).position);
 		expect(new Set(managed.map((p) => p.y)).size, "右上の格子に 1 段で並ぶ").toBe(1);
+	});
+});
+
+// 枠が広がって右隣のプロジェクトの枠に重なるときは、右にある枠をまとめてずらす(中の資料は枠と一緒に動く)
+test.describe.serial("枠が広がっても、右隣のプロジェクトの枠に重ならない", () => {
+	const ids = {};
+	const frameOf = (items, name) => items.find((i) => i.type === "frame" && i.data.title === name);
+	const edges = (frame) => ({left: frame.position.x - frame.geometry.width / 2, right: frame.position.x + frame.geometry.width / 2});
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		for (const key of ["left", "right"]) {
+			ids[key] = (await (await request.post("api/projects", {headers: rw, data: {name: `隣${key}${STAMP}`}})).json()).id;
+			await request.post(`api/projects/${ids[key]}/unlock`, {headers: rw});
+			ids[`${key}Doc`] = await upload(request, `隣-${key}${STAMP}.pdf`, PDF);
+			await request.put(`api/projects/${ids[key]}/documents/${ids[`${key}Doc`].id}`, {headers: rw, data: {folderId: null}});
+			await request.post(`api/projects/${ids[key]}/miro`, {headers: rw});
+			await settled(request, ids[key]);
+		}
+	});
+
+	test.afterAll(async ({request}) => {
+		for (const key of ["left", "right"]) await request.delete(`api/projects/${ids[key]}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("左の枠を右へ広げると、右の枠を間隔を空けてずらす。右の枠の中の資料は枠の中の位置のまま", async ({request}) => {
+		let items = await boardItems(request);
+		const rightBefore = frameOf(items, `隣right${STAMP}`);
+		const leftBefore = frameOf(items, `隣left${STAMP}`);
+		expect(edges(rightBefore).left).toBeGreaterThan(edges(leftBefore).right);
+		const docBefore = items.find((i) => i.data?.title === `隣-right${STAMP}.pdf`).position;
+		// 左の枠の資料を、右の枠を越える位置へ置く(枠が広がる)
+		const far = edges(rightBefore).right - edges(leftBefore).left + 500;
+		const res = await request.post(`api/projects/${ids.left}/miro/layout`, {headers: rw, data: {items: [{documentId: ids.leftDoc.id, x: far, y: 400}]}});
+		expect(res.status()).toBe(200);
+		items = await boardItems(request);
+		const leftAfter = frameOf(items, `隣left${STAMP}`);
+		const rightAfter = frameOf(items, `隣right${STAMP}`);
+		expect(edges(leftAfter).left).toBeCloseTo(edges(leftBefore).left, 3);
+		expect(edges(rightAfter).left, "右の枠に重なっている").toBeGreaterThanOrEqual(edges(leftAfter).right + 400 - 1);
+		expect(rightAfter.position.y).toBeCloseTo(rightBefore.position.y, 3);
+		expect(items.find((i) => i.data?.title === `隣-right${STAMP}.pdf`).position, "中の資料は枠の中の位置のまま").toMatchObject(docBefore);
+		// 状態の枠の大きさ・位置も覚え直している(次に広げるときの基準)
+		const status = await (await request.get(`api/projects/${ids.right}/miro`, {headers: rw})).json();
+		expect(status.frame).toMatchObject({width: rightAfter.geometry.width});
+	});
+});
+
+// 利用者・AI がレイアウトを当てて置いた見出し・図形は、型のものとは別に覚え、連動・並べ直しでは消さない
+test.describe.serial("指示して置いた見出し・図形は、連動と並べ直しで消えない", () => {
+	let projectId;
+	const texts = async (request) => (await boardItems(request)).filter((i) => i.type === "text").map((i) => i.data.content);
+	const shapesOf = async (request) => (await boardItems(request)).filter((i) => i.type === "shape");
+
+	test.beforeAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+		await control(request, {reset: true});
+		await connectMiro(request);
+		projectId = (await (await request.post("api/projects", {headers: rw, data: {name: `指示${STAMP}`}})).json()).id;
+		await request.post(`api/projects/${projectId}/unlock`, {headers: rw});
+		const doc = await upload(request, `指示-a${STAMP}.pdf`, PDF);
+		await request.put(`api/projects/${projectId}/documents/${doc.id}`, {headers: rw, data: {folderId: null}});
+		await request.post(`api/projects/${projectId}/miro`, {headers: rw, data: {layout: "quadrant-cross"}});
+		await settled(request, projectId);
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete(`api/projects/${projectId}/miro`, {headers: rw});
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("連動で資料が増えても、並べ直しても、指示した見出し・図形は残る。clearDecorations で片付けられる", async ({request}) => {
+		const res = await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {
+			labels: [{text: "ここは要確認", x: 400, y: 200}],
+			shapes: [{x: 400, y: 400, width: 300, height: 200, text: "メモ枠", borderColor: "#dc2626", borderWidth: 2, borderStyle: "dashed", fillOpacity: 0}]
+		}});
+		expect(res.status()).toBe(200);
+		// 連動で資料が増える(型の見出しは置き直される)
+		const added = await upload(request, `指示-b${STAMP}.pdf`, PDF);
+		await request.put(`api/projects/${projectId}/documents/${added.id}`, {headers: rw, data: {folderId: null}});
+		await waitFor(request, projectId, (s) => itemOf(s, added.id)?.state === "placed");
+		expect((await texts(request)).some((t) => t.includes("ここは要確認"))).toBe(true);
+		expect((await shapesOf(request)).some((i) => String(i.data?.content).includes("メモ枠"))).toBe(true);
+		expect((await texts(request)).some((t) => t.includes("右上: 管理系"))).toBe(true);
+		// 型を切り替えて並べ直しても残る
+		expect((await request.post(`api/projects/${projectId}/miro/arrange`, {headers: rw, data: {layout: "matrix"}})).status()).toBe(200);
+		expect((await texts(request)).some((t) => t.includes("ここは要確認"))).toBe(true);
+		expect((await texts(request)).some((t) => t.includes("右上: 管理系")), "前の型の見出しは片付く").toBe(false);
+		// 片付ける
+		expect((await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {clearDecorations: true}})).status()).toBe(200);
+		expect((await texts(request)).some((t) => t.includes("ここは要確認"))).toBe(false);
+		expect((await shapesOf(request)).some((i) => String(i.data?.content).includes("メモ枠"))).toBe(false);
 	});
 });

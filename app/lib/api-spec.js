@@ -542,7 +542,8 @@ const OPERATIONS = [
 			+ "`labels`: 区画や列の見出しの文字(`text`・`x`・`y`・`width`・`fontSize`・`color`・`fillColor`・`bold`・`align`)。"
 			+ "`shapes`: 区切りの線・区画の背景などの図形(`shape`・`x`・`y`・`width`・`height`・`fillColor`・`fillOpacity`・`borderColor`・`borderWidth`・`borderStyle`・`text`)。Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なるので、背景は`fillOpacity`を小さくする。"
 			+ "`frame`: 枠の大きさ(省略すると中身に合わせて広げる。左上は動かさず、縮めはしない)。"
-			+ "見出しの文字と図形は覚えておき、次に当てるときに片付けてから置く(`keepDecorations: true`で残す)。資料の大きさは`GET /api/projects/:id/miro`の`items[].position`、枠の大きさは`frame`で分かる。"
+			+ "見出しの文字と図形は「指示したもの」として覚え、並べ方の型の見出しとは別に扱う(連動・並べ直し・元に戻すでは消えない)。次に当てるときに片付けてから置く(`keepDecorations: true`で残す。`clearDecorations: true`だけを渡すと片付ける)。"
+			+ "当てた位置の資料は人が置いた扱いになり、連動では型どおりに寄せない。資料の大きさは`GET /api/projects/:id/miro`の`items[].position`、枠の大きさは`frame`で分かる。"
 			+ "正しくないところがあれば何も動かさずに400と理由の一覧(`details`)を返す。上限は資料2000件・見出し500件・図形500件",
 		body: {schema: {type: "object", properties: {
 			items: {type: "array", items: {type: "object", required: ["documentId", "x", "y"], properties: {documentId: {type: "string"}, x: {type: "number"}, y: {type: "number"}, color: {type: ["string", "null"]}}}},

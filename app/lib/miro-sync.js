@@ -94,6 +94,8 @@ module.exports.STATES = STATES;
 const SQL_GET_PROJECT = `SELECT * FROM miro_projects WHERE project_id = ?`;
 const SQL_LIST_ACTIVE = `SELECT project_id FROM miro_projects WHERE state = 'active'`;
 const SQL_LIST_FRAMES = `SELECT frame_x, frame_y, frame_width, frame_height FROM miro_projects WHERE board_id = ? AND frame_id IS NOT NULL`;
+const SQL_LIST_OTHER_FRAMES = `SELECT project_id, frame_id, frame_x, frame_y, frame_width, frame_height, layout_plan FROM miro_projects WHERE board_id = ? AND frame_id IS NOT NULL AND project_id <> ?`;
+const SQL_MOVE_FRAME = `UPDATE miro_projects SET frame_x = ? WHERE project_id = ? AND frame_id = ?`;
 const SQL_UPSERT_PROJECT = `
 	INSERT INTO miro_projects (project_id, board_id, state, linked_by, linked_at)
 	VALUES (@project_id, @board_id, 'active', @user, @now)
@@ -257,28 +259,44 @@ const linked = (html, link) => (typeof link === "string" && /^https?:\/\//.test(
 /**
  * Document Manager が置く見出しの文字・図形を置き、ID と中身を覚える(次に置き直すときに片付けるため、
  * 「元の型に戻す」で同じものを置き直すため)。labels・shapes は normalizeLayout() と同じ形。
- *   keep     前に置いたものを残して足す(レイアウトを当てるときの keepDecorations)
+ *
+ * 見出しの文字・図形は 2 種類あり、別々に覚える:
+ *   型のもの     並べ方の型が置く区画の見出し・線など(連動・並べ直し・元に戻すで置き直す)
+ *   指示したもの 利用者や AI がレイアウトを当てて置いたもの(custom)。連動・並べ直し・元に戻すでは触らない。
+ *               片付けるのは、次にレイアウトを当てたとき(keep でなければ)だけ
+ *
+ *   custom   指示したものとして置く(レイアウトを当てるとき)
+ *   keep     前に置いたもの(同じ種類)を残して足す(レイアウトを当てるときの keepDecorations)
  *   diff     前と同じ中身のものは残し、変わったものだけ置き直す(連動で反映するとき。Miro を呼ぶ回数を減らす)
  *   tolerant 置けなかったものを飛ばして続ける
- * どれも付けなければ、前に置いたもの(「並べ直すと整います」の付箋も)を全部片付けてから置く。
+ * keep・diff を付けなければ、前に置いた同じ種類のものを片付けてから置く(型のものなら「並べ直すと整います」の付箋も)。
  */
 const decorationKey = (kind, spec) => `${kind}:${JSON.stringify(spec)}`;
-const drawDecorations = async (projectId, link, board, frameId, {labels = [], shapes = []}, {keep = false, diff = false, tolerant = false} = {}) => {
+const deleteItems = async (board, ids) => {
+	for (const id of ids) {
+		await MiroConnection.withToken((token) => Miro.deleteItem(token, board, id)).catch((err) => {
+			if (err.status !== 404) logger.warn({err: err.message}, "見出しの文字・図形を消せませんでした");
+		});
+	}
+};
+const drawDecorations = async (projectId, link, board, frameId, {labels = [], shapes = []}, {custom = false, keep = false, diff = false, tolerant = false} = {}) => {
 	const previous = parseJson(link.layout_plan, {});
-	const previousDecor = Array.isArray(previous.decor) ? previous.decor : [];
+	let typeDecor = Array.isArray(previous.decor) ? previous.decor : [];
+	let customDecor = Array.isArray(previous.custom) ? previous.custom : [];
+	let typeLabels = previous.labels ?? [];
+	let typeShapes = previous.shapes ?? [];
+	let customLabels = previous.customLabels ?? [];
+	let customShapes = previous.customShapes ?? [];
+	let stickyId = previous.stickyId ?? null;
+	const before = custom ? customDecor : typeDecor;
 	const wanted = [...shapes.map((spec) => ({kind: "shape", spec})), ...labels.map((spec) => ({kind: "label", spec}))];
 	let kept = [];
-	let keptLabels = [];
-	let keptShapes = [];
-	let stickyId = previous.stickyId ?? null;
 	let toCreate = wanted;
 	if (keep) {
-		kept = previousDecor;
-		keptLabels = previous.labels ?? [];
-		keptShapes = previous.shapes ?? [];
-	} else if (diff && previousDecor.length > 0) {
+		kept = before;
+	} else if (diff && before.length > 0) {
 		const pool = new Map();
-		for (const d of previousDecor) {
+		for (const d of before) {
 			if (!pool.has(d.key)) pool.set(d.key, []);
 			pool.get(d.key).push(d.id);
 		}
@@ -289,14 +307,15 @@ const drawDecorations = async (projectId, link, board, frameId, {labels = [], sh
 			if (id != null) kept.push({key, id});
 			else toCreate.push(w);
 		}
-		for (const id of [...pool.values()].flat()) {
-			await MiroConnection.withToken((token) => Miro.deleteItem(token, board, id)).catch((err) => {
-				if (err.status !== 404) logger.warn({err: err.message}, "見出しの文字・図形を消せませんでした");
-			});
-		}
+		await deleteItems(board, [...pool.values()].flat());
 	} else {
-		await deleteHeaders(link, board);
-		stickyId = null;
+		await deleteItems(board, before.map((d) => d.id));
+		if (!custom) {
+			// 中身を覚えていない古い見出し(この仕組みより前に置いたもの)と、「並べ直すと整います」の付箋も片付ける。指示したものは残す
+			const known = new Set([...before, ...customDecor].map((d) => d.id));
+			await deleteItems(board, parseJson(link.header_ids, []).filter((id) => !known.has(id)));
+			stickyId = null;
+		}
 	}
 	const skip = (what) => (err) => {
 		if (!tolerant || err.needsReconnect) throw err;
@@ -334,9 +353,18 @@ const drawDecorations = async (projectId, link, board, frameId, {labels = [], sh
 		...(await create(toCreate.filter((w) => w.kind === "label")))
 	];
 	const decor = [...kept, ...created];
-	const headerIds = JSON.stringify([...decor.map((d) => d.id), ...(stickyId ? [stickyId] : [])]);
-	const layoutPlan = JSON.stringify({...previous, decor, stickyId,
-		labels: [...keptLabels, ...labels], shapes: [...keptShapes, ...shapes]});
+	if (custom) {
+		customDecor = decor;
+		customLabels = keep ? [...customLabels, ...labels] : labels;
+		customShapes = keep ? [...customShapes, ...shapes] : shapes;
+	} else {
+		typeDecor = decor;
+		typeLabels = keep ? [...typeLabels, ...labels] : labels;
+		typeShapes = keep ? [...typeShapes, ...shapes] : shapes;
+	}
+	const headerIds = JSON.stringify([...typeDecor.map((d) => d.id), ...customDecor.map((d) => d.id), ...(stickyId ? [stickyId] : [])]);
+	const layoutPlan = JSON.stringify({...previous, decor: typeDecor, custom: customDecor, stickyId,
+		labels: typeLabels, shapes: typeShapes, customLabels, customShapes});
 	await ds.run(SQL_SET_DECORATIONS, {project_id: projectId, header_ids: headerIds, layout_plan: layoutPlan});
 	Object.assign(link, {header_ids: headerIds, layout_plan: layoutPlan});
 	return {labels: created.filter((d) => d.key.startsWith("label:")).length, shapes: created.filter((d) => d.key.startsWith("shape:")).length};
@@ -1058,7 +1086,53 @@ module.exports.checkLayout = checkLayout;
  * 枠の大きさを変える。左上の角は動かさない(中の項目は左上からの位置なので、中心を動かさずに変えると、
  * 中身ごと上や左へずれて見える)。grow のときは縮めない
  */
+/**
+ * 枠を右や下へ広げると、右隣のプロジェクトの枠に重なることがある(新しい枠は右隣に置くため)。
+ * 重なるときは、それより右にある Document Manager の枠を、重なる分だけまとめて右へずらす
+ * (枠を動かすと中の資料・付箋も一緒に動く。「並べ直すと整います」の付箋も動かす。枠の外に人が置いたものは動かない)。
+ * @param {{left: number, right: number, top: number, bottom: number}} area 広げたあとの枠(ボードの上の位置)
+ * @returns {Promise<number>} ずらした距離(ずらさなければ 0)
+ */
+const makeRoomToTheRight = async (projectId, board, area) => {
+	const others = (await ds.all(SQL_LIST_OTHER_FRAMES, [board, projectId])).map((row) => {
+		const width = Number(row.frame_width) || frameWidth();
+		const height = Number(row.frame_height) || 600;
+		const left = Number(row.frame_x) - width / 2;
+		const top = Number(row.frame_y) - height / 2;
+		return {...row, left, right: left + width, top, bottom: top + height, width, height};
+	}).filter((frame) => Number.isFinite(frame.left) && frame.left >= area.left);
+	let shift = 0;
+	for (const frame of others) {
+		if (frame.top < area.bottom && area.top < frame.bottom) shift = Math.max(shift, area.right + LAYOUT.frameGap - frame.left);
+	}
+	if (shift <= 0) return 0;
+	shift = Math.ceil(shift);
+	// 右にある枠は、間隔を保つよう全部同じだけずらす
+	for (const frame of others) {
+		const x = Number(frame.frame_x) + shift;
+		try {
+			await MiroConnection.withToken((token) => Miro.updateFrame(token, board, frame.frame_id, {width: frame.width, height: frame.height, x, y: Number(frame.frame_y)}));
+		} catch (err) {
+			if (err.status === 404) continue;
+			throw err;
+		}
+		await ds.run(SQL_MOVE_FRAME, [x, frame.project_id, frame.frame_id]);
+		const stickyId = parseJson(frame.layout_plan, {}).stickyId;
+		if (stickyId != null) {
+			const sticky = await MiroConnection.withToken((token) => Miro.getItem(token, board, stickyId)).catch(() => null);
+			if (sticky?.position) await MiroConnection.withToken((token) => Miro.moveItem(token, board, stickyId, {x: sticky.position.x + shift, y: sticky.position.y})).catch(() => {});
+		}
+	}
+	logger.info({projectId, shift, frames: others.length}, "枠を広げるため、右にあるプロジェクトの枠をずらしました");
+	return shift;
+};
+
 const resizeFrame = async (projectId, link, board, {width, height, grow = false}) => {
+	// 枠の位置は読み直す(ほかのプロジェクトの枠を広げるときに、この枠がずらされていることがあるため)
+	const fresh = await ds.get(SQL_GET_PROJECT, [projectId]);
+	if (fresh != null && fresh.frame_id === link.frame_id && fresh.frame_x != null) {
+		Object.assign(link, {frame_x: fresh.frame_x, frame_y: fresh.frame_y, frame_width: fresh.frame_width, frame_height: fresh.frame_height});
+	}
 	const currentWidth = Number(link.frame_width) || frameWidth();
 	const currentHeight = Number(link.frame_height) || 600;
 	const nextWidth = Math.ceil(grow ? Math.max(currentWidth, width) : width);
@@ -1068,6 +1142,9 @@ const resizeFrame = async (projectId, link, board, {width, height, grow = false}
 	const top = Number(link.frame_y) - currentHeight / 2;
 	const x = left + nextWidth / 2;
 	const y = top + nextHeight / 2;
+	if (nextWidth > currentWidth || nextHeight > currentHeight) {
+		await makeRoomToTheRight(projectId, board, {left, right: left + nextWidth, top, bottom: top + nextHeight});
+	}
 	await MiroConnection.withToken((token) => Miro.updateFrame(token, board, link.frame_id, {width: nextWidth, height: nextHeight, x, y}));
 	await ds.run(SQL_SET_FRAME, {project_id: projectId, frame_id: link.frame_id, x, y, width: nextWidth, height: nextHeight});
 	Object.assign(link, {frame_x: x, frame_y: y, frame_width: nextWidth, frame_height: nextHeight});
@@ -1081,7 +1158,7 @@ const resizeFrame = async (projectId, link, board, {width, height, grow = false}
  * @param {{items: Array<{row: object, x: number, y: number, color?: ?string}>, labels: object[], shapes: object[], frame?: ?{width: number, height: number}}} plan
  * @param {{grow?: boolean, keepDecorations?: boolean}} options grow: 枠を縮めない(レイアウトを当てるとき)
  */
-const executePlan = async (projectId, link, board, plan, user, {grow = false, keepDecorations = false} = {}) => {
+const executePlan = async (projectId, link, board, plan, user, {grow = false, keepDecorations = false, custom = false} = {}) => {
 	const heightOf = (row) => Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
 	const widthOf = (row) => Number(row.width) || LAYOUT.itemWidth;
 	// 枠を先に合わせる(はみ出した位置に置くと、枠の外に出たように見えるため)。中身がはみ出すなら、その分は広げる
@@ -1105,7 +1182,7 @@ const executePlan = async (projectId, link, board, plan, user, {grow = false, ke
 	};
 	// 縮めるのは最後(先に縮めると、まだ動かしていない資料が枠の外に出てしまい、Miro が断る)
 	let frame = await resizeFrame(projectId, link, board, {...wanted, grow: true});
-	const drawn = await drawDecorations(projectId, link, board, link.frame_id, plan, {keep: keepDecorations});
+	const drawn = await drawDecorations(projectId, link, board, link.frame_id, plan, {keep: keepDecorations, custom});
 
 	// 資料を動かす(見出しも一緒に)。色の指定があれば見出しの背景を塗る
 	const colors = {...(parseJson(link.layout_plan, {}).colors ?? {})};
@@ -1364,8 +1441,10 @@ const normalizeLayout = (layout) => {
 		width: number(layout.frame.width, "frame.width", {min: 400, max: LAYOUT_LIMITS.maxCoordinate}),
 		height: number(layout.frame.height, "frame.height", {min: 400, max: LAYOUT_LIMITS.maxCoordinate})
 	};
-	if (items.length === 0 && labels.length === 0 && shapes.length === 0 && frame == null) {
-		errors.push("items・labels・shapes・frame のどれかを指定してください");
+	// clearDecorations: true だけを渡すと、前に指示して置いた見出しの文字・図形を片付ける
+	const clearDecorations = layout?.clearDecorations === true;
+	if (items.length === 0 && labels.length === 0 && shapes.length === 0 && frame == null && !clearDecorations) {
+		errors.push("items・labels・shapes・frame のどれかを指定してください(指示して置いた見出し・図形を消すだけなら clearDecorations: true)");
 	}
 	return {errors, items, labels, shapes, frame, keepDecorations: layout?.keepDecorations === true};
 };
@@ -1393,8 +1472,9 @@ module.exports.applyLayout = async (projectId, layout, user) => {
 	try {
 		// 指示された位置に置いた資料は、連動で型どおりに寄せない(「並べ直す」を頼まれたときだけ置き直す)
 		const items = plan.items.map((item) => ({row: rows.get(item.documentId), x: item.x, y: item.y, placed: null, ...(item.setColor ? {color: item.color} : {})}));
+		// 見出しの文字・図形は「指示したもの」として置く(連動・並べ直し・元に戻すでは消えない)
 		const result = await executePlan(projectId, link, target.boardId, {items, labels: plan.labels, shapes: plan.shapes, frame: plan.frame}, user,
-			{grow: true, keepDecorations: plan.keepDecorations});
+			{grow: true, keepDecorations: plan.keepDecorations, custom: true});
 		logger.info({audit: "miro_layout_applied", user, projectId, moved: result.moved, labels: result.labels, shapes: result.shapes}, "audit");
 		return result;
 	} finally {
