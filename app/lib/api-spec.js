@@ -472,6 +472,18 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "getProjectMiroLayoutReport", method: "get", path: "/api/projects/:id/miro/layout-report", role: "readonly", tag: "プロジェクト",
+		summary: "並べ方の型で並べたらどうなるかの報告(タグの見直し用)",
+		description: "Miro には触らず、読むだけで出す(連動していなくても出せる)。型(`layout`)は `folder-columns`(フォルダ列型) / `timeline`(時系列型) / `split-shelves`(左右分割・棚型) / `quadrant-cross`(十字型) / `matrix`(マトリクス型)。"
+			+ "`summary`: 区画ごとの件数と未分類の割合(`reviewRecommended` が true なら、並べる前にタグを見直す)。"
+			+ "`placements`: 資料ごとの区画(`area`・`slot`)と根拠(`basis`: `tag` / `inferred` / `unclassified` / `folder`。推定なら `inferredTags` と `matchedWords`)。"
+			+ "`unclassified`(理由 `no_phase_tag` / `no_process_tag` / `no_feature_tag` / `unknown_value`)・`unknownValues`(表に無い値と近い値の候補)・`duplicateTags`・`overriddenTags`・`gaps`(マトリクスの無いマス)・`overflow`(「ほか n 件」)・`notes`(フォルダに入っていない・登録日を日付にした)。"
+			+ "タグの値と推定の決まりは docs/miro-layouts/layout-spec.md",
+		params: [{name: "layout", in: "query", description: "型(省略時は folder-columns)"}],
+		responses: {400: "知らない型"},
+		aiGuide: false
+	},
+	{
 		id: "linkProjectMiro", method: "post", path: "/api/projects/:id/miro", role: "readwrite", tag: "プロジェクト",
 		summary: "プロジェクトを Miro と連動する(資料をボードに並べる)",
 		description: "連携で選んだボードにプロジェクトの枠を作り、資料をフォルダごとに並べる。並べるのは裏で行い、すぐ202を返す(`GET`の`syncing`で進み具合が分かる)。連動しているあいだ、新しい版は同じ場所のまま差し替え、増えた資料は下に足す。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.ioはPDFにして、Officeは体裁つきPDFで出す(1件6MBまで)",

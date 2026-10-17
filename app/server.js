@@ -882,6 +882,7 @@ const OfficeRender = require("./lib/office-render.js");
 const HtmlPdf = require("./lib/html-pdf.js");
 const MiroConnection = require("./lib/miro-connection.js");
 const MiroSync = require("./lib/miro-sync.js");
+const MiroLayout = require("./lib/miro-layout.js");
 const DbIntegrity = require("./lib/db-integrity.js");
 const StorageReconcile = require("./lib/storage-reconcile.js");
 const Mockups = require("./lib/mockups.js");
@@ -4150,6 +4151,32 @@ app.get(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, async (req, res) =
 		res.status(200).json(await MiroSync.status(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/miro");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 並べ方の型で並べたらどうなるかの報告(LLM でタグを見直すため。docs/miro-layouts/layout-spec.md 8 章)。
+ * Miro には触らず、読むだけで出す(連動していなくても出せる)。?layout= で型を選ぶ(省略時はフォルダ列型)
+ */
+app.get(BASE_URL_PATH + 'api/projects/:id/miro/layout-report', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const layout = String(req.query.layout ?? MiroLayout.DEFAULT_LAYOUT);
+		if (!MiroLayout.LAYOUT_IDS.includes(layout)) {
+			res.status(400).json({error: `layout は ${MiroLayout.LAYOUT_IDS.join(" / ")} のどれかです`});
+			return;
+		}
+		const input = await MiroLayout.loadInput(req.params.id);
+		if (input == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const report = MiroLayout.buildReport(layout, input);
+		report.summary.excluded = input.excluded;
+		res.status(200).json(report);
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/miro/layout-report");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
