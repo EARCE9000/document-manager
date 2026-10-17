@@ -82,3 +82,16 @@ test("並べ方の型で使う共通のタグを、決まった順で返す(機�
 	expect(body.tags.some((t) => t.startsWith("機能:"))).toBe(false);
 	expect(body.values["対象外"]).toContain("運用");
 });
+
+test("並べ方の型の見本の図(SVG)を返す。知らない型は 404", async ({request}) => {
+	for (const layout of ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]) {
+		const res = await request.get(`api/miro/layout-preview/${layout}`, {headers: ro});
+		expect(res.status(), layout).toBe(200);
+		expect(res.headers()["content-type"]).toContain("image/svg+xml");
+		expect(res.headers()["content-security-policy"]).toContain("default-src 'none'");
+		const svg = await res.text();
+		expect(svg.startsWith("<svg")).toBe(true);
+		expect(svg).not.toContain("<script");
+	}
+	expect((await request.get("api/miro/layout-preview/kanban", {headers: ro})).status()).toBe(404);
+});

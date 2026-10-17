@@ -883,6 +883,7 @@ const HtmlPdf = require("./lib/html-pdf.js");
 const MiroConnection = require("./lib/miro-connection.js");
 const MiroSync = require("./lib/miro-sync.js");
 const MiroLayout = require("./lib/miro-layout.js");
+const MiroLayoutPreview = require("./lib/miro-layout-preview.js");
 const DbIntegrity = require("./lib/db-integrity.js");
 const StorageReconcile = require("./lib/storage-reconcile.js");
 const Mockups = require("./lib/mockups.js");
@@ -3863,6 +3864,24 @@ app.delete(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin
 		logger.error(err, "::api/allowed_users/:email:remove");
 		res.status(500).json({error: "Internal Error"});
 	}
+});
+
+/**
+ * 並べ方の型の見本の図(SVG)。プロジェクトの Miro の画面で型を選ぶときに出す。
+ * 見本の資料を実際の並べ方にかけて描いたもので、どのプロジェクトでも同じ(lib/miro-layout-preview.js)
+ */
+app.get(BASE_URL_PATH + 'api/miro/layout-preview/:layout', requireAuth, (req, res) => {
+	const svg = MiroLayoutPreview.previewSvg(String(req.params.layout));
+	if (svg == null) {
+		setHTTPHeaders(res);
+		res.status(404).json({error: "not found"});
+		return;
+	}
+	res.setHeader("X-Content-Type-Options", "nosniff");
+	// 見本は版が変わるまで同じなので、しばらく使い回させる。図の中では何も動かさない
+	res.setHeader("Cache-Control", "private, max-age=3600");
+	res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'");
+	res.type("image/svg+xml").status(200).send(svg);
 });
 
 /**

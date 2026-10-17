@@ -472,6 +472,13 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "getMiroLayoutPreview", method: "get", path: "/api/miro/layout-preview/:layout", role: "readonly", tag: "プロジェクト",
+		summary: "並べ方の型の見本の図(SVG)",
+		description: "見本の資料を、その型の実際の並べ方にかけて描いた図。型を選ぶ画面で、どう並ぶかを見せるためのもの。`layout` は `folder-columns` / `timeline` / `split-shelves` / `quadrant-cross` / `matrix`",
+		responses: {404: "知らない型"},
+		aiGuide: false
+	},
+	{
 		id: "getMiroLayoutTags", method: "get", path: "/api/miro/layout-tags", role: "readonly", tag: "プロジェクト",
 		summary: "Miro の並べ方の型で使う共通のタグ",
 		description: "`tags`: 区分:・工程:・段階:・会議: のタグを決まった順で(タグ体系 `/api/tag_order` に登録するとき、この順にそろえる)。"
