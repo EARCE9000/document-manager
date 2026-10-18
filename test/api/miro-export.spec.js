@@ -360,6 +360,21 @@ test.describe.serial("十字で書き出す", () => {
 		expect(caption.style.fillColor).toBe("#f1efe8");
 	});
 
+	test("Miro がフレームの作成を断り続けても、ほかのフレームと概要カードは置き切り、そのフレームの資料だけを失敗にする", async ({request}) => {
+		const before = (await framesOf(request)).length;
+		// やり直し(テストでは 3 回まで)をすべて断る = 最初のフレーム(左上)だけ作れない
+		await control(request, {failFrames: 3});
+		const record = await exportAndWait(request, projectId, {anchor: "全体", documentIds: [docs.req.id, docs.plan.id, docs.meeting.id]});
+		expect(record.state).toBe("done");
+		expect(record.counts).toMatchObject({placed: 2, failed: 1});
+		expect(record.error).toContain("1 件を置けませんでした");
+		expect(record.documents.find((d) => d.documentId === docs.req.id).reason).toContain("フレーム");
+		expect(record.frames.map((f) => f.area).sort()).toEqual(["lower_right", "upper_right"]);
+		expect((await framesOf(request)).length).toBe(before + 2);
+		const cards = (await boardItems(request)).filter((i) => i.type === "text" && i.parent == null && i.data.content.includes(`十字${STAMP}`));
+		expect(cards.length).toBeGreaterThanOrEqual(2);
+	});
+
 	test("同じ目印に十字をもう一度出すと、前の十字に重ならないよう、まとめて右に出す", async ({request}) => {
 		const before = await framesOf(request);
 		const record = await exportAndWait(request, projectId, {anchor: "全体", documentIds: [docs.req.id, docs.plan.id]});

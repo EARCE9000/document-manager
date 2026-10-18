@@ -17,6 +17,7 @@
  *   GET  /__state                               発行したトークンの数など(検証用)
  *   GET  /__items                               ボードの項目(種類・位置・枠・題名・中身の大きさ)
  *   POST /__control {"failUploads": n}          次の n 回のファイルの作成・差し替えを 500 で断る
+ *   POST /__control {"failFrames": n}           次の n 回のフレームの作成を 500 で断る(Miro が一時的に不調なとき)
  *   POST /__control {"deleteItem": "<id>"}      Miro で人が消したのと同じ(項目を消す)
  *   POST /__control {"moveItem": {"id": "...", "x": 1, "y": 2}}  Miro で人が動かしたのと同じ
  *
@@ -56,6 +57,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 	let items = new Map();
 	let nextItemId = 3458764600000100000n;
 	let failUploads = 0;
+	let failFrames = 0;
 
 	const reset = () => {
 		control = {};
@@ -67,6 +69,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 		revoked = 0;
 		items = new Map();
 		failUploads = 0;
+		failFrames = 0;
 		requests.length = 0;
 	};
 
@@ -107,6 +110,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 				if (body.reset) reset();
 				if (body.expireAccess) for (const key of accessTokens.keys()) accessTokens.set(key, 0);
 				if (body.failUploads != null) failUploads = Number(body.failUploads);
+				if (body.failFrames != null) failFrames = Number(body.failFrames);
 				if (body.deleteItem != null) items.delete(String(body.deleteItem));
 				if (body.moveItem != null && items.has(String(body.moveItem.id))) {
 					const item = items.get(String(body.moveItem.id));
@@ -120,6 +124,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 						parent: a.parentId ? {id: String(a.parentId)} : null});
 				}
 				delete body.failUploads;
+				delete body.failFrames;
 				delete body.deleteItem;
 				delete body.moveItem;
 				delete body.addItem;
@@ -266,6 +271,11 @@ module.exports.start = (port) => new Promise((resolve) => {
 				const heightFor = (width) => width * 297 / 210;
 
 				if (req.method === "POST" && kind !== "items") {
+					if (kind === "frames" && failFrames > 0) {
+						failFrames--;
+						send(res, 500, {type: "error", code: "3.0000", message: "Internal error occurred", status: 500});
+						return;
+					}
 					if ((kind === "documents" || kind === "images") && failUploads > 0) {
 						failUploads--;
 						send(res, 500, {type: "error", code: "3.0000", message: "Internal error occurred", status: 500});

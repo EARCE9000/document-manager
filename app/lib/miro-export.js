@@ -638,9 +638,22 @@ const runExport = async (job) => {
 		const now = () => new Date().toISOString();
 		for (const planned of plan.frames) {
 			const title = `${planned.title} [${job.when}]`;
-			const frame = await call((token) => Miro.createFrame(token, board, {
-				title, x: planned.left + planned.width / 2, y: planned.top + planned.height / 2, width: planned.width, height: planned.height
-			}));
+			// フレームを作れなかったら(Miro の一時的な不調でやり直しても断られたとき)、そのフレームの資料だけを失敗にして、
+			// ほかのフレームと概要カードは置き切る(途中で止めると、残りが何も出ない)
+			let frame;
+			try {
+				frame = await call((token) => Miro.createFrame(token, board, {
+					title, x: planned.left + planned.width / 2, y: planned.top + planned.height / 2, width: planned.width, height: planned.height
+				}));
+			} catch (err) {
+				if (err.needsReconnect) throw err;
+				logger.warn({exportId, title, error: err.message}, "フレームを作れませんでした(このフレームの資料を飛ばして続けます)");
+				for (const item of planned.items) {
+					const {doc} = ready.get(item.documentId);
+					results.push({documentId: doc.id, title: doc.entry_file, state: STATES.FAILED, reason: `フレーム「${title}」を作れませんでした: ${String(err.message).slice(0, 200)}`});
+				}
+				continue;
+			}
 			const record = {frameId: String(frame.id), title, direction: planned.direction, area: planned.area, left: planned.left, top: planned.top,
 				width: planned.width, height: planned.height};
 			frames.push(record);
