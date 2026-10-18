@@ -284,7 +284,7 @@ test("pdf-converter-publish.yml: 版の決め方と古いタグの整理が、�
 const DOCKERHUB_OVERVIEW_MAX_BYTES = 25000;
 const DOCKERHUB_DESCRIPTION_MAX_CHARS = 100;
 
-for (const file of ["dockerhub-overview.md", "dockerhub-pdf-converter-overview.md"]) {
+for (const file of ["dockerhub-overview.md", "dockerhub-pdf-converter-overview.md", "dockerhub-converter-overview.md"]) {
 	test(`${file}: Docker Hubの上限に収まっている`, () => {
 		const text = read("docs", file);
 		const end = text.indexOf("-->");
