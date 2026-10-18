@@ -46,10 +46,8 @@ const miroStub = require("./miro-stub.js");
 const miroStubPort = Number(process.env.MIRO_STUB_PORT || stubPort + 20);
 process.env.MIRO_API_URL = process.env.MIRO_API_URL || `http://127.0.0.1:${miroStubPort}`;
 process.env.MIRO_AUTH_URL = process.env.MIRO_AUTH_URL || `http://127.0.0.1:${miroStubPort}`;
-// テストでは待たない: 一時的な失敗のやり直しは短く、変更の反映はすぐ、定期の反映は止める(テストから呼ぶ)
+// テストでは待たない: 一時的な失敗のやり直しは短く
 process.env.MIRO_RETRY_DELAYS_MS = process.env.MIRO_RETRY_DELAYS_MS || "20,40";
-process.env.MIRO_SYNC_DEBOUNCE_SECONDS = process.env.MIRO_SYNC_DEBOUNCE_SECONDS || "0.2";
-process.env.MIRO_SYNC_INTERVAL_MINUTES = process.env.MIRO_SYNC_INTERVAL_MINUTES || "0";
 // 「サーバーに新しいクライアントがある」状態を作り、更新のお知らせを検証できるようにする
 // (同梱のクライアントと同じ版のままでは、お知らせが出る経路を通れないため)
 process.env.SKILL_CLIENT_VERSION = process.env.SKILL_CLIENT_VERSION || "9.9.9";

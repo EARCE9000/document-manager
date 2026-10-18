@@ -206,12 +206,12 @@ const OPERATIONS = [
 	{id: "listArchivedProjects", method: "get", path: "/api/projects/archived", role: "readonly", tag: "プロジェクト", summary: "アーカイブ済みプロジェクト一覧"},
 	{
 		id: "createProject", method: "post", path: "/api/projects", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの作成",
-		description: "`description` は説明(空でもよい。2000 文字まで)。Miro の十字のレイアウトの中心のカードに出る",
+		description: "`description` は説明(空でもよい。2000 文字まで)。Miro に十字で書き出すと、目印の下の概要カードに出る",
 		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}, description: {type: "string"}}, example: {name: "顧客管理システム再構築", description: "2026 年度の受注管理の作り直し"}}}
 	},
 	{
 		id: "renameProject", method: "put", path: "/api/projects/:id", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトの名前・説明の変更",
-		description: "`name`・`description` のどちらか(両方でもよい)。説明は空文字で消す(2000 文字まで)。説明は Miro の十字のレイアウトの中心のカードに出る(連動していれば反映する)",
+		description: "`name`・`description` のどちらか(両方でもよい)。説明は空文字で消す(2000 文字まで)。説明は Miro に十字で書き出すと、目印の下の概要カードに出る",
 		body: {schema: {type: "object", properties: {name: {type: "string"}, description: {type: "string"}}}}
 	},
 	{id: "archiveProject", method: "post", path: "/api/projects/:id/archive", role: "readwrite", tag: "プロジェクト", summary: "プロジェクトのアーカイブ(一覧から隠す。復元可能)"},
@@ -466,133 +466,118 @@ const OPERATIONS = [
 		description: "Miro 側のトークンも取り消す。ボードに出してある資料は Miro に残る",
 		aiGuide: false
 	},
-	// ---- Miro に資料を出す(プロジェクト単位) ----
+	// ---- Miro に資料を書き出す(プロジェクト単位) ----
 	{
 		id: "getProjectMiro", method: "get", path: "/api/projects/:id/miro", role: "readonly", tag: "プロジェクト",
-		summary: "プロジェクトの Miro 連動の状態",
-		description: "連動しているか、Miro の枠を開くURL(`frameUrl`)、最後に反映した時刻と失敗、資料ごとの状態(`placed` 出ている / `skipped` 出せない形式など / `failed` Miroが断った / `excluded` 出さない設定 / `removed` Miroで消された / `detached` プロジェクトから外れた・アーカイブ)と理由を返す。`layout` は並べ方の型、`undo` は「元の型に戻す」で戻れる型(並べ直したあとだけ。無ければ null)。`available:false`は Miro との連携が無いか、貼り先のボードが決まっていない",
-		aiGuide: false
-	},
-	{
-		id: "getMiroLayoutPreview", method: "get", path: "/api/miro/layout-preview/:layout", role: "readonly", tag: "プロジェクト",
-		summary: "並べ方の型の見本の図(SVG)",
-		description: "見本の資料を、その型の実際の並べ方にかけて描いた図。型を選ぶ画面で、どう並ぶかを見せるためのもの。`layout` は `folder-columns` / `timeline` / `split-shelves` / `quadrant-cross` / `matrix`",
-		responses: {404: "知らない型"},
+		summary: "プロジェクトの Miro への書き出しの状態と履歴",
+		description: "`exporting`: いま書き出しているか。`exports`: 書き出しの履歴(新しい順に 20 件。いつ・誰が・どの目印に(`anchor`)・作ったフレーム(`frames[].url` で開ける)・件数(`counts`)・失敗(`error`)。いちばん新しいものだけ資料ごとの結果 `documents` 付き)。"
+			+ "`directions`: 書き出せる向き。`available:false`は Miro との連携が無いか、書き出すボードが決まっていない。書き出しは自動では行わない(頼まれたときだけ)",
 		aiGuide: false
 	},
 	{
 		id: "getMiroLayoutTags", method: "get", path: "/api/miro/layout-tags", role: "readonly", tag: "プロジェクト",
-		summary: "Miro の並べ方の型で使う共通のタグ",
+		summary: "Miro の十字の振り分けで使う共通のタグ",
 		description: "`tags`: 区分:・工程:・段階:・会議: のタグを決まった順で(タグ体系 `/api/tag_order` に登録するとき、この順にそろえる)。"
 			+ "`values`: 見出しごとの値(`対象外:` は工程の値。`機能:` はプロジェクトごとに決めるので入らない)。値はこの一覧だけを正とし、ほかの値を作らない",
 		aiGuide: false
 	},
 	{
 		id: "getProjectMiroLayoutReport", method: "get", path: "/api/projects/:id/miro/layout-report", role: "readonly", tag: "プロジェクト",
-		summary: "並べ方の型で並べたらどうなるかの報告(タグの見直し用)",
-		description: "Miro には触らず、読むだけで出す(連動していなくても出せる)。レイアウト(`layout`)は `folder-columns`(フォルダ列) / `timeline`(時系列) / `split-shelves`(左右分割・棚) / `quadrant-cross`(十字) / `matrix`(マトリクス) / `custom`(ユーザーカスタム: AI に指示して自由に配置。区画は無い)。"
-			+ "`summary`: 区画ごとの件数と未分類の割合(`reviewRecommended` が true なら、並べる前にタグを見直す)。"
-			+ "`placements`: 資料ごとの区画(`area`・`slot`)と根拠(`basis`: `tag` / `inferred` / `unclassified` / `folder`。推定なら `inferredTags` と `matchedWords`)。"
-			+ "`unclassified`(理由 `no_phase_tag` / `no_process_tag` / `no_feature_tag` / `unknown_value`)・`unknownValues`(表に無い値と近い値の候補)・`duplicateTags`・`overriddenTags`・`gaps`(マトリクスの無いマス)・`overflow`(「ほか n 件」)・`notes`(フォルダに入っていない・初版の登録日を日付にした)。"
+		summary: "十字で書き出したらどうなるかの報告(タグの見直し用)",
+		description: "Miro には触らず、読むだけで出す。十字は資料をタグで 4 つ(`upper_left` 要件定義〜設計 / `lower_left` テスト〜リリース / `upper_right` 管理 / `lower_right` 会議)と `unclassified`(未分類)に分ける。"
+			+ "`summary`: 区画ごとの件数と未分類の割合(`reviewRecommended` が true なら、十字で書き出す前にタグを見直す)。"
+			+ "`placements`: 資料ごとの区画(`area`・`slot`)と根拠(`basis`: `tag` / `inferred` / `unclassified`。推定なら `inferredTags` と `matchedWords`)。"
+			+ "`unclassified`(理由 `no_process_tag` / `unknown_value`)・`unknownValues`(表に無い値と近い値の候補)・`duplicateTags`・`overriddenTags`・`notes`(初版の登録日を日付にした)。"
 			+ "タグの値と推定の決まりは docs/miro-layouts/layout-spec.md",
-		params: [{name: "layout", in: "query", description: "型(省略時はプロジェクトに選んである型。連動していなければ folder-columns)"}],
-		responses: {400: "知らない型"},
+		params: [{name: "documentIds", in: "query", description: "書き出す資料に絞る(カンマ区切り。省くとプロジェクトの資料を全部)"}],
+		responses: {404: "プロジェクト・資料が無い"},
 		aiGuide: false
 	},
 	{
-		id: "linkProjectMiro", method: "post", path: "/api/projects/:id/miro", role: "readwrite", tag: "プロジェクト",
-		summary: "プロジェクトを Miro と連動する(資料をボードに並べる)",
-		description: "連携で選んだボードにプロジェクトの枠を作り、資料をフォルダごとに並べる。並べるのは裏で行い、すぐ202を返す(`GET`の`syncing`で進み具合が分かる)。連動しているあいだ、新しい版は同じ場所のまま差し替え、増えた資料は下に足す。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.ioはPDFにして、Officeは体裁つきPDFで出す(1件6MBまで)。`layout` で並べ方の型を選べる(省略すると前に選んだ型。初めてならフォルダ列型)",
-		body: {schema: {type: "object", properties: {layout: {type: "string", enum: ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]}}}},
-		responses: {400: "知らない型", 409: "Miro と連携していないか、貼り先のボードが決まっていない"},
+		id: "exportProjectMiro", method: "post", path: "/api/projects/:id/miro/exports", role: "readwrite", tag: "プロジェクト",
+		summary: "資料を Miro に書き出す(毎回新しいフレーム)",
+		description: "頼まれた資料を、ボードの目印を基準にした向きで、新しいフレームに並べる(前に書き出したフレームには触らない)。置くのは裏で行い、すぐ 202 と書き出しの記録を返す(終わるまで `GET .../miro/exports/:exportId` で待つ)。"
+			+ "場所は `anchor`(ボードの付箋「[DM]名前」の名前)・`anchorUrl`(Miro の「リンクをコピー」で取った付箋・図形のリンク)・`free: true`(ボードの中身の右の空いている所)のどれか。"
+			+ "どれも無いと 409(`code: anchor_required`)。**free は利用者に確かめてから使う**。"
+			+ "1 つのフレームなら `documentIds`(省くとプロジェクトの資料を全部)・`direction`・`title`、向きごとに分けるなら `groups: [{documentIds, direction?, title?}]`。"
+			+ "`direction`: `right` / `left` / `up` / `down` / `upper-right` / `lower-right` / `upper-left` / `lower-left` / `cross`(日本語の 右・左上・十字 なども可)。省くと目印に書いた向き、それも無ければ右。"
+			+ "`cross` は資料をタグで 4 つに分け、目印の斜め 4 つのフレームに出し、目印の下にプロジェクトの概要カードを置く。"
+			+ "フレームの名前は「タイトル [YYYY-MM-DD hh:mm]」(タイトルは `title`、無ければ目印の名前、それも無ければプロジェクト名)。フレームの中は読む順(左上から右へ)。"
+			+ "ほかのフレーム・付箋と重なるときは、向きの外側へずらす。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.io は PDF にして、Office は体裁つき PDF で出す(1 件 6MB まで)",
+		body: {schema: {type: "object", properties: {
+			anchor: {type: "string"}, anchorUrl: {type: "string"}, free: {type: "boolean"},
+			documentIds: {type: "array", items: {type: "string"}}, direction: {type: "string"}, title: {type: "string"},
+			groups: {type: "array", items: {type: "object", required: ["documentIds"], properties: {documentIds: {type: "array", items: {type: "string"}}, direction: {type: "string"}, title: {type: "string"}}}}
+		}, example: {anchor: "設計書", documentIds: ["<文書ID>", "<文書ID>"], direction: "右"}}},
+		responses: {
+			400: "指示に正しくないところがある(details)・目印の向きが読めない(code: anchor_unreadable)・リンクが正しくない",
+			404: "目印がボードに無い(code: anchor_not_found。anchors にボードの目印の名前)",
+			409: "目印もリンクも無い(code: anchor_required)・同じ名前の目印が複数(code: anchor_ambiguous)・Miro と連携していない"
+		},
 		aiGuide: false
 	},
 	{
-		id: "syncProjectMiro", method: "post", path: "/api/projects/:id/miro/sync", role: "readwrite", tag: "プロジェクト",
-		summary: "Miro へ今すぐ反映する",
-		description: "普段は自動で反映する。Miro 側で消された・動かされたことも見に行く。202を返す",
-		responses: {409: "連動していない"},
+		id: "getProjectMiroExport", method: "get", path: "/api/projects/:id/miro/exports/:exportId", role: "readonly", tag: "プロジェクト",
+		summary: "1 回の書き出しの記録",
+		description: "`state`: `running` / `done` / `failed`。作ったフレーム(`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ)、資料ごとの結果(`documents[]`: `placed` / `skipped` 出せない形式など / `failed` Miro が断った)と理由",
+		responses: {404: "無い"},
 		aiGuide: false
 	},
 	{
-		id: "unlinkProjectMiro", method: "delete", path: "/api/projects/:id/miro", role: "readwrite", tag: "プロジェクト",
-		summary: "Miro との連動をやめる",
-		description: "既定ではボードはそのまま残し、更新だけ止める。`?removeDocuments=1`でボードに出した資料(と見出し)も消す(付箋・枠は残す)",
+		id: "listMiroAnchors", method: "get", path: "/api/miro/anchors", role: "readonly", tag: "プロジェクト",
+		summary: "ボードにある書き出しの目印の一覧",
+		description: "付箋・図形・文字で、1 行目が「[DM]名前」のもの。`name`・`direction`(かっこで囲んだ行の向き。無ければ null = 右)・`note`(それ以外の行。何を書き出すかのメモ)・`url`(Miro で開く)・`lastExportedAt`。"
+			+ "書き方が読めないものは `problem` に理由(向きが読めない・同じ名前が複数など)",
+		responses: {409: "Miro と連携していない"},
 		aiGuide: false
 	},
 	{
-		id: "setProjectMiroDocument", method: "put", path: "/api/projects/:id/miro/documents/:documentId", role: "readwrite", tag: "プロジェクト",
-		summary: "資料ごとに、Miro に出す・出さないを決める",
-		description: "`publish:false`にするとボードからも消し、以後出さない。Miro で消された資料をもう一度出すときは`publish:true`",
-		body: {schema: {type: "object", required: ["publish"], properties: {publish: {type: "boolean"}}}},
-		responses: {404: "この文書はこのプロジェクトにない"},
+		id: "placeMiroAnchor", method: "post", path: "/api/miro/anchors", role: "readwrite", tag: "プロジェクト",
+		summary: "書き出しの目印の付箋をボードに置く",
+		description: "「[DM]名前」「(向き)」「メモ」の付箋を、ボードの中身の右の空いている所に置く(利用者が Miro で好きな場所へ動かす)。名前は 60 文字まで、メモは 300 文字まで",
+		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}, direction: {type: "string"}, note: {type: "string"}}, example: {name: "設計書", direction: "右", note: "基本設計書と画面設計の最新版"}}},
+		responses: {400: "名前・向き・メモが正しくない", 409: "Miro と連携していない"},
 		aiGuide: false
 	},
 	{
 		id: "moveProjectMiroDocument", method: "patch", path: "/api/projects/:id/miro/items/:documentId", role: "readwrite", tag: "プロジェクト",
-		summary: "Miro のボードの上で資料を動かす",
-		description: "本体は次のどれか1つ。`{nextTo: 文書ID, side: \"right\"|\"left\"|\"above\"|\"below\"}`(同じプロジェクトのほかの資料の隣へ)、`{project: プロジェクトID}`(ほかの連動しているプロジェクトの枠の下へ)、`{x, y}`(枠の左上からの位置。資料の中心)。見出しも一緒に動かす。動かした位置は覚えておき、新しい版もその場所で差し替える。いまの位置は`GET /api/projects/:id/miro`の`items[].position`",
-		body: {schema: {type: "object", properties: {nextTo: {type: "string"}, side: {type: "string", enum: ["right", "left", "above", "below"]}, project: {type: "string"}, x: {type: "number"}, y: {type: "number"}}}},
-		responses: {400: "指示が足りない・正しくない", 404: "資料が Miro に出ていない・消されている", 409: "連動していない"},
+		summary: "書き出した資料を動かす(最後の書き出しのフレームだけ)",
+		description: "本体は次のどれか。`{nextTo: 文書ID, side: \"right\"|\"left\"|\"above\"|\"below\"}`(ほかの資料の隣へ)、`{frame?: フレームの ID か名前, x, y}`(フレームの左上からの位置。資料の中心。frame を省くといまのフレーム)。"
+			+ "見出しも一緒に動かす。はみ出すときはフレームを右・下へ広げる。いまの位置は `GET .../miro/map`",
+		body: {schema: {type: "object", properties: {nextTo: {type: "string"}, side: {type: "string", enum: ["right", "left", "above", "below"]}, frame: {type: "string"}, x: {type: "number"}, y: {type: "number"}}}},
+		responses: {400: "指示が足りない・正しくない", 404: "資料が最後の書き出しに無い・消されている", 409: "まだ書き出していない・いま書き出しているところ"},
 		aiGuide: false
 	},
 	{
 		id: "applyProjectMiroLayout", method: "post", path: "/api/projects/:id/miro/layout", role: "readwrite", tag: "プロジェクト",
-		summary: "Miro の枠に、レイアウトをまとめて当てる",
-		description: "並べ方(十字型・フォルダ列型・時系列型など)は呼ぶ側が決め、ここではそのままボードへ置く。位置はすべて**枠の左上からの中心の位置**。"
+		summary: "書き出したフレームに、レイアウトをまとめて当てる",
+		description: "最後に書き出したフレームの 1 つ(`frameId`。省くと最初のフレーム)に、呼ぶ側が決めた並べ方をそのまま置く。位置はすべて**フレームの左上からの中心の位置**。"
 			+ "`items`: 資料の位置(`documentId`・`x`・`y`。見出しも一緒に動く)と、見出しの背景の色(`color`。`#rrggbb`、`null`で外す)。"
-			+ "`labels`: 区画や列の見出しの文字(`text`・`x`・`y`・`width`・`fontSize`・`color`・`fillColor`・`bold`・`align`)。"
-			+ "`shapes`: 区切りの線・区画の背景などの図形(`shape`・`x`・`y`・`width`・`height`・`fillColor`・`fillOpacity`・`borderColor`・`borderWidth`・`borderStyle`・`text`)。Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なるので、背景は`fillOpacity`を小さくする。"
-			+ "`frame`: 枠の大きさ(省略すると中身に合わせて広げる。左上は動かさず、縮めはしない)。"
-			+ "見出しの文字と図形は「指示したもの」として覚え、並べ方の型の見出しとは別に扱う(連動・並べ直し・元に戻すでは消えない)。次に当てるときに片付けてから置く(`keepDecorations: true`で残す。`clearDecorations: true`だけを渡すと片付ける)。"
-			+ "当てた位置の資料は人が置いた扱いになり、連動では型どおりに寄せない。資料の大きさは`GET /api/projects/:id/miro`の`items[].position`、枠の大きさは`frame`で分かる。"
+			+ "`labels`: 見出しの文字(`text`・`x`・`y`・`width`・`fontSize`・`color`・`fillColor`・`bold`・`align`・`link`)。"
+			+ "`shapes`: 囲み・矢印・区切りの線などの図形(`shape`・`x`・`y`・`width`・`height`・`fillColor`・`fillOpacity`・`borderColor`・`borderWidth`・`borderStyle`・`text`・`link`)。Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なるので、背景は`fillOpacity`を小さくする。"
+			+ "`frame`: フレームの大きさ(省略すると中身に合わせて広げる。左上は動かさず、縮めはしない)。"
+			+ "見出しの文字と図形はフレームごとに覚え、次に当てるときに片付けてから置く(`keepDecorations: true`で残す。`clearDecorations: true`だけを渡すと片付ける)。"
 			+ "正しくないところがあれば何も動かさずに400と理由の一覧(`details`)を返す。上限は資料2000件・見出し500件・図形500件",
 		body: {schema: {type: "object", properties: {
+			frameId: {type: "string"},
 			items: {type: "array", items: {type: "object", required: ["documentId", "x", "y"], properties: {documentId: {type: "string"}, x: {type: "number"}, y: {type: "number"}, color: {type: ["string", "null"]}}}},
 			labels: {type: "array", items: {type: "object", required: ["text", "x", "y"]}},
 			shapes: {type: "array", items: {type: "object", required: ["x", "y", "width", "height"]}},
 			frame: {type: "object", properties: {width: {type: "number"}, height: {type: "number"}}},
-			keepDecorations: {type: "boolean"}
+			keepDecorations: {type: "boolean"},
+			clearDecorations: {type: "boolean"}
 		}}},
-		responses: {400: "指示に正しくないところがある(details に理由の一覧)", 409: "連動していない・いま反映しているところ"},
-		aiGuide: false
-	},
-	{
-		id: "arrangeProjectMiro", method: "post", path: "/api/projects/:id/miro/arrange", role: "readwrite", tag: "プロジェクト",
-		summary: "Miro の枠の中を、型どおりに並べ直す(型の切り替え)",
-		description: "プロジェクトに選んである型で、見出しの文字・図形も置き直して並べ直す。`layout` を渡すと、その型に切り替えてから並べる。"
-			+ "**人が Miro で並べた配置は上書きされる**ので、頼まれたときだけ使う。人が足した付箋や図形には触らない。"
-			+ "並べる前の配置を 1 世代だけ覚えておき、`POST /api/projects/:id/miro/arrange/undo` で戻せる。切り替える前に `layout-report` で未分類の割合を見る",
-		body: {schema: {type: "object", properties: {layout: {type: "string", enum: ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]}}}},
-		responses: {400: "知らない型・まだ並べられない型", 409: "連動していない・いま反映しているところ"},
+		responses: {400: "指示に正しくないところがある(details に理由の一覧)", 409: "まだ書き出していない・いま書き出しているところ"},
 		aiGuide: false
 	},
 	{
 		id: "getProjectMiroMap", method: "get", path: "/api/projects/:id/miro/map", role: "readonly", tag: "プロジェクト",
-		summary: "Miro のボードの地図(置き場所を考えるための材料)",
-		description: "Miro から枠の中のものを読んで返す(ボードは変えない)。位置はすべて枠の左上から(x・y は中心、left・top・right・bottom は端)。"
-			+ "`areas`: 型の区画の範囲(十字型の upper_left など・マトリクスの cell:・棚の shelf:・列の column:・月の month:・枠の下の段 strip:)。"
-			+ "`documents`: 資料ごとの位置と大きさ・型での区画(`area`・`slot`)・人が動かしたか(`humanMoved`)。"
-			+ "`decorations`: Document Manager が置いた見出しの文字・図形(`layout` 型のもの / `custom` 指示したもの)。"
-			+ "`others`: 人が Miro で足したもの(付箋・図形・文字など)。`freeSpace`: 中身の下(`below`)と右(`right`)の空いている所。"
-			+ "置くときは、ここで重ならない場所を決めてから `POST .../miro/layout`(labels・shapes)や `PATCH .../miro/items/:documentId` を呼ぶ",
-		responses: {409: "連動していない"},
-		aiGuide: false
-	},
-	{
-		id: "checkArrangeProjectMiro", method: "get", path: "/api/projects/:id/miro/arrange-check", role: "readonly", tag: "プロジェクト",
-		summary: "Miro で並べ直す前の確かめ(人が動かした資料の枚数)",
-		description: "並べ直すと上書きされる、人が Miro で動かした資料の枚数(`humanMoved`)と一覧(`documents`)、並べる型での未分類の割合(`unclassifiedRatio`・`reviewRecommended`)を返す。"
-			+ "Miro からいまの位置を読むだけで、ボードは変えない。並べ直しを頼まれたら、先にこれで枚数を伝えて確かめる",
-		params: [{name: "layout", in: "query", description: "切り替え先の型(省略するといまの型)"}],
-		responses: {400: "知らない型", 409: "連動していない"},
-		aiGuide: false
-	},
-	{
-		id: "undoArrangeProjectMiro", method: "post", path: "/api/projects/:id/miro/arrange/undo", role: "readwrite", tag: "プロジェクト",
-		summary: "Miro の並べ直しを取り消す(元の型に戻す)",
-		description: "直前の並べ直しの前の配置(型・資料の位置・見出しの文字・図形・見出しの色・枠の大きさ)に戻す。戻せるのは 1 世代だけで、戻したら消える。そのあとで増えた資料は、いまの場所のまま",
-		responses: {409: "連動していない・戻せる配置が無い・いま反映しているところ"},
+		summary: "書き出したフレームの地図(手直しの置き場所を考えるための材料)",
+		description: "最後に書き出したフレームの中を Miro から読んで返す(ボードは変えない)。位置はフレームごとに、その左上から(x・y は中心、left・top・right・bottom は端)。"
+			+ "`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ、`documents`(資料の位置と大きさ・見出しの下端 `bottomWithCaption`)、`decorations`(指示で置いた見出しの文字・図形)、"
+			+ "`others`(人が Miro で足した付箋・図形など)、`freeSpace`(中身の下 `below` と右 `right` の空いている所)。`missing`: どのフレームにも見当たらない資料。"
+			+ "置くときは、ここで重ならない場所を決めてから `POST .../miro/layout` や `PATCH .../miro/items/:documentId` を呼ぶ",
+		responses: {409: "まだ書き出していない"},
 		aiGuide: false
 	},
 	{

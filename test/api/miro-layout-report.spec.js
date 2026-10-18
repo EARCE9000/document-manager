@@ -1,10 +1,10 @@
 /*!
- * miro-layout-report.spec.js : 並べ方の型で並べたらどうなるかの報告(layout-report)のAPIテスト
+ * miro-layout-report.spec.js : 十字で書き出したらどうなるかの報告(layout-report)のAPIテスト
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * Miro には触らず、プロジェクトの資料・フォルダ・タグだけから出せること(連動していなくても出せる)を確かめる。
- * 型ごとの細かい振り分けは test/miro-layout.test.js で見る。
+ * Miro には触らず、プロジェクトの資料・フォルダ・タグだけから出せること(書き出していなくても出せる)を確かめる。
+ * 細かい振り分けは test/miro-layout.test.js で見る。
  */
 
 const {test, expect} = require("@playwright/test");
@@ -24,7 +24,7 @@ const upload = async (request, name, tags) => {
 	return id;
 };
 
-test.describe.serial("Miro の並べ方の報告", () => {
+test.describe.serial("Miro の十字の報告", () => {
 	let projectId;
 	const ids = {};
 
@@ -41,11 +41,11 @@ test.describe.serial("Miro の並べ方の報告", () => {
 		await request.put(`api/projects/${projectId}/documents/${ids.memo}`, {headers: rw, data: {folderId: null}});
 	});
 
-	test("十字型: タグ・推定・表に無い値・使われなかったタグを返す(読み取りの鍵で、連動していなくても出せる)", async ({request}) => {
-		const res = await request.get(`api/projects/${projectId}/miro/layout-report?layout=quadrant-cross`, {headers: ro});
+	test("タグ・推定・表に無い値・使われなかったタグを返す(読み取りの鍵で、書き出していなくても出せる)", async ({request}) => {
+		const res = await request.get(`api/projects/${projectId}/miro/layout-report`, {headers: ro});
 		expect(res.status()).toBe(200);
 		const report = await res.json();
-		expect(report.layout).toBe("quadrant-cross");
+		expect(report.layout).toBe("cross");
 		expect(report.summary.total).toBe(4);
 		expect(report.summary.areas).toMatchObject({upper_left: 2, upper_right: 1, unclassified: 1});
 		const byId = Object.fromEntries(report.placements.map((p) => [p.documentId, p]));
@@ -58,21 +58,16 @@ test.describe.serial("Miro の並べ方の報告", () => {
 		expect(report.summary.unclassifiedRatio).toBe(0.25);
 	});
 
-	test("型を省略するとフォルダ列型。フォルダに入っていない資料は「その他」列", async ({request}) => {
-		const report = await (await request.get(`api/projects/${projectId}/miro/layout-report`, {headers: ro})).json();
-		expect(report.layout).toBe("folder-columns");
-		expect(report.summary.areas).toEqual({"設計": 2, "その他": 2});
-		expect(report.notes.map((n) => n.kind)).toEqual(["no_folder", "no_folder"]);
-		expect(report.unclassified).toBeUndefined();
-	});
-
-	test("知らない型は 400、無いプロジェクトは 404", async ({request}) => {
-		expect((await request.get(`api/projects/${projectId}/miro/layout-report?layout=kanban`, {headers: ro})).status()).toBe(400);
+	test("書き出す資料に絞れる(documentIds)。プロジェクトに無い資料・無いプロジェクトは 404", async ({request}) => {
+		const report = await (await request.get(`api/projects/${projectId}/miro/layout-report?documentIds=${ids.plan},${ids.design}`, {headers: ro})).json();
+		expect(report.summary.total).toBe(2);
+		expect(report.placements.map((p) => p.documentId).sort()).toEqual([ids.plan, ids.design].sort());
+		expect((await request.get(`api/projects/${projectId}/miro/layout-report?documentIds=no-such-doc`, {headers: ro})).status()).toBe(404);
 		expect((await request.get("api/projects/no-such-project/miro/layout-report", {headers: ro})).status()).toBe(404);
 	});
 });
 
-test("並べ方の型で使う共通のタグを、決まった順で返す(機能: は入れない)", async ({request}) => {
+test("十字の振り分けで使う共通のタグを、決まった順で返す(機能: は入れない)", async ({request}) => {
 	const res = await request.get("api/miro/layout-tags", {headers: ro});
 	expect(res.status()).toBe(200);
 	const body = await res.json();
@@ -81,17 +76,4 @@ test("並べ方の型で使う共通のタグを、決まった順で返す(機�
 	expect(body.tags.at(-1)).toBe("会議:臨時");
 	expect(body.tags.some((t) => t.startsWith("機能:"))).toBe(false);
 	expect(body.values["対象外"]).toContain("運用");
-});
-
-test("並べ方の型の見本の図(SVG)を返す。知らない型は 404", async ({request}) => {
-	for (const layout of ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix"]) {
-		const res = await request.get(`api/miro/layout-preview/${layout}`, {headers: ro});
-		expect(res.status(), layout).toBe(200);
-		expect(res.headers()["content-type"]).toContain("image/svg+xml");
-		expect(res.headers()["content-security-policy"]).toContain("default-src 'none'");
-		const svg = await res.text();
-		expect(svg.startsWith("<svg")).toBe(true);
-		expect(svg).not.toContain("<script");
-	}
-	expect((await request.get("api/miro/layout-preview/kanban", {headers: ro})).status()).toBe(404);
 });

@@ -195,7 +195,7 @@ const createSchema = (targetDb) => {
 			archived_by TEXT,
 			archived_at TEXT,
 			locked INTEGER NOT NULL DEFAULT 0,
-			-- プロジェクトの説明(空でもよい。Miro の十字型の中心のカードなどに出す)
+			-- プロジェクトの説明(空でもよい。Miro に十字で書き出したときの概要カードなどに出す)
 			description TEXT
 		)
 	`);
@@ -365,8 +365,10 @@ const createSchema = (targetDb) => {
 			layout_plan TEXT,
 			-- 直前の配置(1世代だけ。型・資料の位置・見出しの文字・図形の JSON)。「元の型に戻す」に使う
 			layout_undo TEXT,
-			-- 最後に Miro 側を見回った時刻(複数台で同じ間隔のうちに 2 回見回らないため)
-			last_checked_at TEXT
+			-- 最後に Miro 側を見回った時刻(今は使わない。自動の同期をやめる前の列)
+			last_checked_at TEXT,
+			-- 最後の書き出し(miro_exports.id)。書き出したあとの手直しは、この書き出しのフレームだけにできる
+			last_export_id TEXT
 		);
 		-- 資料ごとに、ボードのどの項目に出したか。版をまたいで追いかけるため、資料は
 		-- 共有用のID(document_aliases.alias)で覚える
@@ -391,8 +393,37 @@ const createSchema = (targetDb) => {
 			-- Document Manager が最後に置いた位置(x・y は Miro から読み直した今の位置)。違えば人が動かしたとみなす
 			placed_x REAL,
 			placed_y REAL,
+			-- 入っているフレーム(最後の書き出しのフレームのどれか)
+			frame_id TEXT,
 			PRIMARY KEY (project_id, alias)
 		);
+		-- Miro への書き出しの記録(1 回の書き出しで 1 行。フレームは書き出すたびに新しく作る)
+		CREATE TABLE IF NOT EXISTS miro_exports (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			board_id TEXT NOT NULL,
+			-- 書き出した場所: marker(目印の名前)・link(付箋・図形のリンク)・free(空いている所)
+			anchor_kind TEXT NOT NULL,
+			anchor_name TEXT,
+			anchor_item_id TEXT,
+			title TEXT,
+			-- 頼まれた中身(向きごとの組。JSON)
+			request TEXT,
+			-- running・done・failed
+			state TEXT NOT NULL,
+			-- 作ったフレーム・概要カード・資料ごとの結果(JSON)
+			frames TEXT,
+			cards TEXT,
+			documents TEXT,
+			placed INTEGER,
+			skipped INTEGER,
+			failed INTEGER,
+			error TEXT,
+			created_by TEXT,
+			created_at TEXT NOT NULL,
+			finished_at TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_miro_exports_project ON miro_exports (project_id, created_at);
 	`);
 	addMissingColumns(targetDb);
 };
@@ -400,8 +431,8 @@ const createSchema = (targetDb) => {
 // v21 のうちに足した列。v21 を出したあとで足したため、先に v21 で作られたデータベースには無い。
 // 無ければ足す(足すだけなので、何度呼んでも安全)
 const ADDED_COLUMNS = Object.freeze({
-	miro_projects: {layout: "TEXT", layout_plan: "TEXT", layout_undo: "TEXT", last_checked_at: "TEXT"},
-	miro_items: {placed_x: "REAL", placed_y: "REAL"},
+	miro_projects: {layout: "TEXT", layout_plan: "TEXT", layout_undo: "TEXT", last_checked_at: "TEXT", last_export_id: "TEXT"},
+	miro_items: {placed_x: "REAL", placed_y: "REAL", frame_id: "TEXT"},
 	projects: {description: "TEXT"}
 });
 const addMissingColumns = (targetDb) => {

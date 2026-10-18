@@ -881,9 +881,8 @@ const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 const OfficeRender = require("./lib/office-render.js");
 const HtmlPdf = require("./lib/html-pdf.js");
 const MiroConnection = require("./lib/miro-connection.js");
-const MiroSync = require("./lib/miro-sync.js");
+const MiroExport = require("./lib/miro-export.js");
 const MiroLayout = require("./lib/miro-layout.js");
-const MiroLayoutPreview = require("./lib/miro-layout-preview.js");
 const DbIntegrity = require("./lib/db-integrity.js");
 const StorageReconcile = require("./lib/storage-reconcile.js");
 const Mockups = require("./lib/mockups.js");
@@ -1601,15 +1600,12 @@ const deliverDocumentActivity = (payload) => {
 // 即座にローカル配信され、Postgres(複数インスタンス)ではLISTEN/NOTIFYで全インスタンスへ伝播し、
 // 各インスタンスが自分に繋がるSSEクライアントへ配信する(発行元インスタンスにも届く)。
 // 呼び出し側の使い勝手は従来と同じ(broadcast*()を呼ぶだけ)。
-// 文書・プロジェクトが変わったら、Miro に連動しているプロジェクトも反映する(少しまとめてから。
-// 変更した台だけが動く。複数台でも、同じプロジェクトは1台だけが同期する: lib/miro-sync.js)
+// Miro へは自動で書き出さない(人が頼んだときだけ: lib/miro-sync.js)
 const broadcastDocumentsChanged = () => {
 	ds.notify("documents_changed").catch((err) => logger.error({err}, "::notify:documents_changed"));
-	MiroSync.scheduleAll();
 };
 const broadcastProjectsChanged = () => {
 	ds.notify("projects_changed").catch((err) => logger.error({err}, "::notify:projects_changed"));
-	MiroSync.scheduleAll();
 };
 const broadcastMockupsChanged = () => {
 	ds.notify("mockups_changed").catch((err) => logger.error({err}, "::notify:mockups_changed"));
@@ -3867,24 +3863,6 @@ app.delete(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin
 });
 
 /**
- * 並べ方の型の見本の図(SVG)。プロジェクトの Miro の画面で型を選ぶときに出す。
- * 見本の資料を実際の並べ方にかけて描いたもので、どのプロジェクトでも同じ(lib/miro-layout-preview.js)
- */
-app.get(BASE_URL_PATH + 'api/miro/layout-preview/:layout', requireAuth, (req, res) => {
-	const svg = MiroLayoutPreview.previewSvg(String(req.params.layout));
-	if (svg == null) {
-		setHTTPHeaders(res);
-		res.status(404).json({error: "not found"});
-		return;
-	}
-	res.setHeader("X-Content-Type-Options", "nosniff");
-	// 見本は版が変わるまで同じなので、しばらく使い回させる。図の中では何も動かさない
-	res.setHeader("Cache-Control", "private, max-age=3600");
-	res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'");
-	res.type("image/svg+xml").status(200).send(svg);
-});
-
-/**
  * Miro の並べ方の型で使う共通のタグ(区分:・工程:・段階:・会議:)を、決まった順で返す(docs/miro-layouts/layout-spec.md 2 章)。
  * タグ体系の管理画面の「Miro の並べ方のタグをそろえる」が使う。機能: はプロジェクトごとに決めるので入れない
  */
@@ -4000,8 +3978,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id', requireAuth, requireWrite, async (re
 		if (hasName) await Projects.renameProject(req.params.id, req.body.name);
 		if (hasDescription) await Projects.updateProjectDescription(req.params.id, req.body.description);
 		broadcastProjectsChanged();
-		// 説明は Miro の十字型の中心のカードに出すので、連動していれば反映する
-		if (hasDescription || hasName) MiroSync.runProject(req.params.id, {user: req.authData.user_identifier});
+		// 説明は Miro に十字で書き出したときの概要カードに出す(書き出したフレームは書き換えない)
 		res.status(200).json(await Projects.getProject(req.params.id));
 	} catch (err) {
 		if (err.message === "project name is required" || String(err.message).startsWith("description is too long")) {
@@ -4175,9 +4152,30 @@ const prepareMiroPayload = async (doc) => {
 	}
 	return {skip: `Miro に出せない形式です(${extension || "拡張子なし"})。PDF・画像・HTML・Markdown・draw.io・Office が出せます`};
 };
-MiroSync.init({preparePayload: prepareMiroPayload});
+MiroExport.init({preparePayload: prepareMiroPayload});
 
-/** 連動の状態(誰でも見られる。資料ごとに、出ているか・出せない理由) */
+/**
+ * Miro への書き出し・手直しの失敗を応答にする。連携が切れた・指示の誤り(400・404・409)・Miro が断った(502)
+ */
+const sendExportError = (res, err, where) => {
+	if (err.needsReconnect) {
+		res.status(409).json({error: err.message, needsReconnect: true});
+		return;
+	}
+	if ([400, 404, 409].includes(err.status)) {
+		res.status(err.status).json({error: err.message, ...(err.code ? {code: err.code} : {}), ...(err.details ? {details: err.details} : {}), ...(err.anchors ? {anchors: err.anchors} : {})});
+		return;
+	}
+	// Miro が断った(指示の誤りではないので 400 にしない)
+	if (err.name === "MiroError") {
+		res.status(502).json({error: err.message});
+		return;
+	}
+	logger.error(err, where);
+	res.status(500).json({error: "Internal Error"});
+};
+
+/** 書き出しの状態と履歴(誰でも見られる) */
 app.get(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
@@ -4185,7 +4183,7 @@ app.get(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, async (req, res) =
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		res.status(200).json(await MiroSync.status(req.params.id));
+		res.status(200).json(await MiroExport.status(req.params.id));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/miro");
 		res.status(500).json({error: "Internal Error"});
@@ -4193,26 +4191,28 @@ app.get(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, async (req, res) =
 });
 
 /**
- * 並べ方の型で並べたらどうなるかの報告(LLM でタグを見直すため。docs/miro-layouts/layout-spec.md 8 章)。
- * Miro には触らず、読むだけで出す(連動していなくても出せる)。?layout= で型を選ぶ(省略時はプロジェクトに選んである型)
+ * 十字で書き出したらどうなるかの報告(LLM でタグを見直すため。docs/miro-layouts/layout-spec.md)。
+ * Miro には触らず、読むだけで出す。?documentIds=a,b で書き出す資料に絞れる(省くとプロジェクトの資料を全部)
  */
 app.get(BASE_URL_PATH + 'api/projects/:id/miro/layout-report', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		// 型を省略すると、プロジェクトに選んである型(連動していなければフォルダ列型)
-		const layout = req.query.layout != null ? String(req.query.layout) : await MiroSync.layoutOf(req.params.id);
-		if (!MiroLayout.LAYOUT_IDS.includes(layout)) {
-			res.status(400).json({error: `layout は ${MiroLayout.LAYOUT_IDS.join(" / ")} のどれかです`});
-			return;
-		}
 		const input = await MiroLayout.loadInput(req.params.id);
 		if (input == null) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		const report = MiroLayout.buildReport(layout, input);
-		report.summary.excluded = input.excluded;
-		res.status(200).json(report);
+		const wanted = String(req.query.documentIds ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+		if (wanted.length > 0) {
+			const byId = new Map(input.documents.map((d) => [d.documentId, d]));
+			const missing = wanted.filter((id) => !byId.has(id));
+			if (missing.length > 0) {
+				res.status(404).json({error: `このプロジェクトに無い資料です(${missing.join(", ")})`});
+				return;
+			}
+			input.documents = wanted.map((id) => byId.get(id));
+		}
+		res.status(200).json(MiroLayout.buildCrossReport(input));
 	} catch (err) {
 		logger.error(err, "::api/projects/:id/miro/layout-report");
 		res.status(500).json({error: "Internal Error"});
@@ -4220,237 +4220,101 @@ app.get(BASE_URL_PATH + 'api/projects/:id/miro/layout-report', requireAuth, asyn
 });
 
 /**
- * 連動を始める(または止めていたものを再開する)。並べるのは裏で行い、すぐ返す(202)。
- * 本体: {layout?} 並べ方の型(省略すると前に選んだ型。初めてならフォルダ列型)
+ * Miro に書き出す(毎回新しいフレームを作る。置くのは裏で行い、すぐ返す: 202)。本体:
+ *   {documentIds?, direction?, title?}  1 つのフレーム(資料を省くとプロジェクトの資料を全部)
+ *   {groups: [{documentIds, direction?, title?}]}  向きごとの組
+ *   場所は anchor(目印の名前)・anchorUrl(付箋・図形のリンク)・free: true(空いている所)のどれか
+ * 目印が無いときは 409(code: anchor_required)。利用者に確かめてから free で頼み直す
  */
-app.post(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, requireWrite, async (req, res) => {
+app.post(BASE_URL_PATH + 'api/projects/:id/miro/exports', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		await MiroSync.link(req.params.id, req.authData.user_identifier, {layout: req.body?.layout ?? undefined});
-		res.status(202).json(await MiroSync.status(req.params.id));
+		res.status(202).json(await MiroExport.exportDocuments(req.params.id, req.authData.user_identifier, req.body ?? {}));
 	} catch (err) {
-		if ([400, 404, 409].includes(err.status)) {
-			res.status(err.status).json({error: err.message});
+		sendExportError(res, err, "::api/projects/:id/miro/exports");
+	}
+});
+
+/** 1 回の書き出しの記録(終わるのを待つのに使う) */
+app.get(BASE_URL_PATH + 'api/projects/:id/miro/exports/:exportId', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const found = await MiroExport.getExport(req.params.id, req.params.exportId);
+		if (found == null) {
+			res.status(404).json({error: "not found"});
 			return;
 		}
-		logger.error(err, "::api/projects/:id/miro");
+		res.status(200).json(found);
+	} catch (err) {
+		logger.error(err, "::api/projects/:id/miro/exports/:exportId");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
 
-/** 今すぐ反映する(普段は自動。Miro 側で消された・動かされたかも見に行く) */
-app.post(BASE_URL_PATH + 'api/projects/:id/miro/sync', requireAuth, requireWrite, async (req, res) => {
+/** ボードにある書き出しの目印(付箋の [DM]名前)の一覧。どのプロジェクトから見ても同じ */
+app.get(BASE_URL_PATH + 'api/miro/anchors', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const status = await MiroSync.status(req.params.id);
-		if (!status.linked) {
-			res.status(409).json({error: "このプロジェクトは Miro と連動していません"});
-			return;
-		}
-		MiroSync.runProject(req.params.id, {checkMiro: true, user: req.authData.user_identifier});
-		res.status(202).json(await MiroSync.status(req.params.id));
+		res.status(200).json(await MiroExport.listAnchors());
 	} catch (err) {
-		logger.error(err, "::api/projects/:id/miro/sync");
-		res.status(500).json({error: "Internal Error"});
+		sendExportError(res, err, "::api/miro/anchors");
 	}
 });
 
 /**
- * 連動をやめる。?removeDocuments=1 で、ボードに出した資料も消す(付箋・枠は残す)。
- * 付けなければボードはそのまま残し、更新だけ止める(最終版の記録になる)
+ * 書き出しの目印の付箋をボードに置く。本体: {name, direction?, note?}。
+ * 置く場所はボードの中身の右の空いている所(利用者が Miro で好きな場所へ動かす)
  */
-app.delete(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, requireWrite, async (req, res) => {
-	try {
-		const removeDocuments = ["1", "true"].includes(String(req.query.removeDocuments ?? ""));
-		await MiroSync.unlink(req.params.id, req.authData.user_identifier, {removeDocuments});
-		res.status(204).end();
-	} catch (err) {
-		logger.error(err, "::api/projects/:id/miro");
-		res.status(500).json({error: "Internal Error"});
-	}
-});
-
-/** 資料ごとに、Miro に出す・出さないを決める。本体: {publish: boolean}。出さないにすると、ボードからも消す */
-app.put(BASE_URL_PATH + 'api/projects/:id/miro/documents/:documentId', requireAuth, requireWrite, async (req, res) => {
+app.post(BASE_URL_PATH + 'api/miro/anchors', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		if (typeof req.body?.publish !== "boolean") {
-			res.status(400).json({error: "publish(true / false)を指定してください"});
-			return;
-		}
-		const tree = await Projects.getProjectTree(req.params.id);
-		if (!tree.documents.some((placement) => placement.documentId === req.params.documentId)) {
-			res.status(404).json({error: "この文書はこのプロジェクトにありません"});
-			return;
-		}
-		await MiroSync.setPublish(req.params.id, req.params.documentId, req.body.publish, req.authData.user_identifier);
-		res.status(200).json(await MiroSync.status(req.params.id));
+		res.status(201).json(await MiroExport.placeAnchor(req.authData.user_identifier, req.body ?? {}));
 	} catch (err) {
-		if (err.needsReconnect) {
-			res.status(409).json({error: err.message, needsReconnect: true});
-			return;
-		}
-		logger.error(err, "::api/projects/:id/miro/documents/:documentId");
-		res.status(500).json({error: "Internal Error"});
+		sendExportError(res, err, "::api/miro/anchors");
 	}
 });
 
 /**
- * ボードの上で資料を動かす。本体は次のどれか1つ(見出しも一緒に動かす):
+ * 書き出した資料を動かす(最後の書き出しのフレームだけ)。本体は次のどれか(見出しも一緒に動かす):
  *   {nextTo: 文書ID, side: "right"|"left"|"above"|"below"}  ほかの資料の隣へ
- *   {project: プロジェクトID}                                ほかのプロジェクトの枠へ
- *   {x, y}                                                    枠の左上からの位置へ(資料の中心)
+ *   {frame?: フレームの ID か名前, x, y}                        フレームの左上からの位置へ(資料の中心)
  */
 app.patch(BASE_URL_PATH + 'api/projects/:id/miro/items/:documentId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const {nextTo, side, project, x, y} = req.body ?? {};
-		const result = await MiroSync.moveDocument(req.params.id, req.params.documentId, {nextTo, side, project, x, y}, req.authData.user_identifier);
-		res.status(200).json(result);
+		const {nextTo, side, frame, x, y} = req.body ?? {};
+		res.status(200).json(await MiroExport.moveDocument(req.params.id, req.params.documentId, {nextTo, side, frame, x, y}, req.authData.user_identifier));
 	} catch (err) {
-		if (err.needsReconnect) {
-			res.status(409).json({error: err.message, needsReconnect: true});
-			return;
-		}
-		if ([400, 404, 409].includes(err.status)) {
-			res.status(err.status).json({error: err.message});
-			return;
-		}
-		logger.error(err, "::api/projects/:id/miro/items/:documentId");
-		res.status(500).json({error: "Internal Error"});
+		sendExportError(res, err, "::api/projects/:id/miro/items/:documentId");
 	}
 });
 
 /**
- * レイアウトをまとめて当てる(並べ方を決めるのは指示を出す側。lib/miro-sync.js の applyLayout)。本体:
- *   {items: [{documentId, x, y, color?}], labels: [{text, x, y, width?, fontSize?, color?, fillColor?, bold?, align?}],
- *    shapes: [{shape?, x, y, width, height, text?, fillColor?, fillOpacity?, borderColor?, borderWidth?, borderStyle?}],
- *    frame?: {width, height}, keepDecorations?: boolean}
- * 位置はすべて枠の左上からの中心の位置。正しくないところがあれば、何も動かさずに400と理由の一覧(details)を返す
+ * 最後に書き出したフレームの 1 つに、レイアウトをまとめて当てる(lib/miro-export.js の applyLayout)。本体:
+ *   {frameId?, items: [{documentId, x, y, color?}], labels: [{text, x, y, width?, fontSize?, color?, fillColor?, bold?, align?, link?}],
+ *    shapes: [{shape?, x, y, width, height, text?, fillColor?, fillOpacity?, borderColor?, borderWidth?, borderStyle?, link?}],
+ *    frame?: {width, height}, keepDecorations?: boolean, clearDecorations?: boolean}
+ * 位置はすべてフレームの左上からの中心の位置。正しくないところがあれば、何も動かさずに 400 と理由の一覧(details)を返す
  */
 app.post(BASE_URL_PATH + 'api/projects/:id/miro/layout', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(await MiroSync.applyLayout(req.params.id, req.body ?? {}, req.authData.user_identifier));
+		res.status(200).json(await MiroExport.applyLayout(req.params.id, req.body ?? {}, req.authData.user_identifier));
 	} catch (err) {
-		if (err.needsReconnect) {
-			res.status(409).json({error: err.message, needsReconnect: true});
-			return;
-		}
-		// Miro が断った(指示の誤りではないので 400 にしない)
-		if (err.name === "MiroError") {
-			res.status(502).json({error: `${err.message}`});
-			return;
-		}
-		if ([400, 404, 409].includes(err.status)) {
-			res.status(err.status).json({error: err.message, ...(err.details ? {details: err.details} : {})});
-			return;
-		}
-		logger.error(err, "::api/projects/:id/miro/layout");
-		res.status(500).json({error: "Internal Error"});
+		sendExportError(res, err, "::api/projects/:id/miro/layout");
 	}
 });
 
 /**
- * 枠の中を、型どおりに並べ直す(人が並べた配置は上書きされる。見出しの文字・図形も置き直す)。
- * 本体: {layout?} を渡すと、その型に切り替えてから並べる。並べる前の配置は 1 世代だけ覚え、.../arrange/undo で戻せる
- */
-app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange', requireAuth, requireWrite, async (req, res) => {
-	try {
-		setHTTPHeaders(res);
-		res.status(200).json(await MiroSync.arrange(req.params.id, req.authData.user_identifier, {layout: req.body?.layout ?? undefined}));
-	} catch (err) {
-		if (err.needsReconnect) {
-			res.status(409).json({error: err.message, needsReconnect: true});
-			return;
-		}
-		// Miro が断った(指示の誤りではないので 400 にしない)
-		if (err.name === "MiroError") {
-			res.status(502).json({error: `${err.message}(途中まで動いた配置は「元の型に戻す」で戻せます)`});
-			return;
-		}
-		if ([400, 404, 409].includes(err.status)) {
-			res.status(err.status).json({error: err.message});
-			return;
-		}
-		logger.error(err, "::api/projects/:id/miro/arrange");
-		res.status(500).json({error: "Internal Error"});
-	}
-});
-
-/**
- * ボードの地図: 型の区画の範囲・資料の位置と区画・Document Manager が置いた見出しと図形・人が足したもの・空いている所。
- * LLM が置き場所を考えてから miro-layout・miro-move で置くための材料。Miro から読むだけで、ボードは変えない
+ * ボードの地図: 最後に書き出したフレームごとの、資料の位置・指示で置いた見出しと図形・人が足したもの・空いている所。
+ * LLM が置き場所を考えてから miro-layout・miro-move で直すための材料。Miro から読むだけで、ボードは変えない
  */
 app.get(BASE_URL_PATH + 'api/projects/:id/miro/map', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(await MiroSync.boardMap(req.params.id));
+		res.status(200).json(await MiroExport.boardMap(req.params.id));
 	} catch (err) {
-		if (err.needsReconnect) {
-			res.status(409).json({error: err.message, needsReconnect: true});
-			return;
-		}
-		if (err.name === "MiroError") {
-			res.status(502).json({error: err.message});
-			return;
-		}
-		if ([400, 404, 409].includes(err.status)) {
-			res.status(err.status).json({error: err.message});
-			return;
-		}
-		logger.error(err, "::api/projects/:id/miro/map");
-		res.status(500).json({error: "Internal Error"});
-	}
-});
-
-/**
- * 並べ直す前の確かめ: 並べ直すと上書きされる、人が Miro で動かした資料の枚数と一覧、並べる型での未分類の割合。
- * ?layout= で切り替え先の型(省略するといまの型)。ボードは変えない
- */
-app.get(BASE_URL_PATH + 'api/projects/:id/miro/arrange-check', requireAuth, async (req, res) => {
-	try {
-		setHTTPHeaders(res);
-		res.status(200).json(await MiroSync.arrangeCheck(req.params.id, {layout: req.query.layout != null ? String(req.query.layout) : undefined}));
-	} catch (err) {
-		if (err.needsReconnect) {
-			res.status(409).json({error: err.message, needsReconnect: true});
-			return;
-		}
-		if (err.name === "MiroError") {
-			res.status(502).json({error: err.message});
-			return;
-		}
-		if ([400, 404, 409].includes(err.status)) {
-			res.status(err.status).json({error: err.message});
-			return;
-		}
-		logger.error(err, "::api/projects/:id/miro/arrange-check");
-		res.status(500).json({error: "Internal Error"});
-	}
-});
-
-/** 「元の型に戻す」: 直前の並べ直しの前の配置(型・位置・見出しの文字・図形)に戻す。戻せるのは 1 世代だけ */
-app.post(BASE_URL_PATH + 'api/projects/:id/miro/arrange/undo', requireAuth, requireWrite, async (req, res) => {
-	try {
-		setHTTPHeaders(res);
-		res.status(200).json(await MiroSync.undoArrange(req.params.id, req.authData.user_identifier));
-	} catch (err) {
-		if (err.needsReconnect) {
-			res.status(409).json({error: err.message, needsReconnect: true});
-			return;
-		}
-		// Miro が断った(指示の誤りではないので 400 にしない)
-		if (err.name === "MiroError") {
-			res.status(502).json({error: `${err.message}`});
-			return;
-		}
-		if ([400, 404, 409].includes(err.status)) {
-			res.status(err.status).json({error: err.message});
-			return;
-		}
-		logger.error(err, "::api/projects/:id/miro/arrange/undo");
-		res.status(500).json({error: "Internal Error"});
+		sendExportError(res, err, "::api/projects/:id/miro/map");
 	}
 });
 
@@ -5443,7 +5307,6 @@ const main = async () => {
 		}).catch((err) => logger.error(err, "::checkHealth"));
 	}
 	// Miro に連動しているプロジェクトの定期の反映(Miro 側で消された・動かされたことを見に行く)
-	MiroSync.startPeriodic();
 	// PDFでの持ち出し(HTML→PDF)の接続確認。こちらも繋がらなくてもアプリは動く
 	if (HtmlPdf.isEnabled()) {
 		HtmlPdf.checkHealth().then((health) => {

@@ -33,14 +33,15 @@
  *   node dm_client.mjs projects [--archived] / project-create <名前> / tree <プロジェクト>
  *   node dm_client.mjs project-url <プロジェクト>
  *       人に渡す、プロジェクトを開くリンク
- *   node dm_client.mjs miro <プロジェクト> / miro-link <プロジェクト> [--layout <型>] [--no-wait] / miro-sync <プロジェクト>
- *   node dm_client.mjs miro-unlink <プロジェクト> [--remove-documents] / miro-publish <プロジェクト> <文書ID> [--off]
- *   node dm_client.mjs miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
- *   node dm_client.mjs miro-layout <プロジェクト> <JSONファイル|->  (位置・色・見出し・図形をまとめて当てる)
- *   node dm_client.mjs miro-arrange <プロジェクト> [--layout <型>] [--check] [--yes] / miro-arrange-undo <プロジェクト>
- *   node dm_client.mjs miro-layout-report <プロジェクト> [--layout <型>] / miro-map <プロジェクト>
- *     レイアウト: folder-columns / timeline / split-shelves / quadrant-cross / matrix / custom(ユーザーカスタム)
- *       プロジェクトの資料を Miro のボードへ並べる(連携とボードの設定は管理者が画面で行う)
+ *   node dm_client.mjs miro <プロジェクト>  (書き出しの履歴) / miro-anchors  (ボードの目印の一覧)
+ *   node dm_client.mjs miro-anchor-add <名前> [--direction 右] [--note メモ]  (目印の付箋をボードに置く)
+ *   node dm_client.mjs miro-export <プロジェクト> [文書ID...] (--anchor <目印の名前> | --anchor-url <付箋のリンク> | --free)
+ *       [--direction 右|左|上|下|右上|右下|左上|左下|十字] [--title <タイトル>] [--groups <JSONファイル|->] [--no-wait]
+ *       資料を Miro に書き出す(毎回新しいフレーム。自動では書き出さない。--free は利用者に確かめてから)
+ *   node dm_client.mjs miro-map <プロジェクト> / miro-layout-report <プロジェクト> [文書ID...]
+ *   node dm_client.mjs miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | [--frame <F>] --x N --y N)
+ *   node dm_client.mjs miro-layout <プロジェクト> <JSONファイル|->  (最後に書き出したフレームに、位置・色・見出し・図形をまとめて当てる)
+ *       連携とボードの設定は管理者が画面で行う
  *   node dm_client.mjs folder-create <プロジェクト> <名前> [--parent 親フォルダ]
  *   node dm_client.mjs place <プロジェクト> <文書ID> [--folder フォルダ] / unplace <プロジェクト> <文書ID>
  *   node dm_client.mjs watch [--count N] [--timeout 秒] [--action upload,revise,...] [--all]
@@ -535,39 +536,34 @@ const buildZipFromDirectory = (directory) => {
 const mockupPath = (id, suffix = "") => `api/mockups/${encodeURIComponent(id)}${suffix}`;
 const mockupViewUrl = (id) => new URL(mockupPath(id, "/view"), loadConfig().baseUrl).toString();
 
-// ---- Miro に資料を出す(プロジェクト単位。dm_client.py と同じ) ----
-// 連携とボードの設定は管理者が画面で行う。ここでは、プロジェクトの連動の開始・反映・停止と、ボードの上での移動を扱う
+// ---- Miro に資料を書き出す(プロジェクト単位。dm_client.py と同じ) ----
+// 連携とボードの設定は管理者が画面で行う。書き出しは頼まれたときだけ(自動では書き出さない)。
+// 書き出すたびに、ボードの目印(付箋の [DM]名前)の向きに新しいフレームを作る。前に書き出したフレームには触らない
 const MIRO_WAIT_MS = 600 * 1000;
 const miroPath = (projectId, rest = "") => `api/projects/${encodeURIComponent(projectId)}/miro${rest}`;
-const miroStatus = (projectId) => request("GET", miroPath(projectId));
-// Miro に並べる型(docs/miro-layouts/layout-spec.md)
-const MIRO_LAYOUTS = Object.freeze(["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]);
-const miroLayoutOf = (opts) => {
-	if (opts.layout == null) return undefined;
-	if (!MIRO_LAYOUTS.includes(opts.layout)) throw new DmError(`--layout は ${MIRO_LAYOUTS.join(" / ")} のどれかです`);
-	return opts.layout;
-};
 
-/** 並べ終わる(syncing が偽になる)まで待って、状態を返す。資料が多いと数分かかる */
-const waitMiro = async (projectId, wait) => {
-	let status = await miroStatus(projectId);
+/** 書き出しが終わる(state が running でなくなる)まで待って、記録を返す。資料が多いと数分かかる */
+const waitExport = async (projectId, exportId) => {
+	let record = await request("GET", miroPath(projectId, `/exports/${encodeURIComponent(exportId)}`));
 	const deadline = Date.now() + MIRO_WAIT_MS;
-	while (wait && status.syncing && Date.now() < deadline) {
+	while (record.state === "running" && Date.now() < deadline) {
 		await new Promise((resolve) => setTimeout(resolve, 3000));
-		status = await miroStatus(projectId);
+		record = await request("GET", miroPath(projectId, `/exports/${encodeURIComponent(exportId)}`));
 	}
-	return status;
+	return record;
 };
 
-/** AI が利用者へ伝えやすい形に整える(出せなかった資料は理由つきで並べる) */
-const summarizeMiro = (status) => {
-	const items = status.items || [];
-	const result = Object.fromEntries(["available", "linked", "state", "syncing", "frameUrl", "layout", "layoutName", "undo", "lastSyncedAt", "lastError", "counts"].map((k) => [k, status[k] ?? null]));
-	result.notPlaced = items.filter((i) => ["skipped", "failed", "removed"].includes(i.state)).map((i) => ({title: i.title, state: i.state, reason: i.reason}));
-	result.items = items;
-	if (status.syncing) result.note = "まだボードに並べている途中です。しばらくしてから miro で確かめてください";
-	return result;
-};
+/** AI が利用者へ伝えやすい形に整える(フレームのリンクと、出せなかった資料の理由) */
+const summarizeExport = (record) => ({
+	exportId: record.id,
+	state: record.state,
+	anchor: record.anchor,
+	frames: (record.frames || []).map((f) => ({title: f.title, direction: f.direction, url: f.url, frameId: f.frameId})),
+	counts: record.counts,
+	notPlaced: (record.documents || []).filter((d) => d.state !== "placed").map((d) => ({documentId: d.documentId, title: d.title, state: d.state, reason: d.reason})),
+	error: record.error,
+	...(record.state === "running" ? {note: "まだ書き出している途中です。しばらくしてから miro で確かめてください"} : {})
+});
 
 const commands = {
 	setup: async (_rest, opts) => setup(opts),
@@ -820,39 +816,47 @@ const commands = {
 			note: "開くにはログインが必要です。開くと、このプロジェクトの資料一覧と説明書き(おしながき)が表示されます"
 		};
 	},
-	miro: async ([project]) => summarizeMiro(await miroStatus((await resolveProject(requireArg(project, "プロジェクト"))).id)),
-	"miro-link": async ([project], opts) => {
-		const layout = miroLayoutOf(opts);
+	// 書き出しの状態と履歴(新しい順。いちばん新しいものだけ資料ごとの結果付き)
+	miro: async ([project]) => request("GET", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id)),
+	// ボードにある書き出しの目印(付箋の [DM]名前)。名前・向き・メモ(何を書き出すかの覚え書き)・リンク
+	"miro-anchors": async () => request("GET", "api/miro/anchors"),
+	// 目印の付箋をボードの空いている所に置く(利用者が Miro で好きな場所へ動かす)
+	"miro-anchor-add": async ([name], opts) => request("POST", "api/miro/anchors", {json: {
+		name: requireArg(name, "目印の名前"), ...(opts.direction != null ? {direction: opts.direction} : {}), ...(opts.note != null ? {note: opts.note} : {})
+	}}),
+	// 書き出す。場所は --anchor(目印の名前)・--anchor-url(付箋・図形のリンク)・--free(空いている所。利用者に確かめてから)のどれか。
+	// 資料を省くとプロジェクトの資料を全部。向きごとに分けるなら --groups に [{"documentIds": [...], "direction": "右", "title": "..."}] の JSON
+	"miro-export": async ([project, ...documentIds], opts) => {
 		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
-		await request("POST", miroPath(id), {json: layout ? {layout} : {}});
-		return summarizeMiro(await waitMiro(id, !opts["no-wait"]));
-	},
-	"miro-sync": async ([project], opts) => {
-		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
-		await request("POST", miroPath(id, "/sync"));
-		return summarizeMiro(await waitMiro(id, !opts["no-wait"]));
-	},
-	"miro-unlink": async ([project], opts) => {
-		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
-		await request("DELETE", miroPath(id), {query: opts["remove-documents"] ? {removeDocuments: "1"} : {}});
-		return {unlinked: true, removedDocuments: Boolean(opts["remove-documents"])};
-	},
-	"miro-publish": async ([project, documentId], opts) => {
-		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
-		const status = await request("PUT", miroPath(id, `/documents/${encodeURIComponent(requireArg(documentId, "文書ID"))}`), {json: {publish: !opts.off}});
-		return summarizeMiro(opts.off ? status : await waitMiro(id, true));
+		const body = {};
+		if (opts.anchor != null) body.anchor = opts.anchor;
+		if (opts["anchor-url"] != null) body.anchorUrl = opts["anchor-url"];
+		if (opts.free) body.free = true;
+		if (opts.direction != null) body.direction = opts.direction;
+		if (opts.title != null) body.title = opts.title;
+		if (opts.groups != null) {
+			if (documentIds.length > 0) throw new DmError("--groups を使うときは、文書IDは groups の中に書きます");
+			try {
+				body.groups = JSON.parse(fs.readFileSync(opts.groups === "-" ? 0 : opts.groups, "utf8"));
+			} catch (err) {
+				throw new DmError(`--groups の JSON を読めません: ${err.message}`);
+			}
+		} else if (documentIds.length > 0) {
+			body.documentIds = documentIds;
+		}
+		const started = await request("POST", miroPath(id, "/exports"), {json: body});
+		return summarizeExport(opts["no-wait"] ? started : await waitExport(id, started.id));
 	},
 	"miro-move": async ([project, documentId], opts) => {
 		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
 		let body;
 		if (opts["next-to"]) body = {nextTo: opts["next-to"], side: opts.side || "right"};
-		else if (opts["to-project"]) body = {project: (await resolveProject(opts["to-project"])).id};
-		else if (opts.x != null && opts.y != null) body = {x: Number(opts.x), y: Number(opts.y)};
-		else throw new DmError("--next-to(と --side)・--to-project・--x と --y のどれかを指定してください");
+		else if (opts.x != null && opts.y != null) body = {x: Number(opts.x), y: Number(opts.y), ...(opts.frame != null ? {frame: opts.frame} : {})};
+		else throw new DmError("--next-to(と --side)か、--x と --y(と --frame)を指定してください");
 		if (body.side != null && !["right", "left", "above", "below"].includes(body.side)) throw new DmError("--side は right / left / above / below のどれかです");
 		return request("PATCH", miroPath(id, `/items/${encodeURIComponent(requireArg(documentId, "文書ID"))}`), {json: body});
 	},
-	// レイアウト(資料の位置と色・見出しの文字・図形・枠の大きさ)をまとめて当てる。並べ方は呼ぶ側が決める。
+	// 最後に書き出したフレームに、レイアウト(資料の位置と色・見出しの文字・図形・フレームの大きさ)をまとめて当てる。
 	// JSON の形は spec の applyProjectMiroLayout を参照。正しくないところがあれば何も動かさず、理由の一覧(details)が返る
 	"miro-layout": async ([project, file]) => {
 		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
@@ -864,28 +868,12 @@ const commands = {
 		}
 		return request("POST", miroPath(id, "/layout"), {json: layout});
 	},
-	// 型どおりに並べ直す(--layout で型を切り替える)。人が Miro で動かした資料も上書きするので、先に枚数を確かめ、
-	// 1 枚でもあれば --yes が無いかぎり並べ直さずに一覧を返す(利用者に確かめてから --yes を付けて呼び直す)
-	"miro-arrange": async ([project], opts) => {
-		const layout = miroLayoutOf(opts);
-		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
-		const check = await request("GET", miroPath(id, "/arrange-check"), {query: layout ? {layout} : {}});
-		if (opts.check) return check;
-		if (check.humanMoved > 0 && !opts.yes) {
-			return {arranged: false, needsConfirmation: true, ...check,
-				note: `人が Miro で動かした資料が ${check.humanMoved} 枚あり、並べ直すと型どおりの位置へ戻ります。利用者に確かめてから --yes を付けて呼び直してください(元の型に戻すで 1 世代だけ戻せます)`};
-		}
-		const result = await request("POST", miroPath(id, "/arrange"), {json: layout ? {layout} : {}});
-		return {arranged: true, ...result, humanMoved: check.humanMoved, unclassifiedRatio: check.unclassifiedRatio};
-	},
-	// 置き場所を考えるための地図(Miro から読むだけ)。位置は枠の左上から。これで重ならない場所を決めてから miro-layout・miro-move で置く
+	// 最後に書き出したフレームの地図(Miro から読むだけ)。位置はフレームごとに左上から。これで重ならない場所を決めてから miro-layout・miro-move で直す
 	"miro-map": async ([project]) => request("GET", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id, "/map")),
-	"miro-arrange-undo": async ([project]) => request("POST", miroPath((await resolveProject(requireArg(project, "プロジェクト"))).id, "/arrange/undo")),
-	// その型で並べたらどうなるか(未分類・推定・表に無い値)。Miro は変えない。タグの見直しに使う
-	"miro-layout-report": async ([project], opts) => {
-		const layout = miroLayoutOf(opts);
+	// 十字で書き出したらどうなるか(未分類・推定・表に無い値)。Miro は変えない。タグの見直しに使う。文書IDで書き出す資料に絞れる
+	"miro-layout-report": async ([project, ...documentIds]) => {
 		const {id} = await resolveProject(requireArg(project, "プロジェクト"));
-		return request("GET", miroPath(id, "/layout-report"), {query: layout ? {layout} : {}});
+		return request("GET", miroPath(id, "/layout-report"), {query: documentIds.length > 0 ? {documentIds: documentIds.join(",")} : {}});
 	},
 	"alias-move": async ([alias, id]) => {
 		requireArg(alias, "Alias");
@@ -925,7 +913,7 @@ const commands = {
 	},
 	projects: async (_rest, opts) => request("GET", opts.archived ? "api/projects/archived" : "api/projects"),
 	"project-create": async ([name], opts) => request("POST", "api/projects", {json: {name: requireArg(name, "プロジェクト名"), ...(opts.description != null ? {description: opts.description} : {})}}),
-	// プロジェクトの名前・説明を変える。説明は Miro の十字のレイアウトの中心のカードに出る("" で消す)
+	// プロジェクトの名前・説明を変える。説明は Miro に十字で書き出すと目印の下の概要カードに出る("" で消す)
 	"project-update": async ([project], opts) => {
 		const body = {...(opts.name != null ? {name: opts.name} : {}), ...(opts.description != null ? {description: opts.description} : {})};
 		if (Object.keys(body).length === 0) throw new DmError("--name か --description を指定してください");
@@ -1127,17 +1115,19 @@ const main = async () => {
 			version: {type: "boolean", short: "V"},
 			"no-reconnect": {type: "boolean"},
 			"no-wait": {type: "boolean"},
-			"remove-documents": {type: "boolean"},
-			off: {type: "boolean"},
 			"next-to": {type: "string"},
 			side: {type: "string"},
-			"to-project": {type: "string"},
+			frame: {type: "string"},
 			x: {type: "string"},
 			y: {type: "string"},
-			layout: {type: "string"},
-			description: {type: "string"},
-			check: {type: "boolean"},
-			yes: {type: "boolean"}
+			anchor: {type: "string"},
+			"anchor-url": {type: "string"},
+			free: {type: "boolean"},
+			direction: {type: "string"},
+			title: {type: "string"},
+			groups: {type: "string"},
+			note: {type: "string"},
+			description: {type: "string"}
 		}
 	});
 	const [command, ...rest] = positionals;

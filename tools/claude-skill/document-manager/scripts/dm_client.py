@@ -38,17 +38,16 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py unlink-previous <文書ID>     版の紐付けを解除する
   python dm_client.py projects [--archived]        プロジェクト一覧
   python dm_client.py project-url <プロジェクト>   人に渡す、プロジェクトを開くリンク
-  python dm_client.py miro <プロジェクト>          Miro 連動の状態(出ている資料・出せない理由・Miro で開くURL)
-  python dm_client.py miro-link <プロジェクト> [--layout <型>]   Miro と連動する(ボードの枠に型どおりに並べる。並び終わるまで待つ)
-  python dm_client.py miro-sync <プロジェクト>     Miro へ今すぐ反映する(普段は自動)
-  python dm_client.py miro-unlink <プロジェクト> [--remove-documents]   連動をやめる(既定ではボードに残す)
-  python dm_client.py miro-publish <プロジェクト> <文書ID> [--off]      資料ごとに出す・出さない
-  python dm_client.py miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | --to-project <P> | --x N --y N)
-  python dm_client.py miro-layout <プロジェクト> <JSONファイル|->   レイアウト(位置・色・見出し・図形)をまとめて当てる
-  python dm_client.py miro-arrange <プロジェクト> [--layout <型>] [--check] [--yes]   型どおりに並べ直す(型の切り替え。人が動かした資料があれば --yes が要る)
-  python dm_client.py miro-arrange-undo <プロジェクト>   直前の並べ直しを取り消す(元の型に戻す。1 世代だけ)
-  python dm_client.py miro-map <プロジェクト>     ボードの地図(区画の範囲・資料の位置・見出し・人が足したもの・空いている所)
-  python dm_client.py miro-layout-report <プロジェクト> [--layout <型>]   その型で並べたらどうなるか(タグの見直し用。Miro は変えない)
+  python dm_client.py miro <プロジェクト>          Miro への書き出しの履歴(フレームの URL・出せなかった資料)
+  python dm_client.py miro-anchors                ボードの目印(付箋の [DM]名前)の一覧(向き・メモ・リンク)
+  python dm_client.py miro-anchor-add <名前> [--direction 右] [--note メモ]   目印の付箋をボードの空いている所に置く
+  python dm_client.py miro-export <プロジェクト> [文書ID...] (--anchor <目印の名前> | --anchor-url <付箋のリンク> | --free)
+      [--direction 右|左|上|下|右上|右下|左上|左下|十字] [--title <タイトル>] [--groups <JSONファイル|->] [--no-wait]
+                                                  資料を Miro に書き出す(毎回新しいフレーム。--free は利用者に確かめてから)
+  python dm_client.py miro-map <プロジェクト>     最後に書き出したフレームの地図(資料の位置・人が足したもの・空いている所)
+  python dm_client.py miro-move <プロジェクト> <文書ID> (--next-to <文書ID> [--side right|left|above|below] | [--frame <F>] --x N --y N)
+  python dm_client.py miro-layout <プロジェクト> <JSONファイル|->   最後に書き出したフレームに、位置・色・見出し・図形をまとめて当てる
+  python dm_client.py miro-layout-report <プロジェクト> [文書ID...]   十字で書き出したらどうなるか(タグの見直し用。Miro は変えない)
     レイアウト: folder-columns(フォルダ列) / timeline(時系列) / split-shelves(左右分割・棚) / quadrant-cross(十字) / matrix(マトリクス) / custom(ユーザーカスタム)
   python dm_client.py project-create <名前> [--description 説明]   プロジェクトの作成
   python dm_client.py project-update <プロジェクト> [--name 名前] [--description 説明]   名前・説明の変更(説明は "" で消す)
@@ -781,7 +780,7 @@ def cmd_project_create(args):
 
 
 def cmd_project_update(args):
-    """プロジェクトの名前・説明を変える。説明は Miro の十字のレイアウトの中心のカードに出る("" で消す)"""
+    """プロジェクトの名前・説明を変える。説明は Miro に十字で書き出すと目印の下の概要カードに出る("" で消す)"""
     body = {}
     if args.name is not None:
         body["name"] = args.name
@@ -969,90 +968,114 @@ def cmd_manifest(args):
     return request("GET", f"api/projects/{quote_id(project_id)}/manifest", query=query)
 
 
-# ---- Miro に資料を出す(プロジェクト単位) ----
-# 連携とボードの設定は管理者が画面で行う。ここでは、プロジェクトの連動の開始・反映・停止と、ボードの上での移動を扱う
+# ---- Miro に資料を書き出す(プロジェクト単位) ----
+# 連携とボードの設定は管理者が画面で行う。書き出しは頼まれたときだけ(自動では書き出さない)。
+# 書き出すたびに、ボードの目印(付箋の [DM]名前)の向きに新しいフレームを作る。前に書き出したフレームには触らない
 
 MIRO_WAIT_SECONDS = 600
 
 
-# Miro に並べる型(docs/miro-layouts/layout-spec.md)
-MIRO_LAYOUTS = ["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]
+def miro_path(project_id, rest=""):
+    return f"api/projects/{quote_id(project_id)}/miro{rest}"
 
 
-def miro_status(project_id):
-    return request("GET", f"api/projects/{quote_id(project_id)}/miro")
-
-
-def wait_miro(project_id, wait):
-    """並べ終わる(syncing が偽になる)まで待って、状態を返す。資料が多いと数分かかる"""
-    status = miro_status(project_id)
-    if not wait:
-        return status
+def wait_export(project_id, export_id):
+    """書き出しが終わる(state が running でなくなる)まで待って、記録を返す。資料が多いと数分かかる"""
+    record = request("GET", miro_path(project_id, f"/exports/{quote_id(export_id)}"))
     deadline = time.time() + MIRO_WAIT_SECONDS
-    while status.get("syncing") and time.time() < deadline:
+    while record.get("state") == "running" and time.time() < deadline:
         time.sleep(3)
-        status = miro_status(project_id)
-    return status
+        record = request("GET", miro_path(project_id, f"/exports/{quote_id(export_id)}"))
+    return record
 
 
-def summarize_miro(status):
-    """AI が利用者へ伝えやすい形に整える(出せなかった資料は理由つきで並べる)"""
-    items = status.get("items") or []
-    problems = [{"title": i.get("title"), "state": i.get("state"), "reason": i.get("reason")}
-                for i in items if i.get("state") in ("skipped", "failed", "removed")]
-    result = {k: status.get(k) for k in ("available", "linked", "state", "syncing", "frameUrl", "layout", "layoutName", "undo", "lastSyncedAt", "lastError", "counts")}
-    result["notPlaced"] = problems
-    result["items"] = items
-    if status.get("syncing"):
-        result["note"] = "まだボードに並べている途中です。しばらくしてから miro で確かめてください"
+def summarize_export(record):
+    """AI が利用者へ伝えやすい形に整える(フレームのリンクと、出せなかった資料の理由)"""
+    result = {
+        "exportId": record.get("id"),
+        "state": record.get("state"),
+        "anchor": record.get("anchor"),
+        "frames": [{"title": f.get("title"), "direction": f.get("direction"), "url": f.get("url"), "frameId": f.get("frameId")} for f in record.get("frames") or []],
+        "counts": record.get("counts"),
+        "notPlaced": [{"documentId": d.get("documentId"), "title": d.get("title"), "state": d.get("state"), "reason": d.get("reason")}
+                      for d in record.get("documents") or [] if d.get("state") != "placed"],
+        "error": record.get("error"),
+    }
+    if record.get("state") == "running":
+        result["note"] = "まだ書き出している途中です。しばらくしてから miro で確かめてください"
     return result
 
 
 def cmd_miro(args):
-    return summarize_miro(miro_status(resolve_project(args.project)["id"]))
+    """書き出しの状態と履歴(新しい順。いちばん新しいものだけ資料ごとの結果付き)"""
+    return request("GET", miro_path(resolve_project(args.project)["id"]))
 
 
-def cmd_miro_link(args):
+def cmd_miro_anchors(args):
+    """ボードにある書き出しの目印(付箋の [DM]名前)。名前・向き・メモ(何を書き出すかの覚え書き)・リンク"""
+    return request("GET", "api/miro/anchors")
+
+
+def cmd_miro_anchor_add(args):
+    """目印の付箋をボードの空いている所に置く(利用者が Miro で好きな場所へ動かす)"""
+    body = {"name": args.name}
+    if args.direction is not None:
+        body["direction"] = args.direction
+    if args.note is not None:
+        body["note"] = args.note
+    return request("POST", "api/miro/anchors", body=body)
+
+
+def cmd_miro_export(args):
+    """
+    書き出す。場所は --anchor(目印の名前)・--anchor-url(付箋・図形のリンク)・--free(空いている所。利用者に確かめてから)のどれか。
+    資料を省くとプロジェクトの資料を全部。向きごとに分けるなら --groups に [{"documentIds": [...], "direction": "右", "title": "..."}] の JSON
+    """
     project_id = resolve_project(args.project)["id"]
-    request("POST", f"api/projects/{quote_id(project_id)}/miro", body={"layout": args.layout} if args.layout else {})
-    return summarize_miro(wait_miro(project_id, not args.no_wait))
-
-
-def cmd_miro_sync(args):
-    project_id = resolve_project(args.project)["id"]
-    request("POST", f"api/projects/{quote_id(project_id)}/miro/sync")
-    return summarize_miro(wait_miro(project_id, not args.no_wait))
-
-
-def cmd_miro_unlink(args):
-    project_id = resolve_project(args.project)["id"]
-    query = {"removeDocuments": "1"} if args.remove_documents else None
-    request("DELETE", f"api/projects/{quote_id(project_id)}/miro", query=query)
-    return {"unlinked": True, "removedDocuments": bool(args.remove_documents)}
-
-
-def cmd_miro_publish(args):
-    project_id = resolve_project(args.project)["id"]
-    status = request("PUT", f"api/projects/{quote_id(project_id)}/miro/documents/{quote_id(args.id)}", body={"publish": not args.off})
-    return summarize_miro(wait_miro(project_id, True) if not args.off else status)
+    body = {}
+    if args.anchor is not None:
+        body["anchor"] = args.anchor
+    if args.anchor_url is not None:
+        body["anchorUrl"] = args.anchor_url
+    if args.free:
+        body["free"] = True
+    if args.direction is not None:
+        body["direction"] = args.direction
+    if args.title is not None:
+        body["title"] = args.title
+    if args.groups is not None:
+        if args.ids:
+            raise DmError("--groups を使うときは、文書IDは groups の中に書きます")
+        try:
+            if args.groups == "-":
+                body["groups"] = json.load(sys.stdin)
+            else:
+                with open(args.groups, encoding="utf-8") as f:
+                    body["groups"] = json.load(f)
+        except (OSError, ValueError) as err:
+            raise DmError(f"--groups の JSON を読めません: {err}") from None
+    elif args.ids:
+        body["documentIds"] = args.ids
+    started = request("POST", miro_path(project_id, "/exports"), body=body)
+    return summarize_export(started if args.no_wait else wait_export(project_id, started["id"]))
 
 
 def cmd_miro_move(args):
     project_id = resolve_project(args.project)["id"]
     if args.next_to:
         body = {"nextTo": args.next_to, "side": args.side}
-    elif args.to_project:
-        body = {"project": resolve_project(args.to_project)["id"]}
     elif args.x is not None and args.y is not None:
         body = {"x": args.x, "y": args.y}
+        if args.frame is not None:
+            body["frame"] = args.frame
     else:
-        raise DmError("--next-to(と --side)・--to-project・--x と --y のどれかを指定してください")
-    return request("PATCH", f"api/projects/{quote_id(project_id)}/miro/items/{quote_id(args.id)}", body=body)
+        raise DmError("--next-to(と --side)か、--x と --y(と --frame)を指定してください")
+    return request("PATCH", miro_path(project_id, f"/items/{quote_id(args.id)}"), body=body)
 
 
 def cmd_miro_layout(args):
     """
-    レイアウト(資料の位置と色・見出しの文字・図形・枠の大きさ)をまとめて当てる。並べ方は呼ぶ側が決める。
+    最後に書き出したフレームに、レイアウト(資料の位置と色・見出しの文字・図形・フレームの大きさ)をまとめて当てる。
     JSON の形は spec の applyProjectMiroLayout を参照。正しくないところがあれば何も動かさず、理由の一覧(details)が返る
     """
     project_id = resolve_project(args.project)["id"]
@@ -1067,39 +1090,16 @@ def cmd_miro_layout(args):
     return request("POST", f"api/projects/{quote_id(project_id)}/miro/layout", body=layout)
 
 
-def cmd_miro_arrange(args):
-    """
-    型どおりに並べ直す(--layout で型を切り替える)。人が Miro で動かした資料も上書きするので、先に枚数を確かめ、
-    1 枚でもあれば --yes が無いかぎり並べ直さずに一覧を返す(利用者に確かめてから --yes を付けて呼び直す)
-    """
-    project_id = resolve_project(args.project)["id"]
-    query = {"layout": args.layout} if args.layout else None
-    check = request("GET", f"api/projects/{quote_id(project_id)}/miro/arrange-check", query=query)
-    if args.check:
-        return check
-    if check.get("humanMoved", 0) > 0 and not args.yes:
-        return {"arranged": False, "needsConfirmation": True, **check,
-                "note": f"人が Miro で動かした資料が {check['humanMoved']} 枚あり、並べ直すと型どおりの位置へ戻ります。"
-                        "利用者に確かめてから --yes を付けて呼び直してください(元の型に戻すで 1 世代だけ戻せます)"}
-    result = request("POST", f"api/projects/{quote_id(project_id)}/miro/arrange", body={"layout": args.layout} if args.layout else {})
-    return {"arranged": True, **result, "humanMoved": check.get("humanMoved", 0), "unclassifiedRatio": check.get("unclassifiedRatio")}
-
-
 def cmd_miro_map(args):
-    """置き場所を考えるための地図(Miro から読むだけ)。位置は枠の左上から。これで重ならない場所を決めてから miro-layout・miro-move で置く"""
+    """最後に書き出したフレームの地図(Miro から読むだけ)。位置はフレームごとに左上から。これで重ならない場所を決めてから miro-layout・miro-move で直す"""
     project_id = resolve_project(args.project)["id"]
-    return request("GET", f"api/projects/{quote_id(project_id)}/miro/map")
-
-
-def cmd_miro_arrange_undo(args):
-    project_id = resolve_project(args.project)["id"]
-    return request("POST", f"api/projects/{quote_id(project_id)}/miro/arrange/undo")
+    return request("GET", miro_path(project_id, "/map"))
 
 
 def cmd_miro_layout_report(args):
-    """その型で並べたらどうなるか(未分類・推定・表に無い値)。Miro は変えない。タグの見直しに使う"""
+    """十字で書き出したらどうなるか(未分類・推定・表に無い値)。Miro は変えない。タグの見直しに使う。文書IDで書き出す資料に絞れる"""
     project_id = resolve_project(args.project)["id"]
-    return request("GET", f"api/projects/{quote_id(project_id)}/miro/layout-report", query={"layout": args.layout} if args.layout else None)
+    return request("GET", miro_path(project_id, "/layout-report"), query={"documentIds": ",".join(args.ids)} if args.ids else None)
 
 
 def cmd_folder_reorder(args):
@@ -1328,7 +1328,7 @@ def main():
     p.set_defaults(func=cmd_projects)
     p = sub.add_parser("project-create", help="プロジェクトの作成")
     p.add_argument("name")
-    p.add_argument("--description", help="説明(空でもよい。Miro の十字のレイアウトの中心に出る)")
+    p.add_argument("--description", help="説明(空でもよい。Miro に十字で書き出すと概要カードに出る)")
     p.set_defaults(func=cmd_project_create)
     p = sub.add_parser("project-update", help="プロジェクトの名前・説明の変更")
     p.add_argument("project", help="プロジェクトIDまたは名前")
@@ -1414,55 +1414,46 @@ def main():
     p.set_defaults(func=cmd_note)
 
     # ---- Miro ----
-    p = sub.add_parser("miro", help="プロジェクトの Miro 連動の状態(出ている資料・出せない理由・Miro で開くURL)")
+    p = sub.add_parser("miro", help="プロジェクトの Miro への書き出しの履歴(フレームの URL・出せなかった資料)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.set_defaults(func=cmd_miro)
-    p = sub.add_parser("miro-link", help="プロジェクトを Miro と連動する(ボードの枠に型どおりに並べる。並び終わるまで待つ)")
+    p = sub.add_parser("miro-anchors", help="ボードの書き出しの目印(付箋の [DM]名前)の一覧(向き・メモ・リンク)")
+    p.set_defaults(func=cmd_miro_anchors)
+    p = sub.add_parser("miro-anchor-add", help="書き出しの目印の付箋をボードの空いている所に置く")
+    p.add_argument("name", help="目印の名前(書き出したフレームの名前にもなる)")
+    p.add_argument("--direction", help="向き(右・左・上・下・右上・右下・左上・左下・十字。省くと右)")
+    p.add_argument("--note", help="メモ(何を書き出すかの覚え書き)")
+    p.set_defaults(func=cmd_miro_anchor_add)
+    p = sub.add_parser("miro-export", help="資料を Miro に書き出す(毎回新しいフレーム。書き終わるまで待つ)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
-    p.add_argument("--layout", choices=MIRO_LAYOUTS, help="並べ方の型(省略すると前に選んだ型。初めてならフォルダ列型)")
-    p.add_argument("--no-wait", action="store_true", help="並び終わるのを待たずに返す")
-    p.set_defaults(func=cmd_miro_link)
-    p = sub.add_parser("miro-sync", help="Miro へ今すぐ反映する(普段は自動)")
-    p.add_argument("project", help="プロジェクトIDまたは名前")
-    p.add_argument("--no-wait", action="store_true", help="反映し終わるのを待たずに返す")
-    p.set_defaults(func=cmd_miro_sync)
-    p = sub.add_parser("miro-unlink", help="Miro との連動をやめる(既定ではボードに資料を残す)")
-    p.add_argument("project", help="プロジェクトIDまたは名前")
-    p.add_argument("--remove-documents", action="store_true", help="ボードに出した資料も消す(付箋・枠は残る)")
-    p.set_defaults(func=cmd_miro_unlink)
-    p = sub.add_parser("miro-publish", help="資料ごとに Miro に出す・出さないを決める")
-    p.add_argument("project", help="プロジェクトIDまたは名前")
-    p.add_argument("id", help="文書ID")
-    p.add_argument("--off", action="store_true", help="出さない(ボードからも消す)。付けなければ出す")
-    p.set_defaults(func=cmd_miro_publish)
-    p = sub.add_parser("miro-move", help="Miro のボードの上で資料を動かす(見出しも一緒に動く)")
+    p.add_argument("ids", nargs="*", help="書き出す文書ID(省くとプロジェクトの資料を全部)")
+    p.add_argument("--anchor", help="目印の名前(ボードの付箋の [DM]名前)")
+    p.add_argument("--anchor-url", help="付箋・図形のリンク(Miro の「リンクをコピー」)")
+    p.add_argument("--free", action="store_true", help="目印を使わず、ボードの中身の右の空いている所に出す(利用者に確かめてから)")
+    p.add_argument("--direction", help="向き(右・左・上・下・右上・右下・左上・左下・十字。省くと目印に書いた向き、無ければ右)")
+    p.add_argument("--title", help="フレームの名前(省くと目印の名前。後ろに [日時] が付く)")
+    p.add_argument("--groups", help='向きごとの組の JSON ファイル(- で標準入力)。[{"documentIds": [...], "direction": "右", "title": "..."}]')
+    p.add_argument("--no-wait", action="store_true", help="書き終わるのを待たずに返す")
+    p.set_defaults(func=cmd_miro_export)
+    p = sub.add_parser("miro-move", help="書き出した資料を動かす(最後の書き出しのフレームだけ。見出しも一緒に動く)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("id", help="動かす資料の文書ID")
     p.add_argument("--next-to", help="この文書の隣へ")
     p.add_argument("--side", default="right", choices=["right", "left", "above", "below"], help="隣のどちら側か(既定 right)")
-    p.add_argument("--to-project", help="このプロジェクトの枠へ移す(IDまたは名前。連動しているもの)")
-    p.add_argument("--x", type=float, help="枠の左上からの位置(資料の中心)")
-    p.add_argument("--y", type=float, help="枠の左上からの位置(資料の中心)")
+    p.add_argument("--frame", help="動かす先のフレーム(ID か名前。省くといまのフレーム)")
+    p.add_argument("--x", type=float, help="フレームの左上からの位置(資料の中心)")
+    p.add_argument("--y", type=float, help="フレームの左上からの位置(資料の中心)")
     p.set_defaults(func=cmd_miro_move)
-    p = sub.add_parser("miro-layout", help="Miro の枠にレイアウト(資料の位置と色・見出し・図形)をまとめて当てる")
+    p = sub.add_parser("miro-layout", help="最後に書き出したフレームに、レイアウト(資料の位置と色・見出し・図形)をまとめて当てる")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.add_argument("file", help="レイアウトの JSON ファイル(- で標準入力)")
     p.set_defaults(func=cmd_miro_layout)
-    p = sub.add_parser("miro-arrange", help="Miro の枠の中を型どおりに並べ直す(型の切り替え。人が動かした資料も上書きする)")
-    p.add_argument("project", help="プロジェクトIDまたは名前")
-    p.add_argument("--layout", choices=MIRO_LAYOUTS, help="この型に切り替えて並べる(省略するといまの型)")
-    p.add_argument("--check", action="store_true", help="並べ直さずに、人が動かした資料の枚数と未分類の割合だけを返す")
-    p.add_argument("--yes", action="store_true", help="人が動かした資料があっても並べ直す(利用者に確かめてから付ける)")
-    p.set_defaults(func=cmd_miro_arrange)
-    p = sub.add_parser("miro-map", help="ボードの地図(区画の範囲・資料の位置・見出し・人が足したもの・空いている所。Miro は変えない)")
+    p = sub.add_parser("miro-map", help="最後に書き出したフレームの地図(資料の位置・人が足したもの・空いている所。Miro は変えない)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
     p.set_defaults(func=cmd_miro_map)
-    p = sub.add_parser("miro-arrange-undo", help="直前の並べ直しを取り消す(元の型に戻す。1 世代だけ)")
+    p = sub.add_parser("miro-layout-report", help="十字で書き出したらどうなるか(未分類・推定・表に無い値。Miro は変えない)")
     p.add_argument("project", help="プロジェクトIDまたは名前")
-    p.set_defaults(func=cmd_miro_arrange_undo)
-    p = sub.add_parser("miro-layout-report", help="その型で並べたらどうなるか(未分類・推定・表に無い値。Miro は変えない)")
-    p.add_argument("project", help="プロジェクトIDまたは名前")
-    p.add_argument("--layout", choices=MIRO_LAYOUTS, help="型(省略するといま選んである型)")
+    p.add_argument("ids", nargs="*", help="書き出す文書ID(省くとプロジェクトの資料を全部)")
     p.set_defaults(func=cmd_miro_layout_report)
 
     p = sub.add_parser("spec", help="APIの仕様を出力する(同梱コマンドに無い操作を呼ぶとき)")

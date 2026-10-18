@@ -1,59 +1,46 @@
 /*!
- * miro-layout.js : Miro に資料を並べる「型」の振り分け(どの資料をどの区画に置くか)
+ * miro-layout.js : Miro に書き出すときの「十字」の振り分け(どの資料を左上・右上・左下・右下のどこに出すか)
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * 仕様は docs/miro-layouts/layout-spec.md。ここは**どこに置くか**を決めるだけで、Miro には触らない。
- * 同じ振り分けを、LLM がタグを見直すための報告(layout-report)と、ボードに並べる処理の両方で使う
+ * 仕様は docs/miro-layouts/layout-spec.md。ここは**どこに出すか**を決めるだけで、Miro には触らない。
+ * 同じ振り分けを、LLM がタグを見直すための報告(layout-report)と、書き出す処理(miro-export.js)の両方で使う
  * (片方だけ直して食い違う、を防ぐ)。
  *
- * ---- 型 ----
- *   folder-columns  フォルダ列型(既定)。一番上のフォルダごとに 1 列。タグは見ない
- *   timeline        時系列型。1 か月 = 1 行。タグは色分けにだけ使う
- *   split-shelves   左右分割・棚型。左 管理、右 段階ごとの棚
- *   quadrant-cross  十字型。左上 要件定義〜設計、左下 テスト〜運用、右上 管理、右下 会議(週 × 曜日)
- *   matrix          マトリクス型。行 = 機能、列 = 工程
+ * ---- 十字の 4 つの区画 ----
+ *   upper_left   要件定義〜設計(工程のタグ)
+ *   lower_left   テスト〜運用(工程のタグ)
+ *   upper_right  管理(区分:管理)
+ *   lower_right  会議(区分:会議・会議:)。日付順
+ *   unclassified どれにも当たらない資料
  *
  * ---- タグ ----
  * 今のタグと同じ文字列(例 `区分:管理`)。`:` より前を見出し、後ろを値として読む。値は TAG_VALUES だけを正とする。
- * タグが無いときは、題名(ファイル名)とフォルダ名の言葉から推定する。推定はタグとして保存せず、並べるときにだけ使う。
+ * タグが無いときは、題名(ファイル名)とフォルダ名の言葉から推定する。推定はタグとして保存せず、書き出すときにだけ使う。
  */
 
 const path = require("path");
 
-// custom はユーザーカスタム: AI に指示を出しながら自由に配置する。Document Manager は資料を型どおりに寄せず、見出し・線も置かない
-const LAYOUT_IDS = Object.freeze(["folder-columns", "timeline", "split-shelves", "quadrant-cross", "matrix", "custom"]);
-const DEFAULT_LAYOUT = "folder-columns";
-const LAYOUT_NAMES = Object.freeze({
-	"folder-columns": "フォルダ列型",
-	"timeline": "時系列型",
-	"split-shelves": "左右分割・棚型",
-	"quadrant-cross": "十字型",
-	"matrix": "マトリクス型",
-	"custom": "ユーザーカスタム"
+// 十字の区画の名前(書き出すフレームの名前・報告に使う)
+const CROSS_AREAS = Object.freeze(["upper_left", "upper_right", "lower_left", "lower_right", "unclassified"]);
+const CROSS_AREA_TITLES = Object.freeze({
+	upper_left: "要件定義〜設計",
+	upper_right: "管理",
+	lower_left: "テスト〜リリース",
+	lower_right: "会議",
+	unclassified: "未分類"
 });
-module.exports.LAYOUT_IDS = LAYOUT_IDS;
-module.exports.DEFAULT_LAYOUT = DEFAULT_LAYOUT;
-module.exports.LAYOUT_NAMES = LAYOUT_NAMES;
+module.exports.CROSS_AREAS = CROSS_AREAS;
+module.exports.CROSS_AREA_TITLES = CROSS_AREA_TITLES;
 
 const positiveNumber = (value, fallback) => {
 	const number = Number(value);
 	return Number.isFinite(number) && number > 0 ? number : fallback;
 };
 
-// 型ごとの数(layout-spec.md の 9 章で実装側が決めるとしたもの)。枚数と目安は環境変数で変えられる
 const RULES = Object.freeze({
-	// 未分類がこの割合を超えたら、並べる前に LLM でタグを見直す
-	reviewRatio: positiveNumber(process.env.MIRO_LAYOUT_REVIEW_RATIO, 0.3),
-	// 時系列型の 1 行の枚数
-	timelinePerRow: positiveNumber(process.env.MIRO_LAYOUT_TIMELINE_PER_ROW, 7),
-	// 棚型の 1 段の枚数
-	shelfPerRow: positiveNumber(process.env.MIRO_LAYOUT_SHELF_PER_ROW, 4),
-	// 十字型の上の 2 区画は大きさが固定。入りきらない分は「ほか n 件」の 1 枚にまとめる
-	crossUpperRightCapacity: 9,
-	crossStepCapacity: 4,
-	// マトリクス型の 1 マスの枚数
-	matrixCellCapacity: 2
+	// 未分類がこの割合を超えたら、十字で書き出す前に LLM でタグを見直す
+	reviewRatio: positiveNumber(process.env.MIRO_LAYOUT_REVIEW_RATIO, 0.3)
 });
 module.exports.RULES = RULES;
 
@@ -291,32 +278,6 @@ const documentDate = (doc) => {
 module.exports.documentDate = documentDate;
 module.exports.findDate = findDate;
 
-const WEEKDAYS = Object.freeze(["日", "月", "火", "水", "木", "金", "土"]);
-/** その日を含む週の月曜日と、曜日 */
-const weekOf = (date) => {
-	const [y, m, d] = date.split("-").map(Number);
-	const day = new Date(Date.UTC(y, m - 1, d));
-	const weekday = day.getUTCDay();
-	const monday = new Date(day.getTime() - ((weekday + 6) % 7) * 86400000);
-	return {week: monday.toISOString().slice(0, 10), weekday: WEEKDAYS[weekday]};
-};
-module.exports.weekOf = weekOf;
-
-const monthsBetween = (first, last) => {
-	const months = [];
-	let [y, m] = first.split("-").map(Number);
-	const [ly, lm] = last.split("-").map(Number);
-	while (y < ly || (y === ly && m <= lm)) {
-		months.push(`${y}-${pad(m)}`);
-		m += 1;
-		if (m > 12) {
-			m = 1;
-			y += 1;
-		}
-	}
-	return months;
-};
-
 // ---- 表に無い値の、近い値の候補 ----
 const bigrams = (text) => {
 	const list = [];
@@ -374,278 +335,72 @@ const overriddenBy = (doc, classification, ignoredHeadings) => {
 const unknownReason = (classification, headings) => classification.unknown.some((u) => headings.includes(u.heading));
 
 /**
- * 型で並べたらどうなるか(Miro には触らない)。
- * @param {string} layout LAYOUT_IDS のどれか
- * @param {{project: {id: string, name: string}, documents: object[], featureOrder?: string[]}} input
- *   documents はおしながき順。各要素: {documentId, entryFile, modified, firstUploaded, tags, folderId, folderNames(近い順), topFolder: ?{id, name}, subFolders: string[]}
- * @param {{previous?: Map<string, {x: number, y: number, top?: number}>}} [options]
- *   previous: 前に置いた位置(連動で資料を足すとき)。渡すと、押し下げを減らすため、どの区画の中でも
- *   **前に置いた資料は前の並びのまま**(上から・左から)にし、新しい資料はその後ろに足す(layout-spec.md 5 章)。
- *   区画の並び(フォルダ列型の列・マトリクスの行と列)も前のまま、新しいものは右・下に足す。
+ * 十字で書き出したらどうなるか(Miro には触らない)。
+ * @param {{project: {id: string, name: string}, documents: object[]}} input
+ *   documents は出す順。各要素: {documentId, entryFile, modified, firstUploaded, tags, folderId, folderNames(近い順), topFolder: ?{id, name}, subFolders: string[]}
+ * 区画の中の並び: 左上・左下は工程の順(同じ工程の中は出す順)、右上は出す順、右下は日付順
  */
-module.exports.buildReport = (layout, input, {previous = null} = {}) => {
-	if (!LAYOUT_IDS.includes(layout)) throw Object.assign(new Error(`型は ${LAYOUT_IDS.join(" / ")} のどれかです`), {status: 400});
+module.exports.buildCrossReport = (input) => {
 	const documents = input.documents ?? [];
-	let classified = documents.map((doc, order) => ({doc, order, c: classify(doc), ...documentDate(doc)}));
-	const previousOf = (entry) => previous?.get(entry.doc.documentId) ?? null;
-	// 上から・左から。同じ段かどうかは上の端で見る(中心は資料の縦横の比で少しずれる)
-	const rowCompare = (a, b) => {
-		const dy = (a.top ?? a.y) - (b.top ?? b.y);
-		return Math.abs(dy) > 1 ? dy : a.x - b.x;
-	};
-	if (previous != null) {
-		// 前に置いた資料を前の並び(上から・左から)で先に、新しい資料をそのあとに(新しい資料どうしは型の並び)
-		const known = classified.filter((e) => previousOf(e) != null)
-			.sort((a, b) => rowCompare(previousOf(a), previousOf(b)));
-		const added = classified.filter((e) => previousOf(e) == null);
-		classified = [...known, ...added].map((e, order) => ({...e, order}));
-	}
+	const classified = documents.map((doc, order) => ({doc, order, c: classify(doc), ...documentDate(doc)}));
 	const placements = [];
 	const unclassified = [];
 	const overridden = [];
 	const notes = [];
-	const overflow = [];
-	const extra = {};
 	const place = (entry, area, slot, fields = {}) => placements.push({
 		documentId: entry.doc.documentId, title: titleOf(entry.doc), area, slot: slot ?? null, ...fields
 	});
 	const dateFields = (entry) => ({date: entry.date, dateSource: entry.dateSource});
-	const noteUploadDate = (entry) => {
-		if (entry.dateSource === "first_upload") notes.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), kind: "date_from_first_upload", date: entry.date});
-	};
-	// 区画の中の並び。前の位置を渡されたときは、前の並びを崩さない(新しい資料は日付にかかわらず後ろへ足す)
-	const isNew = (e) => (previousOf(e) == null ? 1 : 0);
-	const byDate = previous != null
-		? (a, b) => isNew(a) - isNew(b) || (isNew(a) === 1 && isNew(b) === 1 ? (a.date ?? "").localeCompare(b.date ?? "") : 0) || a.order - b.order
-		: (a, b) => (a.date ?? "").localeCompare(b.date ?? "") || a.order - b.order;
-	const markUnclassified = (entry, reasons, fields = {}) => {
-		unclassified.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), reason: reasons[0], ...(reasons.length > 1 ? {reasons} : {})});
-		place(entry, "unclassified", null, {basis: "unclassified", ...fields});
-	};
-	/** 区画に入りきらない分を「ほか n 件」にまとめる(入る枚数 - 1 枚を出し、残りを 1 枚にまとめる) */
-	const capOverflow = (area, slot, entries, capacity) => {
-		if (entries.length <= capacity) return new Set();
-		const hidden = entries.slice(capacity - 1);
-		overflow.push({area, ...(slot ? {slot} : {}), count: hidden.length, documentIds: hidden.map((e) => e.doc.documentId)});
-		return new Set(hidden.map((e) => e.doc.documentId));
-	};
-	let areaOrder = [];
+	const byDate = (a, b) => (a.date ?? "").localeCompare(b.date ?? "") || a.order - b.order;
 
-	if (layout === "custom") {
-		// 区画は無い(置き場所は指示する側が決める)
-		areaOrder = ["custom"];
-		for (const entry of classified) place(entry, "custom", null, {basis: "custom"});
-	} else if (layout === "folder-columns") {
-		const columns = new Map();
-		for (const entry of classified) {
-			const top = entry.doc.topFolder;
-			const key = top ? top.id : null;
-			if (!columns.has(key)) columns.set(key, {name: top ? top.name : "その他", entries: []});
-			columns.get(key).entries.push(entry);
+	const upperRight = [];
+	const lowerRight = [];
+	const steps = new Map();
+	const rest = [];
+	for (const entry of classified) {
+		const {c} = entry;
+		const division = c.values["区分"]?.value;
+		if (division === "管理" || division === "会議") {
+			(division === "管理" ? upperRight : lowerRight).push(entry);
+			const o = overriddenBy(entry.doc, c, ["工程", "段階"]);
+			if (o) overridden.push(o);
+			continue;
 		}
-		// 「その他」列は常に右端
-		const ordered = [...columns.entries()].sort(([a], [b]) => (a == null) - (b == null));
-		for (const [key, column] of ordered) {
-			areaOrder.push(column.name);
-			for (const entry of column.entries) {
-				const sub = entry.doc.subFolders ?? [];
-				place(entry, column.name, sub.length > 0 ? sub.join(" / ") : null, {basis: "folder", ...(key ? {folderId: key} : {})});
-				if (key == null) notes.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), kind: "no_folder"});
-			}
+		const process = c.values["工程"]?.value;
+		if (process == null) {
+			rest.push(entry);
+			continue;
 		}
-	} else if (layout === "timeline") {
-		const colorOf = (c) => {
-			const division = c.values["区分"]?.value;
-			if (division === "管理") return "gray";
-			if (division === "会議") return c.values["会議"]?.value === "定例" ? "green" : "orange";
-			const process = c.values["工程"]?.value;
-			if (process == null) return "gray";
-			return UPPER_PROCESSES.includes(process) ? "purple" : "pink";
-		};
-		const dated = classified.filter((e) => e.date != null)
-			.sort((a, b) => a.date.slice(0, 7).localeCompare(b.date.slice(0, 7)) || byDate(a, b));
-		if (dated.length > 0) areaOrder = monthsBetween(dated[0].date.slice(0, 7), dated[dated.length - 1].date.slice(0, 7));
-		for (const entry of dated) {
-			place(entry, entry.date.slice(0, 7), null, {...dateFields(entry), color: colorOf(entry.c), ...basisOf(entry.c, ["区分", "工程", "会議"])});
-			noteUploadDate(entry);
+		const step = CROSS_STEP_OF[process];
+		if (!steps.has(step)) steps.set(step, []);
+		steps.get(step).push(entry);
+	}
+	const stepOrder = ["要件定義", "基本設計", "詳細設計", "単体テスト", "結合テスト", "受入テスト", "リリース", "運用"];
+	for (const step of stepOrder) {
+		const area = UPPER_PROCESSES.includes(step) ? "upper_left" : "lower_left";
+		for (const entry of steps.get(step) ?? []) {
+			place(entry, area, `工程:${entry.c.values["工程"].value}`, {step, ...basisOf(entry.c, ["工程"])});
 		}
-		extra.perRow = RULES.timelinePerRow;
-	} else if (layout === "split-shelves") {
-		const shelves = new Map();
-		const left = [];
-		const meetings = [];
-		for (const entry of classified) {
-			const {c} = entry;
-			const division = c.values["区分"]?.value;
-			const phase = c.values["段階"]?.value;
-			if (division === "管理") {
-				left.push(entry);
-				const o = overriddenBy(entry.doc, c, ["工程", "段階"]);
-				if (o) overridden.push(o);
-				continue;
-			}
-			if (division === "会議" && phase == null) {
-				meetings.push(entry);
-				continue;
-			}
-			if (phase == null) {
-				markUnclassified(entry, [unknownReason(c, ["段階"]) ? "unknown_value" : "no_phase_tag"]);
-				continue;
-			}
-			if (!shelves.has(phase)) shelves.set(phase, []);
-			shelves.get(phase).push(entry);
-		}
-		for (const entry of left) place(entry, "left", "区分:管理", basisOf(entry.c, ["区分"]));
-		const shelfNames = [...shelves.keys()].sort((a, b) => valueRank("段階", a) - valueRank("段階", b));
-		for (const name of shelfNames) {
-			for (const entry of shelves.get(name).sort(byDate)) {
-				place(entry, "shelf", `段階:${name}`, {...dateFields(entry), ...basisOf(entry.c, ["区分", "段階"])});
-				noteUploadDate(entry);
-			}
-		}
-		for (const entry of meetings.sort(byDate)) {
-			place(entry, "meeting", `会議:${entry.c.values["会議"].value}`, {...dateFields(entry), ...basisOf(entry.c, ["区分", "会議"])});
-			noteUploadDate(entry);
-		}
-		areaOrder = ["left", "shelf", "meeting", "unclassified"];
-		extra.shelves = shelfNames;
-		extra.perRow = RULES.shelfPerRow;
-	} else if (layout === "quadrant-cross") {
-		const upperRight = [];
-		const lowerRight = [];
-		const steps = new Map();
-		for (const entry of classified) {
-			const {c} = entry;
-			const division = c.values["区分"]?.value;
-			if (division === "管理" || division === "会議") {
-				(division === "管理" ? upperRight : lowerRight).push(entry);
-				const o = overriddenBy(entry.doc, c, ["工程", "段階"]);
-				if (o) overridden.push(o);
-				continue;
-			}
-			const process = c.values["工程"]?.value;
-			if (process == null) {
-				markUnclassified(entry, [unknownReason(c, ["区分", "工程"]) ? "unknown_value" : "no_process_tag"]);
-				continue;
-			}
-			const step = CROSS_STEP_OF[process];
-			if (!steps.has(step)) steps.set(step, []);
-			steps.get(step).push(entry);
-		}
-		const stepOrder = ["要件定義", "基本設計", "詳細設計", "単体テスト", "結合テスト", "受入テスト", "リリース", "運用"];
-		for (const step of stepOrder) {
-			const entries = steps.get(step) ?? [];
-			const upper = UPPER_PROCESSES.includes(step);
-			const area = upper ? "upper_left" : "lower_left";
-			// 上の区画だけ大きさが固定(下は下へ伸ばす)
-			const hidden = upper ? capOverflow(area, `工程:${step}`, entries, RULES.crossStepCapacity) : new Set();
-			for (const entry of entries) {
-				place(entry, area, `工程:${entry.c.values["工程"].value}`, {step, ...basisOf(entry.c, ["工程"]), ...(hidden.has(entry.doc.documentId) ? {overflow: true} : {})});
-			}
-		}
-		const hiddenRight = capOverflow("upper_right", null, upperRight, RULES.crossUpperRightCapacity);
-		for (const entry of upperRight) place(entry, "upper_right", "区分:管理", {...basisOf(entry.c, ["区分"]), ...(hiddenRight.has(entry.doc.documentId) ? {overflow: true} : {})});
-		const weeks = new Set();
-		for (const entry of lowerRight.sort(byDate)) {
-			const fields = entry.date ? weekOf(entry.date) : {};
-			if (fields.week) weeks.add(fields.week);
-			place(entry, "lower_right", `会議:${entry.c.values["会議"].value}`, {...dateFields(entry), ...fields, ...basisOf(entry.c, ["区分", "会議"])});
-			noteUploadDate(entry);
-		}
-		areaOrder = ["upper_left", "lower_left", "upper_right", "lower_right", "unclassified"];
-		extra.weeks = [...weeks].sort();
-	} else if (layout === "matrix") {
-		const management = [];
-		const meetings = [];
-		const cells = new Map();
-		const featureSeen = [];
-		const excluded = new Map();
-		for (const entry of classified) {
-			const {c} = entry;
-			const division = c.values["区分"]?.value;
-			if (division === "管理" || division === "会議") {
-				(division === "管理" ? management : meetings).push(entry);
-				const o = overriddenBy(entry.doc, c, ["工程", "機能"]);
-				if (o) overridden.push(o);
-				continue;
-			}
-			const feature = c.values["機能"]?.value;
-			const process = c.values["工程"]?.value;
-			if (feature != null) {
-				if (!featureSeen.includes(feature)) featureSeen.push(feature);
-				for (const p of c.excludedProcesses) {
-					if (!excluded.has(feature)) excluded.set(feature, new Set());
-					excluded.get(feature).add(p);
-				}
-			}
-			if (feature == null || process == null) {
-				const reasons = [];
-				if (feature == null) reasons.push("no_feature_tag");
-				if (process == null) reasons.push(unknownReason(c, ["工程"]) ? "unknown_value" : "no_process_tag");
-				markUnclassified(entry, reasons);
-				continue;
-			}
-			const key = `${feature}\u0000${process}`;
-			if (!cells.has(key)) cells.set(key, []);
-			cells.get(key).push(entry);
-		}
-		// 機能の並び: タグ体系(/api/tag_order)に登録した順 → まだ無いものは、おしながき順で最初に出てきた順
-		// 前に置いた位置があれば、行(機能)と列(工程)は前の並びのまま、新しいものを下・右に足す
-		const registered = previous != null ? [] : (input.featureOrder ?? []).filter((f) => featureSeen.includes(f));
-		const features = [...registered, ...featureSeen.filter((f) => !registered.includes(f))];
-		let processes = PROCESSES.filter((p) => features.some((f) => cells.has(`${f}\u0000${p}`)));
-		if (previous != null) {
-			const leftOf = (p) => Math.min(...features.flatMap((f) => (cells.get(`${f}\u0000${p}`) ?? []).map((e) => previousOf(e)?.x ?? Infinity)));
-			const known = processes.filter((p) => Number.isFinite(leftOf(p))).sort((a, b) => leftOf(a) - leftOf(b));
-			processes = [...known, ...processes.filter((p) => !known.includes(p))];
-		}
-		const gaps = [];
-		const excludedCells = [];
-		for (const feature of features) {
-			for (const process of processes) {
-				const entries = cells.get(`${feature}\u0000${process}`) ?? [];
-				const isExcluded = excluded.get(feature)?.has(process) ?? false;
-				if (isExcluded) excludedCells.push({feature, process, ...(entries.length > 0 ? {documents: entries.length} : {})});
-				if (entries.length === 0) {
-					if (!isExcluded) gaps.push({feature, process});
-					continue;
-				}
-				const slot = `機能:${feature} × 工程:${process}`;
-				const hidden = capOverflow("table", slot, entries, RULES.matrixCellCapacity);
-				for (const entry of entries) {
-					place(entry, "table", slot, {feature, process, ...basisOf(entry.c, ["機能", "工程"]), ...(hidden.has(entry.doc.documentId) ? {overflow: true} : {})});
-				}
-			}
-		}
-		for (const entry of management) place(entry, "management", "区分:管理", basisOf(entry.c, ["区分"]));
-		for (const entry of meetings.sort(byDate)) {
-			place(entry, "meeting", `会議:${entry.c.values["会議"].value}`, {...dateFields(entry), ...basisOf(entry.c, ["区分", "会議"])});
-			noteUploadDate(entry);
-		}
-		areaOrder = ["table", "management", "meeting", "unclassified"];
-		extra.features = features;
-		extra.processes = processes;
-		extra.gaps = gaps;
-		extra.excludedCells = excludedCells;
+	}
+	for (const entry of upperRight) place(entry, "upper_right", "区分:管理", basisOf(entry.c, ["区分"]));
+	for (const entry of lowerRight.sort(byDate)) {
+		place(entry, "lower_right", `会議:${entry.c.values["会議"].value}`, {...dateFields(entry), ...basisOf(entry.c, ["区分", "会議"])});
+		if (entry.dateSource === "first_upload") notes.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), kind: "date_from_first_upload", date: entry.date});
+	}
+	for (const entry of rest) {
+		const reason = unknownReason(entry.c, ["区分", "工程"]) ? "unknown_value" : "no_process_tag";
+		unclassified.push({documentId: entry.doc.documentId, title: titleOf(entry.doc), reason});
+		place(entry, "unclassified", null, {basis: "unclassified"});
 	}
 
-	// 未分類の段は区画の最後(フォルダ列型は「その他」列を未分類とみなす: layout-spec.md 4 章)
-	const unclassifiedPlacements = placements.filter((p) => p.area === "unclassified");
-	const others = placements.filter((p) => p.area !== "unclassified");
-	placements.length = 0;
-	placements.push(...others, ...unclassifiedPlacements);
-
-	const areas = Object.fromEntries(areaOrder.map((a) => [a, 0]));
+	const areas = Object.fromEntries(CROSS_AREAS.map((a) => [a, 0]));
 	const slots = {};
 	for (const p of placements) {
-		areas[p.area] = (areas[p.area] ?? 0) + 1;
+		areas[p.area] += 1;
 		if (p.slot) slots[`${p.area} / ${p.slot}`] = (slots[`${p.area} / ${p.slot}`] ?? 0) + 1;
 	}
-	const unclassifiedCount = layout === "folder-columns"
-		? notes.filter((n) => n.kind === "no_folder").length
-		: unclassified.length;
 	const total = documents.length;
-	const ratio = total === 0 ? 0 : Math.round((unclassifiedCount / total) * 100) / 100;
+	const ratio = total === 0 ? 0 : Math.round((unclassified.length / total) * 100) / 100;
 
 	const unknownValues = [];
 	const duplicateTags = [];
@@ -656,42 +411,30 @@ module.exports.buildReport = (layout, input, {previous = null} = {}) => {
 		for (const d of c.duplicates) duplicateTags.push({documentId: doc.documentId, title: titleOf(doc), ...d});
 	}
 
-	const usesTags = ["split-shelves", "quadrant-cross", "matrix"].includes(layout);
-	const report = {
+	return {
 		project: input.project?.name ?? null,
 		projectId: input.project?.id ?? null,
-		layout,
-		layoutName: LAYOUT_NAMES[layout],
+		layout: "cross",
+		layoutName: "十字",
+		areaTitles: CROSS_AREA_TITLES,
 		summary: {
 			total,
-			unclassified: unclassifiedCount,
+			unclassified: unclassified.length,
 			unclassifiedRatio: ratio,
-			// 型を切り替える前の目安(この割合を超えたら、先に LLM でタグを見直す)
-			reviewRecommended: usesTags && ratio > RULES.reviewRatio,
+			// 十字で書き出す前の目安(この割合を超えたら、先に LLM でタグを見直す)
+			reviewRecommended: ratio > RULES.reviewRatio,
 			reviewRatio: RULES.reviewRatio,
 			inferred: placements.filter((p) => p.basis === "inferred").length,
 			areas,
 			slots
 		},
 		placements,
+		unclassified,
+		overriddenTags: overridden,
 		unknownValues,
 		duplicateTags,
 		notes
 	};
-	if (usesTags) {
-		report.unclassified = unclassified;
-		report.overriddenTags = overridden;
-	}
-	if (layout === "quadrant-cross" || layout === "matrix") report.overflow = overflow;
-	if (layout === "matrix") {
-		report.gaps = extra.gaps;
-		report.excludedCells = extra.excludedCells;
-		report.features = extra.features;
-		report.processes = extra.processes;
-	}
-	if (layout === "split-shelves") report.shelves = extra.shelves;
-	if (layout === "quadrant-cross") report.weeks = extra.weeks;
-	return report;
 };
 
 // ---- データベースから報告の材料を集める ----
@@ -712,20 +455,16 @@ const firstUploadedAt = async (ds, documentId, fallback) => {
 };
 
 /**
- * プロジェクトの資料を、おしながき順に、タグ・フォルダ名付きで集める。
- * アーカイブ済みの資料と、Miro に「出さない」にした資料は入れない(ボードに並ばないため)。
- * @returns {Promise<?{project: object, documents: object[], featureOrder: string[], excluded: number}>}
+ * プロジェクトの資料を、おしながき順に、タグ・フォルダ名付きで集める。アーカイブ済みの資料は入れない。
+ * @returns {Promise<?{project: object, documents: object[]}>}
  */
 module.exports.loadInput = async (projectId) => {
 	const ds = require("./datastore.js");
 	const Projects = require("./projects.js");
 	const ProjectManifest = require("./project-manifest.js");
-	const DocumentAliases = require("./document-aliases.js");
-	const TagOrder = require("./tag-order.js");
 	const project = await Projects.getProject(projectId);
 	if (project == null) return null;
 	const manifest = ProjectManifest.build(project, await Projects.getProjectTree(projectId));
-	const excludedAliases = new Set((await ds.all(`SELECT alias FROM miro_items WHERE project_id = ? AND state = 'excluded'`, [projectId])).map((r) => r.alias));
 	const placements = [];
 	for (const doc of manifest.rootDocuments) placements.push({doc, chain: []});
 	const walk = (folders, chain) => {
@@ -737,14 +476,8 @@ module.exports.loadInput = async (projectId) => {
 	};
 	walk(manifest.folders, []);
 	const documents = [];
-	let excluded = 0;
 	for (const {doc, chain} of placements) {
 		if (doc.archived || doc.entryFile == null) continue;
-		const alias = await DocumentAliases.aliasOf(doc.documentId);
-		if (alias != null && excludedAliases.has(alias)) {
-			excluded += 1;
-			continue;
-		}
 		const tags = (await ds.all(`SELECT tag FROM document_tags WHERE document_id = ? ORDER BY tag`, [doc.documentId])).map((r) => r.tag);
 		documents.push({
 			documentId: doc.documentId,
@@ -758,9 +491,5 @@ module.exports.loadInput = async (projectId) => {
 			subFolders: chain.slice(1).map((f) => f.name)
 		});
 	}
-	const featureOrder = (await TagOrder.listTagOrder())
-		.map((row) => row.tag)
-		.filter((tag) => /^機能[:：]/.test(tag))
-		.map((tag) => tag.replace(/^機能[:：]/, "").normalize("NFKC").trim());
-	return {project, documents, featureOrder, excluded};
+	return {project, documents};
 };

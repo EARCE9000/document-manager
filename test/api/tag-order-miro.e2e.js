@@ -1,9 +1,9 @@
 /*!
- * tag-order-miro.e2e.js : タグ体系の管理の「Miro の並べ方のタグをそろえる」(実ブラウザ)
+ * tag-order-miro.e2e.js : タグ体系の管理の「Miro の十字のタグをそろえる」(実ブラウザ)
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * Miro の並べ方の型で使う共通のタグ(docs/miro-layouts/layout-spec.md 2 章)を、決まった順で下書きに入れる。
+ * Miro に十字で書き出すときの振り分けに使う共通のタグ(docs/miro-layouts/layout-spec.md 2 章)を、決まった順で下書きに入れる。
  * ほかのタグの順は変えず、保存するまでは反映しない。
  *
  * 実行には Chromium が必要: `npx playwright install chromium`
@@ -15,7 +15,7 @@ const {loadKeys, BASE_URL} = require("./config.js");
 const keys = loadKeys();
 const admin = {Cookie: `${keys.sessionCookieName}=${keys.sessionCookie}`};
 
-test.describe.serial("タグ体系に Miro の並べ方のタグをそろえる", () => {
+test.describe.serial("タグ体系に Miro の十字のタグをそろえる", () => {
 	let saved;
 
 	test.beforeAll(async ({request}) => {

@@ -1,50 +1,79 @@
 /*!
- * miro-layout-plan.js : 型ごとの並べ方(枠の中のどこに置くか・区画の見出し・線)を計算する
+ * miro-layout-plan.js : 書き出すフレームの形と置き場所を計算する
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * どの資料をどの区画に置くかは miro-layout.js の buildReport() で決め、ここではその区画を枠の中の位置にする。
- * Miro には触らない。結果はレイアウトをまとめて当てる処理(miro-sync.js)にそのまま渡せる形:
- *   {items: [{documentId, x, y, color}], labels: [...], shapes: [...], frame: {width, height}}
- * 位置はすべて枠の左上からの中心の位置。labels・shapes は miro-sync.js の normalizeLayout() と同じ形。
+ * 書き出しは、ボードの目印(付箋)を基準にした向きで、毎回新しいフレームを置く。Miro には触らない。
+ *   right / left / up / down                              目印の横・上・下
+ *   upper-right / lower-right / upper-left / lower-left    目印の斜め(フレームの角を目印の角に向ける)
+ *   cross  十字。資料をタグで 4 つに分け(miro-layout.js)、斜め 4 つのフレームに出す。フレームの隙間が十字の線になる。
+ *          プロジェクトの概要カード(名前・説明・件数)は目印のすぐ下。どこにも当たらない資料は「未分類」のフレームを下に
+ * フレームの中は向きにかかわらず読む順(左上から右へ、行が埋まったら次の行)。フレームの形は向きに合わせる
+ * (横は横長、上下は縦長、斜めは正方形に近い)。
  *
- * 仕様は docs/miro-layouts/layout-spec.md の 4・7 章。区画に入りきらない「ほか n 件」の中身は、枠の下の
- * 「ほか n 件の中身」の段に、区画ごとの小見出しを付けて並べる(上から 管理 → 会議 → 未分類 → ほか n 件の中身)。
+ * ほかのもの(ボードにあるフレーム・付箋など)と重なるときは、向きの外側へずらす(同じ目印に何度書き出しても重ならない)。
+ * 位置: フレーム・目印・概要カードはボードの上の位置、フレームの中の資料は枠の左上からの中心の位置。
  */
 
 const MiroLayout = require("./miro-layout.js");
 
-// カードの見出しの色(図の色に合わせる)
+// カードの見出しの色(十字の区画ごと)
 const COLORS = Object.freeze({
 	purple: "#eeedfe",
 	pink: "#fbeaf0",
 	gray: "#f1efe8",
 	green: "#e1f5ee",
-	orange: "#faece7",
-	after: "#faeeda"
+	orange: "#faece7"
 });
 module.exports.COLORS = COLORS;
 
-const AREA_TITLES = Object.freeze({
-	upper_left: "左上: 要件定義〜設計",
-	lower_left: "左下: テスト〜リリース",
-	upper_right: "右上: 管理系",
-	lower_right: "右下: 会議",
-	table: "表",
-	left: "左半分: 管理系",
-	management: "管理",
-	meeting: "会議",
-	unclassified: "未分類"
+// ---- 向き ----
+const DIRECTIONS = Object.freeze(["right", "left", "up", "down", "upper-right", "lower-right", "upper-left", "lower-left", "cross"]);
+const DIRECTION_NAMES = Object.freeze({
+	"right": "右", "left": "左", "up": "上", "down": "下",
+	"upper-right": "右上", "lower-right": "右下", "upper-left": "左上", "lower-left": "左下",
+	"cross": "十字"
 });
+const DEFAULT_DIRECTION = "right";
+module.exports.DIRECTIONS = DIRECTIONS;
+module.exports.DIRECTION_NAMES = DIRECTION_NAMES;
+module.exports.DEFAULT_DIRECTION = DEFAULT_DIRECTION;
 
-const LINE_COLOR = "#333333";
+// 向きの書き方(付箋の 2 行目・CLI)。「右側」「右へ」「→」なども読む
+const DIRECTION_WORDS = Object.freeze({
+	"右": "right", "→": "right", "➡": "right",
+	"左": "left", "←": "left", "⬅": "left",
+	"上": "up", "↑": "up", "⬆": "up",
+	"下": "down", "↓": "down", "⬇": "down",
+	"右上": "upper-right", "↗": "upper-right",
+	"右下": "lower-right", "↘": "lower-right",
+	"左上": "upper-left", "↖": "upper-left",
+	"左下": "lower-left", "↙": "lower-left",
+	"十字": "cross", "十字型": "cross", "+": "cross", "✚": "cross", "十": "cross"
+});
+/**
+ * 向きの書き方を読む。読めなければ null
+ * @param {string} text 例: 「右」「(右側)」「右へ」「→」「upper-right」
+ */
+const parseDirection = (text) => {
+	let word = String(text ?? "").normalize("NFKC").trim().toLowerCase();
+	word = word.replace(/^[(\[]\s*/, "").replace(/\s*[)\]]$/, "").trim();
+	if (DIRECTIONS.includes(word)) return word;
+	if (DIRECTION_WORDS[word] != null) return DIRECTION_WORDS[word];
+	// 「右側」「右へ」「右に」「右方向」「右向き」「左上に出す」など
+	const stem = word.replace(/(側|へ|に|方向|向き|に出す|へ出す|出し)+$/, "").replace(/(側|へ|に|方向|向き)+$/, "");
+	return DIRECTION_WORDS[stem] ?? null;
+};
+module.exports.parseDirection = parseDirection;
 
-// 十字型の中心の概要カードに出す説明の長さの上限(超えたら切って「…」。カードからはみ出さないように)
+// ---- 十字の中心の概要カード ----
+
+// 概要カードに出す説明の長さの上限(超えたら切って「…」。カードからはみ出さないように)
 const SUMMARY_DESCRIPTION_MAX = 100;
 module.exports.SUMMARY_DESCRIPTION_MAX = SUMMARY_DESCRIPTION_MAX;
 /**
- * 十字型の中心の概要カードの文字。説明があれば「名前 / 説明 / 件数・最終更新」の 3 行、無ければ 1 行
- * (改行は Miro の見出しの文字の中で改行になる)
+ * 概要カードの文字。説明があれば「名前 / 説明 / 件数・最終更新」の 3 行、無ければ 1 行
+ * (改行は Miro の文字の中で改行になる)
  */
 const summaryText = (project, total, latest) => {
 	const name = project?.name ?? "";
@@ -56,394 +85,202 @@ const summaryText = (project, total, latest) => {
 	return `${name}\n${short}\n${stats}`;
 };
 module.exports.summaryText = summaryText;
+const SUMMARY = Object.freeze({width: 900, fontSize: 28});
 
-const label = (text, x, y, width, {fontSize = null, color = null, fillColor = null, bold = true, align = "left", link = null} = {}) =>
-	({text: [...String(text)].slice(0, 300).join(""), x, y, width: Math.max(40, width), fontSize, color, fillColor, bold, align, ...(link ? {link} : {})});
-// Miro の図形は幅・高さとも 8 以上。枠線の太さに 0 は指定できない(指定しなければ枠線は見えない)
-const MIN_SHAPE = 8;
-const shape = ({x, y, width, height, kind = "rectangle", text = "", fillColor = null, fillOpacity = null, borderColor = null, borderWidth = null, borderStyle = null, link = null}) =>
-	({shape: kind, text, x, y, width: Math.max(MIN_SHAPE, width), height: Math.max(MIN_SHAPE, height), fillColor, fillOpacity, borderColor, borderWidth, borderStyle, ...(link ? {link} : {})});
-/** 線(細い長方形)。x1,y1 から x2,y2 へ(縦か横) */
-const line = (x1, y1, x2, y2, {thickness = 8, color = LINE_COLOR} = {}) => shape({
-	x: (x1 + x2) / 2, y: (y1 + y2) / 2,
-	width: Math.max(thickness, Math.abs(x2 - x1)), height: Math.max(thickness, Math.abs(y2 - y1)),
-	fillColor: color
+// ---- フレームの中の並び ----
+
+/** 1 行に並べる枚数。横は横長(8 枚)、上下は縦長(3 枚)、斜めは正方形に近く */
+const columnsFor = (direction, count) => {
+	const n = Math.max(1, count);
+	if (direction === "right" || direction === "left") return Math.min(8, n);
+	if (direction === "up" || direction === "down") return Math.min(3, n);
+	return Math.min(6, Math.ceil(Math.sqrt(n)));
+};
+module.exports.columnsFor = columnsFor;
+
+/**
+ * フレームの中に、読む順で並べる
+ * @param {Array<{documentId: string, height: number, color?: ?string}>} documents
+ * @returns {{items: Array<{documentId: string, x: number, y: number, color: ?string}>, width: number, height: number}}
+ */
+const planFrame = (direction, documents, G) => {
+	const columns = columnsFor(direction, documents.length);
+	const W = G.itemWidth;
+	const items = [];
+	let y = G.padding;
+	for (let i = 0; i < documents.length; i += columns) {
+		const row = documents.slice(i, i + columns);
+		const rowHeight = Math.max(...row.map((d) => Number(d.height) || W * G.defaultAspect));
+		row.forEach((d, index) => items.push({
+			documentId: d.documentId,
+			x: G.padding + index * (W + G.gapX) + W / 2,
+			y: y + (Number(d.height) || W * G.defaultAspect) / 2,
+			color: d.color ?? null
+		}));
+		y += rowHeight + G.captionHeight + G.gapY;
+	}
+	return {
+		items,
+		width: Math.ceil(G.padding * 2 + columns * W + (columns - 1) * G.gapX),
+		height: Math.ceil(Math.max(y - G.gapY + G.padding, 400))
+	};
+};
+module.exports.planFrame = planFrame;
+
+// ---- 置き場所 ----
+
+const boxOf = (left, top, width, height) => ({left, top, right: left + width, bottom: top + height, width, height});
+const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+module.exports.overlaps = overlaps;
+
+/**
+ * 目印に対するフレームの左上。横は上の端を、上下は左の端を目印にそろえ、斜めはフレームの角を目印の角に向ける
+ * @param {{left: number, top: number, right: number, bottom: number}} anchor
+ */
+const slotFor = (anchor, direction, {width, height}, gap) => {
+	switch (direction) {
+		case "right": return {left: anchor.right + gap, top: anchor.top};
+		case "left": return {left: anchor.left - gap - width, top: anchor.top};
+		case "up": return {left: anchor.left, top: anchor.top - gap - height};
+		case "down": return {left: anchor.left, top: anchor.bottom + gap};
+		case "upper-right": return {left: anchor.right + gap, top: anchor.top - gap - height};
+		case "lower-right": return {left: anchor.right + gap, top: anchor.bottom + gap};
+		case "upper-left": return {left: anchor.left - gap - width, top: anchor.top - gap - height};
+		case "lower-left": return {left: anchor.left - gap - width, top: anchor.bottom + gap};
+		default: throw new Error(`unknown direction: ${direction}`);
+	}
+};
+
+// ずらす向き(斜めは横へ。同じ段のまま外へ出す)
+const PUSH = Object.freeze({
+	"right": [1, 0], "left": [-1, 0], "up": [0, -1], "down": [0, 1],
+	"upper-right": [1, 0], "lower-right": [1, 0], "upper-left": [-1, 0], "lower-left": [-1, 0], "cross": [1, 0]
 });
 
 /**
- * @param {string} layout
- * @param {object} input miro-layout.js の loadInput() と同じ形(ボードに出ている資料だけにしてから渡す)
- * @param {{geometry: {itemWidth: number, gapX: number, gapY: number, captionHeight: number, padding: number, headerHeight: number, defaultAspect: number},
- *          sizes?: Map<string, {width: number, height: number}>, projectUrl?: ?string}} options
+ * まとまり(フレームとカードの組)が何とも重ならなくなるまで、向きの外側へずらす
+ * @param {Array<{left, top, right, bottom}>} boxes まとまりの中の範囲
+ * @returns {{dx: number, dy: number}}
  */
-module.exports.buildPlan = (layout, input, {geometry, sizes = new Map(), projectUrl = null, previous = null} = {}) => {
-	const report = MiroLayout.buildReport(layout, input, {previous});
-	const G = geometry;
-	const W = G.itemWidth;
-	const cw = W + G.gapX;
-	const defaultHeight = W * G.defaultAspect;
-	const heightOf = (documentId) => Number(sizes.get(documentId)?.height) || defaultHeight;
-	// カード 1 段分の高さ(見出しと段の間を含む)
-	const lineHeight = (ids) => Math.max(...ids.map(heightOf), 1) + G.captionHeight + G.gapY;
-	const fixedLine = defaultHeight + G.captionHeight + G.gapY;
-	const items = [];
-	// 区画の範囲(枠の左上から。LLM が置き場所を考えるときの地図に使う)
-	const areas = [];
-	const addArea = (id, title, left, top, right, bottom) => areas.push({
-		id, title, left: Math.round(left), top: Math.round(top), right: Math.round(right), bottom: Math.round(Math.max(top, bottom))
-	});
-	const labels = [];
-	const shapes = [];
-	const placedIds = new Set();
-	const put = (documentId, x, y, color) => {
-		items.push({documentId, x, y, color: color ?? null});
-		placedIds.add(documentId);
-	};
-	/** 左上(x0, y0)から、columns 枚ずつ折り返して置く。置いた下端(次に置ける y)を返す */
-	const grid = (ids, x0, y0, columns, colorOf = () => null) => {
-		let y = y0;
-		for (let i = 0; i < ids.length; i += columns) {
-			const row = ids.slice(i, i + columns);
-			row.forEach((id, index) => put(id, x0 + index * cw + W / 2, y + heightOf(id) / 2, colorOf(id)));
-			y += lineHeight(row);
-		}
-		return y;
-	};
-	/** 「ほか n 件」のカード(資料ではなく Document Manager が置く図形。プロジェクトの画面へのリンク) */
-	const overflowCard = (x, y, count) => shapes.push(shape({
-		x, y, width: W, height: Math.min(defaultHeight, 240), kind: "round_rectangle",
-		text: `ほか ${count} 件`, fillColor: "#ffffff", borderColor: "#888888", borderWidth: 2, borderStyle: "dashed", link: projectUrl
-	}));
-	const placementsIn = (area) => report.placements.filter((p) => p.area === area);
-	const meetingColor = (p) => (p.slot === "会議:定例" ? COLORS.green : COLORS.orange);
-	const byId = new Map(report.placements.map((p) => [p.documentId, p]));
-	const hidden = new Set((report.overflow ?? []).flatMap((o) => o.documentIds));
-	let contentRight = 0;
-
-	/** 枠の下の段(管理 → 会議 → 未分類 → ほか n 件の中身)。列の数は枠の幅に合わせる */
-	const bottomStrips = (top, width, strips) => {
-		const columns = Math.max(4, Math.floor((width - G.padding * 2 + G.gapX) / cw));
-		let y = top;
-		for (const strip of strips) {
-			if (strip.ids.length === 0 && !strip.always) continue;
-			const stripTop = y;
-			labels.push(label(strip.title, G.padding + (width - G.padding * 2) / 2, y + G.headerHeight / 2, width - G.padding * 2, {fontSize: strip.small ? null : 36}));
-			y += G.headerHeight;
-			y = strip.ids.length === 0 ? y + 120 : grid(strip.ids, G.padding, y, columns, strip.colorOf);
-			addArea(`strip:${strip.title}`, strip.title, G.padding, stripTop, width - G.padding, y - G.gapY);
-		}
-		return y;
-	};
-	const overflowStrips = () => (report.overflow ?? []).map((o) => ({
-		title: `${o.slot ? o.slot : AREA_TITLES[o.area] ?? o.area} のほか ${o.count} 件`,
-		ids: o.documentIds,
-		colorOf: (id) => colorOfPlacement(byId.get(id)),
-		small: true
-	}));
-	let colorOfPlacement = () => null;
-	let width = 0;
-	let height = 0;
-
-	if (layout === "custom") {
-		// ユーザーカスタム: 前に置いた資料はその場所のまま(Document Manager は動かさない)。
-		// 新しい資料は、いまある資料の下に 6 枚ずつ並べて足す(置き場所は AI に指示して決めてもらう)。見出しの色は変えない
-		const columns = 6;
-		let right = G.padding;
-		let bottom = G.padding;
-		const fresh = [];
-		for (const p of report.placements) {
-			const before = previous?.get(p.documentId);
-			if (before == null) {
-				fresh.push(p.documentId);
-				continue;
+const clearOf = (boxes, direction, obstacles, gap) => {
+	const [px, py] = PUSH[direction];
+	let dx = 0;
+	let dy = 0;
+	for (let i = 0; i < 1000; i++) {
+		const moved = boxes.map((b) => ({left: b.left + dx, right: b.right + dx, top: b.top + dy, bottom: b.bottom + dy}));
+		let step = 0;
+		for (const o of obstacles) {
+			for (const b of moved) {
+				if (!overlaps(b, o)) continue;
+				// 重なりを抜けるのに要る長さ(間を gap 空ける)
+				const need = px > 0 ? o.right + gap - b.left : px < 0 ? b.right - (o.left - gap) : py > 0 ? o.bottom + gap - b.top : b.bottom - (o.top - gap);
+				step = Math.max(step, need);
 			}
-			items.push({documentId: p.documentId, x: before.x, y: before.y, color: undefined});
-			placedIds.add(p.documentId);
-			right = Math.max(right, before.x + W / 2);
-			bottom = Math.max(bottom, before.y + heightOf(p.documentId) / 2 + G.captionHeight + G.gapY);
 		}
-		let y = previous != null && placedIds.size > 0 ? bottom : G.padding;
-		for (let i = 0; i < fresh.length; i += columns) {
-			const row = fresh.slice(i, i + columns);
-			row.forEach((id, index) => {
-				items.push({documentId: id, x: G.padding + index * cw + W / 2, y: y + heightOf(id) / 2, color: undefined});
-				placedIds.add(id);
-			});
-			right = Math.max(right, G.padding + row.length * cw - G.gapX);
-			y += lineHeight(row);
-		}
-		width = Math.max(right + G.padding, G.padding * 2 + columns * cw - G.gapX);
-		height = Math.max(Math.max(y, bottom) - G.gapY + G.padding, 600);
-	} else if (layout === "folder-columns") {
-		const colWidth = 2 * W + G.gapX;
-		const colGap = 120;
-		const columns = [];
-		for (const p of report.placements) {
-			let column = columns.find((c) => c.name === p.area && c.folderId === (p.folderId ?? null));
-			if (column == null) {
-				column = {name: p.area, folderId: p.folderId ?? null, placements: []};
-				columns.push(column);
+		if (step <= 0) return {dx, dy};
+		dx += px * Math.ceil(step);
+		dy += py * Math.ceil(step);
+	}
+	return {dx, dy};
+};
+
+/**
+ * 書き出しの配置をまとめて決める。
+ * @param {object} options
+ * @param {Array<{direction: string, title: string, documents: Array<{documentId: string, height: number}>}>} options.groups
+ *   出す順。direction が cross のものは、input のタグで 4 つに分ける
+ * @param {?{left: number, top: number, right: number, bottom: number}} options.anchor 目印の範囲(ボードの上)。
+ *   null なら空いている所(free の左上)に、向きの形のまま出す
+ * @param {?{left: number, top: number}} options.free 目印が無いときの置き場所(ボードの中身の右)
+ * @param {Array<{left, top, right, bottom}>} options.obstacles ボードにあるもの(重ねない)。目印そのものは入れない
+ * @param {{project: object, documents: object[]}} options.input miro-layout.js の loadInput() と同じ形(十字の振り分けに使う)
+ * @param {object} options.geometry miro-export.js の LAYOUT
+ * @returns {{frames: Array<{title: string, direction: string, area: ?string, left: number, top: number, width: number, height: number,
+ *            items: Array<{documentId: string, x: number, y: number, color: ?string}>}>,
+ *            cards: Array<{text: string, x: number, y: number, width: number, fontSize: number}>, reports: object[]}}
+ */
+module.exports.planExport = ({groups, anchor = null, free = null, obstacles = [], input = {documents: []}, geometry: G}) => {
+	const frames = [];
+	const cards = [];
+	const reports = [];
+	const blocked = anchor == null ? [] : [...obstacles];
+	// 目印が無いときは、仮の目印(大きさ 0)を原点に置いて組み、最後に空いている所へまとめて動かす
+	const base = anchor ?? {left: 0, top: 0, right: 0, bottom: 0};
+	const gap = G.anchorGap;
+	const inputOf = new Map((input.documents ?? []).map((d) => [d.documentId, d]));
+
+	for (const group of groups) {
+		const unit = [];
+		if (group.direction === "cross") {
+			const docs = group.documents.map((d) => inputOf.get(d.documentId) ?? {documentId: d.documentId, entryFile: d.title ?? "", tags: [], folderNames: []});
+			const report = MiroLayout.buildCrossReport({project: input.project, documents: docs});
+			reports.push(report);
+			const sizeOf = new Map(group.documents.map((d) => [d.documentId, d]));
+			const colorOf = (p) => ({upper_left: COLORS.purple, lower_left: COLORS.pink, upper_right: COLORS.gray}[p.area]
+				?? (p.area === "lower_right" ? (p.slot === "会議:定例" ? COLORS.green : COLORS.orange) : null));
+			const planned = {};
+			for (const area of MiroLayout.CROSS_AREAS) {
+				const entries = report.placements.filter((p) => p.area === area);
+				if (entries.length === 0) continue;
+				const direction = {upper_left: "upper-left", upper_right: "upper-right", lower_left: "lower-left", lower_right: "lower-right", unclassified: "down"}[area];
+				planned[area] = {direction, ...planFrame(direction, entries.map((p) => ({documentId: p.documentId, height: sizeOf.get(p.documentId)?.height, color: colorOf(p)})), G)};
 			}
-			column.placements.push(p);
-		}
-		// 列の中は、そのフォルダの直下の資料 → 下の階層(▼ の小見出しごと)の順。下の階層の中はおしながき順のまま
-		for (const column of columns) {
-			const order = [null, ...new Set(column.placements.map((p) => p.slot).filter((slot) => slot != null))];
-			column.placements = order.flatMap((slot) => column.placements.filter((p) => p.slot === slot));
-		}
-		let bottom = G.padding;
-		columns.forEach((column, index) => {
-			const left = G.padding + index * (colWidth + colGap);
-			let y = G.padding;
-			labels.push(label(`■ ${column.name}`, left + colWidth / 2, y + G.headerHeight / 2, colWidth));
-			y += G.headerHeight;
-			let i = 0;
-			while (i < column.placements.length) {
-				const slot = column.placements[i].slot;
-				const group = [];
-				while (i < column.placements.length && column.placements[i].slot === slot) group.push(column.placements[i++].documentId);
-				if (slot) {
-					labels.push(label(`▼ ${slot}`, left + colWidth / 2, y + G.headerHeight / 2, colWidth, {bold: false}));
-					y += G.headerHeight;
-				}
-				y = grid(group, left, y, 2);
+			// 概要カード(目印のすぐ下)。下の 2 つのフレームは、その下から
+			const latest = docs.map((d) => String(d.modified ?? "")).sort().pop()?.slice(0, 10) ?? "";
+			const text = summaryText(input.project, group.documents.length, latest);
+			const cardHeight = text.split("\n").length * SUMMARY.fontSize * 1.6 + 40;
+			const cx = (base.left + base.right) / 2;
+			const card = {text, x: cx, y: base.bottom + gap / 2 + cardHeight / 2, width: SUMMARY.width, height: Math.ceil(cardHeight), fontSize: SUMMARY.fontSize};
+			const cardBox = {left: cx - SUMMARY.width / 2, right: cx + SUMMARY.width / 2, top: base.bottom + gap / 2, bottom: base.bottom + gap / 2 + cardHeight};
+			const lowerAnchor = {...base, bottom: cardBox.bottom};
+			const at = {};
+			for (const area of ["upper_left", "upper_right", "lower_left", "lower_right"]) {
+				if (planned[area] == null) continue;
+				const ref = area.startsWith("lower") ? lowerAnchor : base;
+				at[area] = slotFor(ref, planned[area].direction, planned[area], gap);
 			}
-			bottom = Math.max(bottom, y);
-			addArea(`column:${column.name}`, `■ ${column.name}`, left, G.padding, left + colWidth, y - G.gapY);
-		});
-		width = G.padding * 2 + Math.max(1, columns.length) * colWidth + Math.max(0, columns.length - 1) * colGap;
-		height = bottom - G.gapY + G.padding;
-	} else if (layout === "timeline") {
-		const perRow = MiroLayout.RULES.timelinePerRow;
-		const labelWidth = 220;
-		const x0 = G.padding + labelWidth;
-		width = x0 + perRow * cw - G.gapX + G.padding;
-		const colorHex = {purple: COLORS.purple, pink: COLORS.pink, gray: COLORS.gray, green: COLORS.green, orange: COLORS.orange};
-		let y = G.padding;
-		const months = Object.keys(report.summary.areas);
-		const colorOf = (id) => colorHex[byId.get(id).color] ?? null;
-		const rowsOf = [];
-		months.forEach((month) => {
-			const ids = placementsIn(month).map((p) => p.documentId);
-			labels.push(label(month, G.padding + labelWidth / 2, y + 40, labelWidth - 20, {fontSize: 36}));
-			// どの月も 7 枚で折り返す(連動で足すときは、空いていればここ、無ければ枠の下。miro-sync.js が決める)
-			const bottom = ids.length === 0 ? y + 200 : grid(ids, x0, y, perRow, colorOf);
-			rowsOf.push({month, top: y, bottom});
-			y = bottom;
-		});
-		for (const row of rowsOf) addArea(`month:${row.month}`, row.month, G.padding, row.top, width - G.padding, row.bottom - G.gapY / 2);
-		// 月の区切りの線は、いちばん長い行に合わせる
-		for (const {bottom} of rowsOf) shapes.push(line(G.padding, bottom - G.gapY / 2, width - G.padding, bottom - G.gapY / 2, {color: "#dddddd"}));
-		height = Math.max(y - G.gapY + G.padding, 600);
-	} else if (layout === "split-shelves") {
-		const leftColumns = 3;
-		const perRow = MiroLayout.RULES.shelfPerRow;
-		const leftWidth = leftColumns * cw - G.gapX;
-		const divider = G.padding + leftWidth + 100;
-		const rightLeft = divider + 100;
-		const rightWidth = perRow * cw - G.gapX;
-		width = rightLeft + rightWidth + G.padding;
-		const shelfColor = (name) => (name === "準備" ? COLORS.purple : name === "実施後" ? COLORS.after : COLORS.pink);
-		colorOfPlacement = (p) => (p.area === "left" ? COLORS.gray : p.area === "shelf" ? shelfColor(p.slot.replace(/^段階:/, "")) : p.area === "meeting" ? meetingColor(p) : null);
-		let leftY = G.padding;
-		labels.push(label(AREA_TITLES.left, G.padding + leftWidth / 2, leftY + G.headerHeight / 2, leftWidth, {fontSize: 36}));
-		leftY = grid(placementsIn("left").map((p) => p.documentId), G.padding, leftY + G.headerHeight, leftColumns, () => COLORS.gray);
-		addArea("left", AREA_TITLES.left, G.padding, G.padding, G.padding + leftWidth, leftY - G.gapY);
-		let rightY = G.padding;
-		labels.push(label("右半分: 棚(準備 → 実施 → 実施後)", rightLeft + rightWidth / 2, rightY + G.headerHeight / 2, rightWidth, {fontSize: 36}));
-		rightY += G.headerHeight;
-		const shelves = [
-			...(report.shelves ?? []).map((name) => ({title: name, ids: placementsIn("shelf").filter((p) => p.slot === `段階:${name}`).map((p) => p.documentId)})),
-			{title: "会議", ids: placementsIn("meeting").map((p) => p.documentId)},
-			{title: "未分類", ids: placementsIn("unclassified").map((p) => p.documentId)}
-		];
-		for (const shelf of shelves) {
-			if (shelf.ids.length === 0) continue;
-			labels.push(label(shelf.title, rightLeft + rightWidth / 2, rightY + G.headerHeight / 2, rightWidth, {bold: true}));
-			const shelfTop = rightY;
-			rightY = grid(shelf.ids, rightLeft, rightY + G.headerHeight, perRow, (id) => colorOfPlacement(byId.get(id)));
-			addArea(`shelf:${shelf.title}`, `棚: ${shelf.title}`, rightLeft, shelfTop, rightLeft + rightWidth, rightY - G.gapY / 2);
-			// 棚の板
-			shapes.push(line(rightLeft, rightY - G.gapY / 2, rightLeft + rightWidth, rightY - G.gapY / 2, {thickness: 10}));
+			if (planned.unclassified != null) {
+				const lowerBottom = Math.max(cardBox.bottom, ...["lower_left", "lower_right"].filter((a) => at[a]).map((a) => at[a].top + planned[a].height));
+				at.unclassified = {left: at.lower_left?.left ?? base.left - gap - planned.unclassified.width, top: lowerBottom + gap};
+			}
+			for (const area of MiroLayout.CROSS_AREAS) {
+				if (planned[area] == null) continue;
+				unit.push({
+					kind: "frame", title: `${group.title} / ${MiroLayout.CROSS_AREA_TITLES[area]}`, direction: planned[area].direction, area,
+					...boxOf(at[area].left, at[area].top, planned[area].width, planned[area].height), items: planned[area].items
+				});
+			}
+			unit.push({kind: "card", ...cardBox, card});
+		} else {
+			const plan = planFrame(group.direction, group.documents, G);
+			const slot = slotFor(base, group.direction, plan, gap);
+			unit.push({kind: "frame", title: group.title, direction: group.direction, area: null, ...boxOf(slot.left, slot.top, plan.width, plan.height), items: plan.items});
 		}
-		const bottom = Math.max(leftY, rightY);
-		shapes.push(line(divider, G.padding, divider, bottom - G.gapY));
-		height = Math.max(bottom - G.gapY + G.padding, 600);
-	} else if (layout === "quadrant-cross") {
-		colorOfPlacement = (p) => ({upper_left: COLORS.purple, lower_left: COLORS.pink, upper_right: COLORS.gray}[p.area] ?? (p.area === "lower_right" ? meetingColor(p) : null));
-		const stepCapacity = MiroLayout.RULES.crossStepCapacity;
-		const stepLabel = 60;
-		// 区画の見出しは十字の中心の周りに、外向きの矢印を付けて置く(どちらに何があるか分かるように)。
-		// そのため横線の上下に帯を空ける(見出しと中心の概要カードが資料と重ならないように)
-		// 中心の概要カードは説明が入ると数行になるので、その分も空ける
-		const band = 230;
-		const areaLabelOffset = 160;
-		const areaLabelWidth = 900;
-		const areaLabelStyle = {fontSize: 40, color: "#1e3a8a"};
-		const stepHeight = stepLabel + fixedLine;
-		const upperLeftWidth = (stepCapacity + 2) * cw - G.gapX;
-		const upperRightColumns = 3;
-		const upperRightWidth = upperRightColumns * cw - G.gapX;
-		const upperHeight = 3 * stepHeight;
-		const cx = G.padding + upperLeftWidth + 100;
-		const rightLeft = cx + 100;
-		// 横線の位置は、上の 2 区画を置いてから決める(縦長の資料で段が高くなることがあるため)
-		let cy = G.padding + upperHeight - G.gapY + band;
-		let lowerTop = cy + band;
-		const colorOf = (id) => colorOfPlacement(byId.get(id));
-
-		// 左上: 中心へ下りる階段(要件定義 → 基本設計 → 詳細設計)。段の大きさは固定で、入りきらない分は「ほか n 件」
-		const stepRows = (steps, top, offsets, fixed) => {
-			let y = top;
-			steps.forEach((step, index) => {
-				const left = G.padding + offsets[index] * cw;
-				const entries = report.placements.filter((p) => p.step === step);
-				labels.push(label(step, left + (stepCapacity * cw) / 2, y + stepLabel / 2, stepCapacity * cw - G.gapX, {bold: true}));
-				const shown = entries.filter((p) => !hidden.has(p.documentId)).map((p) => p.documentId);
-				if (fixed) {
-					shown.forEach((id, i) => put(id, left + i * cw + W / 2, y + stepLabel + heightOf(id) / 2, colorOf(id)));
-					const overflow = (report.overflow ?? []).find((o) => o.slot === `工程:${step}`);
-					if (overflow) overflowCard(left + shown.length * cw + W / 2, y + stepLabel + Math.min(defaultHeight, 240) / 2, overflow.count);
-					// 枚数は固定。縦長の資料(画像など)があるときだけ、その段を高くする(重ならないように)
-					y += stepLabel + Math.max(fixedLine, lineHeight(shown));
-				} else {
-					// 資料の無い工程は、見出しの分だけ空ける(下へ伸ばす区画なので、空の段で間延びさせない)
-					y = shown.length === 0 ? y + stepLabel + 120 : grid(shown, left, y + stepLabel, stepCapacity, colorOf);
-				}
-			});
-			return y;
-		};
-		const upperLeftBottom = stepRows(["要件定義", "基本設計", "詳細設計"], G.padding, [0, 1, 2], true);
-		// 右上: 管理系の格子(大きさ固定)
-		const upperRight = placementsIn("upper_right").filter((p) => !hidden.has(p.documentId)).map((p) => p.documentId);
-		const rightOverflow = (report.overflow ?? []).find((o) => o.area === "upper_right");
-		let upperRightY = G.padding;
-		for (let i = 0; i < upperRight.length + (rightOverflow ? 1 : 0); i += upperRightColumns) {
-			const row = upperRight.slice(i, i + upperRightColumns);
-			row.forEach((id, index) => put(id, rightLeft + index * cw + W / 2, upperRightY + heightOf(id) / 2, COLORS.gray));
-			if (rightOverflow && row.length < upperRightColumns) overflowCard(rightLeft + row.length * cw + W / 2, upperRightY + Math.min(defaultHeight, 240) / 2, rightOverflow.count);
-			upperRightY += Math.max(fixedLine, lineHeight(row));
+		// 重なるなら外側へずらす(十字はまとめて右へ。目印は真ん中にあるので、ぶつかる相手に数えない)
+		const against = group.direction === "cross" || anchor == null ? blocked : [...blocked, anchor];
+		const {dx, dy} = clearOf(unit, group.direction, against, G.frameGap);
+		for (const u of unit) {
+			const moved = {...u, left: u.left + dx, right: u.right + dx, top: u.top + dy, bottom: u.bottom + dy};
+			blocked.push(moved);
+			if (u.kind === "frame") frames.push(moved);
+			else cards.push({...u.card, x: u.card.x + dx, y: u.card.y + dy});
 		}
-
-		cy = Math.max(cy, upperLeftBottom - G.gapY + band, upperRightY - G.gapY + band);
-		lowerTop = cy + band;
-		// 区画の見出し: 中心の縦線をはさんで、左は右寄せ・右は左寄せ。横線のすぐ上と下
-		const leftOfCentre = cx - 40 - areaLabelWidth / 2;
-		const rightOfCentre = cx + 40 + areaLabelWidth / 2;
-		labels.push(label(`↖ ${AREA_TITLES.upper_left}`, leftOfCentre, cy - areaLabelOffset, areaLabelWidth, {...areaLabelStyle, align: "right"}));
-		labels.push(label(`${AREA_TITLES.upper_right} ↗`, rightOfCentre, cy - areaLabelOffset, areaLabelWidth, {...areaLabelStyle, align: "left"}));
-		labels.push(label(`↙ ${AREA_TITLES.lower_left}`, leftOfCentre, cy + areaLabelOffset, areaLabelWidth, {...areaLabelStyle, align: "right"}));
-		// 左下: 横線で上下対称に、中心から外へ戻る階段(単体テスト → 結合テスト → 受入テスト → リリース → 運用)。下へ伸びる
-		const lowerLeftBottom = stepRows(["単体テスト", "結合テスト", "受入テスト", "リリース", "運用"], lowerTop, [2, 1, 0, 0, 0], false);
-
-		// 右下: 縦 = 週(古い週が上)、横 = 月〜金(土日に会議があれば列を足す)。同じ日は縦に重ねる
-		const meetings = placementsIn("lower_right");
-		const weekend = meetings.some((p) => p.weekday === "土" || p.weekday === "日");
-		const days = weekend ? ["月", "火", "水", "木", "金", "土", "日"] : ["月", "火", "水", "木", "金"];
-		const weekLabel = 200;
-		const lowerRightWidth = weekLabel + days.length * cw - G.gapX;
-		labels.push(label(`${AREA_TITLES.lower_right}(週 × 曜日) ↘`, rightOfCentre, cy + areaLabelOffset, areaLabelWidth, {...areaLabelStyle, align: "left"}));
-		const dayTop = lowerTop;
-		days.forEach((day, i) => labels.push(label(day, rightLeft + weekLabel + i * cw + W / 2, dayTop + 30, W, {align: "center"})));
-		let y = dayTop + 70;
-		const weeks = [];
-		if ((report.weeks ?? []).length > 0) {
-			const first = new Date(`${report.weeks[0]}T00:00:00Z`);
-			const last = new Date(`${report.weeks[report.weeks.length - 1]}T00:00:00Z`);
-			for (let t = first.getTime(); t <= last.getTime(); t += 7 * 86400000) weeks.push(new Date(t).toISOString().slice(0, 10));
-		}
-		for (const week of weeks) {
-			labels.push(label(`${week.slice(5).replace("-", "/")} の週`, rightLeft + weekLabel / 2, y + 30, weekLabel - 20, {bold: false}));
-			let rowBottom = y + 200;
-			days.forEach((day, i) => {
-				let cellY = y;
-				for (const p of meetings.filter((m) => m.week === week && m.weekday === day)) {
-					put(p.documentId, rightLeft + weekLabel + i * cw + W / 2, cellY + heightOf(p.documentId) / 2, meetingColor(p));
-					cellY += heightOf(p.documentId) + G.captionHeight + G.gapY;
-				}
-				rowBottom = Math.max(rowBottom, cellY);
-			});
-			y = rowBottom;
-		}
-		const lowerRightBottom = y;
-
-		// 十字の線と、中心のプロジェクトの概要カード
-		const right = rightLeft + Math.max(upperRightWidth, lowerRightWidth);
-		const lowerBottom = Math.max(lowerLeftBottom, lowerRightBottom, lowerTop + 400);
-		shapes.push(line(cx, G.padding, cx, lowerBottom));
-		addArea("upper_left", AREA_TITLES.upper_left, G.padding, G.padding, cx, cy);
-		addArea("upper_right", AREA_TITLES.upper_right, cx, G.padding, right, cy);
-		addArea("lower_left", AREA_TITLES.lower_left, G.padding, cy, cx, lowerBottom);
-		addArea("lower_right", AREA_TITLES.lower_right, cx, cy, right, lowerBottom);
-		shapes.push(line(G.padding, cy, right, cy));
-		const total = input.documents.length;
-		const latest = input.documents.map((d) => String(d.modified ?? "")).sort().pop()?.slice(0, 10) ?? "";
-		labels.push(label(summaryText(input.project, total, latest), cx, cy, 900,
-			{fontSize: 28, fillColor: "#ffffff", align: "center", link: projectUrl}));
-
-		width = right + G.padding;
-		contentRight = width;
-		const stripsTop = lowerBottom + 120;
-		const bottom = bottomStrips(stripsTop, width, [
-			{title: AREA_TITLES.unclassified, ids: placementsIn("unclassified").map((p) => p.documentId)},
-			...overflowStrips()
-		]);
-		height = Math.max(bottom - G.gapY + G.padding, lowerBottom + G.padding);
-	} else if (layout === "matrix") {
-		colorOfPlacement = (p) => (p.area === "table" ? COLORS.purple : p.area === "management" ? COLORS.gray : p.area === "meeting" ? meetingColor(p) : null);
-		const featureWidth = 300;
-		const cellWidth = 2 * cw;
-		const headerHeight = 80;
-		const features = report.features ?? [];
-		const processes = report.processes ?? [];
-		const left0 = G.padding + featureWidth;
-		const top0 = G.padding + headerHeight;
-		labels.push(label("機能 \\ 工程", G.padding + featureWidth / 2, G.padding + headerHeight / 2, featureWidth - 20));
-		processes.forEach((process, c) => labels.push(label(process, left0 + c * cellWidth + cellWidth / 2, G.padding + headerHeight / 2, cellWidth - G.gapX, {align: "center"})));
-		// 行の高さは変えない(縦長の資料があるときだけ、その行を高くする)
-		let top = top0;
-		features.forEach((feature) => {
-			const rowIds = report.placements.filter((p) => p.area === "table" && p.feature === feature && !hidden.has(p.documentId)).map((p) => p.documentId);
-			const rowHeight = Math.max(fixedLine, lineHeight(rowIds));
-			labels.push(label(feature, G.padding + featureWidth / 2, top + rowHeight / 2, featureWidth - 20));
-			processes.forEach((process, c) => {
-				const left = left0 + c * cellWidth;
-				const cellCentre = {x: left + cellWidth / 2 - G.gapX / 2, y: top + (rowHeight - G.gapY) / 2};
-				addArea(`cell:機能:${feature} × 工程:${process}`, `機能:${feature} × 工程:${process}`, left, top, left + cellWidth - G.gapX, top + rowHeight - G.gapY);
-				const excluded = (report.excludedCells ?? []).some((e) => e.feature === feature && e.process === process);
-				const entries = report.placements.filter((p) => p.area === "table" && p.feature === feature && p.process === process);
-				if (entries.length === 0) {
-					shapes.push(excluded
-						? shape({...cellCentre, width: cellWidth - G.gapX, height: rowHeight - G.gapY, text: "対象外", fillColor: "#e5e7eb", fillOpacity: 1})
-						: shape({...cellCentre, width: cellWidth - G.gapX, height: rowHeight - G.gapY, text: "無し", fillOpacity: 0, borderColor: "#dc2626", borderWidth: 2, borderStyle: "dashed"}));
-					return;
-				}
-				const shown = entries.filter((p) => !hidden.has(p.documentId));
-				shown.forEach((p, i) => put(p.documentId, left + i * cw + W / 2, top + heightOf(p.documentId) / 2, COLORS.purple));
-				const overflow = (report.overflow ?? []).find((o) => o.slot === `機能:${feature} × 工程:${process}`);
-				if (overflow) overflowCard(left + shown.length * cw + W / 2, top + Math.min(defaultHeight, 240) / 2, overflow.count);
-			});
-			shapes.push(line(G.padding, top + rowHeight - G.gapY / 2, left0 + processes.length * cellWidth - G.gapX, top + rowHeight - G.gapY / 2, {color: "#dddddd"}));
-			top += rowHeight;
-		});
-		width = Math.max(left0 + processes.length * cellWidth - G.gapX + G.padding, G.padding * 2 + 4 * cw);
-		const tableBottom = top;
-		addArea("table", "表(行 = 機能、列 = 工程)", G.padding, G.padding, left0 + processes.length * cellWidth - G.gapX, tableBottom - G.gapY);
-		const bottom = bottomStrips(tableBottom + 80, width, [
-			{title: AREA_TITLES.management, ids: placementsIn("management").map((p) => p.documentId), colorOf: () => COLORS.gray},
-			{title: AREA_TITLES.meeting, ids: placementsIn("meeting").map((p) => p.documentId), colorOf: (id) => meetingColor(byId.get(id))},
-			{title: AREA_TITLES.unclassified, ids: placementsIn("unclassified").map((p) => p.documentId)},
-			...overflowStrips()
-		]);
-		height = Math.max(bottom - G.gapY + G.padding, 600);
 	}
 
-	// 区画に置けなかった資料が残らないように(念のため。どの型でも全部の資料をどこかに置く)
-	const leftovers = input.documents.map((d) => d.documentId).filter((id) => !placedIds.has(id));
-	if (leftovers.length > 0) {
-		const top = height - G.padding + G.gapY;
-		const bottom = bottomStrips(top, Math.max(width, contentRight), [{title: "そのほか", ids: leftovers}]);
-		height = bottom - G.gapY + G.padding;
+	// 目印が無いとき: まとめて、ボードの中身の右の空いている所へ
+	if (anchor == null && (frames.length > 0 || cards.length > 0)) {
+		const all = [...frames, ...cards.map((c) => ({left: c.x - c.width / 2, top: c.y - c.height / 2}))];
+		const minLeft = Math.min(...all.map((b) => b.left));
+		const minTop = Math.min(...all.map((b) => b.top));
+		const dx = (free?.left ?? 0) - minLeft;
+		const dy = (free?.top ?? 0) - minTop;
+		for (const f of frames) Object.assign(f, {left: f.left + dx, right: f.right + dx, top: f.top + dy, bottom: f.bottom + dy});
+		for (const c of cards) Object.assign(c, {x: c.x + dx, y: c.y + dy});
 	}
-	return {items, labels, shapes, areas, frame: {width: Math.ceil(width), height: Math.ceil(height)}, report};
+	return {
+		frames: frames.map((f) => ({title: f.title, direction: f.direction, area: f.area, left: Math.round(f.left), top: Math.round(f.top),
+			width: Math.ceil(f.width), height: Math.ceil(f.height), items: f.items})),
+		cards: cards.map((c) => ({...c, x: Math.round(c.x), y: Math.round(c.y)})),
+		reports
+	};
 };

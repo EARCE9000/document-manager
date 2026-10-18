@@ -397,6 +397,33 @@ const MIGRATIONS = [
 	// プロジェクトの説明(空でもよい。SQLite の v21 に後から足した列)
 	{version: 16, sql: `
 		ALTER TABLE projects ADD COLUMN IF NOT EXISTS description TEXT;
+	`},
+	// Miro への書き出し(自動の同期をやめ、頼まれたときに毎回新しいフレームへ書き出す)。SQLite の v21 に後から足した表・列
+	{version: 17, sql: `
+		ALTER TABLE miro_projects ADD COLUMN IF NOT EXISTS last_export_id TEXT;
+		ALTER TABLE miro_items ADD COLUMN IF NOT EXISTS frame_id TEXT;
+		CREATE TABLE IF NOT EXISTS miro_exports (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			board_id TEXT NOT NULL,
+			anchor_kind TEXT NOT NULL,
+			anchor_name TEXT,
+			anchor_item_id TEXT,
+			title TEXT,
+			request TEXT,
+			state TEXT NOT NULL,
+			frames TEXT,
+			cards TEXT,
+			documents TEXT,
+			placed INTEGER,
+			skipped INTEGER,
+			failed INTEGER,
+			error TEXT,
+			created_by TEXT,
+			created_at TEXT NOT NULL,
+			finished_at TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_miro_exports_project ON miro_exports (project_id, created_at);
 	`}
 ];
 
