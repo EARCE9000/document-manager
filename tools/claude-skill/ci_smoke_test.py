@@ -527,7 +527,7 @@ def smoke_miro(kind, env, workdir):
         ids.append(json.loads(run_client(kind, ["upload", path, "--project", project_name], env).stdout)["id"])
 
     # 目印が無ければ書き出さない(利用者に確かめてから --free にする)
-    refused = run_client(kind, ["miro-export", project_name, ids[0]], env, expect_ok=False)
+    refused = run_client(kind, ["miro-export", ids[0]], env, expect_ok=False)
     check(refused.returncode == 1 and "anchor_required" in refused.stderr, "miro-export: 目印もリンクも無ければ anchor_required で断る")
 
     placed = json.loads(run_client(kind, ["miro-anchor-add", anchor, "--direction", "下", "--note", "見本のメモ"], env).stdout)
@@ -536,29 +536,33 @@ def smoke_miro(kind, env, workdir):
     anchors = json.loads(run_client(kind, ["miro-anchors"], env).stdout)["anchors"]
     check(any(a.get("name") == anchor and a.get("note") == "見本のメモ" for a in anchors), "miro-anchors: 目印の名前・メモが分かる")
 
-    exported = json.loads(run_client(kind, ["miro-export", project_name, "--anchor", anchor], env).stdout)
+    exported = json.loads(run_client(kind, ["miro-export", "--project", project_name, "--anchor", anchor], env).stdout)
     check(exported.get("state") == "done" and exported["counts"]["placed"] == 2,
           f"miro-export: 書き終わるまで待って、出した資料の数を返す ({exported.get('counts')})")
     check(len(exported.get("frames", [])) == 1 and exported["frames"][0]["direction"] == "down" and "moveToWidget=" in exported["frames"][0]["url"],
           "miro-export: 目印に書いた向きでフレームを作り、開く URL を返す")
     check(exported["frames"][0]["title"].startswith(anchor + " ["), "miro-export: フレームの名前は「目印の名前 [日時]」")
+    check((exported.get("project") or {}).get("name") == project_name, "miro-export --project: プロジェクトの資料を全部書き出す")
     check(exported.get("notPlaced") == [], "miro-export: 出せなかった資料が無ければ notPlaced は空")
 
-    status = json.loads(run_client(kind, ["miro", project_name], env).stdout)
-    check(len(status.get("exports", [])) == 1 and status["exports"][0]["anchor"]["name"] == anchor, "miro: 書き出しの履歴が分かる")
+    status = json.loads(run_client(kind, ["miro"], env).stdout)
+    check(status.get("exports", [{}])[0].get("id") == exported["exportId"] and status["exports"][0]["anchor"]["name"] == anchor, "miro: 書き出しの履歴が分かる(新しい順)")
+    one = json.loads(run_client(kind, ["miro", exported["exportId"]], env).stdout)
+    check(one.get("id") == exported["exportId"] and len(one.get("documents", [])) == 2, "miro <ID>: 1 回の書き出しの資料ごとの結果が分かる")
 
-    board_map = json.loads(run_client(kind, ["miro-map", project_name], env).stdout)
+    board_map = json.loads(run_client(kind, ["miro-map"], env).stdout)
+    check(board_map.get("exportId") == exported["exportId"], "miro-map: 書き出しを省くと、自分の最後の書き出し")
     frame = board_map["frames"][0]
     check(len(frame.get("documents", [])) == 2 and "below" in frame.get("freeSpace", {}),
           f"miro-map: 書き出したフレームの地図を返す ({len(frame.get('documents', []))} 件)")
     first = next(d for d in frame["documents"] if d["documentId"] == ids[0])
-    moved = json.loads(run_client(kind, ["miro-move", project_name, ids[1], "--next-to", ids[0], "--side", "below"], env).stdout)
+    moved = json.loads(run_client(kind, ["miro-move", ids[1], "--next-to", ids[0], "--side", "below"], env).stdout)
     check(abs(moved["x"] - first["x"]) < 0.01 and moved["y"] > first["y"], "miro-move --next-to --side below: 相手の資料の下へ動かせる")
-    bad = run_client(kind, ["miro-move", project_name, ids[1]], env, expect_ok=False)
+    bad = run_client(kind, ["miro-move", ids[1]], env, expect_ok=False)
     check(bad.returncode == 1 and "--next-to" in bad.stderr, "miro-move: 動かし方を指定しないとエラー")
 
     # 十字の報告(Miro は変えない)
-    report = json.loads(run_client(kind, ["miro-layout-report", project_name, ids[0]], env).stdout)
+    report = json.loads(run_client(kind, ["miro-layout-report", ids[0]], env).stdout)
     check(report.get("layout") == "cross" and report["summary"]["total"] == 1 and report["summary"]["unclassified"] == 1,
           f"miro-layout-report: 十字で書き出したらどうなるかを返す ({report.get('summary')})")
 
@@ -568,18 +572,18 @@ def smoke_miro(kind, env, workdir):
                "labels": [{"text": "まとめ", "x": 400, "y": 100}],
                "shapes": [{"x": 1200, "y": 600, "width": 8, "height": 1000, "fillColor": "#333333"}]},
               open(layout_path, "w", encoding="utf-8"), ensure_ascii=False)
-    applied = json.loads(run_client(kind, ["miro-layout", project_name, layout_path], env).stdout)
+    applied = json.loads(run_client(kind, ["miro-layout", layout_path, "--export", exported["exportId"]], env).stdout)
     check(applied.get("moved") == 2 and applied.get("labels") == 1 and applied.get("shapes") == 1,
           f"miro-layout: レイアウトをまとめて当てられる ({applied})")
     json.dump({"items": [{"documentId": ids[0], "x": -1, "y": 0}]}, open(layout_path, "w", encoding="utf-8"))
-    rejected = run_client(kind, ["miro-layout", project_name, layout_path], env, expect_ok=False)
+    rejected = run_client(kind, ["miro-layout", layout_path], env, expect_ok=False)
     check(rejected.returncode == 1 and "items[0].x" in rejected.stderr, "miro-layout: 正しくない指示は、理由の一覧つきで断られる")
 
     # 向きごとの組で、空いている所に出す(--groups)
     groups_path = os.path.join(workdir, f"miro-groups-{kind}.json")
     json.dump([{"documentIds": [ids[0]], "direction": "右", "title": "A"}, {"documentIds": [ids[1]], "direction": "下"}],
               open(groups_path, "w", encoding="utf-8"), ensure_ascii=False)
-    grouped = json.loads(run_client(kind, ["miro-export", project_name, "--free", "--groups", groups_path, "--title", "B"], env).stdout)
+    grouped = json.loads(run_client(kind, ["miro-export", "--free", "--groups", groups_path, "--title", "B"], env).stdout)
     check(grouped.get("state") == "done" and [f["direction"] for f in grouped["frames"]] == ["right", "down"]
           and grouped["frames"][0]["title"].startswith("A [") and grouped["frames"][1]["title"].startswith("B ["),
           f"miro-export --free --groups: 向きごとにフレームを分けて出せる ({[f['title'] for f in grouped.get('frames', [])]})")

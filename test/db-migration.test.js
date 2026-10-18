@@ -77,7 +77,7 @@ test("最新化で、すべての表の行が引き継がれる", () => {
 		try {
 			// この版で新しく足した表は、移行元(1つ前の版)には無い。ここでは1つ前の版を最新と同形で作っているため、
 			// 新しい表にも行が入っているが、移行では空で作る約束なので数えない
-			const addedInThisVersion = new Set(["miro_connection", "miro_projects", "miro_items", "miro_exports"]);
+			const addedInThisVersion = new Set(["miro_connection", "miro_projects", "miro_items", "miro_exports", "miro_export_items"]);
 			for (const [name, expected] of Object.entries(counts)) {
 				if (addedInThisVersion.has(name)) continue;
 				const actual = neu.prepare(`SELECT COUNT(*) AS n FROM ${name}`).get().n;

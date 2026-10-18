@@ -3,7 +3,7 @@
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * 仕様は docs/miro-layouts/layout-spec.md。ここは**どこに出すか**を決めるだけで、Miro には触らない。
+ * 決まりは docs/miro.md の「十字」。ここは**どこに出すか**を決めるだけで、Miro には触らない。
  * 同じ振り分けを、LLM がタグを見直すための報告(layout-report)と、書き出す処理(miro-export.js)の両方で使う
  * (片方だけ直して食い違う、を防ぐ)。
  *
@@ -44,7 +44,7 @@ const RULES = Object.freeze({
 });
 module.exports.RULES = RULES;
 
-// ---- 共通のタグ(layout-spec.md 2 章) ----
+// ---- 共通のタグ(docs/miro.md の「十字」のタグ) ----
 const PROCESSES = Object.freeze(["要件定義", "基本設計", "詳細設計", "実装", "単体テスト", "結合テスト", "受入テスト", "リリース", "運用"]);
 const TAG_VALUES = Object.freeze({
 	"区分": Object.freeze(["管理", "会議"]),
@@ -122,7 +122,7 @@ const readTags = (tags) => {
 };
 module.exports.readTags = readTags;
 
-// ---- タグが無いときの推定(layout-spec.md 3 章) ----
+// ---- タグが無いときの推定(docs/miro.md の「十字」の推定) ----
 // 上から順に見る(会議と管理の言葉が両方あれば会議)。段階:・機能: は推定しない
 const INFERENCE = Object.freeze([
 	{heading: "区分", value: "会議", words: ["議事録", "会議", "打合せ", "MTG", "定例"]},
@@ -218,7 +218,7 @@ const classify = (doc) => {
 };
 module.exports.classify = classify;
 
-// ---- 日付(layout-spec.md 7 章「資料の日付の取り方」) ----
+// ---- 日付(docs/miro.md の「十字」の日付) ----
 const pad = (n) => String(n).padStart(2, "0");
 const localDate = (iso) => {
 	const date = new Date(iso);
@@ -306,7 +306,7 @@ const candidatesFor = (heading, value) => {
 };
 module.exports.candidatesFor = candidatesFor;
 
-// ---- 報告(layout-spec.md 8 章) ----
+// ---- 報告(GET /api/miro/layout-report) ----
 
 /** 推定・既定で決めた見出しを、placement の根拠に書く形にする */
 const basisOf = (classification, headings) => {
@@ -489,6 +489,33 @@ module.exports.loadInput = async (projectId) => {
 			folderNames: chain.map((f) => f.name).reverse(),
 			topFolder: chain.length > 0 ? {id: chain[0].id, name: chain[0].name} : null,
 			subFolders: chain.slice(1).map((f) => f.name)
+		});
+	}
+	return {project, documents};
+};
+
+/**
+ * 書き出す資料を、出す順に、タグ付きで集める(十字の振り分けに使う)。プロジェクトを渡すと、そのプロジェクトの
+ * フォルダ名も推定に使う。プロジェクトに入っていない資料は、題名とタグだけで振り分ける。
+ * @param {string[]} documentIds 出す順の文書 ID(いまの版)
+ * @param {?object} project
+ * @returns {Promise<{project: ?object, documents: object[]}>}
+ */
+module.exports.loadDocumentsInput = async (documentIds, project = null) => {
+	const ds = require("./datastore.js");
+	const inProject = new Map(project == null ? [] : ((await module.exports.loadInput(project.id))?.documents ?? []).map((d) => [d.documentId, d]));
+	const documents = [];
+	for (const id of documentIds) {
+		if (inProject.has(id)) {
+			documents.push(inProject.get(id));
+			continue;
+		}
+		const row = await ds.get(`SELECT id, entry_file, uploaded_at FROM documents WHERE id = ?`, [id]);
+		if (row == null) continue;
+		const tags = (await ds.all(`SELECT tag FROM document_tags WHERE document_id = ? ORDER BY tag`, [id])).map((r) => r.tag);
+		documents.push({
+			documentId: id, entryFile: row.entry_file, modified: row.uploaded_at, firstUploaded: await firstUploadedAt(ds, id, row.uploaded_at),
+			tags, folderId: null, folderNames: [], topFolder: null, subFolders: []
 		});
 	}
 	return {project, documents};

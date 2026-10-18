@@ -3,7 +3,7 @@
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * Miro に十字で書き出すときの振り分けに使う共通のタグ(docs/miro-layouts/layout-spec.md 2 章)を、決まった順で下書きに入れる。
+ * Miro に十字で書き出すときの振り分けに使う共通のタグ(docs/miro.md の「十字」)を、決まった順で下書きに入れる。
  * ほかのタグの順は変えず、保存するまでは反映しない。
  *
  * 実行には Chromium が必要: `npx playwright install chromium`

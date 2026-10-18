@@ -42,7 +42,7 @@ test.describe.serial("Miro の十字の報告", () => {
 	});
 
 	test("タグ・推定・表に無い値・使われなかったタグを返す(読み取りの鍵で、書き出していなくても出せる)", async ({request}) => {
-		const res = await request.get(`api/projects/${projectId}/miro/layout-report`, {headers: ro});
+		const res = await request.get(`api/miro/layout-report?project=${projectId}`, {headers: ro});
 		expect(res.status()).toBe(200);
 		const report = await res.json();
 		expect(report.layout).toBe("cross");
@@ -59,11 +59,11 @@ test.describe.serial("Miro の十字の報告", () => {
 	});
 
 	test("書き出す資料に絞れる(documentIds)。プロジェクトに無い資料・無いプロジェクトは 404", async ({request}) => {
-		const report = await (await request.get(`api/projects/${projectId}/miro/layout-report?documentIds=${ids.plan},${ids.design}`, {headers: ro})).json();
+		const report = await (await request.get(`api/miro/layout-report?project=${projectId}&documentIds=${ids.plan},${ids.design}`, {headers: ro})).json();
 		expect(report.summary.total).toBe(2);
 		expect(report.placements.map((p) => p.documentId).sort()).toEqual([ids.plan, ids.design].sort());
-		expect((await request.get(`api/projects/${projectId}/miro/layout-report?documentIds=no-such-doc`, {headers: ro})).status()).toBe(404);
-		expect((await request.get("api/projects/no-such-project/miro/layout-report", {headers: ro})).status()).toBe(404);
+		expect((await request.get(`api/miro/layout-report?project=${projectId}&documentIds=no-such-doc`, {headers: ro})).status()).toBe(404);
+		expect((await request.get("api/miro/layout-report?project=no-such-project", {headers: ro})).status()).toBe(404);
 	});
 });
 

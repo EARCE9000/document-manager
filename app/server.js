@@ -3863,7 +3863,7 @@ app.delete(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin
 });
 
 /**
- * Miro の並べ方の型で使う共通のタグ(区分:・工程:・段階:・会議:)を、決まった順で返す(docs/miro-layouts/layout-spec.md 2 章)。
+ * Miro の十字の振り分けで使う共通のタグ(区分:・工程:・段階:・会議:)を、決まった順で返す(docs/miro.md の「十字」)。
  * タグ体系の管理画面の「Miro の並べ方のタグをそろえる」が使う。機能: はプロジェクトごとに決めるので入れない
  */
 app.get(BASE_URL_PATH + 'api/miro/layout-tags', requireAuth, (req, res) => {
@@ -4175,83 +4175,84 @@ const sendExportError = (res, err, where) => {
 	res.status(500).json({error: "Internal Error"});
 };
 
-/** 書き出しの状態と履歴(誰でも見られる) */
-app.get(BASE_URL_PATH + 'api/projects/:id/miro', requireAuth, async (req, res) => {
+/** 書き出しの状態と履歴(新しい順。誰でも見られる)。?limit= で件数(既定 30・最大 200) */
+app.get(BASE_URL_PATH + 'api/miro/exports', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		if (await Projects.getProject(req.params.id) == null) {
-			res.status(404).json({error: "not found"});
-			return;
-		}
-		res.status(200).json(await MiroExport.status(req.params.id));
+		res.status(200).json(await MiroExport.listExports({limit: req.query.limit}));
 	} catch (err) {
-		logger.error(err, "::api/projects/:id/miro");
-		res.status(500).json({error: "Internal Error"});
-	}
-});
-
-/**
- * 十字で書き出したらどうなるかの報告(LLM でタグを見直すため。docs/miro-layouts/layout-spec.md)。
- * Miro には触らず、読むだけで出す。?documentIds=a,b で書き出す資料に絞れる(省くとプロジェクトの資料を全部)
- */
-app.get(BASE_URL_PATH + 'api/projects/:id/miro/layout-report', requireAuth, async (req, res) => {
-	try {
-		setHTTPHeaders(res);
-		const input = await MiroLayout.loadInput(req.params.id);
-		if (input == null) {
-			res.status(404).json({error: "not found"});
-			return;
-		}
-		const wanted = String(req.query.documentIds ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-		if (wanted.length > 0) {
-			const byId = new Map(input.documents.map((d) => [d.documentId, d]));
-			const missing = wanted.filter((id) => !byId.has(id));
-			if (missing.length > 0) {
-				res.status(404).json({error: `このプロジェクトに無い資料です(${missing.join(", ")})`});
-				return;
-			}
-			input.documents = wanted.map((id) => byId.get(id));
-		}
-		res.status(200).json(MiroLayout.buildCrossReport(input));
-	} catch (err) {
-		logger.error(err, "::api/projects/:id/miro/layout-report");
+		logger.error(err, "::api/miro/exports");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
 
 /**
  * Miro に書き出す(毎回新しいフレームを作る。置くのは裏で行い、すぐ返す: 202)。本体:
- *   {documentIds?, direction?, title?}  1 つのフレーム(資料を省くとプロジェクトの資料を全部)
- *   {groups: [{documentIds, direction?, title?}]}  向きごとの組
+ *   {documentIds?, direction?, title?, project?}  1 つのフレーム(資料を省くと project の資料を全部)
+ *   {groups: [{documentIds, direction?, title?}], project?}  向きごとの組
  *   場所は anchor(目印の名前)・anchorUrl(付箋・図形のリンク)・free: true(空いている所)のどれか
  * 目印が無いときは 409(code: anchor_required)。利用者に確かめてから free で頼み直す
  */
-app.post(BASE_URL_PATH + 'api/projects/:id/miro/exports', requireAuth, requireWrite, async (req, res) => {
+app.post(BASE_URL_PATH + 'api/miro/exports', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(202).json(await MiroExport.exportDocuments(req.params.id, req.authData.user_identifier, req.body ?? {}));
+		res.status(202).json(await MiroExport.exportDocuments(req.authData.user_identifier, req.body ?? {}));
 	} catch (err) {
-		sendExportError(res, err, "::api/projects/:id/miro/exports");
+		sendExportError(res, err, "::api/miro/exports");
 	}
 });
 
 /** 1 回の書き出しの記録(終わるのを待つのに使う) */
-app.get(BASE_URL_PATH + 'api/projects/:id/miro/exports/:exportId', requireAuth, async (req, res) => {
+app.get(BASE_URL_PATH + 'api/miro/exports/:exportId', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const found = await MiroExport.getExport(req.params.id, req.params.exportId);
+		const found = await MiroExport.getExport(req.params.exportId);
 		if (found == null) {
 			res.status(404).json({error: "not found"});
 			return;
 		}
 		res.status(200).json(found);
 	} catch (err) {
-		logger.error(err, "::api/projects/:id/miro/exports/:exportId");
+		logger.error(err, "::api/miro/exports/:exportId");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
 
-/** ボードにある書き出しの目印(付箋の [DM]名前)の一覧。どのプロジェクトから見ても同じ */
+/**
+ * 十字で書き出したらどうなるかの報告(LLM でタグを見直すため。docs/miro.md の「十字」)。
+ * Miro には触らず、読むだけで出す。?documentIds=a,b(書き出す資料)か ?project=(そのプロジェクトの資料を全部)
+ */
+app.get(BASE_URL_PATH + 'api/miro/layout-report', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const wanted = String(req.query.documentIds ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+		let project = null;
+		if (req.query.project != null && req.query.project !== "") {
+			project = await Projects.getProject(String(req.query.project));
+			if (project == null) {
+				res.status(404).json({error: "プロジェクトがありません"});
+				return;
+			}
+		}
+		if (wanted.length === 0 && project == null) {
+			res.status(400).json({error: "documentIds か project を指定してください"});
+			return;
+		}
+		const ids = wanted.length > 0 ? wanted : ((await MiroLayout.loadInput(project.id))?.documents ?? []).map((d) => d.documentId);
+		const input = await MiroLayout.loadDocumentsInput(ids, project);
+		const missing = ids.filter((id) => !input.documents.some((d) => d.documentId === id));
+		if (missing.length > 0) {
+			res.status(404).json({error: `無い資料です(${missing.join(", ")})`});
+			return;
+		}
+		res.status(200).json(MiroLayout.buildCrossReport(input));
+	} catch (err) {
+		logger.error(err, "::api/miro/layout-report");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** ボードにある書き出しの目印(付箋の [DM]名前)の一覧 */
 app.get(BASE_URL_PATH + 'api/miro/anchors', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
@@ -4275,46 +4276,46 @@ app.post(BASE_URL_PATH + 'api/miro/anchors', requireAuth, requireWrite, async (r
 });
 
 /**
- * 書き出した資料を動かす(最後の書き出しのフレームだけ)。本体は次のどれか(見出しも一緒に動かす):
- *   {nextTo: 文書ID, side: "right"|"left"|"above"|"below"}  ほかの資料の隣へ
- *   {frame?: フレームの ID か名前, x, y}                        フレームの左上からの位置へ(資料の中心)
+ * 書き出した資料を動かす。本体は次のどれか(見出しも一緒に動かす)。exportId を省くと、頼んだ人の最後の書き出し:
+ *   {exportId?, nextTo: 文書ID, side: "right"|"left"|"above"|"below"}  ほかの資料の隣へ
+ *   {exportId?, frame?: フレームの ID か名前, x, y}                        フレームの左上からの位置へ(資料の中心)
  */
-app.patch(BASE_URL_PATH + 'api/projects/:id/miro/items/:documentId', requireAuth, requireWrite, async (req, res) => {
+app.patch(BASE_URL_PATH + 'api/miro/items/:documentId', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const {nextTo, side, frame, x, y} = req.body ?? {};
-		res.status(200).json(await MiroExport.moveDocument(req.params.id, req.params.documentId, {nextTo, side, frame, x, y}, req.authData.user_identifier));
+		const {exportId, nextTo, side, frame, x, y} = req.body ?? {};
+		res.status(200).json(await MiroExport.moveDocument(exportId, req.params.documentId, {nextTo, side, frame, x, y}, req.authData.user_identifier));
 	} catch (err) {
-		sendExportError(res, err, "::api/projects/:id/miro/items/:documentId");
+		sendExportError(res, err, "::api/miro/items/:documentId");
 	}
 });
 
 /**
- * 最後に書き出したフレームの 1 つに、レイアウトをまとめて当てる(lib/miro-export.js の applyLayout)。本体:
- *   {frameId?, items: [{documentId, x, y, color?}], labels: [{text, x, y, width?, fontSize?, color?, fillColor?, bold?, align?, link?}],
+ * 書き出したフレームの 1 つに、レイアウトをまとめて当てる(lib/miro-export.js の applyLayout)。本体:
+ *   {exportId?, frameId?, items: [{documentId, x, y, color?}], labels: [{text, x, y, width?, fontSize?, color?, fillColor?, bold?, align?, link?}],
  *    shapes: [{shape?, x, y, width, height, text?, fillColor?, fillOpacity?, borderColor?, borderWidth?, borderStyle?, link?}],
  *    frame?: {width, height}, keepDecorations?: boolean, clearDecorations?: boolean}
  * 位置はすべてフレームの左上からの中心の位置。正しくないところがあれば、何も動かさずに 400 と理由の一覧(details)を返す
  */
-app.post(BASE_URL_PATH + 'api/projects/:id/miro/layout', requireAuth, requireWrite, async (req, res) => {
+app.post(BASE_URL_PATH + 'api/miro/layout', requireAuth, requireWrite, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(await MiroExport.applyLayout(req.params.id, req.body ?? {}, req.authData.user_identifier));
+		res.status(200).json(await MiroExport.applyLayout(req.body ?? {}, req.authData.user_identifier));
 	} catch (err) {
-		sendExportError(res, err, "::api/projects/:id/miro/layout");
+		sendExportError(res, err, "::api/miro/layout");
 	}
 });
 
 /**
- * ボードの地図: 最後に書き出したフレームごとの、資料の位置・指示で置いた見出しと図形・人が足したもの・空いている所。
- * LLM が置き場所を考えてから miro-layout・miro-move で直すための材料。Miro から読むだけで、ボードは変えない
+ * 書き出したフレームの地図: フレームごとの、資料の位置・指示で置いた見出しと図形・人が足したもの・空いている所。
+ * ?exportId= を省くと、頼んだ人の最後の書き出し。Miro から読むだけで、ボードは変えない
  */
-app.get(BASE_URL_PATH + 'api/projects/:id/miro/map', requireAuth, async (req, res) => {
+app.get(BASE_URL_PATH + 'api/miro/map', requireAuth, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		res.status(200).json(await MiroExport.boardMap(req.params.id));
+		res.status(200).json(await MiroExport.boardMap(req.query.exportId ?? null, req.authData.user_identifier));
 	} catch (err) {
-		sendExportError(res, err, "::api/projects/:id/miro/map");
+		sendExportError(res, err, "::api/miro/map");
 	}
 });
 

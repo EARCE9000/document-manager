@@ -23,9 +23,13 @@
  * 右・左・上・下・右上・右下・左上・左下、と十字(資料をタグで 4 つに分け、斜め 4 つのフレームに出す)。
  * 1 回の書き出しで「この資料はこの向き」の組を複数出せる。フレームの名前は「タイトル [YYYY-MM-DD hh:mm]」。
  *
+ * ---- 何を書き出すか ----
+ * 文書 ID で頼む(プロジェクトには縛られない)。プロジェクトを渡すと、資料を省いたときにそのプロジェクトの資料を全部出し、
+ * 十字ではプロジェクトの名前・説明の概要カードを置く。
+ *
  * ---- 書き出したあと ----
- * 最後に書き出したフレームだけは、資料を動かす・まとめて置き直す・見出しや図形を足すことができる
- * (boardMap で今の様子を読み、moveDocument・applyLayout で直す)。
+ * 書き出しの記録(miro_exports)ごとに、資料を動かす・まとめて置き直す・見出しや図形を足すことができる
+ * (boardMap で今の様子を読み、moveDocument・applyLayout で直す)。書き出しを省くと、頼んだ人の最後の書き出し。
  *
  * ファイルの取り出しや PDF への変換は、呼び出し側(server.js)から渡される preparePayload が行う。
  */
@@ -96,19 +100,7 @@ const forEachConcurrently = async (list, limit, fn) => {
 };
 
 // ---- SQL ----
-const SQL_GET_PROJECT = `SELECT * FROM miro_projects WHERE project_id = ?`;
-const SQL_UPSERT_PROJECT = `
-	INSERT INTO miro_projects (project_id, board_id, state, linked_by, linked_at)
-	VALUES (@project_id, @board_id, 'active', @user, @now)
-	ON CONFLICT(project_id) DO UPDATE SET state = 'active', board_id = excluded.board_id
-`;
-const SQL_SET_LAST_EXPORT = `UPDATE miro_projects SET last_export_id = @export_id, last_synced_at = @now, last_error = @error, layout_plan = NULL WHERE project_id = @project_id`;
-const SQL_SET_DECORATIONS = `UPDATE miro_projects SET layout_plan = @layout_plan WHERE project_id = @project_id`;
-const SQL_TAKE_LOCK = `
-	UPDATE miro_projects SET sync_lock_owner = @owner, sync_lock_until = @until
-	WHERE project_id = @project_id AND (sync_lock_owner IS NULL OR sync_lock_until IS NULL OR sync_lock_until < @now)
-`;
-const SQL_RELEASE_LOCK = `UPDATE miro_projects SET sync_lock_owner = NULL, sync_lock_until = NULL WHERE project_id = @project_id AND sync_lock_owner = @owner`;
+// miro_projects・miro_items は、自動の同期(連動)をやめる前の表。今は使わない
 const SQL_INSERT_EXPORT = `
 	INSERT INTO miro_exports (id, project_id, board_id, anchor_kind, anchor_name, anchor_item_id, title, request, state, created_by, created_at)
 	VALUES (@id, @project_id, @board_id, @anchor_kind, @anchor_name, @anchor_item_id, @title, @request, 'running', @created_by, @created_at)
@@ -119,23 +111,27 @@ const SQL_FINISH_EXPORT = `
 	WHERE id = @id
 `;
 const SQL_SET_EXPORT_FRAMES = `UPDATE miro_exports SET frames = @frames WHERE id = @id`;
-const SQL_GET_EXPORT = `SELECT * FROM miro_exports WHERE id = ? AND project_id = ?`;
-const SQL_LIST_EXPORTS = `SELECT * FROM miro_exports WHERE project_id = ? ORDER BY created_at DESC LIMIT 20`;
+const SQL_SET_EXPORT_DECORATIONS = `UPDATE miro_exports SET decorations = @decorations WHERE id = @id`;
+const SQL_GET_EXPORT = `SELECT * FROM miro_exports WHERE id = ?`;
+const SQL_LIST_EXPORTS = `SELECT * FROM miro_exports ORDER BY created_at DESC LIMIT ?`;
+const SQL_LAST_EXPORT_OF = `SELECT * FROM miro_exports WHERE created_by = ? AND board_id = ? AND state = 'done' ORDER BY created_at DESC LIMIT 1`;
 const SQL_LAST_EXPORT_AT_ANCHOR = `SELECT anchor_item_id, MAX(created_at) AS last_at FROM miro_exports WHERE board_id = ? AND anchor_item_id IS NOT NULL AND state = 'done' GROUP BY anchor_item_id`;
-const SQL_LIST_ITEMS = `SELECT * FROM miro_items WHERE project_id = ?`;
-const SQL_CLEAR_ITEMS = `DELETE FROM miro_items WHERE project_id = ?`;
-const SQL_INSERT_ITEM = `
-	INSERT INTO miro_items (project_id, alias, board_id, document_id, item_id, item_kind, caption_id, group_id, title, state, reason, x, y, width, height, placed_x, placed_y, frame_id, updated_by, updated_at)
-	VALUES (@project_id, @alias, @board_id, @document_id, @item_id, @item_kind, @caption_id, @group_id, @title, @state, @reason, @x, @y, @width, @height, @x, @y, @frame_id, @updated_by, @updated_at)
-	ON CONFLICT(project_id, alias) DO UPDATE SET board_id = excluded.board_id, document_id = excluded.document_id, item_id = excluded.item_id,
-		item_kind = excluded.item_kind, caption_id = excluded.caption_id, group_id = excluded.group_id, title = excluded.title, state = excluded.state,
-		reason = excluded.reason, x = excluded.x, y = excluded.y, width = excluded.width, height = excluded.height,
-		placed_x = excluded.placed_x, placed_y = excluded.placed_y, frame_id = excluded.frame_id, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+// 手直しの順番取り(同じ書き出しを 2 つの頼みで同時に動かさない。複数台でも)
+const SQL_TAKE_LOCK = `
+	UPDATE miro_exports SET lock_owner = @owner, lock_until = @until
+	WHERE id = @id AND (lock_owner IS NULL OR lock_until IS NULL OR lock_until < @now)
 `;
-const SQL_GET_ITEM = `SELECT * FROM miro_items WHERE project_id = ? AND alias = ?`;
-const SQL_SET_POSITION = `UPDATE miro_items SET x = ?, y = ?, width = ?, height = ?, frame_id = ?, updated_by = ?, updated_at = ? WHERE project_id = ? AND alias = ?`;
+const SQL_RELEASE_LOCK = `UPDATE miro_exports SET lock_owner = NULL, lock_until = NULL WHERE id = @id AND lock_owner = @owner`;
+const SQL_LIST_ITEMS = `SELECT * FROM miro_export_items WHERE export_id = ?`;
+const SQL_INSERT_ITEM = `
+	INSERT INTO miro_export_items (export_id, alias, document_id, item_id, item_kind, caption_id, group_id, title, frame_id, x, y, width, height, updated_by, updated_at)
+	VALUES (@export_id, @alias, @document_id, @item_id, @item_kind, @caption_id, @group_id, @title, @frame_id, @x, @y, @width, @height, @updated_by, @updated_at)
+`;
+const SQL_GET_ITEM = `SELECT * FROM miro_export_items WHERE export_id = ? AND alias = ?`;
+const SQL_SET_POSITION = `UPDATE miro_export_items SET x = ?, y = ?, width = ?, height = ?, frame_id = ?, updated_by = ?, updated_at = ? WHERE export_id = ? AND alias = ?`;
 const SQL_SELECT_DOCUMENT = `SELECT id, entry_file, preview_file, size, uploaded_at, deleted_at, render_status, render_file FROM documents WHERE id = ?`;
-const SQL_PREVIOUS_ID = `SELECT previous_id FROM documents WHERE id = ?`;
+// 新しい版(古い版の ID を渡されたら、いまの版へたどる)
+const SQL_NEXT_VERSION = `SELECT id FROM documents WHERE previous_id = ? ORDER BY uploaded_at DESC LIMIT 1`;
 
 // ---- 呼び出し側から渡されるもの ----
 let preparePayload = null;
@@ -181,7 +177,7 @@ const captionHtml = ({title, uploadedAt, url, note}) => {
 module.exports.captionHtml = captionHtml;
 
 const aliasUrl = (publicBaseUrl, alias) => (publicBaseUrl ? `${String(publicBaseUrl).replace(/\/+$/, "")}/api/documents/alias/${alias}/viewer` : null);
-const projectUrlOf = (target, projectId) => (target?.publicBaseUrl ? `${String(target.publicBaseUrl).replace(/\/+$/, "")}/?project=${encodeURIComponent(projectId)}` : null);
+const projectUrlOf = (target, projectId) => (target?.publicBaseUrl && projectId ? `${String(target.publicBaseUrl).replace(/\/+$/, "")}/?project=${encodeURIComponent(projectId)}` : null);
 /** ボードの項目へ直接飛ぶリンク(Miro は ?moveToWidget= で、その項目の位置を開く) */
 const itemUrl = (target, itemId) => (target?.boardUrl && itemId ? `${target.boardUrl}${target.boardUrl.includes("?") ? "&" : "?"}moveToWidget=${itemId}` : null);
 
@@ -220,14 +216,14 @@ const aspectOf = (file, contentType) => {
 };
 module.exports.aspectOf = aspectOf;
 
-// ---- 順番取り(同じプロジェクトの書き出し・手直しを重ねない。複数台でも) ----
+// ---- 順番取り(同じ書き出しの手直しを重ねない。複数台でも) ----
 
-const takeLock = async (projectId) => {
+const takeLock = async (exportId) => {
 	const now = new Date();
-	const result = await ds.run(SQL_TAKE_LOCK, {project_id: projectId, owner: INSTANCE_ID, until: new Date(now.getTime() + LOCK_MS).toISOString(), now: now.toISOString()});
+	const result = await ds.run(SQL_TAKE_LOCK, {id: exportId, owner: INSTANCE_ID, until: new Date(now.getTime() + LOCK_MS).toISOString(), now: now.toISOString()});
 	return Number(result?.changes ?? 0) > 0;
 };
-const releaseLock = (projectId) => ds.run(SQL_RELEASE_LOCK, {project_id: projectId, owner: INSTANCE_ID}).catch(() => {});
+const releaseLock = (exportId) => ds.run(SQL_RELEASE_LOCK, {id: exportId, owner: INSTANCE_ID}).catch(() => {});
 
 const requireTarget = async () => {
 	const target = await MiroConnection.target();
@@ -326,7 +322,7 @@ const findAnchors = (scan) => scan.filter((entry) => ANCHOR_TYPES.includes(entry
 	.map((entry) => ({entry, parsed: parseAnchorText(entry.item.data?.content)}))
 	.filter(({parsed}) => parsed != null);
 
-/** ボードにある目印の一覧(どのプロジェクトの画面から見ても同じ) */
+/** ボードにある目印の一覧 */
 module.exports.listAnchors = async () => {
 	const target = await requireTarget();
 	const scan = await scanBoard(target.boardId);
@@ -391,11 +387,11 @@ module.exports.parseItemUrl = parseItemUrl;
 
 // ---- 頼まれた中身を検める ----
 
-/** プロジェクトの資料(おしながき順)。版をまたいで同じ資料を引けるよう、共有用の ID も付ける */
-const projectDocuments = async (projectId) => {
-	const project = await Projects.getProject(projectId);
-	if (project == null) return null;
-	const manifest = ProjectManifest.build(project, await Projects.getProjectTree(projectId));
+const withAlias = async (row) => ({...row, alias: (await DocumentAliases.aliasOf(row.id)) ?? (await DocumentAliases.assign(row.id))});
+
+/** プロジェクトの資料(おしながき順。アーカイブ済みは除く) */
+const projectDocuments = async (project) => {
+	const manifest = ProjectManifest.build(project, await Projects.getProjectTree(project.id));
 	const placements = [...manifest.rootDocuments];
 	const walk = (folders) => {
 		for (const folder of folders) {
@@ -408,19 +404,30 @@ const projectDocuments = async (projectId) => {
 	for (const placement of placements) {
 		const row = await ds.get(SQL_SELECT_DOCUMENT, [placement.documentId]);
 		if (row == null || row.deleted_at != null) continue;
-		const alias = (await DocumentAliases.aliasOf(row.id)) ?? (await DocumentAliases.assign(row.id));
-		documents.push({...row, alias});
+		documents.push(await withAlias(row));
 	}
-	return {project, documents};
+	return documents;
+};
+
+/** 文書 ID から、いまの版を引く(古い版の ID なら新しい版へたどる)。無ければ null、アーカイブ済みなら {archived} */
+const currentDocument = async (id) => {
+	let row = await ds.get(SQL_SELECT_DOCUMENT, [id]);
+	if (row == null) return null;
+	for (let i = 0; i < 1000; i++) {
+		const next = await ds.get(SQL_NEXT_VERSION, [row.id]);
+		if (next == null) break;
+		row = await ds.get(SQL_SELECT_DOCUMENT, [next.id]);
+	}
+	return row.deleted_at != null ? {archived: true, row} : withAlias(row);
 };
 
 /**
  * 書き出しの頼みを検める。
- *   {documentIds?, direction?, title?}                 1 つのフレーム(資料を省くとプロジェクトの資料を全部)
+ *   {documentIds?, direction?, title?}                 1 つのフレーム(資料を省くときは project が要る: そのプロジェクトの資料を全部)
  *   {groups: [{documentIds, direction?, title?}]}      向きごとの組
- *   anchor(目印の名前)・anchorUrl(付箋・図形のリンク)・free(空いている所)のどれか 1 つ
+ *   anchor(目印の名前)・anchorUrl(付箋・図形のリンク)・free(空いている所)のどれか 1 つ。project は省ける
  */
-const normalizeRequest = (body, documents) => {
+const normalizeRequest = (body) => {
 	const errors = [];
 	const where = ["anchor", "anchorUrl", "free"].filter((key) => body?.[key] != null && body[key] !== "" && body[key] !== false);
 	if (where.length > 1) errors.push("anchor・anchorUrl・free はどれか 1 つだけ指定します");
@@ -432,25 +439,9 @@ const normalizeRequest = (body, documents) => {
 	};
 	const title = (value, label) => {
 		if (value == null || value === "") return null;
-		const s = String(value).replace(/\s+/g, " ").trim();
-		if ([...s].length > 100) errors.push(`${label} は 100 文字までです`);
-		return s;
-	};
-	const byId = new Map(documents.map((d) => [d.id, d]));
-	// 古い版の ID → いまの版(古い版は共有用の ID を持たないので、版の鎖をさかのぼって引く。要るときだけ作る)
-	let olderVersions = null;
-	const currentOf = async (id) => {
-		if (olderVersions == null) {
-			olderVersions = new Map();
-			for (const doc of documents) {
-				let previous = (await ds.get(SQL_PREVIOUS_ID, [doc.id]))?.previous_id;
-				for (let i = 0; previous != null && i < 1000 && !olderVersions.has(previous); i++) {
-					olderVersions.set(previous, doc);
-					previous = (await ds.get(SQL_PREVIOUS_ID, [previous]))?.previous_id;
-				}
-			}
-		}
-		return olderVersions.get(id) ?? null;
+		const text = String(value).replace(/\s+/g, " ").trim();
+		if ([...text].length > 100) errors.push(`${label} は 100 文字までです`);
+		return text;
 	};
 	const seen = new Set();
 	const resolveIds = async (ids, label) => {
@@ -463,9 +454,13 @@ const normalizeRequest = (body, documents) => {
 		for (const raw of ids) {
 			const id = String(raw ?? "");
 			// 古い版の ID でも、同じ資料ならいまの版を出す
-			const doc = byId.get(id) ?? await currentOf(id);
+			const doc = await currentDocument(id);
 			if (doc == null) {
-				errors.push(`このプロジェクトに無い資料です(${id})`);
+				errors.push(`無い資料です(${id})`);
+				continue;
+			}
+			if (doc.archived) {
+				errors.push(`アーカイブされた資料です(${id})`);
 				continue;
 			}
 			if (seen.has(doc.id)) {
@@ -482,13 +477,17 @@ const normalizeRequest = (body, documents) => {
 
 /**
  * 書き出しを始める(資料を置くのは裏で行う)。目印・資料・向きはここで確かめ、正しくなければ何もせずに断る。
+ * @param {object} body project?(プロジェクト ID)・documentIds?・groups?・direction?・title?・anchor / anchorUrl / free
  * @returns {Promise<object>} 書き出しの記録(state: running)
  */
-module.exports.exportDocuments = async (projectId, user, body = {}) => {
+module.exports.exportDocuments = async (user, body = {}) => {
 	const target = await requireTarget();
-	const loaded = await projectDocuments(projectId);
-	if (loaded == null) throw exportError("not found", 404);
-	const request = normalizeRequest(body, loaded.documents);
+	let project = null;
+	if (body.project != null && body.project !== "") {
+		project = await Projects.getProject(String(body.project));
+		if (project == null) throw exportError("プロジェクトがありません", 404);
+	}
+	const request = normalizeRequest(body);
 	const topDirection = request.direction(body.direction, "direction");
 	const topTitle = request.title(body.title, "title");
 	let groups;
@@ -506,8 +505,12 @@ module.exports.exportDocuments = async (projectId, user, body = {}) => {
 			}
 		}
 	} else {
-		const docs = await request.resolveIds(body.documentIds, "documentIds");
-		groups = [{documents: docs ?? loaded.documents, direction: null, title: null}];
+		let docs = await request.resolveIds(body.documentIds, "documentIds");
+		if (docs == null) {
+			if (project == null) request.errors.push("documentIds(書き出す文書 ID)か、project(そのプロジェクトの資料を全部)を指定します");
+			else docs = await projectDocuments(project);
+		}
+		groups = [{documents: docs ?? [], direction: null, title: null}];
 	}
 	const total = groups.reduce((n, g) => n + g.documents.length, 0);
 	if (total === 0 && request.errors.length === 0) request.errors.push("書き出す資料がありません(プロジェクトに資料が無いか、documentIds が空です)");
@@ -553,7 +556,7 @@ module.exports.exportDocuments = async (projectId, user, body = {}) => {
 	if (anchor?.parsed?.directionText != null && anchor.parsed.direction == null && !everyGroupHasDirection) {
 		throw exportError(`目印を読めません: ${anchor.parsed.problem}`, 400, {code: "anchor_unreadable"});
 	}
-	const baseTitle = topTitle ?? anchor?.parsed?.name ?? loaded.project.name;
+	const baseTitle = topTitle ?? (anchor?.parsed?.name || null) ?? project?.name ?? "Document Manager";
 	const when = stamp();
 	const plannedGroups = groups.map((g) => ({
 		documents: g.documents,
@@ -562,46 +565,38 @@ module.exports.exportDocuments = async (projectId, user, body = {}) => {
 	}));
 
 	const exportId = crypto.randomUUID();
-	await ds.run(SQL_UPSERT_PROJECT, {project_id: projectId, board_id: board, user, now: new Date().toISOString()});
 	await ds.run(SQL_INSERT_EXPORT, {
-		id: exportId, project_id: projectId, board_id: board, anchor_kind: anchorKind, anchor_name: anchor?.parsed?.name ?? null, anchor_item_id: anchor?.entry.id ?? null,
+		id: exportId, project_id: project?.id ?? null, board_id: board, anchor_kind: anchorKind, anchor_name: anchor?.parsed?.name ?? null, anchor_item_id: anchor?.entry.id ?? null,
 		title: baseTitle, request: JSON.stringify({groups: plannedGroups.map((g) => ({direction: g.direction, title: g.title, documentIds: g.documents.map((d) => d.id)}))}),
 		created_by: user, created_at: new Date().toISOString()
 	});
-	logger.info({audit: "miro_export_started", user, projectId, exportId, anchor: anchorKind, anchorName: anchor?.parsed?.name ?? null, documents: total}, "audit");
-	const job = {exportId, projectId, user, target, project: loaded.project, groups: plannedGroups, when, anchorId: anchor?.entry.id ?? null};
+	logger.info({audit: "miro_export_started", user, projectId: project?.id ?? null, exportId, anchor: anchorKind, anchorName: anchor?.parsed?.name ?? null, documents: total}, "audit");
+	const job = {exportId, user, target, project, groups: plannedGroups, when, anchorId: anchor?.entry.id ?? null};
 	// 同じ台の書き出しは 1 つずつ(続けて頼まれても、あとのものが先のフレームを避けられるように)
+	running.add(exportId);
 	queue = queue.then(() => runExport(job)).catch(() => null);
-	running.add(projectId);
-	return exportView(target, await ds.get(SQL_GET_EXPORT, [exportId, projectId]));
+	return exportView(target, await ds.get(SQL_GET_EXPORT, [exportId]));
 };
 
-// この台で書き出しているプロジェクトと、書き出しの順番
+// この台で書き出している書き出しと、書き出しの順番
 const running = new Set();
 let queue = Promise.resolve();
 
 /** 書き出しの本体(裏で動く) */
 const runExport = async (job) => {
-	const {exportId, projectId, user, target, project} = job;
+	const {exportId, user, target, project} = job;
 	const board = target.boardId;
 	const call = (fn) => MiroConnection.withToken((token) => fn(token));
 	const results = [];
 	const frames = [];
 	const cards = [];
-	const finish = async (state, error = null, {keepLast = false} = {}) => {
+	const finish = async (state, error = null) => {
 		const count = (s) => results.filter((r) => r.state === s).length;
 		await ds.run(SQL_FINISH_EXPORT, {
 			id: exportId, state, frames: JSON.stringify(frames), cards: JSON.stringify(cards), documents: JSON.stringify(results),
 			placed: count(STATES.PLACED), skipped: count(STATES.SKIPPED), failed: count(STATES.FAILED), error, finished_at: new Date().toISOString()
 		});
-		// 何も置かずに終わったとき(ほかの書き出しが動いていた)は、前の書き出しを手直しできるまま残す
-		if (!keepLast) await ds.run(SQL_SET_LAST_EXPORT, {project_id: projectId, export_id: exportId, now: new Date().toISOString(), error});
 	};
-	if (!(await takeLock(projectId))) {
-		await finish("failed", "このプロジェクトのほかの書き出し・手直しが動いています。終わってからやり直してください", {keepLast: true}).catch(() => {});
-		running.delete(projectId);
-		return;
-	}
 	try {
 		// 中身を用意する(変換は時間がかかるので、置く前にまとめて済ませる)
 		const ready = new Map();
@@ -621,7 +616,8 @@ const runExport = async (job) => {
 
 		// 置き場所を決める。ボードは置く直前に読み直す(頼まれてから変換を待つあいだに、目印が動かされた・
 		// ほかの書き出しのフレームができた、ことがあるため)。ボードにあるものとは重ねない
-		const input = await MiroLayout.loadInput(projectId) ?? {project, documents: []};
+		// 十字の振り分けに使うタグ・フォルダ名(プロジェクトを渡されたときは、そのプロジェクトのフォルダ名も使う)
+		const input = await MiroLayout.loadDocumentsInput(job.groups.flatMap((g) => g.documents.map((d) => d.id)), project);
 		const scan = await scanBoard(board);
 		let anchorBox = null;
 		if (job.anchorId != null) {
@@ -635,11 +631,10 @@ const runExport = async (job) => {
 		})).filter((g) => g.documents.length > 0);
 		const plan = MiroLayoutPlan.planExport({
 			groups, anchor: anchorBox, free: anchorBox == null ? freeSpot(scan) : null, obstacles,
-			input: {project, documents: input.documents}, geometry: LAYOUT
+			input, geometry: LAYOUT
 		});
 
 		// フレームを作って、資料を置く(中身 → 見出し → グループ)。数件ずつ同時に書き込む
-		await ds.run(SQL_CLEAR_ITEMS, [projectId]);
 		const now = () => new Date().toISOString();
 		for (const planned of plan.frames) {
 			const title = `${planned.title} [${job.when}]`;
@@ -668,8 +663,8 @@ const runExport = async (job) => {
 						logger.warn({err: err.message}, "資料と見出しをグループにできませんでした(それぞれは置いてあります)");
 						return null;
 					});
-					await ds.run(SQL_INSERT_ITEM, {project_id: projectId, alias: doc.alias, board_id: board, document_id: doc.id, item_id: String(created.id), item_kind: payload.kind,
-						caption_id: String(caption.id), group_id: group?.id != null ? String(group.id) : null, title: doc.entry_file, state: STATES.PLACED, reason: null,
+					await ds.run(SQL_INSERT_ITEM, {export_id: exportId, alias: doc.alias, document_id: doc.id, item_id: String(created.id), item_kind: payload.kind,
+						caption_id: String(caption.id), group_id: group?.id != null ? String(group.id) : null, title: doc.entry_file,
 						x: item.x, y: item.y, width: created.geometry?.width ?? LAYOUT.itemWidth, height, frame_id: record.frameId, updated_by: user, updated_at: now()});
 					results.push({documentId: doc.id, title: doc.entry_file, state: STATES.PLACED, frameId: record.frameId});
 				} catch (err) {
@@ -680,37 +675,36 @@ const runExport = async (job) => {
 				}
 			});
 		}
-		// 十字の概要カード(目印のすぐ下。フレームには入れない)
+		// 十字の概要カード(目印のすぐ下。フレームには入れない。プロジェクトを渡されたときだけ)
 		for (const card of plan.cards) {
 			const created = await call((token) => Miro.createText(token, board, {
-				content: `<p>${linked(`<strong>${textHtml(card.text)}</strong>`, projectUrlOf(target, projectId))}</p>`,
+				content: `<p>${linked(`<strong>${textHtml(card.text)}</strong>`, projectUrlOf(target, project?.id))}</p>`,
 				x: card.x, y: card.y, width: card.width,
 				style: {fontSize: String(card.fontSize), fillColor: "#ffffff", fillOpacity: "1", textAlign: "center"}
 			})).catch((err) => {
 				if (err.needsReconnect) throw err;
-				logger.warn({err: err.message, projectId}, "概要カードを置けませんでした");
+				logger.warn({err: err.message, exportId}, "概要カードを置けませんでした");
 				return null;
 			});
 			if (created != null) cards.push({id: String(created.id), text: card.text});
 		}
 		const failed = results.filter((r) => r.state === STATES.FAILED).length;
 		await finish("done", failed > 0 ? `${failed} 件を置けませんでした(Miro が断りました。もう一度書き出してください)` : null);
-		logger.info({audit: "miro_export_done", user, projectId, exportId, frames: frames.length, placed: results.filter((r) => r.state === STATES.PLACED).length, failed}, "audit");
+		logger.info({audit: "miro_export_done", user, projectId: project?.id ?? null, exportId, frames: frames.length, placed: results.filter((r) => r.state === STATES.PLACED).length, failed}, "audit");
 	} catch (err) {
 		const message = err.needsReconnect ? err.message : `Miro に書き出せませんでした: ${err.message}`;
-		logger.warn({projectId, exportId, error: err.message}, "Miro への書き出しに失敗しました");
+		logger.warn({exportId, error: err.message}, "Miro への書き出しに失敗しました");
 		await finish("failed", message.slice(0, 500)).catch(() => {});
 	} finally {
-		await releaseLock(projectId);
-		running.delete(projectId);
+		running.delete(exportId);
 	}
 };
 
 /** 書き出しの記録を、画面・API の形にする */
-const exportView = (target, row, {withDocuments = true} = {}) => {
+const exportView = (target, row, {withDocuments = true, projects = new Map()} = {}) => {
 	if (row == null) return null;
 	const frames = parseJson(row.frames, []);
-	const staleRunning = row.state === "running" && Date.now() - Date.parse(row.created_at) > LOCK_MS * 2;
+	const staleRunning = row.state === "running" && !running.has(row.id) && Date.now() - Date.parse(row.created_at) > LOCK_MS * 2;
 	return {
 		id: row.id,
 		state: staleRunning ? "failed" : row.state,
@@ -718,6 +712,7 @@ const exportView = (target, row, {withDocuments = true} = {}) => {
 		createdBy: row.created_by,
 		finishedAt: row.finished_at ?? null,
 		title: row.title,
+		project: row.project_id ? {id: row.project_id, name: projects.get(row.project_id) ?? null} : null,
 		anchor: {kind: row.anchor_kind, name: row.anchor_name ?? null, url: itemUrl(target, row.anchor_item_id)},
 		frames: frames.map((f) => ({...f, url: itemUrl(target, f.frameId)})),
 		counts: {placed: Number(row.placed ?? 0), skipped: Number(row.skipped ?? 0), failed: Number(row.failed ?? 0)},
@@ -725,31 +720,35 @@ const exportView = (target, row, {withDocuments = true} = {}) => {
 		...(withDocuments ? {documents: parseJson(row.documents, [])} : {})
 	};
 };
-
-/** 1 つの書き出しの記録(書き出しを頼んだあと、終わるのを待つのに使う) */
-module.exports.getExport = async (projectId, exportId) => {
-	const target = await MiroConnection.target().catch(() => null);
-	return exportView(target, await ds.get(SQL_GET_EXPORT, [exportId, projectId]));
+const projectNames = async (rows) => {
+	const names = new Map();
+	for (const id of new Set(rows.map((r) => r.project_id).filter(Boolean))) names.set(id, (await Projects.getProject(id))?.name ?? null);
+	return names;
 };
 
-/** プロジェクトの書き出しの状態と履歴(画面・API の応答) */
-module.exports.status = async (projectId) => {
+/** 1 つの書き出しの記録(書き出しを頼んだあと、終わるのを待つのに使う) */
+module.exports.getExport = async (exportId) => {
 	const target = await MiroConnection.target().catch(() => null);
-	const link = await ds.get(SQL_GET_PROJECT, [projectId]);
-	const rows = await ds.all(SQL_LIST_EXPORTS, [projectId]);
+	const row = await ds.get(SQL_GET_EXPORT, [exportId]);
+	return exportView(target, row, {projects: await projectNames(row ? [row] : [])});
+};
+
+/** 書き出しの状態と履歴(新しい順。画面・API の応答) */
+module.exports.listExports = async ({limit = 30} = {}) => {
+	const target = await MiroConnection.target().catch(() => null);
+	const rows = await ds.all(SQL_LIST_EXPORTS, [Math.max(1, Math.min(200, Number(limit) || 30))]);
+	const projects = await projectNames(rows);
+	const exports = rows.map((row) => exportView(target, row, {withDocuments: false, projects}));
 	return {
 		available: target != null,
 		boardUrl: target?.boardUrl ?? null,
-		exporting: running.has(projectId) || rows.some((r) => exportView(target, r).state === "running"),
-		lastExportId: link?.last_export_id ?? null,
-		lastExportedAt: link?.last_synced_at ?? null,
-		lastError: link?.last_error ?? null,
+		exporting: running.size > 0 || exports.some((e) => e.state === "running"),
 		directions: MiroLayoutPlan.DIRECTIONS.map((id) => ({id, name: MiroLayoutPlan.DIRECTION_NAMES[id]})),
-		exports: rows.map((row, index) => exportView(target, row, {withDocuments: index === 0}))
+		exports
 	};
 };
 
-// ---- 書き出したあとの手直し(最後に書き出したフレームだけ) ----
+// ---- 書き出したあとの手直し(書き出しの記録ごと) ----
 // 人が Miro で動かしたあとでも正しく動かせるよう、動かす前に Miro からいまの位置を読み直す。
 // 資料と見出しはグループにしてあるが、API で動かすときは1つずつ動かす必要がある(実物で確かめた)ので、
 // 見出しも資料の下へ一緒に動かす
@@ -757,21 +756,26 @@ module.exports.status = async (projectId) => {
 const SIDES = Object.freeze(["right", "left", "above", "below"]);
 module.exports.SIDES = SIDES;
 
-/** 最後の書き出し(手直しできるのはこれだけ) */
-const lastExportOf = async (projectId) => {
+/** 手直しする書き出し。ID を省くと、頼んだ人の最後の書き出し(このボードで、終わったもの) */
+const exportFor = async (exportId, user) => {
 	const target = await requireTarget();
-	const link = await ds.get(SQL_GET_PROJECT, [projectId]);
-	const row = link?.last_export_id ? await ds.get(SQL_GET_EXPORT, [link.last_export_id, projectId]) : null;
-	if (row == null || row.state !== "done") throw exportError("このプロジェクトは、まだ Miro に書き出していません(書き出しが終わってから手直しできます)", 409, {code: "no_export"});
-	if (row.board_id !== target.boardId) throw exportError("最後に書き出したボードと、いまのボードが違います(書き出し直してください)", 409, {code: "board_changed"});
-	return {target, link, row, frames: parseJson(row.frames, [])};
+	const row = exportId != null && exportId !== ""
+		? await ds.get(SQL_GET_EXPORT, [String(exportId)])
+		: await ds.get(SQL_LAST_EXPORT_OF, [user, target.boardId]);
+	if (row == null) {
+		throw exportError(exportId ? "その書き出しはありません" : "まだ Miro に書き出していません(書き出しが終わってから手直しできます)", exportId ? 404 : 409, {code: "no_export"});
+	}
+	if (row.state !== "done") throw exportError("その書き出しは終わっていないか、失敗しています", 409, {code: "export_not_done"});
+	if (row.board_id !== target.boardId) throw exportError("その書き出しのボードと、いまのボードが違います(書き出し直してください)", 409, {code: "board_changed"});
+	return {target, row, frames: parseJson(row.frames, [])};
 };
 
 /** 書き出した資料を、文書 ID から引く。版が変わっていても、同じ資料なら引ける */
-const placedRowOf = async (projectId, documentId) => {
-	const alias = await DocumentAliases.aliasOf(documentId);
-	const row = alias == null ? null : await ds.get(SQL_GET_ITEM, [projectId, alias]);
-	if (row == null || row.item_id == null || row.state !== STATES.PLACED) throw exportError("この資料は、最後の書き出しで Miro に出ていません", 404);
+const placedRowOf = async (exportId, documentId) => {
+	const current = await currentDocument(String(documentId ?? ""));
+	const alias = current == null ? null : current.archived ? await DocumentAliases.aliasOf(current.row.id) : current.alias;
+	const row = alias == null ? null : await ds.get(SQL_GET_ITEM, [exportId, alias]);
+	if (row == null || row.item_id == null) throw exportError("この資料は、この書き出しで Miro に出ていません", 404);
 	return row;
 };
 
@@ -820,23 +824,23 @@ const frameOf = (frames, ref) => {
 	const wanted = String(ref).trim();
 	const found = frames.find((f) => f.frameId === wanted) ?? frames.find((f) => f.title === wanted)
 		?? frames.filter((f) => f.title.replace(/\s*\[[^\]]*\]$/, "") === wanted)[0];
-	if (found == null) throw exportError(`最後に書き出したフレームに「${wanted}」はありません(${frames.map((f) => f.title).join(" / ")})`, 404);
+	if (found == null) throw exportError(`この書き出しのフレームに「${wanted}」はありません(${frames.map((f) => f.title).join(" / ")})`, 404);
 	return found;
 };
 
 /**
- * ボードの地図(LLM が置き場所を考えるための材料)。最後に書き出したフレームの中を Miro から読み、次を返す。ボードは変えない。
+ * ボードの地図(LLM が置き場所を考えるための材料)。書き出したフレームの中を Miro から読み、次を返す。ボードは変えない。
  *   frames[].documents    資料ごとの位置と大きさ(見出しの下端も)
  *   frames[].decorations  Document Manager が指示で置いた見出しの文字・図形
  *   frames[].others       人が Miro で足したもの(付箋・図形・文字など。Document Manager は触らない)
  *   frames[].freeSpace    中身の右と下の空いている所の目安
  * 位置はフレームごとに、その左上から。x・y は中心、left・top・right・bottom は端。
  */
-module.exports.boardMap = async (projectId) => {
-	const {target, row, frames} = await lastExportOf(projectId);
+module.exports.boardMap = async (exportId, user) => {
+	const {target, row, frames} = await exportFor(exportId, user);
 	const board = target.boardId;
-	const rows = (await ds.all(SQL_LIST_ITEMS, [projectId])).filter((r) => r.state === STATES.PLACED && r.item_id != null);
-	const decorations = parseJson((await ds.get(SQL_GET_PROJECT, [projectId]))?.layout_plan, {}).frames ?? {};
+	const rows = (await ds.all(SQL_LIST_ITEMS, [row.id])).filter((r) => r.item_id != null);
+	const decorations = parseJson(row.decorations, {});
 	const located = new Set();
 	const result = [];
 	for (const frame of frames) {
@@ -891,27 +895,27 @@ module.exports.boardMap = async (projectId) => {
 		});
 	}
 	return {
-		projectId,
 		exportId: row.id,
+		projectId: row.project_id ?? null,
 		exportedAt: row.created_at,
 		coordinates: "位置はフレームごとに、その左上から。x・y は中心、left・top・right・bottom は端。miro-layout・miro-move にも同じ座標で渡す",
 		frames: result,
-		// 最後の書き出しの資料で、どのフレームにも見当たらないもの(Miro で消された・フレームの外へ出された)
+		// この書き出しの資料で、どのフレームにも見当たらないもの(Miro で消された・フレームの外へ出された)
 		missing: rows.filter((r) => !located.has(r.alias)).map((r) => ({documentId: r.document_id, title: r.title})),
 		cardSize: {width: LAYOUT.itemWidth, captionHeight: LAYOUT.captionHeight}
 	};
 };
 
 /**
- * 資料を動かす(最後に書き出したフレームの中・フレームどうし)。指示は次のどれか1つ:
+ * 資料を動かす(書き出したフレームの中・同じ書き出しのフレームどうし)。指示は次のどれか1つ:
  *   {nextTo: 文書ID, side: "right"|"left"|"above"|"below"}  ほかの資料の隣へ
  *   {frame?: フレームの ID か名前, x, y}                        フレームの左上からの位置へ(資料の中心。frame を省くといまのフレーム)
  */
-module.exports.moveDocument = async (projectId, documentId, instruction, user) => {
-	const {target, row: exportRow, frames} = await lastExportOf(projectId);
+module.exports.moveDocument = async (exportId, documentId, instruction, user) => {
+	const {target, row: exportRow, frames} = await exportFor(exportId, user);
 	const board = target.boardId;
-	const row = await placedRowOf(projectId, documentId);
-	if (!(await takeLock(projectId))) throw exportError("いま Miro へ書き出しているところです。終わってからやり直してください", 409);
+	const row = await placedRowOf(exportRow.id, documentId);
+	if (!(await takeLock(exportRow.id))) throw exportError("いまこの書き出しをほかの頼みで直しています。終わってからやり直してください", 409);
 	try {
 		const current = await readPlacement(board, row).catch((err) => {
 			if (err.status === 404) throw exportError("この資料は Miro で消されています", 404);
@@ -923,8 +927,8 @@ module.exports.moveDocument = async (projectId, documentId, instruction, user) =
 		if (instruction.nextTo != null) {
 			const side = instruction.side ?? "right";
 			if (!SIDES.includes(side)) throw exportError("side は right / left / above / below のどれかです");
-			const reference = await placedRowOf(projectId, instruction.nextTo).catch(() => {
-				throw exportError("隣に置く相手の資料が、最後の書き出しで Miro に出ていません", 404);
+			const reference = await placedRowOf(exportRow.id, instruction.nextTo).catch(() => {
+				throw exportError("隣に置く相手の資料が、この書き出しで Miro に出ていません", 404);
 			});
 			if (reference.alias === row.alias) throw exportError("自分自身の隣には置けません");
 			const ref = await readPlacement(board, reference);
@@ -946,7 +950,7 @@ module.exports.moveDocument = async (projectId, documentId, instruction, user) =
 			throw exportError("nextTo(と side)か、x と y(と frame)を指定してください");
 		}
 		if (destination.parentId == null || !frames.some((f) => f.frameId === destination.parentId)) {
-			throw exportError("最後に書き出したフレームの外へは動かせません");
+			throw exportError("この書き出しのフレームの外へは動かせません");
 		}
 		if (destination.x - current.width / 2 < 0 || destination.y - current.height / 2 < 0) {
 			throw exportError("フレームの左・上の端からはみ出します(フレームは右と下にだけ広げられます)");
@@ -957,15 +961,15 @@ module.exports.moveDocument = async (projectId, documentId, instruction, user) =
 			height: destination.y + current.height / 2 + LAYOUT.captionHeight + LAYOUT.padding
 		});
 		await placeAt(board, row, destination);
-		await ds.run(SQL_SET_POSITION, [destination.x, destination.y, row.width, row.height, destination.parentId, user, new Date().toISOString(), projectId, row.alias]);
-		logger.info({audit: "miro_document_moved", user, projectId, documentId, instruction}, "audit");
-		return {x: destination.x, y: destination.y, frameId: destination.parentId};
+		await ds.run(SQL_SET_POSITION, [destination.x, destination.y, row.width, row.height, destination.parentId, user, new Date().toISOString(), exportRow.id, row.alias]);
+		logger.info({audit: "miro_document_moved", user, exportId: exportRow.id, documentId, instruction}, "audit");
+		return {exportId: exportRow.id, x: destination.x, y: destination.y, frameId: destination.parentId};
 	} finally {
-		await releaseLock(projectId);
+		await releaseLock(exportRow.id);
 	}
 };
 
-// ---- まとめて置き直す・見出しや図形を足す(最後に書き出したフレームの 1 つ) ----
+// ---- まとめて置き直す・見出しや図形を足す(書き出したフレームの 1 つ) ----
 
 const LAYOUT_LIMITS = Object.freeze({items: 2000, labels: 500, shapes: 500, maxCoordinate: 200000, textLength: 300});
 const SHAPE_KINDS = Object.freeze(["rectangle", "round_rectangle", "circle", "triangle", "rhombus", "parallelogram", "trapezoid", "pentagon", "hexagon", "octagon", "star", "flow_chart_predefined_process", "can", "cross", "right_arrow", "left_arrow", "left_right_arrow", "left_brace", "right_brace"]);
@@ -1061,36 +1065,36 @@ const normalizeLayout = (layout) => {
 	if (items.length === 0 && labels.length === 0 && shapes.length === 0 && frame == null && !clearDecorations) {
 		errors.push("items・labels・shapes・frame のどれかを指定してください(指示して置いた見出し・図形を消すだけなら clearDecorations: true)");
 	}
-	return {errors, frameRef: layout?.frameId ?? null, items, labels, shapes, frame, keepDecorations: layout?.keepDecorations === true};
+	return {errors, exportRef: layout?.exportId ?? null, frameRef: layout?.frameId ?? null, items, labels, shapes, frame, keepDecorations: layout?.keepDecorations === true};
 };
 module.exports.normalizeLayout = normalizeLayout;
 
 /**
- * レイアウトをまとめて当てる(最後に書き出したフレームの 1 つ。frameId を省くと最初のフレーム)。
+ * レイアウトをまとめて当てる(書き出したフレームの 1 つ。exportId を省くと頼んだ人の最後の書き出し、frameId を省くと最初のフレーム)。
  * 位置はすべて、そのフレームの左上からの中心の位置。フレームは広げるだけで縮めない(左上は動かさない)。
  * 見出しの文字・図形は Document Manager が覚えておき、次に当てるときに片付けてから置く(keepDecorations なら残して足す)。
- * @param {{frameId?: string, items?: Array<{documentId: string, x: number, y: number, color?: ?string}>,
+ * @param {{exportId?: string, frameId?: string, items?: Array<{documentId: string, x: number, y: number, color?: ?string}>,
  *          labels?: object[], shapes?: object[], frame?: {width: number, height: number}, keepDecorations?: boolean, clearDecorations?: boolean}} layout
  */
-module.exports.applyLayout = async (projectId, layout, user) => {
-	const {target, row: exportRow, frames} = await lastExportOf(projectId);
-	const board = target.boardId;
+module.exports.applyLayout = async (layout, user) => {
 	const plan = normalizeLayout(layout);
+	const {target, row: exportRow, frames} = await exportFor(plan.exportRef, user);
+	const board = target.boardId;
 	let frame = null;
 	try {
 		frame = frameOf(frames, plan.frameRef) ?? frames[0];
 	} catch (err) {
 		plan.errors.push(err.message);
 	}
-	// 資料は、最後の書き出しで出したものだけ(版が変わっていても同じ資料なら引ける)
+	// 資料は、この書き出しで出したものだけ(版が変わっていても同じ資料なら引ける)
 	const rows = new Map();
 	for (const item of plan.items) {
-		const row = await placedRowOf(projectId, item.documentId).catch(() => null);
-		if (row == null) plan.errors.push(`この資料は、最後の書き出しで Miro に出ていません(${item.documentId})`);
+		const row = await placedRowOf(exportRow.id, item.documentId).catch(() => null);
+		if (row == null) plan.errors.push(`この資料は、この書き出しで Miro に出ていません(${item.documentId})`);
 		else rows.set(item.documentId, row);
 	}
 	if (plan.errors.length > 0) throw exportError("レイアウトの指示に正しくないところがあります(何も動かしていません)", 400, {details: plan.errors.slice(0, 50)});
-	if (!(await takeLock(projectId))) throw exportError("いま Miro へ書き出しているところです。終わってからやり直してください", 409);
+	if (!(await takeLock(exportRow.id))) throw exportError("いまこの書き出しをほかの頼みで直しています。終わってからやり直してください", 409);
 	try {
 		const heightOf = (row) => Number(row.height) || LAYOUT.itemWidth * LAYOUT.defaultAspect;
 		const widthOf = (row) => Number(row.width) || LAYOUT.itemWidth;
@@ -1114,7 +1118,7 @@ module.exports.applyLayout = async (projectId, layout, user) => {
 			width: Math.max(plan.frame?.width ?? 0, right + LAYOUT.padding),
 			height: Math.max(plan.frame?.height ?? 0, bottom + LAYOUT.padding)
 		});
-		const drawn = await drawDecorations(projectId, board, frame.frameId, plan);
+		const drawn = await drawDecorations(exportRow.id, board, frame.frameId, plan);
 
 		let moved = 0;
 		await forEachConcurrently(plan.items, CONCURRENCY, async (item) => {
@@ -1133,14 +1137,14 @@ module.exports.applyLayout = async (projectId, layout, user) => {
 					if (err.status !== 404) throw err;
 				});
 			}
-			await ds.run(SQL_SET_POSITION, [item.x, item.y, row.width, row.height, frame.frameId, user, new Date().toISOString(), projectId, row.alias]);
+			await ds.run(SQL_SET_POSITION, [item.x, item.y, row.width, row.height, frame.frameId, user, new Date().toISOString(), exportRow.id, row.alias]);
 			moved++;
 		});
 		const current = frames.find((f) => f.frameId === frame.frameId);
-		logger.info({audit: "miro_layout_applied", user, projectId, frameId: frame.frameId, moved, labels: drawn.labels, shapes: drawn.shapes}, "audit");
-		return {frameId: frame.frameId, moved, labels: drawn.labels, shapes: drawn.shapes, frame: {width: current.width, height: current.height}};
+		logger.info({audit: "miro_layout_applied", user, exportId: exportRow.id, frameId: frame.frameId, moved, labels: drawn.labels, shapes: drawn.shapes}, "audit");
+		return {exportId: exportRow.id, frameId: frame.frameId, moved, labels: drawn.labels, shapes: drawn.shapes, frame: {width: current.width, height: current.height}};
 	} finally {
-		await releaseLock(projectId);
+		await releaseLock(exportRow.id);
 	}
 };
 
@@ -1149,9 +1153,8 @@ module.exports.applyLayout = async (projectId, layout, user) => {
  * (keepDecorations なら前のものを残して足す)。人が Miro で足した付箋などには触らない
  */
 const decorationKey = (kind, spec) => `${kind}:${JSON.stringify(spec)}`;
-const drawDecorations = async (projectId, board, frameId, {labels, shapes, keepDecorations}) => {
-	const saved = parseJson((await ds.get(SQL_GET_PROJECT, [projectId]))?.layout_plan, {});
-	const all = saved.frames ?? {};
+const drawDecorations = async (exportId, board, frameId, {labels, shapes, keepDecorations}) => {
+	const all = parseJson((await ds.get(SQL_GET_EXPORT, [exportId]))?.decorations, {});
 	const before = all[frameId] ?? {decor: [], labels: [], shapes: []};
 	if (!keepDecorations) {
 		for (const d of before.decor) {
@@ -1196,7 +1199,7 @@ const drawDecorations = async (projectId, board, frameId, {labels, shapes, keepD
 		labels: [...(keepDecorations ? before.labels : []), ...labels],
 		shapes: [...(keepDecorations ? before.shapes : []), ...shapes]
 	};
-	await ds.run(SQL_SET_DECORATIONS, {project_id: projectId, layout_plan: JSON.stringify({...saved, frames: all})});
+	await ds.run(SQL_SET_EXPORT_DECORATIONS, {id: exportId, decorations: JSON.stringify(all)});
 	return {labels: created.filter((d) => d.key.startsWith("label:")).length, shapes: created.filter((d) => d.key.startsWith("shape:")).length};
 };
 

@@ -7,7 +7,7 @@
  *   right / left / up / down                              目印の横・上・下
  *   upper-right / lower-right / upper-left / lower-left    目印の斜め(フレームの角を目印の角に向ける)
  *   cross  十字。資料をタグで 4 つに分け(miro-layout.js)、斜め 4 つのフレームに出す。フレームの隙間が十字の線になる。
- *          プロジェクトの概要カード(名前・説明・件数)は目印のすぐ下。どこにも当たらない資料は「未分類」のフレームを下に
+ *          プロジェクトを渡されたときは、プロジェクトの概要カード(名前・説明・件数)を目印のすぐ下に。どこにも当たらない資料は「未分類」のフレームを下に
  * フレームの中は向きにかかわらず読む順(左上から右へ、行が埋まったら次の行)。フレームの形は向きに合わせる
  * (横は横長、上下は縦長、斜めは正方形に近い)。
  *
@@ -193,7 +193,7 @@ const clearOf = (boxes, direction, obstacles, gap) => {
  *   null なら空いている所(free の左上)に、向きの形のまま出す
  * @param {?{left: number, top: number}} options.free 目印が無いときの置き場所(ボードの中身の右)
  * @param {Array<{left, top, right, bottom}>} options.obstacles ボードにあるもの(重ねない)。目印そのものは入れない
- * @param {{project: object, documents: object[]}} options.input miro-layout.js の loadInput() と同じ形(十字の振り分けに使う)
+ * @param {{project: ?object, documents: object[]}} options.input miro-layout.js の loadDocumentsInput() の形(十字の振り分けに使う。project が無ければ概要カードを置かない)
  * @param {object} options.geometry miro-export.js の LAYOUT
  * @returns {{frames: Array<{title: string, direction: string, area: ?string, left: number, top: number, width: number, height: number,
  *            items: Array<{documentId: string, x: number, y: number, color: ?string}>}>,
@@ -225,14 +225,18 @@ module.exports.planExport = ({groups, anchor = null, free = null, obstacles = []
 				const direction = {upper_left: "upper-left", upper_right: "upper-right", lower_left: "lower-left", lower_right: "lower-right", unclassified: "down"}[area];
 				planned[area] = {direction, ...planFrame(direction, entries.map((p) => ({documentId: p.documentId, height: sizeOf.get(p.documentId)?.height, color: colorOf(p)})), G)};
 			}
-			// 概要カード(目印のすぐ下)。下の 2 つのフレームは、その下から
-			const latest = docs.map((d) => String(d.modified ?? "")).sort().pop()?.slice(0, 10) ?? "";
-			const text = summaryText(input.project, group.documents.length, latest);
-			const cardHeight = text.split("\n").length * SUMMARY.fontSize * 1.6 + 40;
-			const cx = (base.left + base.right) / 2;
-			const card = {text, x: cx, y: base.bottom + gap / 2 + cardHeight / 2, width: SUMMARY.width, height: Math.ceil(cardHeight), fontSize: SUMMARY.fontSize};
-			const cardBox = {left: cx - SUMMARY.width / 2, right: cx + SUMMARY.width / 2, top: base.bottom + gap / 2, bottom: base.bottom + gap / 2 + cardHeight};
-			const lowerAnchor = {...base, bottom: cardBox.bottom};
+			// 概要カード(目印のすぐ下。プロジェクトを渡されたときだけ)。下の 2 つのフレームは、その下から
+			let card = null;
+			let cardBox = null;
+			if (input.project != null) {
+				const latest = docs.map((d) => String(d.modified ?? "")).sort().pop()?.slice(0, 10) ?? "";
+				const text = summaryText(input.project, group.documents.length, latest);
+				const cardHeight = text.split("\n").length * SUMMARY.fontSize * 1.6 + 40;
+				const cx = (base.left + base.right) / 2;
+				card = {text, x: cx, y: base.bottom + gap / 2 + cardHeight / 2, width: SUMMARY.width, height: Math.ceil(cardHeight), fontSize: SUMMARY.fontSize};
+				cardBox = {left: cx - SUMMARY.width / 2, right: cx + SUMMARY.width / 2, top: base.bottom + gap / 2, bottom: base.bottom + gap / 2 + cardHeight};
+			}
+			const lowerAnchor = cardBox == null ? base : {...base, bottom: cardBox.bottom};
 			const at = {};
 			for (const area of ["upper_left", "upper_right", "lower_left", "lower_right"]) {
 				if (planned[area] == null) continue;
@@ -240,7 +244,7 @@ module.exports.planExport = ({groups, anchor = null, free = null, obstacles = []
 				at[area] = slotFor(ref, planned[area].direction, planned[area], gap);
 			}
 			if (planned.unclassified != null) {
-				const lowerBottom = Math.max(cardBox.bottom, ...["lower_left", "lower_right"].filter((a) => at[a]).map((a) => at[a].top + planned[a].height));
+				const lowerBottom = Math.max(lowerAnchor.bottom, ...["lower_left", "lower_right"].filter((a) => at[a]).map((a) => at[a].top + planned[a].height));
 				at.unclassified = {left: at.lower_left?.left ?? base.left - gap - planned.unclassified.width, top: lowerBottom + gap};
 			}
 			for (const area of MiroLayout.CROSS_AREAS) {
@@ -250,7 +254,7 @@ module.exports.planExport = ({groups, anchor = null, free = null, obstacles = []
 					...boxOf(at[area].left, at[area].top, planned[area].width, planned[area].height), items: planned[area].items
 				});
 			}
-			unit.push({kind: "card", ...cardBox, card});
+			if (card != null) unit.push({kind: "card", ...cardBox, card});
 		} else {
 			const plan = planFrame(group.direction, group.documents, G);
 			const slot = slotFor(base, group.direction, plan, gap);

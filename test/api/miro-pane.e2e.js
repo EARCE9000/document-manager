@@ -1,9 +1,9 @@
 /*!
- * miro-project.e2e.js : プロジェクトの画面の「Miro への書き出し」(実ブラウザ)
+ * miro-project.e2e.js : 上のメニューの「Miro」の画面(実ブラウザ)
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
- * プロジェクトを開いて Miro のボタンを押すと、目印を置く欄・ボードの目印の一覧・書き出しの履歴が出る。
+ * メニューの「Miro」を開くと、目印を置く欄・ボードの目印の一覧・書き出しの履歴(全プロジェクト分)が出る。
  * 画面から目印の付箋をボード(Miro の代わり)に置き、API で書き出したものが履歴に出るところまでを通す。
  * 書き出しそのものは Claude Code などから頼むもので、画面には書き出すボタンを置かない。
  *
@@ -27,7 +27,7 @@ const upload = async (request, name, buffer) => {
 	return res.json();
 };
 
-test.describe.serial("プロジェクトの Miro への書き出し(実ブラウザ)", () => {
+test.describe.serial("Miro の画面(実ブラウザ)", () => {
 	let projectId;
 	const docs = [];
 
@@ -59,25 +59,31 @@ test.describe.serial("プロジェクトの Miro への書き出し(実ブラウ
 	});
 
 	test("目印の付箋を画面から置くと、ボードに [DM]名前・向き・メモの付箋ができ、目印の一覧に出る", async ({page}) => {
-		await page.goto(`./?project=${projectId}`);
-		const button = page.locator("#projectMiroButton");
-		await expect(button).toBeVisible();
-		await expect(button).toBeEnabled();
-		await button.click();
-		const overlay = page.locator("#miroProjectOverlay");
+		await page.goto("./");
+		const menu = page.locator("#menuMiroLink");
+		await expect(menu).toBeVisible();
+		await menu.click();
+		const overlay = page.locator("#miroPane");
 		await expect(overlay).toBeVisible();
-		await expect(page.locator("#miroProjectTitle")).toContainText(`Miro への書き出し — 画面からMiro${STAMP}`);
 		await expect(page.locator("#miroAnchorList")).toContainText("ボードに目印がありません");
-		await expect(page.locator("#miroExportList")).toContainText("まだ書き出していません");
+		// プロジェクトの画面には Miro のボタンを置かない
+		await expect(page.locator("#projectMiroButton")).toHaveCount(0);
 		// 書き出すボタンは画面に置かない(Claude Code などから頼む)
 		await expect(overlay.locator("button", {hasText: "書き出す"})).toHaveCount(0);
 		await expect(overlay.locator(".miroHowTo")).toContainText("Claude Code");
 
-		// 向きは 3×3 のマス(真ん中が付箋)と十字。既定は右
+		// 向きの既定は右
 		await expect(page.locator('input[name="miroAnchorDirection"]:checked')).toHaveValue("right");
-		await expect(page.locator(".miroDirectionCell.anchor")).toHaveText("付箋");
+		// 向きは図で選ぶ: 付箋(真ん中)のまわりに 8 つの置き場所。選んだ向きはフレームの形と中の並びまで描く
+		const preview = page.locator("#miroDirectionPreview");
+		await expect(preview.locator(".slot")).toHaveCount(8);
+		await expect(preview.locator(".slot.selected")).toHaveAttribute("data-direction", "right");
+		await expect(page.locator("#miroDirectionNote")).toContainText("付箋の右に");
 		await page.locator("#miroAnchorName").fill("定例");
-		await page.locator(".miroDirectionCell", {hasText: "左下"}).click();
+		await preview.locator('[data-direction="lower-left"]').click();
+		await expect(preview.locator(".slot.selected")).toHaveAttribute("data-direction", "lower-left");
+		await expect(preview.locator(".slot.selected .card")).toHaveCount(9);
+		await expect(preview.locator(".sticky")).toContainText("[DM]");
 		await expect(page.locator('input[name="miroAnchorDirection"]:checked')).toHaveValue("lower-left");
 		await page.locator("#miroAnchorNote").fill("議事録の最新");
 		await page.locator("#miroAnchorPlaceButton").click();
@@ -93,14 +99,15 @@ test.describe.serial("プロジェクトの Miro への書き出し(実ブラウ
 	});
 
 	test("書き出すと(Claude Code などから API で)、履歴にフレームへのリンクと件数が出る", async ({page, request}) => {
-		const res = await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: {anchor: "定例"}});
+		const res = await request.post("api/miro/exports", {headers: rw, data: {anchor: "定例", project: projectId}});
 		expect(res.status()).toBe(202);
 		const started = await res.json();
-		await expect.poll(async () => (await (await request.get(`api/projects/${projectId}/miro/exports/${started.id}`, {headers: rw})).json()).state).toBe("done");
-		await page.goto(`./?project=${projectId}`);
-		await page.locator("#projectMiroButton").click();
+		await expect.poll(async () => (await (await request.get(`api/miro/exports/${started.id}`, {headers: rw})).json()).state).toBe("done");
+		await page.goto("./");
+		await page.locator("#menuMiroLink").click();
 		const row = page.locator("#miroExportList tbody tr").first();
 		await expect(row).toContainText("[DM]定例");
+		await expect(row).toContainText(`画面からMiro${STAMP}`);
 		await expect(row).toContainText("出した 2 件・出せない 1 件");
 		await expect(row.locator(".frames a")).toContainText(/^定例 \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\(左下\)$/);
 		await expect(row.locator(".frames a")).toHaveAttribute("href", /moveToWidget=/);
@@ -112,20 +119,20 @@ test.describe.serial("プロジェクトの Miro への書き出し(実ブラウ
 			const response = await route.fetch();
 			await route.fulfill({response, json: {...(await response.json()), role: "readonly", isAdmin: false}});
 		});
-		await page.goto(`./?project=${projectId}`);
-		await page.locator("#projectMiroButton").click();
-		await expect(page.locator("#miroExportList tbody tr")).toHaveCount(1);
+		await page.goto("./");
+		await page.locator("#menuMiroLink").click();
+		await expect(page.locator("#miroExportList tbody tr").first()).toContainText("[DM]定例");
 		await expect(page.locator("#miroAnchorList")).toContainText("定例");
 		await expect(page.locator("#miroAnchorSection")).toBeHidden();
 	});
 
-	test("Miro 連携が無い環境では、ボタンを出さない", async ({page}) => {
+	test("Miro 連携が無い環境では、メニューに出さない", async ({page}) => {
 		await page.route("**/api/check_access_token", async (route) => {
 			const response = await route.fetch();
 			await route.fulfill({response, json: {...(await response.json()), miroEnabled: false}});
 		});
-		await page.goto(`./?project=${projectId}`);
-		await expect(page.locator("#projectCopyLinkButton")).toBeVisible();
-		await expect(page.locator("#projectMiroButton")).toBeHidden();
+		await page.goto("./");
+		await expect(page.locator("#menuToolsLink")).toBeVisible();
+		await expect(page.locator("#menuMiroLink")).toBeHidden();
 	});
 });

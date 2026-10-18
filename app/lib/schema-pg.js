@@ -424,6 +424,32 @@ const MIGRATIONS = [
 			finished_at TEXT
 		);
 		CREATE INDEX IF NOT EXISTS idx_miro_exports_project ON miro_exports (project_id, created_at);
+	`},
+	// Miro への書き出しをプロジェクトに縛らない(文書 ID だけで頼める)。手直しは書き出しの記録ごと(SQLite の v21 に後から足した表・列)
+	{version: 18, sql: `
+		ALTER TABLE miro_exports ALTER COLUMN project_id DROP NOT NULL;
+		ALTER TABLE miro_exports ADD COLUMN IF NOT EXISTS decorations TEXT;
+		ALTER TABLE miro_exports ADD COLUMN IF NOT EXISTS lock_owner TEXT;
+		ALTER TABLE miro_exports ADD COLUMN IF NOT EXISTS lock_until TEXT;
+		CREATE INDEX IF NOT EXISTS idx_miro_exports_created ON miro_exports (created_by, created_at);
+		CREATE TABLE IF NOT EXISTS miro_export_items (
+			export_id TEXT NOT NULL,
+			alias TEXT NOT NULL,
+			document_id TEXT,
+			item_id TEXT,
+			item_kind TEXT,
+			caption_id TEXT,
+			group_id TEXT,
+			title TEXT,
+			frame_id TEXT,
+			x DOUBLE PRECISION,
+			y DOUBLE PRECISION,
+			width DOUBLE PRECISION,
+			height DOUBLE PRECISION,
+			updated_by TEXT,
+			updated_at TEXT,
+			PRIMARY KEY (export_id, alias)
+		);
 	`}
 ];
 

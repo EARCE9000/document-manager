@@ -466,65 +466,66 @@ const OPERATIONS = [
 		description: "Miro 側のトークンも取り消す。ボードに出してある資料は Miro に残る",
 		aiGuide: false
 	},
-	// ---- Miro に資料を書き出す(プロジェクト単位) ----
+	// ---- Miro に資料を書き出す(プロジェクトには縛られない) ----
 	{
-		id: "getProjectMiro", method: "get", path: "/api/projects/:id/miro", role: "readonly", tag: "プロジェクト",
-		summary: "プロジェクトの Miro への書き出しの状態と履歴",
-		description: "`exporting`: いま書き出しているか。`exports`: 書き出しの履歴(新しい順に 20 件。いつ・誰が・どの目印に(`anchor`)・作ったフレーム(`frames[].url` で開ける)・件数(`counts`)・失敗(`error`)。いちばん新しいものだけ資料ごとの結果 `documents` 付き)。"
+		id: "listMiroExports", method: "get", path: "/api/miro/exports", role: "readonly", tag: "その他",
+		summary: "Miro への書き出しの状態と履歴",
+		description: "`exporting`: いま書き出しているか。`exports`: 書き出しの履歴(新しい順。`?limit=` 既定 30・最大 200。いつ・誰が・どのプロジェクト(`project`。省いたものは null)・どの目印に(`anchor`)・作ったフレーム(`frames[].url` で開ける)・件数(`counts`)・失敗(`error`))。"
 			+ "`directions`: 書き出せる向き。`available:false`は Miro との連携が無いか、書き出すボードが決まっていない。書き出しは自動では行わない(頼まれたときだけ)",
 		aiGuide: false
 	},
 	{
-		id: "getMiroLayoutTags", method: "get", path: "/api/miro/layout-tags", role: "readonly", tag: "プロジェクト",
+		id: "getMiroLayoutTags", method: "get", path: "/api/miro/layout-tags", role: "readonly", tag: "その他",
 		summary: "Miro の十字の振り分けで使う共通のタグ",
 		description: "`tags`: 区分:・工程:・段階:・会議: のタグを決まった順で(タグ体系 `/api/tag_order` に登録するとき、この順にそろえる)。"
 			+ "`values`: 見出しごとの値(`対象外:` は工程の値。`機能:` はプロジェクトごとに決めるので入らない)。値はこの一覧だけを正とし、ほかの値を作らない",
 		aiGuide: false
 	},
 	{
-		id: "getProjectMiroLayoutReport", method: "get", path: "/api/projects/:id/miro/layout-report", role: "readonly", tag: "プロジェクト",
+		id: "getMiroLayoutReport", method: "get", path: "/api/miro/layout-report", role: "readonly", tag: "その他",
 		summary: "十字で書き出したらどうなるかの報告(タグの見直し用)",
 		description: "Miro には触らず、読むだけで出す。十字は資料をタグで 4 つ(`upper_left` 要件定義〜設計 / `lower_left` テスト〜リリース / `upper_right` 管理 / `lower_right` 会議)と `unclassified`(未分類)に分ける。"
 			+ "`summary`: 区画ごとの件数と未分類の割合(`reviewRecommended` が true なら、十字で書き出す前にタグを見直す)。"
 			+ "`placements`: 資料ごとの区画(`area`・`slot`)と根拠(`basis`: `tag` / `inferred` / `unclassified`。推定なら `inferredTags` と `matchedWords`)。"
 			+ "`unclassified`(理由 `no_process_tag` / `unknown_value`)・`unknownValues`(表に無い値と近い値の候補)・`duplicateTags`・`overriddenTags`・`notes`(初版の登録日を日付にした)。"
-			+ "タグの値と推定の決まりは docs/miro-layouts/layout-spec.md",
-		params: [{name: "documentIds", in: "query", description: "書き出す資料に絞る(カンマ区切り。省くとプロジェクトの資料を全部)"}],
-		responses: {404: "プロジェクト・資料が無い"},
+			+ "タグの値と推定の決まりは docs/miro.md の「十字」",
+		params: [{name: "documentIds", in: "query", description: "書き出す資料(カンマ区切り)"}, {name: "project", in: "query", description: "プロジェクト ID(documentIds を省くとそのプロジェクトの資料を全部。フォルダ名も推定に使う)"}],
+		responses: {400: "documentIds も project も無い", 404: "プロジェクト・資料が無い"},
 		aiGuide: false
 	},
 	{
-		id: "exportProjectMiro", method: "post", path: "/api/projects/:id/miro/exports", role: "readwrite", tag: "プロジェクト",
+		id: "exportMiro", method: "post", path: "/api/miro/exports", role: "readwrite", tag: "その他",
 		summary: "資料を Miro に書き出す(毎回新しいフレーム)",
-		description: "頼まれた資料を、ボードの目印を基準にした向きで、新しいフレームに並べる(前に書き出したフレームには触らない)。置くのは裏で行い、すぐ 202 と書き出しの記録を返す(終わるまで `GET .../miro/exports/:exportId` で待つ)。"
+		description: "頼まれた資料を、ボードの目印を基準にした向きで、新しいフレームに並べる(前に書き出したフレームには触らない)。置くのは裏で行い、すぐ 202 と書き出しの記録を返す(終わるまで `GET /api/miro/exports/:exportId` で待つ)。"
 			+ "場所は `anchor`(ボードの付箋「[DM]名前」の名前)・`anchorUrl`(Miro の「リンクをコピー」で取った付箋・図形のリンク)・`free: true`(ボードの中身の右の空いている所)のどれか。"
 			+ "どれも無いと 409(`code: anchor_required`)。**free は利用者に確かめてから使う**。"
-			+ "1 つのフレームなら `documentIds`(省くとプロジェクトの資料を全部)・`direction`・`title`、向きごとに分けるなら `groups: [{documentIds, direction?, title?}]`。"
+			+ "1 つのフレームなら `documentIds`・`direction`・`title`、向きごとに分けるなら `groups: [{documentIds, direction?, title?}]`。"
+			+ "`project`(プロジェクト ID)は省ける。渡すと、`documentIds` を省いたときにそのプロジェクトの資料を全部出し、十字では概要カードを置き、タイトルの既定にもなる。古い版の ID を渡すと、いまの版を出す。"
 			+ "`direction`: `right` / `left` / `up` / `down` / `upper-right` / `lower-right` / `upper-left` / `lower-left` / `cross`(日本語の 右・左上・十字 なども可)。省くと目印に書いた向き、それも無ければ右。"
-			+ "`cross` は資料をタグで 4 つに分け、目印の斜め 4 つのフレームに出し、目印の下にプロジェクトの概要カードを置く。"
-			+ "フレームの名前は「タイトル [YYYY-MM-DD hh:mm]」(タイトルは `title`、無ければ目印の名前、それも無ければプロジェクト名)。フレームの中は読む順(左上から右へ)。"
+			+ "`cross` は資料をタグで 4 つに分け、目印の斜め 4 つのフレームに出し、`project` があれば目印の下にプロジェクトの概要カードを置く。"
+			+ "フレームの名前は「タイトル [YYYY-MM-DD hh:mm]」(タイトルは `title` → 目印の名前 → プロジェクト名)。フレームの中は読む順(左上から右へ)。"
 			+ "ほかのフレーム・付箋と重なるときは、向きの外側へずらす。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.io は PDF にして、Office は体裁つき PDF で出す(1 件 6MB まで)",
 		body: {schema: {type: "object", properties: {
-			anchor: {type: "string"}, anchorUrl: {type: "string"}, free: {type: "boolean"},
+			project: {type: "string"}, anchor: {type: "string"}, anchorUrl: {type: "string"}, free: {type: "boolean"},
 			documentIds: {type: "array", items: {type: "string"}}, direction: {type: "string"}, title: {type: "string"},
 			groups: {type: "array", items: {type: "object", required: ["documentIds"], properties: {documentIds: {type: "array", items: {type: "string"}}, direction: {type: "string"}, title: {type: "string"}}}}
 		}, example: {anchor: "設計書", documentIds: ["<文書ID>", "<文書ID>"], direction: "右"}}},
 		responses: {
 			400: "指示に正しくないところがある(details)・目印の向きが読めない(code: anchor_unreadable)・リンクが正しくない",
-			404: "目印がボードに無い(code: anchor_not_found。anchors にボードの目印の名前)",
+			404: "目印がボードに無い(code: anchor_not_found。anchors にボードの目印の名前)・プロジェクトが無い",
 			409: "目印もリンクも無い(code: anchor_required)・同じ名前の目印が複数(code: anchor_ambiguous)・Miro と連携していない"
 		},
 		aiGuide: false
 	},
 	{
-		id: "getProjectMiroExport", method: "get", path: "/api/projects/:id/miro/exports/:exportId", role: "readonly", tag: "プロジェクト",
+		id: "getMiroExport", method: "get", path: "/api/miro/exports/:exportId", role: "readonly", tag: "その他",
 		summary: "1 回の書き出しの記録",
 		description: "`state`: `running` / `done` / `failed`。作ったフレーム(`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ)、資料ごとの結果(`documents[]`: `placed` / `skipped` 出せない形式など / `failed` Miro が断った)と理由",
 		responses: {404: "無い"},
 		aiGuide: false
 	},
 	{
-		id: "listMiroAnchors", method: "get", path: "/api/miro/anchors", role: "readonly", tag: "プロジェクト",
+		id: "listMiroAnchors", method: "get", path: "/api/miro/anchors", role: "readonly", tag: "その他",
 		summary: "ボードにある書き出しの目印の一覧",
 		description: "付箋・図形・文字で、1 行目が「[DM]名前」のもの。`name`・`direction`(かっこで囲んだ行の向き。無ければ null = 右)・`note`(それ以外の行。何を書き出すかのメモ)・`url`(Miro で開く)・`lastExportedAt`。"
 			+ "書き方が読めないものは `problem` に理由(向きが読めない・同じ名前が複数など)",
@@ -532,7 +533,7 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
-		id: "placeMiroAnchor", method: "post", path: "/api/miro/anchors", role: "readwrite", tag: "プロジェクト",
+		id: "placeMiroAnchor", method: "post", path: "/api/miro/anchors", role: "readwrite", tag: "その他",
 		summary: "書き出しの目印の付箋をボードに置く",
 		description: "「[DM]名前」「(向き)」「メモ」の付箋を、ボードの中身の右の空いている所に置く(利用者が Miro で好きな場所へ動かす)。名前は 60 文字まで、メモは 300 文字まで",
 		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}, direction: {type: "string"}, note: {type: "string"}}, example: {name: "設計書", direction: "右", note: "基本設計書と画面設計の最新版"}}},
@@ -540,18 +541,18 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
-		id: "moveProjectMiroDocument", method: "patch", path: "/api/projects/:id/miro/items/:documentId", role: "readwrite", tag: "プロジェクト",
-		summary: "書き出した資料を動かす(最後の書き出しのフレームだけ)",
-		description: "本体は次のどれか。`{nextTo: 文書ID, side: \"right\"|\"left\"|\"above\"|\"below\"}`(ほかの資料の隣へ)、`{frame?: フレームの ID か名前, x, y}`(フレームの左上からの位置。資料の中心。frame を省くといまのフレーム)。"
-			+ "見出しも一緒に動かす。はみ出すときはフレームを右・下へ広げる。いまの位置は `GET .../miro/map`",
-		body: {schema: {type: "object", properties: {nextTo: {type: "string"}, side: {type: "string", enum: ["right", "left", "above", "below"]}, frame: {type: "string"}, x: {type: "number"}, y: {type: "number"}}}},
-		responses: {400: "指示が足りない・正しくない", 404: "資料が最後の書き出しに無い・消されている", 409: "まだ書き出していない・いま書き出しているところ"},
+		id: "moveMiroDocument", method: "patch", path: "/api/miro/items/:documentId", role: "readwrite", tag: "その他",
+		summary: "書き出した資料を動かす",
+		description: "`exportId` で書き出しを指す(省くと、頼んだ人の最後の書き出し)。本体は次のどれか。`{nextTo: 文書ID, side: \"right\"|\"left\"|\"above\"|\"below\"}`(ほかの資料の隣へ)、`{frame?: フレームの ID か名前, x, y}`(フレームの左上からの位置。資料の中心。frame を省くといまのフレーム)。"
+			+ "見出しも一緒に動かす。はみ出すときはフレームを右・下へ広げる。いまの位置は `GET /api/miro/map`",
+		body: {schema: {type: "object", properties: {exportId: {type: "string"}, nextTo: {type: "string"}, side: {type: "string", enum: ["right", "left", "above", "below"]}, frame: {type: "string"}, x: {type: "number"}, y: {type: "number"}}}},
+		responses: {400: "指示が足りない・正しくない", 404: "書き出し・資料が無い・消されている", 409: "まだ書き出していない・ほかの頼みで直しているところ"},
 		aiGuide: false
 	},
 	{
-		id: "applyProjectMiroLayout", method: "post", path: "/api/projects/:id/miro/layout", role: "readwrite", tag: "プロジェクト",
+		id: "applyMiroLayout", method: "post", path: "/api/miro/layout", role: "readwrite", tag: "その他",
 		summary: "書き出したフレームに、レイアウトをまとめて当てる",
-		description: "最後に書き出したフレームの 1 つ(`frameId`。省くと最初のフレーム)に、呼ぶ側が決めた並べ方をそのまま置く。位置はすべて**フレームの左上からの中心の位置**。"
+		description: "書き出し(`exportId`。省くと頼んだ人の最後の書き出し)のフレームの 1 つ(`frameId`。省くと最初のフレーム)に、呼ぶ側が決めた並べ方をそのまま置く。位置はすべて**フレームの左上からの中心の位置**。"
 			+ "`items`: 資料の位置(`documentId`・`x`・`y`。見出しも一緒に動く)と、見出しの背景の色(`color`。`#rrggbb`、`null`で外す)。"
 			+ "`labels`: 見出しの文字(`text`・`x`・`y`・`width`・`fontSize`・`color`・`fillColor`・`bold`・`align`・`link`)。"
 			+ "`shapes`: 囲み・矢印・区切りの線などの図形(`shape`・`x`・`y`・`width`・`height`・`fillColor`・`fillOpacity`・`borderColor`・`borderWidth`・`borderStyle`・`text`・`link`)。Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なるので、背景は`fillOpacity`を小さくする。"
@@ -559,6 +560,7 @@ const OPERATIONS = [
 			+ "見出しの文字と図形はフレームごとに覚え、次に当てるときに片付けてから置く(`keepDecorations: true`で残す。`clearDecorations: true`だけを渡すと片付ける)。"
 			+ "正しくないところがあれば何も動かさずに400と理由の一覧(`details`)を返す。上限は資料2000件・見出し500件・図形500件",
 		body: {schema: {type: "object", properties: {
+			exportId: {type: "string"},
 			frameId: {type: "string"},
 			items: {type: "array", items: {type: "object", required: ["documentId", "x", "y"], properties: {documentId: {type: "string"}, x: {type: "number"}, y: {type: "number"}, color: {type: ["string", "null"]}}}},
 			labels: {type: "array", items: {type: "object", required: ["text", "x", "y"]}},
@@ -567,16 +569,16 @@ const OPERATIONS = [
 			keepDecorations: {type: "boolean"},
 			clearDecorations: {type: "boolean"}
 		}}},
-		responses: {400: "指示に正しくないところがある(details に理由の一覧)", 409: "まだ書き出していない・いま書き出しているところ"},
+		responses: {400: "指示に正しくないところがある(details に理由の一覧)", 409: "まだ書き出していない・ほかの頼みで直しているところ"},
 		aiGuide: false
 	},
 	{
-		id: "getProjectMiroMap", method: "get", path: "/api/projects/:id/miro/map", role: "readonly", tag: "プロジェクト",
+		id: "getMiroMap", method: "get", path: "/api/miro/map", role: "readonly", tag: "その他",
 		summary: "書き出したフレームの地図(手直しの置き場所を考えるための材料)",
-		description: "最後に書き出したフレームの中を Miro から読んで返す(ボードは変えない)。位置はフレームごとに、その左上から(x・y は中心、left・top・right・bottom は端)。"
+		description: "書き出し(`?exportId=`。省くと頼んだ人の最後の書き出し)のフレームの中を Miro から読んで返す(ボードは変えない)。位置はフレームごとに、その左上から(x・y は中心、left・top・right・bottom は端)。"
 			+ "`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ、`documents`(資料の位置と大きさ・見出しの下端 `bottomWithCaption`)、`decorations`(指示で置いた見出しの文字・図形)、"
 			+ "`others`(人が Miro で足した付箋・図形など)、`freeSpace`(中身の下 `below` と右 `right` の空いている所)。`missing`: どのフレームにも見当たらない資料。"
-			+ "置くときは、ここで重ならない場所を決めてから `POST .../miro/layout` や `PATCH .../miro/items/:documentId` を呼ぶ",
+			+ "置くときは、ここで重ならない場所を決めてから `POST /api/miro/layout` や `PATCH /api/miro/items/:documentId` を呼ぶ",
 		responses: {409: "まだ書き出していない"},
 		aiGuide: false
 	},

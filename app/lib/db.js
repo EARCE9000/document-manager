@@ -359,7 +359,7 @@ const createSchema = (targetDb) => {
 			sync_lock_until TEXT,
 			-- 枠の中に置いたフォルダの見出し(文字の項目のID。JSONの配列)。資料を片付けるときに一緒に消す
 			header_ids TEXT,
-			-- 並べ方の型(lib/miro-layout.js の LAYOUT_IDS。NULL はフォルダ列型)
+			-- 並べ方の型(自動の同期をやめる前の列。今は使わない。miro_projects・miro_items も同じ)
 			layout TEXT,
 			-- Document Manager が置いた見出しの文字・図形の中身(JSON)。「元の型に戻す」で置き直すため
 			layout_plan TEXT,
@@ -400,7 +400,8 @@ const createSchema = (targetDb) => {
 		-- Miro への書き出しの記録(1 回の書き出しで 1 行。フレームは書き出すたびに新しく作る)
 		CREATE TABLE IF NOT EXISTS miro_exports (
 			id TEXT PRIMARY KEY,
-			project_id TEXT NOT NULL,
+			-- 頼まれたときのプロジェクト(省ける)
+			project_id TEXT,
 			board_id TEXT NOT NULL,
 			-- 書き出した場所: marker(目印の名前)・link(付箋・図形のリンク)・free(空いている所)
 			anchor_kind TEXT NOT NULL,
@@ -421,9 +422,34 @@ const createSchema = (targetDb) => {
 			error TEXT,
 			created_by TEXT,
 			created_at TEXT NOT NULL,
-			finished_at TEXT
+			finished_at TEXT,
+			-- 手直しで置いた見出しの文字・図形(フレームごと。JSON)
+			decorations TEXT,
+			-- 手直しの順番取り(同じ書き出しを同時に直さない)
+			lock_owner TEXT,
+			lock_until TEXT
 		);
 		CREATE INDEX IF NOT EXISTS idx_miro_exports_project ON miro_exports (project_id, created_at);
+		CREATE INDEX IF NOT EXISTS idx_miro_exports_created ON miro_exports (created_by, created_at);
+		-- 書き出した資料ごとに、ボードのどの項目に出したか(手直しで動かすため)。資料は共有用のID(document_aliases.alias)で覚える
+		CREATE TABLE IF NOT EXISTS miro_export_items (
+			export_id TEXT NOT NULL,
+			alias TEXT NOT NULL,
+			document_id TEXT,
+			item_id TEXT,
+			item_kind TEXT,
+			caption_id TEXT,
+			group_id TEXT,
+			title TEXT,
+			frame_id TEXT,
+			x REAL,
+			y REAL,
+			width REAL,
+			height REAL,
+			updated_by TEXT,
+			updated_at TEXT,
+			PRIMARY KEY (export_id, alias)
+		);
 	`);
 	addMissingColumns(targetDb);
 };
@@ -433,6 +459,7 @@ const createSchema = (targetDb) => {
 const ADDED_COLUMNS = Object.freeze({
 	miro_projects: {layout: "TEXT", layout_plan: "TEXT", layout_undo: "TEXT", last_checked_at: "TEXT", last_export_id: "TEXT"},
 	miro_items: {placed_x: "REAL", placed_y: "REAL", frame_id: "TEXT"},
+	miro_exports: {decorations: "TEXT", lock_owner: "TEXT", lock_until: "TEXT"},
 	projects: {description: "TEXT"}
 });
 const addMissingColumns = (targetDb) => {

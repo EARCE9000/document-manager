@@ -6,13 +6,13 @@
  * Miro には代わりのサーバー(miro-stub.js)を使い、置かれた項目(種類・位置・枠・題名)を直接見て確かめる。
  * PDF への変換は、変換サービスの代わり(converter-stub.js)が最小の PDF を返す。
  *
- * 確かめること:
+ * 確かめること(書き出しはプロジェクトに縛られない。プロジェクトを渡すのは、資料を全部出すときと十字の概要カードのため):
  *   - 目印(付箋の [DM]名前・向き・メモ)を読む・置く。目印もリンクも無ければ書き出さない
  *   - 目印の向きに新しいフレームを作り、頼んだ資料だけを読む順に並べる。フレームの名前は「タイトル [日時]」
  *   - 同じ目印に何度書き出しても、前のフレームには触らず、重ならない所に出す。ほかの付箋とも重ねない
  *   - 資料を変えても、頼まれるまでボードは変わらない(自動では書き出さない)
  *   - リンク・空いている所・向きごとの組・十字(斜め 4 つと概要カード)
- *   - 書き出したあとの手直し(地図・動かす・まとめて当てる)は、最後の書き出しのフレームだけ
+ *   - 書き出したあとの手直し(地図・動かす・まとめて当てる)は書き出しごと。省くと頼んだ人の最後の書き出し
  */
 
 const {test, expect} = require("@playwright/test");
@@ -66,12 +66,12 @@ const addToProject = async (request, projectId, doc, folderId = null) => {
 
 /** 書き出しを頼み、終わるのを待って記録を返す */
 const exportAndWait = async (request, projectId, body) => {
-	const res = await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: body});
+	const res = await request.post("api/miro/exports", {headers: rw, data: {project: projectId, ...body}});
 	expect(res.status(), JSON.stringify(await res.json().catch(() => null))).toBe(202);
 	const started = await res.json();
 	let record;
 	await expect.poll(async () => {
-		record = await (await request.get(`api/projects/${projectId}/miro/exports/${started.id}`, {headers: rw})).json();
+		record = await (await request.get(`api/miro/exports/${started.id}`, {headers: rw})).json();
 		return record.state;
 	}, {timeout: 15000}).not.toBe("running");
 	return record;
@@ -102,16 +102,16 @@ test.describe.serial("Miro に書き出す", () => {
 
 	test("Miro と連携していなければ、目印も書き出しも 409", async ({request}) => {
 		expect((await request.get("api/miro/anchors", {headers: rw})).status()).toBe(409);
-		const res = await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: {free: true}});
+		const res = await request.post("api/miro/exports", {headers: rw, data: {project: projectId, free: true}});
 		expect(res.status()).toBe(409);
 		expect((await res.json()).code).toBe("not_connected");
-		const status = await (await request.get(`api/projects/${projectId}/miro`, {headers: ro})).json();
-		expect(status).toMatchObject({available: false, exporting: false, exports: []});
+		const status = await (await request.get("api/miro/exports", {headers: ro})).json();
+		expect(status).toMatchObject({available: false, exporting: false});
 		await connectMiro(request);
 	});
 
 	test("目印もリンクも無ければ、何も書き出さずに 409(anchor_required)", async ({request}) => {
-		const res = await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: {documentIds: [docs.pdf.id]}});
+		const res = await request.post("api/miro/exports", {headers: rw, data: {project: projectId, documentIds: [docs.pdf.id]}});
 		expect(res.status()).toBe(409);
 		const body = await res.json();
 		expect(body.code).toBe("anchor_required");
@@ -217,7 +217,7 @@ test.describe.serial("Miro に書き出す", () => {
 		await control(request, {addItem: {id: "9100000000000000003", type: "sticky_note", x: -3000, y: 0, width: 300, height: 300, content: "<p>[DM]読めない</p><p>(ななめ)</p>"}});
 		const list = await (await request.get("api/miro/anchors", {headers: ro})).json();
 		expect(list.anchors.find((a) => a.name === "読めない").problem).toContain("向き");
-		const res = await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: {anchor: "読めない", documentIds: [docs.md.id]}});
+		const res = await request.post("api/miro/exports", {headers: rw, data: {project: projectId, anchor: "読めない", documentIds: [docs.md.id]}});
 		expect(res.status()).toBe(400);
 		expect((await res.json()).code).toBe("anchor_unreadable");
 		const record = await exportAndWait(request, projectId, {anchor: "読めない", direction: "左", documentIds: [docs.md.id]});
@@ -226,13 +226,13 @@ test.describe.serial("Miro に書き出す", () => {
 	});
 
 	test("無い目印は 404(ボードの目印の名前付き)、同じ名前が 2 つあれば 409", async ({request}) => {
-		let res = await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: {anchor: "無い目印", documentIds: [docs.md.id]}});
+		let res = await request.post("api/miro/exports", {headers: rw, data: {project: projectId, anchor: "無い目印", documentIds: [docs.md.id]}});
 		expect(res.status()).toBe(404);
 		let body = await res.json();
 		expect(body.code).toBe("anchor_not_found");
 		expect(body.anchors).toEqual(expect.arrayContaining(["設計書", "定例"]));
 		await control(request, {addItem: {id: "9100000000000000004", type: "shape", x: -6000, y: 0, width: 300, height: 200, content: "<p>[dm] 設計書</p>"}});
-		res = await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: {anchor: "設計書", documentIds: [docs.md.id]}});
+		res = await request.post("api/miro/exports", {headers: rw, data: {project: projectId, anchor: "設計書", documentIds: [docs.md.id]}});
 		expect(res.status()).toBe(409);
 		body = await res.json();
 		expect(body.code).toBe("anchor_ambiguous");
@@ -249,8 +249,8 @@ test.describe.serial("Miro に書き出す", () => {
 		const frame = (await framesOf(request)).find((f) => f.id === record.frames[0].frameId);
 		expect(boxOf(frame).bottom).toBeLessThan(-5100);
 		expect(boxOf(frame).left).toBeCloseTo(-100, 3);
-		expect((await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: {anchorUrl: "https://miro.com/app/board/uXjVOther=/?moveToWidget=1", documentIds: [docs.md.id]}})).status()).toBe(400);
-		expect((await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data: {anchorUrl: "https://example.com/", documentIds: [docs.md.id]}})).status()).toBe(400);
+		expect((await request.post("api/miro/exports", {headers: rw, data: {project: projectId, anchorUrl: "https://miro.com/app/board/uXjVOther=/?moveToWidget=1", documentIds: [docs.md.id]}})).status()).toBe(400);
+		expect((await request.post("api/miro/exports", {headers: rw, data: {project: projectId, anchorUrl: "https://example.com/", documentIds: [docs.md.id]}})).status()).toBe(400);
 	});
 
 	test("空いている所(free): ボードの中身の右に出す。向きごとの組で、1 回に複数のフレームを出せる", async ({request}) => {
@@ -272,28 +272,30 @@ test.describe.serial("Miro に書き出す", () => {
 			{free: true, documentIds: ["no-such-document"]},
 			{free: true, direction: "ななめ"}
 		]) {
-			const res = await request.post(`api/projects/${projectId}/miro/exports`, {headers: rw, data});
+			const res = await request.post("api/miro/exports", {headers: rw, data: {project: projectId, ...data}});
 			expect(res.status(), JSON.stringify(data)).toBe(400);
 			expect((await res.json()).details.length).toBeGreaterThan(0);
 		}
 	});
 
-	test("履歴: 新しい順に、目印・フレーム・件数が残る(いちばん新しいものだけ資料ごとの結果付き)", async ({request}) => {
-		const status = await (await request.get(`api/projects/${projectId}/miro`, {headers: ro})).json();
+	test("履歴: 新しい順に、プロジェクト・目印・フレーム・件数が残る(資料ごとの結果は 1 件ずつの記録で)", async ({request}) => {
+		const status = await (await request.get("api/miro/exports", {headers: ro})).json();
 		expect(status).toMatchObject({available: true, exporting: false});
 		expect(status.exports.length).toBeGreaterThanOrEqual(6);
-		expect(status.exports[0].anchor.kind).toBe("free");
-		expect(status.exports[0].documents).toBeTruthy();
-		expect(status.exports[1].documents).toBeUndefined();
-		expect(status.exports.at(-1)).toMatchObject({anchor: {kind: "marker", name: "設計書"}, counts: {placed: 3, skipped: 1}});
+		expect(status.exports[0]).toMatchObject({anchor: {kind: "free"}, project: {id: projectId, name: `Miro書き出し${STAMP}`}});
+		expect(status.exports[0].documents).toBeUndefined();
+		const first = status.exports.filter((e) => e.anchor.name === "設計書").at(-1);
+		expect(first).toMatchObject({counts: {placed: 3, skipped: 1}});
+		expect((await (await request.get(`api/miro/exports/${first.id}`, {headers: ro})).json()).documents).toHaveLength(4);
+		expect((await request.get("api/miro/exports/no-such-export", {headers: ro})).status()).toBe(404);
 		expect(status.directions.map((d) => d.id)).toContain("cross");
 	});
 
 	test("閲覧だけの権限では書き出せない。ログインしていなければ見られない", async ({request, playwright}) => {
-		expect((await request.post(`api/projects/${projectId}/miro/exports`, {headers: ro, data: {free: true}})).status()).toBe(403);
+		expect((await request.post("api/miro/exports", {headers: ro, data: {project: projectId, free: true}})).status()).toBe(403);
 		const anonymous = await playwright.request.newContext({baseURL: test.info().project.use.baseURL});
 		try {
-			expect((await anonymous.get(`api/projects/${projectId}/miro`)).status()).toBe(401);
+			expect((await anonymous.get("api/miro/exports")).status()).toBe(401);
 			expect((await anonymous.get("api/miro/anchors")).status()).toBe(401);
 		} finally {
 			await anonymous.dispose();
@@ -368,9 +370,8 @@ test.describe.serial("十字で書き出す", () => {
 	});
 });
 
-test.describe.serial("書き出したあとの手直し(最後の書き出しのフレームだけ)", () => {
+test.describe.serial("書き出したあとの手直し(書き出しごと。省くと自分の最後の書き出し)", () => {
 	let projectId;
-	let other;
 	const docs = {};
 	let record;
 
@@ -378,7 +379,6 @@ test.describe.serial("書き出したあとの手直し(最後の書き出しの
 		await control(request, {reset: true});
 		await connectMiro(request);
 		projectId = await newProject(request, `手直し${STAMP}`);
-		other = await newProject(request, `まだ${STAMP}`);
 		for (const key of ["a", "b", "c"]) {
 			docs[key] = await upload(request, `${key}-${STAMP}.pdf`, PDF);
 			await addToProject(request, projectId, docs[key]);
@@ -391,15 +391,15 @@ test.describe.serial("書き出したあとの手直し(最後の書き出しの
 		await request.delete("api/miro/connection", {headers: admin});
 	});
 
-	test("まだ書き出していなければ 409", async ({request}) => {
-		expect((await request.get(`api/projects/${other}/miro/map`, {headers: rw})).status()).toBe(409);
-		expect((await request.post(`api/projects/${other}/miro/layout`, {headers: rw, data: {labels: [{text: "x", x: 100, y: 100}]}})).status()).toBe(409);
+	test("無い書き出しは 404", async ({request}) => {
+		expect((await request.get("api/miro/map?exportId=no-such-export", {headers: rw})).status()).toBe(404);
+		expect((await request.post("api/miro/layout", {headers: rw, data: {exportId: "no-such-export", labels: [{text: "x", x: 100, y: 100}]}})).status()).toBe(404);
 	});
 
 	test("地図: フレームごとの資料の位置・人が足したもの・空いている所", async ({request}) => {
 		const frameId = record.frames[0].frameId;
 		await control(request, {addItem: {id: "9300000000000000002", type: "sticky_note", parentId: frameId, x: 1200, y: 650, width: 100, height: 100, content: "<p>人のメモ</p>"}});
-		const map = await (await request.get(`api/projects/${projectId}/miro/map`, {headers: ro})).json();
+		const map = await (await request.get(`api/miro/map?exportId=${record.id}`, {headers: ro})).json();
 		expect(map.exportId).toBe(record.id);
 		expect(map.frames).toHaveLength(1);
 		const frame = map.frames[0];
@@ -412,12 +412,12 @@ test.describe.serial("書き出したあとの手直し(最後の書き出しの
 	});
 
 	test("資料を動かせる(ほかの資料の下・位置)。はみ出すときはフレームを右・下へ広げる", async ({request}) => {
-		let res = await request.patch(`api/projects/${projectId}/miro/items/${docs.c.id}`, {headers: rw, data: {nextTo: docs.a.id, side: "below"}});
+		let res = await request.patch(`api/miro/items/${docs.c.id}`, {headers: rw, data: {nextTo: docs.a.id, side: "below"}});
 		expect(res.status(), await res.text()).toBe(200);
 		const moved = await res.json();
 		expect(moved.x).toBe(260);
 		const frameBefore = (await framesOf(request))[0];
-		res = await request.patch(`api/projects/${projectId}/miro/items/${docs.b.id}`, {headers: rw, data: {x: 3000, y: 400}});
+		res = await request.patch(`api/miro/items/${docs.b.id}`, {headers: rw, data: {x: 3000, y: 400}});
 		expect(res.status()).toBe(200);
 		const frameAfter = (await framesOf(request))[0];
 		expect(frameAfter.geometry.width).toBeGreaterThan(frameBefore.geometry.width);
@@ -427,14 +427,14 @@ test.describe.serial("書き出したあとの手直し(最後の書き出しの
 		const caption = (await childrenOf(request, frameAfter.id)).find((i) => i.type === "text" && i.data.content.includes(`b-${STAMP}.pdf`));
 		expect(caption.position.x).toBe(3000);
 		// 正しくない指示
-		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.b.id}`, {headers: rw, data: {}})).status()).toBe(400);
-		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.b.id}`, {headers: rw, data: {x: -5, y: 10}})).status()).toBe(400);
-		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.b.id}`, {headers: rw, data: {nextTo: docs.b.id}})).status()).toBe(400);
-		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.b.id}`, {headers: rw, data: {frame: "無いフレーム", x: 10, y: 10}})).status()).toBe(404);
+		expect((await request.patch(`api/miro/items/${docs.b.id}`, {headers: rw, data: {}})).status()).toBe(400);
+		expect((await request.patch(`api/miro/items/${docs.b.id}`, {headers: rw, data: {x: -5, y: 10}})).status()).toBe(400);
+		expect((await request.patch(`api/miro/items/${docs.b.id}`, {headers: rw, data: {nextTo: docs.b.id}})).status()).toBe(400);
+		expect((await request.patch(`api/miro/items/${docs.b.id}`, {headers: rw, data: {frame: "無いフレーム", x: 10, y: 10}})).status()).toBe(404);
 	});
 
 	test("まとめて当てる: 資料の位置と色・見出しの文字・図形。当て直すと前の見出しと図形を片付ける", async ({request}) => {
-		const res = await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {
+		const res = await request.post("api/miro/layout", {headers: rw, data: {
 			items: [{documentId: docs.a.id, x: 400, y: 600, color: "#eeedfe"}],
 			labels: [{text: "まとめ", x: 400, y: 120, width: 500}],
 			shapes: [{shape: "rectangle", x: 400, y: 600, width: 700, height: 900, fillOpacity: 0, borderColor: "#dc2626", borderWidth: 3, borderStyle: "dashed"}]
@@ -447,22 +447,84 @@ test.describe.serial("書き出したあとの手直し(最後の書き出しの
 		expect(children.filter((i) => i.type === "shape")).toHaveLength(1);
 		const caption = children.find((i) => i.type === "text" && i.data.content.includes(`a-${STAMP}.pdf`));
 		expect(caption.style.fillColor).toBe("#eeedfe");
-		await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {labels: [{text: "やり直し", x: 400, y: 120}]}});
+		await request.post("api/miro/layout", {headers: rw, data: {labels: [{text: "やり直し", x: 400, y: 120}]}});
 		children = await childrenOf(request, frameId);
 		expect(children.some((i) => i.type === "text" && i.data.content.includes("まとめ"))).toBe(false);
 		expect(children.filter((i) => i.type === "shape")).toHaveLength(0);
 		// 人の付箋はそのまま
 		expect(children.some((i) => i.id === "9300000000000000002")).toBe(true);
 		// 正しくないところがあれば何も当てない
-		const bad = await request.post(`api/projects/${projectId}/miro/layout`, {headers: rw, data: {items: [{documentId: "no-such", x: 1, y: 1}], labels: [{text: "", x: 1, y: 1}]}});
+		const bad = await request.post("api/miro/layout", {headers: rw, data: {items: [{documentId: "no-such", x: 1, y: 1}], labels: [{text: "", x: 1, y: 1}]}});
 		expect(bad.status()).toBe(400);
 		expect((await bad.json()).details.length).toBe(2);
 	});
 
-	test("新しく書き出すと、手直しできるのは新しいフレームだけになる", async ({request}) => {
+	test("新しく書き出すと、書き出しを省いた手直しは新しいフレームに。前の書き出しも ID で指せば直せる", async ({request}) => {
 		const next = await exportAndWait(request, projectId, {anchor: "手直し", documentIds: [docs.a.id]});
-		const map = await (await request.get(`api/projects/${projectId}/miro/map`, {headers: ro})).json();
+		const map = await (await request.get("api/miro/map", {headers: rw})).json();
+		expect(map.exportId).toBe(next.id);
 		expect(map.frames.map((f) => f.frameId)).toEqual([next.frames[0].frameId]);
-		expect((await request.patch(`api/projects/${projectId}/miro/items/${docs.b.id}`, {headers: rw, data: {x: 100, y: 100}})).status()).toBe(404);
+		expect((await request.patch(`api/miro/items/${docs.b.id}`, {headers: rw, data: {x: 100, y: 100}})).status()).toBe(404);
+		const old = await request.patch(`api/miro/items/${docs.b.id}`, {headers: rw, data: {exportId: record.id, x: 500, y: 300}});
+		expect(old.status()).toBe(200);
+		expect((await old.json()).exportId).toBe(record.id);
+	});
+});
+
+test.describe.serial("プロジェクトを指定せずに書き出す", () => {
+	const docs = {};
+
+	test.beforeAll(async ({request}) => {
+		await control(request, {reset: true});
+		await connectMiro(request);
+		for (const [key, name, tags] of [["req", `要件定義書-単独${STAMP}.pdf`, ["工程:要件定義"]], ["plan", `計画書-単独${STAMP}.pdf`, ["区分:管理"]]]) {
+			docs[key] = await upload(request, name, PDF);
+			await request.put(`api/documents/${docs[key].id}/tags`, {headers: rw, data: {tags}});
+		}
+		await control(request, {addItem: {id: "9400000000000000001", type: "sticky_note", x: 0, y: 0, width: 200, height: 200, content: "<p>[DM]単独</p>"}});
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	const exportBare = async (request, body) => {
+		const res = await request.post("api/miro/exports", {headers: rw, data: body});
+		expect(res.status(), JSON.stringify(await res.json().catch(() => null))).toBe(202);
+		const started = await res.json();
+		let record;
+		await expect.poll(async () => {
+			record = await (await request.get(`api/miro/exports/${started.id}`, {headers: rw})).json();
+			return record.state;
+		}, {timeout: 15000}).not.toBe("running");
+		return record;
+	};
+
+	test("文書 ID だけで書き出せる(プロジェクトに入っていない資料も)。タイトルは目印の名前", async ({request}) => {
+		const record = await exportBare(request, {anchor: "単独", documentIds: [docs.req.id, docs.plan.id]});
+		expect(record).toMatchObject({state: "done", project: null, counts: {placed: 2}});
+		expect(record.frames[0].title).toMatch(new RegExp(`^単独 ${STAMP_PATTERN.source}`));
+	});
+
+	test("十字でも出せる。プロジェクトが無ければ概要カードは置かない", async ({request}) => {
+		const before = (await boardItems(request)).filter((i) => i.type === "text" && i.parent == null).length;
+		const record = await exportBare(request, {anchor: "単独", direction: "十字", documentIds: [docs.req.id, docs.plan.id]});
+		expect(record.frames.map((f) => f.area).sort()).toEqual(["upper_left", "upper_right"]);
+		expect((await boardItems(request)).filter((i) => i.type === "text" && i.parent == null).length).toBe(before);
+	});
+
+	test("目印も無く空いている所に出すと、タイトルは Document Manager。資料もプロジェクトも無ければ断る", async ({request}) => {
+		const record = await exportBare(request, {free: true, documentIds: [docs.plan.id]});
+		expect(record.frames[0].title).toMatch(new RegExp(`^Document Manager ${STAMP_PATTERN.source}`));
+		const res = await request.post("api/miro/exports", {headers: rw, data: {free: true}});
+		expect(res.status()).toBe(400);
+		expect((await res.json()).details[0]).toContain("project");
+		expect((await request.post("api/miro/exports", {headers: rw, data: {free: true, project: "no-such-project"}})).status()).toBe(404);
+	});
+
+	test("十字の報告も文書 ID だけで出せる", async ({request}) => {
+		const report = await (await request.get(`api/miro/layout-report?documentIds=${docs.req.id},${docs.plan.id}`, {headers: ro})).json();
+		expect(report.summary.areas).toMatchObject({upper_left: 1, upper_right: 1});
+		expect((await request.get("api/miro/layout-report", {headers: ro})).status()).toBe(400);
 	});
 });
