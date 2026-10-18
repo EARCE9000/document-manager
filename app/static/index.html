@@ -6837,18 +6837,21 @@ const renderMiroDirectionChooser = () => {
 /** 選んだ向きに、フレームが並ぶ順番(付箋を真ん中のマスにして、1 → 2 → 3 …)。紙の絵はフレーム 1 つ */
 const renderMiroDirectionOrder = () => {
 	const chosen = miroDirectionChosen();
-	const cell = 64;
-	const gap = 22;
-	const step = cell + gap;
 	const diagonal = ["upper-right", "lower-right", "upper-left", "lower-left"].includes(chosen);
 	const sx = chosen.includes("left") ? -1 : chosen.includes("right") ? 1 : 0;
 	const sy = chosen.includes("up") || chosen.startsWith("upper") ? -1 : chosen.includes("down") || chosen.startsWith("lower") ? 1 : 0;
-	// 並ぶマス([横, 縦]。付箋が [0, 0])。斜めは輪の順(1 周目は濃く、2 周目は薄く)、横・上下はまっすぐ 3 つ
-	const cells = diagonal ? MIRO_RING_ORDER : [1, 2, 3].map((n) => [sx !== 0 ? n : 0, sy !== 0 ? n : 0]);
+	// 並ぶマス([横, 縦]。付箋が [0, 0])。斜めは輪の順(1 周目は濃く、2 周目は薄く)、横はまっすぐ 3 つ、上下は縦に長くなるので 2 つ
+	const cells = diagonal ? MIRO_RING_ORDER : (sx !== 0 ? [1, 2, 3] : [1, 2]).map((n) => [sx !== 0 ? n : 0, sy !== 0 ? n : 0]);
 	const xs = cells.map(([i]) => i * (sx || 1)).concat([0]);
 	const ys = cells.map(([, j]) => j * (sy || 1)).concat([0]);
 	const minX = Math.min(...xs);
 	const minY = Math.min(...ys);
+	// マスの大きさは、並ぶ数に合わせて図(330 × 250。下に説明の 1 行)に収まるように決める(縦に 4 つ並ぶ上・下でも見切れない)
+	const columns = Math.max(...xs) - minX + 1;
+	const rows = Math.max(...ys) - minY + 1;
+	const step = Math.min(86, (330 - 16) / columns, (250 - 12) / rows);
+	const cell = Math.round(step * 0.74);
+	const gap = step - cell;
 	const width = (Math.max(...xs) - minX + 1) * step - gap;
 	const height = (Math.max(...ys) - minY + 1) * step - gap;
 	const ox = (330 - width) / 2;
@@ -6866,7 +6869,7 @@ const renderMiroDirectionOrder = () => {
 	cells.forEach((c, index) => {
 		const p = pos(c);
 		const later = diagonal && index >= 3;
-		const fold = 12;
+		const fold = Math.round(cell * 0.19);
 		parts.push('<g class="file order-' + (index + 1) + (later ? " later" : " first") + '"><path d="M' + p.x + ',' + p.y + ' h' + (cell - fold) + ' l' + fold + ',' + fold + ' v' + (cell - fold) + ' h-' + cell + ' z M' + (p.x + cell - fold) + ',' + p.y + ' v' + fold + ' h' + fold + '"/>'
 			+ '<text x="' + (p.x + cell / 2) + '" y="' + (p.y + cell / 2 + 5) + '" text-anchor="middle">' + (index + 1) + '</text></g>');
 	});
