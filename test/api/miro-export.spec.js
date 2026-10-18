@@ -388,15 +388,27 @@ test.describe.serial("十字で書き出す", () => {
 		expect(caption.style.fillColor).toBe("#f1efe8");
 	});
 
-	test("Miro がフレームの作成を断り続けても、ほかのフレームと概要カードは置き切り、そのフレームの資料だけを失敗にする", async ({request}) => {
+	test("フレームの作成は 3 回までやり直す(3 回断られても、4 回目で通れば置ける)", async ({request}) => {
 		const before = (await framesOf(request)).length;
-		// やり直し(テストでは 3 回まで)をすべて断る = 最初のフレーム(左上)だけ作れない
 		await control(request, {failFrames: 3});
+		const record = await exportAndWait(request, projectId, {anchor: "全体", documentIds: [docs.req.id]});
+		expect(record).toMatchObject({state: "done", error: null, retryDocumentIds: []});
+		expect(record.counts).toMatchObject({placed: 1, failed: 0});
+		expect((await framesOf(request)).length).toBe(before + 1);
+	});
+
+	test("Miro がフレームの作成を断り続けても、ほかのフレームと概要カードは置き切り、そのフレームの資料だけを失敗にする。出し直せる資料の ID を返す", async ({request}) => {
+		const before = (await framesOf(request)).length;
+		// やり直し(3 回)まですべて断る = 最初のフレーム(左上)だけ作れない
+		await control(request, {failFrames: 4});
 		const record = await exportAndWait(request, projectId, {anchor: "全体", documentIds: [docs.req.id, docs.plan.id, docs.meeting.id]});
 		expect(record.state).toBe("done");
 		expect(record.counts).toMatchObject({placed: 2, failed: 1});
 		expect(record.error).toContain("1 件を置けませんでした");
+		expect(record.documents.find((d) => d.documentId === docs.req.id)).toMatchObject({state: "failed", code: "miro_unavailable", retryable: true});
 		expect(record.documents.find((d) => d.documentId === docs.req.id).reason).toContain("フレーム");
+		expect(record.error).toContain("出し直せます");
+		expect(record.retryDocumentIds).toEqual([docs.req.id]);
 		expect(record.frames.map((f) => f.area).sort()).toEqual(["lower_right", "upper_right"]);
 		expect((await framesOf(request)).length).toBe(before + 2);
 		const cards = (await boardItems(request)).filter((i) => i.type === "text" && i.parent == null && i.data.content.includes(`十字${STAMP}`));

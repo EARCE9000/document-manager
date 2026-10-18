@@ -560,10 +560,22 @@ const summarizeExport = (record) => ({
 	anchor: record.anchor,
 	frames: (record.frames || []).map((f) => ({title: f.title, direction: f.direction, url: f.url, frameId: f.frameId})),
 	counts: record.counts,
-	notPlaced: (record.documents || []).filter((d) => d.state !== "placed").map((d) => ({documentId: d.documentId, title: d.title, state: d.state, reason: d.reason})),
+	notPlaced: (record.documents || []).filter((d) => d.state !== "placed").map((d) => ({documentId: d.documentId, title: d.title, state: d.state, reason: d.reason,
+		code: d.code ?? null, retryable: d.retryable ?? false})),
 	error: record.error,
-	...(record.state === "running" ? {note: "まだ書き出している途中です。しばらくしてから miro で確かめてください"} : {})
+	...(record.state === "running" ? {note: "まだ書き出している途中です。しばらくしてから miro で確かめてください"} : {}),
+	...retryHint(record)
 });
+// Miro が一時的に断った資料。勝手に出し直さず、利用者に確かめてから、この資料だけを同じ場所に書き出す
+const retryHint = (record) => {
+	const ids = record.retryDocumentIds || [];
+	if (ids.length === 0) return {};
+	const anchor = record.anchor || {};
+	const where = anchor.kind === "marker" && anchor.name ? "--anchor " + JSON.stringify(anchor.name)
+		: anchor.kind === "link" && anchor.url ? "--anchor-url " + anchor.url : "--free";
+	return {retry: {documentIds: ids, command: "miro-export " + ids.join(" ") + " " + where,
+		note: "Miro が一時的に断った資料です(少し時間をおけば通ることが多い)。出し直すか利用者に確かめ、出し直すなら command を実行する"}};
+};
 
 const commands = {
 	setup: async (_rest, opts) => setup(opts),

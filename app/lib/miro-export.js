@@ -659,10 +659,11 @@ const runExport = async (job) => {
 				}));
 			} catch (err) {
 				if (err.needsReconnect) throw err;
-				logger.warn({exportId, title, error: err.message}, "フレームを作れませんでした(このフレームの資料を飛ばして続けます)");
+				logger.warn({exportId, title, error: err.message, requestId: err.requestId ?? null}, "フレームを作れませんでした(このフレームの資料を飛ばして続けます)");
 				for (const item of planned.items) {
 					const {doc} = ready.get(item.documentId);
-					results.push({documentId: doc.id, title: doc.entry_file, state: STATES.FAILED, reason: `フレーム「${title}」を作れませんでした: ${String(err.message).slice(0, 200)}`});
+					results.push({documentId: doc.id, title: doc.entry_file, state: STATES.FAILED, ...failureCode(err),
+						reason: `フレーム「${title}」を作れませんでした: ${String(err.message).slice(0, 200)}`});
 				}
 				continue;
 			}
@@ -696,7 +697,7 @@ const runExport = async (job) => {
 					if (err.needsReconnect) throw err;
 					// 中身だけ置けて見出しで失敗したときは、中途半端に残さない
 					if (itemId != null) await call((token) => Miro.deleteItem(token, board, itemId)).catch(() => {});
-					results.push({documentId: doc.id, title: doc.entry_file, state: STATES.FAILED, reason: String(err.message).slice(0, 300), frameId: record.frameId});
+					results.push({documentId: doc.id, title: doc.entry_file, state: STATES.FAILED, ...failureCode(err), reason: String(err.message).slice(0, 300), frameId: record.frameId});
 				}
 			});
 		}
@@ -714,7 +715,10 @@ const runExport = async (job) => {
 			if (created != null) cards.push({id: String(created.id), text: card.text});
 		}
 		const failed = results.filter((r) => r.state === STATES.FAILED).length;
-		await finish("done", failed > 0 ? `${failed} 件を置けませんでした(Miro が断りました。もう一度書き出してください)` : null);
+		const temporary = results.filter((r) => r.retryable).length;
+		await finish("done", failed === 0 ? null : temporary === failed
+			? `${failed} 件を置けませんでした(Miro が一時的に断りました。間を空けて 3 回やり直しても通りませんでした)。少し時間をおいて、置けなかった資料だけ出し直せます`
+			: `${failed} 件を置けませんでした(Miro が断りました。資料ごとの理由を見てください)`);
 		logger.info({audit: "miro_export_done", user, projectId: project?.id ?? null, exportId, frames: frames.length, placed: results.filter((r) => r.state === STATES.PLACED).length, failed}, "audit");
 	} catch (err) {
 		const message = err.needsReconnect ? err.message : `Miro に書き出せませんでした: ${err.message}`;
@@ -724,6 +728,9 @@ const runExport = async (job) => {
 		running.delete(exportId);
 	}
 };
+
+/** 置けなかった理由の印。code: miro_unavailable(一時的。出し直せば通るかもしれない)・miro_error(Miro が断った) */
+const failureCode = (err) => (Miro.isTemporary(err) ? {code: "miro_unavailable", retryable: true} : {code: "miro_error", retryable: false});
 
 /** 書き出しの記録を、画面・API の形にする */
 const exportView = (target, row, {withDocuments = true, projects = new Map()} = {}) => {
@@ -742,9 +749,11 @@ const exportView = (target, row, {withDocuments = true, projects = new Map()} = 
 		frames: frames.map((f) => ({...f, url: itemUrl(target, f.frameId)})),
 		counts: {placed: Number(row.placed ?? 0), skipped: Number(row.skipped ?? 0), failed: Number(row.failed ?? 0)},
 		error: staleRunning ? "書き出しが途中で止まりました(サーバーが止まったなど)。もう一度書き出してください" : row.error ?? null,
-		...(withDocuments ? {documents: parseJson(row.documents, [])} : {})
+		...(withDocuments ? retryView(parseJson(row.documents, [])) : {})
 	};
 };
+// 資料ごとの結果と、出し直せる資料(一時的に断られたもの。同じ目印に、この ID だけで書き出し直す)
+const retryView = (documents) => ({documents, retryDocumentIds: documents.filter((d) => d.state === STATES.FAILED && d.retryable).map((d) => d.documentId)});
 const projectNames = async (rows) => {
 	const names = new Map();
 	for (const id of new Set(rows.map((r) => r.project_id).filter(Boolean))) names.set(id, (await Projects.getProject(id))?.name ?? null);

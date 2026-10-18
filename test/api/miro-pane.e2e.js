@@ -148,6 +148,24 @@ test.describe.serial("Miro の画面(実ブラウザ)", () => {
 		await expect(page.locator("#miroExportResult a")).toContainText("プレビューから [");
 		const frames = (await (await page.request.get(`${STUB_URL}/__items`)).json()).filter((i) => i.type === "frame");
 		expect(frames.length).toBe(before + 1);
+		await expect(page.locator("#miroExportOkButton")).toBeHidden();
+		await page.locator("#miroExportCancelButton").click();
+		await expect(dialog).toBeHidden();
+
+		// Miro が一時的にフレームの作成を断り続けたら(やり直し 3 回まで全部)、「もう一度書き出す」で同じ目印に出し直せる
+		await page.locator("#previewMiroButton").click();
+		await expect(page.locator("#miroExportOkButton")).toHaveText("書き出す");
+		await expect(page.locator("#miroExportOkButton")).toBeEnabled();
+		await page.request.post(`${STUB_URL}/__control`, {data: {failFrames: 4}});
+		await page.locator("#miroExportOkButton").click();
+		await expect(page.locator("#miroExportResult")).toContainText("失敗", {timeout: 15000});
+		await expect(page.locator("#miroExportResult")).toContainText("一時的に断りました");
+		await expect(page.locator("#miroExportOkButton")).toHaveText("もう一度書き出す");
+		await page.locator("#miroExportOkButton").click();
+		await expect(page.locator("#miroExportResult")).toContainText("書き出しました", {timeout: 15000});
+		await expect(page.locator("#miroExportOkButton")).toBeHidden();
+		const after = (await (await page.request.get(`${STUB_URL}/__items`)).json()).filter((i) => i.type === "frame");
+		expect(after.length).toBe(before + 2);
 		await page.locator("#miroExportCancelButton").click();
 		await expect(dialog).toBeHidden();
 	});

@@ -995,12 +995,28 @@ def summarize_export(record):
         "anchor": record.get("anchor"),
         "frames": [{"title": f.get("title"), "direction": f.get("direction"), "url": f.get("url"), "frameId": f.get("frameId")} for f in record.get("frames") or []],
         "counts": record.get("counts"),
-        "notPlaced": [{"documentId": d.get("documentId"), "title": d.get("title"), "state": d.get("state"), "reason": d.get("reason")}
+        "notPlaced": [{"documentId": d.get("documentId"), "title": d.get("title"), "state": d.get("state"), "reason": d.get("reason"),
+                       "code": d.get("code"), "retryable": d.get("retryable", False)}
                       for d in record.get("documents") or [] if d.get("state") != "placed"],
         "error": record.get("error"),
     }
     if record.get("state") == "running":
         result["note"] = "まだ書き出している途中です。しばらくしてから miro で確かめてください"
+    retry_ids = record.get("retryDocumentIds") or []
+    if retry_ids:
+        # Miro が一時的に断った資料。勝手に出し直さず、利用者に確かめてから、この資料だけを同じ場所に書き出す
+        anchor = record.get("anchor") or {}
+        if anchor.get("kind") == "marker" and anchor.get("name"):
+            where = "--anchor " + json.dumps(anchor["name"], ensure_ascii=False)
+        elif anchor.get("kind") == "link" and anchor.get("url"):
+            where = "--anchor-url " + anchor["url"]
+        else:
+            where = "--free"
+        result["retry"] = {
+            "documentIds": retry_ids,
+            "command": "miro-export " + " ".join(retry_ids) + " " + where,
+            "note": "Miro が一時的に断った資料です(少し時間をおけば通ることが多い)。出し直すか利用者に確かめ、出し直すなら command を実行する",
+        }
     return result
 
 

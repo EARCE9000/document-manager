@@ -518,7 +518,9 @@ const OPERATIONS = [
 	{
 		id: "getMiroExport", method: "get", path: "/api/miro/exports/:exportId", role: "readonly", tag: "その他",
 		summary: "1 回の書き出しの記録",
-		description: "`state`: `running` / `done` / `failed`。作ったフレーム(`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ)、資料ごとの結果(`documents[]`: `placed` / `skipped` 出せない形式など / `failed` Miro が断った)と理由",
+		description: "`state`: `running` / `done` / `failed`。作ったフレーム(`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ)、資料ごとの結果(`documents[]`: `placed` / `skipped` 出せない形式など / `failed` Miro が断った)と理由。"
+			+ "`failed` には `code`(`miro_unavailable`: Miro が一時的に断った。少し時間をおけば通ることが多い / `miro_error`: Miro が断った)と `retryable`。"
+			+ "`retryDocumentIds`: 一時的に断られた資料の ID(同じ目印にこの ID だけで書き出せば出し直せる)",
 		responses: {404: "無い"}
 	},
 	{
@@ -974,6 +976,7 @@ const GUIDE_SECTIONS = [
 			"目印もリンクも無いと 409(`code: anchor_required`)。**ボードの右の空いている所に出してよいか利用者に確かめてから** `free: true` で書き出す",
 			"向き(`direction`): 右・左・上・下・右上・右下・左上・左下・十字(`right` などの英語も可)。省くと目印に書いた向き。十字は資料をタグで 4 つに分ける",
 			"目印のメモは何を書き出すかの覚え書き。資料を言われず「設計書の目印に出して」とだけ頼まれたら、メモから資料を選び、**どれを出すか利用者に確かめてから**書き出す",
+			"**Miro が一時的に断った資料**(`documents[].code: miro_unavailable`・`retryDocumentIds`)は、サーバーが間を空けて 3 回やり直したあとのもの(Miro はフレームの作成をときどき数十秒続けて断る)。Miro には何も残っていない。**勝手に出し直さず**、エラーを見せて、少し時間をおいて出し直すか利用者に確かめる。出し直すなら `retryDocumentIds` の資料だけを同じ目印に書き出す(次の空いている所に出る)",
 			"書き出したあとの手直し(資料を動かす・見出しや囲みを足す)は `GET /api/miro/map`・`PATCH /api/miro/items/:documentId`・`POST /api/miro/layout`(詳しくは OpenAPI)。同梱クライアント(Skill)を使えば `miro-*` のコマンドで行える",
 			"Miro との連携と書き出すボードは管理者が画面で設定する。`code: not_connected` なら、管理者に設定を頼むよう利用者に伝える"
 		]
@@ -1040,7 +1043,8 @@ const AI_INSTRUCTIONS = [
 		do: `上記の「Miro に書き出す」のとおり、まず目印の一覧を取り、頼まれた目印に頼まれた資料を書き出してください。
 目印が無い・名前が曖昧なときは一覧を見せて確かめ、目印もリンクも無ければ、空いている所に出してよいか確かめてから書き出してください。
 **頼まれていないのに書き出さないでください**(打ち合わせで使っているボードが変わってしまうため)。
-書き出したら、フレームを開く URL(\`frames[].url\`)と、出せなかった資料があればその理由を伝えてください。`
+書き出したら、フレームを開く URL(\`frames[].url\`)と、出せなかった資料があればその理由を伝えてください。
+Miro が一時的に断った資料(\`retryDocumentIds\`)があれば、勝手に出し直さず、少し時間をおいて出し直すか確かめてから、その資料だけを同じ目印に書き出してください。`
 	},
 	{
 		when: "「アップして」「これ登録して」「保存しておいて」「アップロードして」",

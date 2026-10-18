@@ -26,8 +26,15 @@ const AUTH_URL = (process.env.MIRO_AUTH_URL || "https://miro.com").replace(/\/+$
 const TIMEOUT_MS = Number(process.env.MIRO_TIMEOUT_SECONDS || 30) * 1000;
 // 一時的な失敗(混雑・Miro 側の内部エラー)のやり直し。実物の Miro で、枠の作成が数分のあいだ 500 を返し、
 // そのあと何もせずに通るようになったことがある(コミュニティにも同じ報告がある)。待ち時間は少しずつ延ばす
-const RETRY_DELAYS_MS = (process.env.MIRO_RETRY_DELAYS_MS || "2000,8000,30000").split(",").map(Number).filter((n) => n >= 0);
+const delaysOf = (text) => text.split(",").map(Number).filter((n) => n >= 0);
+const RETRY_DELAYS_MS = delaysOf(process.env.MIRO_RETRY_DELAYS_MS || "2000,8000,30000");
+// 枠(フレーム)の作成だけは、断られると 40 秒以上続けて断られることが多い(資料・見出し・グループの作成は断られない)。
+// 間を長めに空けて 3 回やり直す(5 秒・30 秒・60 秒。合わせて 1 分半ほど)
+const FRAME_RETRY_DELAYS_MS = delaysOf(process.env.MIRO_FRAME_RETRY_DELAYS_MS || "5000,30000,60000");
+module.exports.FRAME_RETRY_DELAYS_MS = FRAME_RETRY_DELAYS_MS;
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+/** やり直せば通るかもしれない失敗か(混雑・Miro 側の内部エラー・通信できなかった) */
+module.exports.isTemporary = (err) => err?.name === "MiroError" && (err.status === 0 || RETRYABLE.has(err.status));
 
 /** Miro が返した失敗。status は Miro の HTTP ステータス(通信できなかったときは 0) */
 class MiroError extends Error {
@@ -43,18 +50,19 @@ class MiroError extends Error {
  * Miro を呼ぶ。応答が JSON ならその中身を、本体が無ければ null を返す。
  * @param {string} method
  * @param {string} url 完全なURL
- * @param {{token?: string, body?: object, raw?: Buffer, rawType?: string}} [options]
+ * @param {{token?: string, body?: object, raw?: Buffer, rawType?: string, retryDelays?: number[]}} [options] retryDelays はやり直しの待ち時間(省くと RETRY_DELAYS_MS)
  */
 const call = async (method, url, options = {}) => {
+	const delays = options.retryDelays ?? RETRY_DELAYS_MS;
 	for (let attempt = 0; ; attempt++) {
 		try {
 			return await callOnce(method, url, options);
 		} catch (err) {
 			const retryable = err.status === 0 || RETRYABLE.has(err.status);
-			if (!retryable || attempt >= RETRY_DELAYS_MS.length || options.retry === false) throw err;
+			if (!retryable || attempt >= delays.length || options.retry === false) throw err;
 			// 混雑(429)は、Miro が待つ時間を言ってくればそれに従う
-			const wait = err.retryAfterMs ?? RETRY_DELAYS_MS[attempt];
-			logger.warn({status: err.status, attempt: attempt + 1, waitMs: wait, method, path: new URL(url).pathname}, "Miro の一時的な失敗。待ってやり直します");
+			const wait = err.retryAfterMs ?? delays[attempt];
+			logger.warn({status: err.status, code: err.code, requestId: err.requestId ?? null, attempt: attempt + 1, waitMs: wait, method, path: new URL(url).pathname}, "Miro の一時的な失敗。待ってやり直します");
 			await new Promise((resolve) => setTimeout(resolve, wait));
 		}
 	}
@@ -96,6 +104,8 @@ const callOnce = async (method, url, {token, body, raw, rawType} = {}) => {
 		const error = new MiroError(`Miro がエラーを返しました(HTTP ${res.status}): ${detail}`, {status: res.status, code: json?.code ?? json?.error ?? null});
 		const retryAfter = Number(res.headers.get("retry-after"));
 		if (retryAfter > 0) error.retryAfterMs = Math.min(retryAfter, 120) * 1000;
+		// Miro のサポートに問い合わせるときの手がかり(どの呼び出しが失敗したかを Miro 側で追える)
+		error.requestId = res.headers.get("x-request-id") || null;
 		throw error;
 	}
 	return json;
@@ -168,7 +178,7 @@ const boardPath = (boardId) => `${API_URL}/v2/boards/${encodeURIComponent(boardI
 
 /** 枠(フレーム)を作る */
 module.exports.createFrame = (token, boardId, {title, x, y, width, height}) =>
-	call("POST", `${boardPath(boardId)}/frames`, {token, body: {data: {title, format: "custom", type: "freeform"}, position: {x, y}, geometry: {width, height}}});
+	call("POST", `${boardPath(boardId)}/frames`, {token, retryDelays: FRAME_RETRY_DELAYS_MS, body: {data: {title, format: "custom", type: "freeform"}, position: {x, y}, geometry: {width, height}}});
 
 /** 枠の題名・大きさ・位置を変える(位置は枠の中心) */
 module.exports.updateFrame = (token, boardId, frameId, {title, width, height, x, y}) =>

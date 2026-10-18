@@ -6742,6 +6742,7 @@ const openMiroExportDialog = async (doc) => {
 	miroExportResult.innerHTML = "";
 	document.getElementById("miroExportForm").style.display = "";
 	miroExportOkButton.style.display = "";
+	miroExportOkButton.textContent = "書き出す";
 	miroExportOkButton.disabled = true;
 	miroExportCancelButton.textContent = "キャンセル";
 	miroExportAnchor.innerHTML = '<option value="">目印を読んでいます...</option>';
@@ -6795,7 +6796,12 @@ miroExportOkButton.addEventListener("click", async () => {
 			+ notPlaced.map((d) => '<div class="problem">' + escapeHtml(d.reason || "") + '</div>').join("")
 			+ (record.error ? '<div class="problem">' + escapeHtml(record.error) + '</div>' : "");
 		document.getElementById("miroExportForm").style.display = "none";
-		miroExportOkButton.style.display = "none";
+		// Miro が一時的に断ったとき(間を空けて 3 回やり直しても通らなかった)は、同じ目印・名前でもう一度書き出せるようにする。
+		// 断られた資料は Miro に何も残っていないので、出し直しても重ならない
+		const retryable = (record.retryDocumentIds || []).length > 0;
+		if (retryable) miroExportResult.innerHTML += '<div class="miroRetryNote">Miro が一時的に断りました(Miro 側の不調で、少し時間をおけば通ることが多いです)。少し待ってから「もう一度書き出す」を押してください。</div>';
+		miroExportOkButton.textContent = "もう一度書き出す";
+		miroExportOkButton.style.display = retryable ? "" : "none";
 		miroExportCancelButton.textContent = "閉じる";
 	} catch {
 		miroExportResult.innerHTML = '<span class="problem">書き出せませんでした(通信できませんでした)</span>';
