@@ -503,14 +503,30 @@ const OPERATIONS = [
 			+ "`direction`: `right` / `left` / `up` / `down` / `upper-right` / `lower-right` / `upper-left` / `lower-left` / `cross`(日本語の 右・左上・十字 なども可)。省くと目印に書いた向き、それも無ければ右。"
 			+ "`cross` は資料をタグで 4 つに分け、目印の斜め 4 つのフレームに出し、`project` があれば目印の下にプロジェクトの概要カードを置く。"
 			+ "フレームの名前は「タイトル [YYYY-MM-DD hh:mm]」(タイトルは `title` → 目印の名前 → プロジェクト名)。フレームの中は読む順(左上から右へ)。"
-			+ "ほかのフレーム・付箋と重なるときは、向きの外側へずらす。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.io は PDF にして、Office は体裁つき PDF で出す(1 件 6MB まで)",
+			+ "ほかのフレーム・付箋と重なるときは、向きの外側へずらす。PDF・画像はそのまま、HTML・Markdown・MHTML・draw.io は PDF にして、Office は体裁つき PDF で出す(1 件 6MB まで)。"
+			+ "**フロー図**: 資料の代わりに `diagram`(または `groups[].diagram`)で箱と線の一覧を渡すと、新しいフレームに図形と線で描く(位置は Document Manager が決める)。"
+			+ "`diagram`: `{flow?: \"right\"|\"down\", lanes?: [{key, title}], nodes: [{key, text, type?, lane?, rank?, color?, documentId?, link?, width?, height?}], edges?: [{from, to, label?, line?, style?, arrow?, color?}]}`。"
+			+ "`type`: start・end(角丸)/ process(四角。既定)/ decision(菱形)/ data(平行四辺形)/ subprocess(定義済み処理)/ store(円柱)/ note(付箋色の四角)。`shape` で Miro の図形を直接選んでもよい。"
+			+ "`lanes` を使うと担当ごとの帯に分ける(どの箱にも `lane` が要る)。並びは線をたどった段数で決まり(戻る線は数えない)、`rank` で段を指定できる。`documentId` を書いた箱は、その資料を Document Manager で開くリンクになる。"
+			+ "`line`: elbowed(既定)/ straight / curved、`style`: solid / dashed / dotted、`arrow`: end(既定)/ both / none。上限は箱 200・線 400・レーン 20。十字には出せない",
 		body: {schema: {type: "object", properties: {
 			project: {type: "string"}, anchor: {type: "string"}, anchorUrl: {type: "string"}, free: {type: "boolean"},
 			documentIds: {type: "array", items: {type: "string"}}, direction: {type: "string"}, title: {type: "string"},
-			groups: {type: "array", items: {type: "object", required: ["documentIds"], properties: {documentIds: {type: "array", items: {type: "string"}}, direction: {type: "string"}, title: {type: "string"}}}}
+			diagram: {type: "object", required: ["nodes"], properties: {
+				flow: {type: "string", enum: ["right", "down"]},
+				lanes: {type: "array", items: {type: "object", required: ["key"], properties: {key: {type: "string"}, title: {type: "string"}}}},
+				nodes: {type: "array", items: {type: "object", required: ["key", "text"], properties: {
+					key: {type: "string"}, text: {type: "string"}, type: {type: "string", enum: ["start", "end", "process", "decision", "data", "subprocess", "store", "note"]},
+					shape: {type: "string"}, lane: {type: "string"}, rank: {type: "integer"}, color: {type: "string"}, documentId: {type: "string"}, link: {type: "string"},
+					width: {type: "number"}, height: {type: "number"}}}},
+				edges: {type: "array", items: {type: "object", required: ["from", "to"], properties: {
+					from: {type: "string"}, to: {type: "string"}, label: {type: "string"}, line: {type: "string", enum: ["elbowed", "straight", "curved"]},
+					style: {type: "string", enum: ["solid", "dashed", "dotted"]}, arrow: {type: "string", enum: ["end", "both", "none"]}, color: {type: "string"}}}}
+			}},
+			groups: {type: "array", items: {type: "object", properties: {documentIds: {type: "array", items: {type: "string"}}, diagram: {type: "object"}, direction: {type: "string"}, title: {type: "string"}}}}
 		}, example: {anchor: "設計書", documentIds: ["<文書ID>", "<文書ID>"], direction: "右"}}},
 		responses: {
-			400: "指示に正しくないところがある(details)・目印の向きが読めない(code: anchor_unreadable)・リンクが正しくない",
+			400: "指示に正しくないところがある(details)・目印の向きが読めない(code: anchor_unreadable)・リンクが正しくない・フロー図を十字で出そうとした(code: diagram_direction)",
 			404: "目印がボードに無い(code: anchor_not_found。anchors にボードの目印の名前)・プロジェクトが無い",
 			409: "目印もリンクも無い(code: anchor_required)・同じ名前の目印が複数(code: anchor_ambiguous)・Miro と連携していない"
 		}
@@ -518,9 +534,9 @@ const OPERATIONS = [
 	{
 		id: "getMiroExport", method: "get", path: "/api/miro/exports/:exportId", role: "readonly", tag: "その他",
 		summary: "1 回の書き出しの記録",
-		description: "`state`: `running` / `done` / `failed`。作ったフレーム(`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ)、資料ごとの結果(`documents[]`: `placed` / `skipped` 出せない形式など / `failed` Miro が断った)と理由。"
+		description: "`state`: `running` / `done` / `failed`。作ったフレーム(`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ。フロー図なら `diagram.nodes` に箱の key と Miro の ID)、資料ごとの結果(`documents[]`: `placed` / `skipped` 出せない形式など / `failed` Miro が断った)と理由。フロー図は `kind: diagram` の 1 件(箱と線の数)。"
 			+ "`failed` には `code`(`miro_unavailable`: Miro が一時的に断った。少し時間をおけば通ることが多い / `miro_error`: Miro が断った)と `retryable`。"
-			+ "`retryDocumentIds`: 一時的に断られた資料の ID(同じ目印にこの ID だけで書き出せば出し直せる)",
+			+ "`retryDocumentIds`: 一時的に断られた資料の ID(同じ目印にこの ID だけで書き出せば出し直せる)。`retryDiagrams`: 一時的に断られたフロー図の名前(同じ図の頼みをもう一度送れば出し直せる)",
 		responses: {404: "無い"}
 	},
 	{
@@ -553,9 +569,11 @@ const OPERATIONS = [
 			+ "`items`: 資料の位置(`documentId`・`x`・`y`。見出しも一緒に動く)と、見出しの背景の色(`color`。`#rrggbb`、`null`で外す)。"
 			+ "`labels`: 見出しの文字(`text`・`x`・`y`・`width`・`fontSize`・`color`・`fillColor`・`bold`・`align`・`link`)。"
 			+ "`shapes`: 囲み・矢印・区切りの線などの図形(`shape`・`x`・`y`・`width`・`height`・`fillColor`・`fillOpacity`・`borderColor`・`borderWidth`・`borderStyle`・`text`・`link`)。Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なるので、背景は`fillOpacity`を小さくする。"
+			+ "`shapes[].key` を付けた図形は、`connectors` でつなげる。"
+			+ "`connectors`: 線(`from`・`to`・`label`・`line`: elbowed/straight/curved・`style`: solid/dashed/dotted・`arrow`: end/both/none・`color`)。`from`・`to` は、この指示の図形の key・フロー図の箱の key・この書き出しの資料の文書 ID のどれか。線はフレームの中には入らず、つないだ項目について動く。"
 			+ "`frame`: フレームの大きさ(省略すると中身に合わせて広げる。左上は動かさず、縮めはしない)。"
-			+ "見出しの文字と図形はフレームごとに覚え、次に当てるときに片付けてから置く(`keepDecorations: true`で残す。`clearDecorations: true`だけを渡すと片付ける)。"
-			+ "正しくないところがあれば何も動かさずに400と理由の一覧(`details`)を返す。上限は資料2000件・見出し500件・図形500件",
+			+ "見出しの文字・図形・線はフレームごとに覚え、次に当てるときに片付けてから置く(`keepDecorations: true`で残す。`clearDecorations: true`だけを渡すと片付ける)。"
+			+ "正しくないところがあれば何も動かさずに400と理由の一覧(`details`)を返す。上限は資料2000件・見出し500件・図形500件・線500本",
 		body: {schema: {type: "object", properties: {
 			exportId: {type: "string"},
 			frameId: {type: "string"},
@@ -965,7 +983,7 @@ const GUIDE_SECTIONS = [
 		entries: [
 			{id: "listMiroAnchors", trail: "ボードの目印(付箋の `[DM]名前`)の一覧。名前・向き・メモ(何を書き出すかの覚え書き)・`url`"},
 			{id: "placeMiroAnchor", trail: "目印の付箋を置く(要 admin/readwrite ロール)。JSONボディ: `{\"name\": \"設計書\", \"direction\": \"右\", \"note\": \"メモ\"}`"},
-			{id: "exportMiro", trail: "書き出す(要 admin/readwrite ロール。202 で受け付け、裏で置く)。JSONボディ: `{\"documentIds\": [\"<文書ID>\"], \"anchor\": \"設計書\"}`"},
+			{id: "exportMiro", trail: "書き出す(要 admin/readwrite ロール。202 で受け付け、裏で置く)。JSONボディ: `{\"documentIds\": [\"<文書ID>\"], \"anchor\": \"設計書\"}`。フロー図は `documentIds` の代わりに `diagram`(箱と線の一覧。下記)"},
 			{id: "getMiroExport", trail: "1 回の書き出しの記録。`state` が `running` でなくなるまで数秒おきに取り直し、`frames[].url` を利用者に伝える"},
 			{id: "listMiroExports", trail: "書き出しの履歴(新しい順)"}
 		],
@@ -977,7 +995,8 @@ const GUIDE_SECTIONS = [
 			"向き(`direction`): 右・左・上・下・右上・右下・左上・左下・十字(`right` などの英語も可)。省くと目印に書いた向き。十字は資料をタグで 4 つに分ける",
 			"目印のメモは何を書き出すかの覚え書き。資料を言われず「設計書の目印に出して」とだけ頼まれたら、メモから資料を選び、**どれを出すか利用者に確かめてから**書き出す",
 			"**Miro が一時的に断った資料**(`documents[].code: miro_unavailable`・`retryDocumentIds`)は、サーバーが間を空けて 3 回やり直したあとのもの(Miro はフレームの作成をときどき数十秒続けて断る)。Miro には何も残っていない。**勝手に出し直さず**、エラーを見せて、少し時間をおいて出し直すか利用者に確かめる。出し直すなら `retryDocumentIds` の資料だけを同じ目印に書き出す(次の空いている所に出る)",
-			"書き出したあとの手直し(資料を動かす・見出しや囲みを足す)は `GET /api/miro/map`・`PATCH /api/miro/items/:documentId`・`POST /api/miro/layout`(詳しくは OpenAPI)。同梱クライアント(Skill)を使えば `miro-*` のコマンドで行える",
+			"**フロー図を描く**(「業務フローを Miro に描いて」): `diagram: {flow: \"right\", lanes: [{key, title}], nodes: [{key, text, type, lane}], edges: [{from, to, label}]}` を渡す。位置は Document Manager が決めるので、座標は要らない。`type` は start・end・process・decision・data・subprocess・store・note。担当ごとに分けるなら lanes。関係する資料がある箱には `documentId` を書くと、その資料を開くリンクになる。**描く前に、箱と線の一覧(どんな流れか)を利用者に見せて確かめる**",
+			"書き出したあとの手直し(資料を動かす・見出しや囲みを足す・線でつなぐ)は `GET /api/miro/map`・`PATCH /api/miro/items/:documentId`・`POST /api/miro/layout`(詳しくは OpenAPI)。同梱クライアント(Skill)を使えば `miro-*` のコマンドで行える",
 			"Miro との連携と書き出すボードは管理者が画面で設定する。`code: not_connected` なら、管理者に設定を頼むよう利用者に伝える"
 		]
 	},
@@ -1044,7 +1063,8 @@ const AI_INSTRUCTIONS = [
 目印が無い・名前が曖昧なときは一覧を見せて確かめ、目印もリンクも無ければ、空いている所に出してよいか確かめてから書き出してください。
 **頼まれていないのに書き出さないでください**(打ち合わせで使っているボードが変わってしまうため)。
 書き出したら、フレームを開く URL(\`frames[].url\`)と、出せなかった資料があればその理由を伝えてください。
-Miro が一時的に断った資料(\`retryDocumentIds\`)があれば、勝手に出し直さず、少し時間をおいて出し直すか確かめてから、その資料だけを同じ目印に書き出してください。`
+Miro が一時的に断った資料(\`retryDocumentIds\`)やフロー図(\`retryDiagrams\`)があれば、勝手に出し直さず、少し時間をおいて出し直すか確かめてから、その資料(または同じ図)だけを同じ目印に書き出してください。
+フロー図を頼まれたら、箱と線の一覧(どんな流れか)を先に利用者に見せて確かめてから描いてください。`
 	},
 	{
 		when: "「アップして」「これ登録して」「保存しておいて」「アップロードして」",

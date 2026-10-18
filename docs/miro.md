@@ -231,7 +231,7 @@ AI(Claude Code など)に「〇〇を△△の右に置いて」「囲みを付�
 |---|---|
 | `GET /api/miro/map?exportId=…` | フレームごとの資料の位置・指示で置いた見出しと図形・人が足したもの・空いている所(位置はフレームの左上から)。**Miro は変えない** |
 | `PATCH /api/miro/items/:documentId` | 資料を動かす(本体に `exportId` を足せる): `{nextTo: 文書ID, side: "right"\|"left"\|"above"\|"below"}` か `{frame?: フレームの ID か名前, x, y}`。見出しも一緒に動く |
-| `POST /api/miro/layout` | 位置と色・見出しの文字・図形をまとめて当てる(下) |
+| `POST /api/miro/layout` | 位置と色・見出しの文字・図形・線をまとめて当てる(下) |
 
 ```json
 {
@@ -250,10 +250,63 @@ AI(Claude Code など)に「〇〇を△△の右に置いて」「囲みを付�
 | 位置 | すべて**フレームの左上からの中心の位置**。`exportId` を省くと頼んだ人の最後の書き出し、`frameId` を省くと最初のフレーム |
 | `items` | 資料を動かす(見出しも一緒に)。`color` で見出しの背景を塗る(`null` で外す) |
 | `labels` | 見出しの文字 |
-| `shapes` | 囲み・矢印・区切りの線など。**Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なる**ので、背景は `fillOpacity` を小さくする |
+| `shapes` | 囲み・矢印・区切りの線など。**Miro では重なりの順を指定できず、あとから置いた図形が資料の上に重なる**ので、背景は `fillOpacity` を小さくする。`key` を付けると `connectors` でつなげる |
+| `connectors` | 線(`from`・`to`・`label`・`line`: `elbowed`/`straight`/`curved`・`style`: `solid`/`dashed`/`dotted`・`arrow`: `end`/`both`/`none`・`color`)。`from`・`to` は、同じ指示の図形の `key`・フロー図の箱の `key`・この書き出しの資料の文書 ID のどれか |
 | `frame` | フレームの大きさ。省略すると中身に合わせて広げる(左上は動かさず、縮めはしない) |
-| 当て直し | 前に置いた見出しの文字と図形を片付けてから置く(`keepDecorations: true` で残す。`clearDecorations: true` だけで片付ける) |
+| 当て直し | 前に置いた見出しの文字・図形・線を片付けてから置く(`keepDecorations: true` で残す。`clearDecorations: true` だけで片付ける) |
 | 失敗 | 正しくないところが1つでもあれば、何も動かさずに理由の一覧(`details`)を返す |
+
+線(Miro のコネクター)は、実物の Miro で次のように振る舞います。
+
+- **フレームの中には入らない**(Miro の API が受け付けない)。ボードに置かれ、両端の項目について動く(フレームを動かしても付いてくる)
+- つないだ項目を消すと、線も消える
+- 地図(`GET /api/miro/map`)の `others` には出ない(フレームの中身の一覧に出ないため)
+
+### フロー図を描く
+
+資料の代わりに、**箱と線の一覧**を渡すと、目印の向きに新しいフレームを作り、Miro の図形と線で描きます。
+**位置は Document Manager が決めます**(AI に座標を考えさせない)。打ち合わせで人が Miro の上でそのまま直せます。
+
+`POST /api/miro/exports` に `documentIds` の代わりに `diagram` を渡します(資料と一緒に出すなら `groups[].diagram`)。
+同梱クライアントでは `miro-diagram <JSONファイル> --anchor <目印の名前>`。
+
+```json
+{
+  "anchor": "業務フロー",
+  "title": "受注から請求まで",
+  "diagram": {
+    "flow": "right",
+    "lanes": [{"key": "sales", "title": "営業"}, {"key": "wh", "title": "倉庫"}],
+    "nodes": [
+      {"key": "start", "text": "受注", "type": "start", "lane": "sales"},
+      {"key": "check", "text": "在庫はあるか", "type": "decision", "lane": "wh"},
+      {"key": "ship", "text": "出荷", "lane": "wh", "documentId": "…"},
+      {"key": "order", "text": "仕入れ", "type": "subprocess", "lane": "wh"},
+      {"key": "bill", "text": "請求", "type": "end", "lane": "sales"}
+    ],
+    "edges": [
+      {"from": "start", "to": "check"},
+      {"from": "check", "to": "ship", "label": "ある"},
+      {"from": "check", "to": "order", "label": "ない", "style": "dashed"},
+      {"from": "order", "to": "ship"},
+      {"from": "ship", "to": "bill"}
+    ]
+  }
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `flow` | 流れの向き。`right`(左から右。既定)・`down`(上から下) |
+| `lanes` | 担当ごとの帯(省ける)。使うなら、どの箱にも `lane` が要る。流れが右なら横の帯、下なら縦の帯で、見出しが付く |
+| `nodes[].type` | `start`・`end`(角丸)/ `process`(四角。既定)/ `decision`(菱形)/ `data`(平行四辺形)/ `subprocess`(定義済み処理)/ `store`(円柱)/ `note`(メモ)。`shape` で Miro の図形を直接選んでもよい |
+| 並び | 線をたどって、最初の箱からの段数を流れの向きに並べる(戻る線=ループは段数に数えない)。同じ段・同じレーンに複数あれば、流れと直角に積む。前から線が来ない箱(メモなど)は、つながる先の 1 つ手前の段に寄せる(`start` は左端のまま)。`rank`(0 から)で段を指定できる |
+| 箱の大きさ | 文字の量に合わせて広げる(幅は 480 まで。入らなければ高くする)。`width`・`height` を書けばそのまま |
+| `nodes[].documentId` | その資料を Document Manager で開くリンクにする(`link` で任意の URL も可) |
+| `edges[]` | `label`・`line`(`elbowed` 既定 / `straight` / `curved`)・`style`(`solid` / `dashed` / `dotted`)・`arrow`(`end` 既定 / `both` / `none`)・`color` |
+| 上限 | 箱 200・線 400・レーン 20。十字には出せない(`400 diagram_direction`) |
+| 結果 | 書き出しの記録の `documents[]` に `kind: diagram` の 1 件(箱と線の数)。フレームの `diagram.nodes` に箱の key と Miro の ID。地図にも箱が key つきで出る |
+| 一時的に断られた | `retryDiagrams` に図の名前が入る。利用者に確かめてから、同じ頼みをもう一度送る |
 
 ### 見る人
 

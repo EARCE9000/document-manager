@@ -44,9 +44,11 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py miro-export [文書ID...] [--project <P>] (--anchor <目印の名前> | --anchor-url <付箋のリンク> | --free)
       [--direction 右|左|上|下|右上|右下|左上|左下|十字] [--title <タイトル>] [--groups <JSONファイル|->] [--no-wait]
                                                   資料を Miro に書き出す(毎回新しいフレーム。--free は利用者に確かめてから)
+  python dm_client.py miro-diagram <JSONファイル|-> (--anchor <目印の名前> | --anchor-url <付箋のリンク> | --free) [--direction 下] [--title <タイトル>] [--no-wait]
+                                                  フロー図(箱と線の一覧の JSON)を Miro に描く(位置は Document Manager が決める)
   python dm_client.py miro-map [--export <ID>]   書き出したフレームの地図(資料の位置・人が足したもの・空いている所)
   python dm_client.py miro-move <文書ID> (--next-to <文書ID> [--side right|left|above|below] | [--frame <F>] --x N --y N) [--export <ID>]
-  python dm_client.py miro-layout <JSONファイル|-> [--export <ID>]   書き出したフレームに、位置・色・見出し・図形をまとめて当てる
+  python dm_client.py miro-layout <JSONファイル|-> [--export <ID>]   書き出したフレームに、位置・色・見出し・図形・線をまとめて当てる
                                                   (--export を省くと、自分の最後の書き出し)
   python dm_client.py miro-layout-report [文書ID...] [--project <P>]   十字で書き出したらどうなるか(タグの見直し用。Miro は変えない)
     向き(--direction): 右・左・上・下・右上・右下・左上・左下・十字(right / left / up / down / upper-right / lower-right / upper-left / lower-left / cross)
@@ -84,7 +86,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.13.0"
+CLIENT_VERSION = "1.14.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -1002,6 +1004,12 @@ def summarize_export(record):
     }
     if record.get("state") == "running":
         result["note"] = "まだ書き出している途中です。しばらくしてから miro で確かめてください"
+    if record.get("retryDiagrams"):
+        # Miro が一時的に断ったフロー図。勝手に出し直さず、利用者に確かめてから、同じ miro-diagram をもう一度実行する
+        result["retryDiagrams"] = {
+            "titles": record["retryDiagrams"],
+            "note": "Miro が一時的に断ったフロー図です(少し時間をおけば通ることが多い)。出し直すか利用者に確かめ、出し直すなら同じ miro-diagram をもう一度実行する",
+        }
     retry_ids = record.get("retryDocumentIds") or []
     if retry_ids:
         # Miro が一時的に断った資料。勝手に出し直さず、利用者に確かめてから、この資料だけを同じ場所に書き出す
@@ -1073,6 +1081,34 @@ def cmd_miro_export(args):
             raise DmError(f"--groups の JSON を読めません: {err}") from None
     elif args.ids:
         body["documentIds"] = args.ids
+    started = request("POST", "api/miro/exports", body=body)
+    return summarize_export(started if args.no_wait else wait_export(started["id"]))
+
+
+def cmd_miro_diagram(args):
+    """
+    フロー図を描く。JSON は {"flow": "right", "lanes": [{"key", "title"}], "nodes": [{"key", "text", "type", "lane"}], "edges": [{"from", "to", "label"}]}。
+    位置は Document Manager が決める(座標は要らない)。場所は miro-export と同じ(--anchor・--anchor-url・--free)
+    """
+    try:
+        if args.file == "-":
+            diagram = json.load(sys.stdin)
+        else:
+            with open(args.file, encoding="utf-8") as f:
+                diagram = json.load(f)
+    except (OSError, ValueError) as err:
+        raise DmError(f"フロー図の JSON を読めません: {err}") from None
+    body = {"diagram": diagram}
+    if args.anchor is not None:
+        body["anchor"] = args.anchor
+    if args.anchor_url is not None:
+        body["anchorUrl"] = args.anchor_url
+    if args.free:
+        body["free"] = True
+    if args.direction is not None:
+        body["direction"] = args.direction
+    if args.title is not None:
+        body["title"] = args.title
     started = request("POST", "api/miro/exports", body=body)
     return summarize_export(started if args.no_wait else wait_export(started["id"]))
 
@@ -1459,6 +1495,15 @@ def main():
     p.add_argument("--groups", help='向きごとの組の JSON ファイル(- で標準入力)。[{"documentIds": [...], "direction": "右", "title": "..."}]')
     p.add_argument("--no-wait", action="store_true", help="書き終わるのを待たずに返す")
     p.set_defaults(func=cmd_miro_export)
+    p = sub.add_parser("miro-diagram", help="フロー図(箱と線の一覧)を Miro に描く(新しいフレーム。書き終わるまで待つ)")
+    p.add_argument("file", help='フロー図の JSON ファイル(- で標準入力)。{"flow": "right", "lanes": [...], "nodes": [...], "edges": [...]}')
+    p.add_argument("--anchor", help="目印の名前(ボードの付箋の [DM]名前)")
+    p.add_argument("--anchor-url", help="付箋・図形のリンク(Miro の「リンクをコピー」)")
+    p.add_argument("--free", action="store_true", help="目印を使わず、ボードの中身の右の空いている所に出す(利用者に確かめてから)")
+    p.add_argument("--direction", help="向き(右・左・上・下・右上・右下・左上・左下。十字は使えない。省くと目印に書いた向き)")
+    p.add_argument("--title", help="フレームの名前(省くと目印の名前。後ろに [日時] が付く)")
+    p.add_argument("--no-wait", action="store_true", help="描き終わるのを待たずに返す")
+    p.set_defaults(func=cmd_miro_diagram)
     p = sub.add_parser("miro-move", help="書き出した資料を動かす(見出しも一緒に動く)")
     p.add_argument("id", help="動かす資料の文書ID")
     p.add_argument("--export", help="書き出しの ID(省くと自分の最後の書き出し)")

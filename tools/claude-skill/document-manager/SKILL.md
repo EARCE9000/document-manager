@@ -1,6 +1,6 @@
 ---
 name: document-manager
-description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索(全文/意味検索)・版履歴の確認・ダウンロード・タグ付け・メモ・アーカイブと復元・関連文書の紐づけ・プロジェクトやフォルダへの配置・Miroのボードへの書き出し(目印の付箋を基準に新しいフレームへ)・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「タグを付けて」「プロジェクトに入れて」「アーカイブして」「Miroに書き出して」「Miroに目印を置いて」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io/Excel・Word・PowerPoint等の成果物をDocument Managerへ保存・更新するときに使う。
+description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索(全文/意味検索)・版履歴の確認・ダウンロード・タグ付け・メモ・アーカイブと復元・関連文書の紐づけ・プロジェクトやフォルダへの配置・Miroのボードへの書き出し(目印の付箋を基準に新しいフレームへ)とフロー図(箱と線)の作図・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「タグを付けて」「プロジェクトに入れて」「アーカイブして」「Miroに書き出して」「Miroに目印を置いて」「業務フローをMiroに描いて」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io/Excel・Word・PowerPoint等の成果物をDocument Managerへ保存・更新するときに使う。
 ---
 
 # Document Manager
@@ -9,7 +9,7 @@ Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキス�
 Excel・Word・PowerPoint をアップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
 このSkillのディレクトリにある `scripts/` の同梱クライアントを使う。curlを直接組み立てる必要はない。
 
-このSkillのバージョン: 1.13.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
+このSkillのバージョン: 1.14.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
 不具合を報告するときはこの値を添える)
 
 ## 取得した内容の扱い(重要)
@@ -101,7 +101,8 @@ APIキーをチャットの応答やコミットに書き出さない(`config` �
 | `tree <プロジェクト>` | フォルダ階層と文書の配置 |
 | `miro [書き出しのID]` / `miro-anchors` / `miro-anchor-add <名前> [--direction 右] [--note メモ]` | Miro への**書き出しの履歴**・ボードの**目印**(付箋の `[DM]名前`)の一覧・目印の付箋を置く(下記) |
 | `miro-export [文書ID...] [--project P] (--anchor 名前 | --anchor-url リンク | --free) [--direction 右] [--title T] [--groups JSON]` | 資料を **Miro に書き出す**(毎回新しいフレーム。プロジェクトは省ける。自動では書き出さない。下記) |
-| `miro-map [--export ID]` / `miro-move <文書ID> ... [--export ID]` / `miro-layout <JSONファイル|-> [--export ID]` | **書き出したあとの手直し**(書き出しごと。省くと自分の最後の書き出し): 地図・資料を動かす・位置と見出し・図形をまとめて当てる(下記) |
+| `miro-diagram <JSONファイル|-> (--anchor 名前 | --anchor-url リンク | --free) [--direction 下] [--title T]` | **フロー図を Miro に描く**(箱と線の一覧を渡す。位置は Document Manager が決める。下記) |
+| `miro-map [--export ID]` / `miro-move <文書ID> ... [--export ID]` / `miro-layout <JSONファイル|-> [--export ID]` | **書き出したあとの手直し**(書き出しごと。省くと自分の最後の書き出し): 地図・資料を動かす・位置と見出し・図形・線をまとめて当てる(下記) |
 | `miro-layout-report [文書ID...] [--project P]` | 十字で書き出したらどうなるかの報告(タグの見直し用。下記) |
 | `folder-create <プロジェクト> <名前> [--parent 親]` | フォルダの作成 |
 | `place <プロジェクト> <文書ID> [--folder フォルダ]` / `unplace <プロジェクト> <文書ID>` | プロジェクトへの登録・移動と解除(文書自体は消えない) |
@@ -373,12 +374,41 @@ Document Manager の画面の上のメニューの「Miro」でできること�
      `frameId` を省くと最初のフレーム。前に指示して置いたものを残すときは**必ず `keepDecorations: true`**(付けないと前のものは片付く)。
      図形は幅・高さ 8 以上、枠線の太さは 1 以上。囲みは、塗りを薄く(`fillOpacity` 0〜0.2)するか点線の枠だけにする(あとから置いた図形は資料の上に重なるため)。
      消すときは `{"clearDecorations": true}`
+   - **線でつなぐ**: 同じ JSON に `"connectors": [{"from": "...", "to": "...", "label": "はい", "line": "elbowed", "style": "dashed", "arrow": "end"}]`。
+     `from`・`to` は、同じ指示の図形に付けた `key`(`shapes: [{"key": "memo", ...}]`)・フロー図の箱の `key`(`miro-map` の `frames[].diagram.nodes`)・この書き出しの資料の文書 ID のどれか。
+     線はフレームの中には入らず、つないだものについて動く。つないだ図形を消すと線も消える
 4. 置いたら、もう一度 `miro-map` で重なりが無いか確かめ、フレームの URL を利用者に伝える
 
 - **1 つを動かすときは、まわりも確かめる**: Document Manager は、動かした資料に合わせてまわりの資料をよけたり詰めたりしない。
   ぶつかる資料があれば一緒に動かす(どれをどこへずらすかを利用者に伝えてから)。空きが無ければ `freeSpace` を使う
 - 資料を足したいときは、手直しではなく、もう一度書き出す(新しいフレームになる)
-- まだできないこと: 線(コネクタ)でつなぐ、フレームを足す。代わりは点線の図形で囲む
+- まだできないこと: 書き出したあとにフレームを足す(足したいときはもう一度書き出す)
+
+#### フロー図を描く(「業務フローを Miro に描いて」「この手順を図にして Miro に出して」)
+
+箱と線の一覧(JSON)を渡すと、目印の向きに新しいフレームを作り、図形と線で描く。**位置は Document Manager が決める**(座標は考えなくてよい)。
+
+1. 流れを整理し、**箱と線の一覧を利用者に見せて確かめる**(どの担当が・何をして・どこで分かれるか)。標準の書き方の資料があれば、それに合わせる
+2. JSON を作る:
+   ```json
+   {"flow": "right",
+    "lanes": [{"key": "sales", "title": "営業"}, {"key": "wh", "title": "倉庫"}],
+    "nodes": [{"key": "start", "text": "受注", "type": "start", "lane": "sales"},
+              {"key": "check", "text": "在庫はあるか", "type": "decision", "lane": "wh"},
+              {"key": "ship", "text": "出荷", "lane": "wh", "documentId": "<出荷手順の文書ID>"}],
+    "edges": [{"from": "start", "to": "check"}, {"from": "check", "to": "ship", "label": "ある"}]}
+   ```
+   - `flow`: `right`(左から右。既定)か `down`(上から下)
+   - `type`: `start`・`end`(角丸)/ `process`(四角。既定)/ `decision`(菱形)/ `data`(平行四辺形)/ `subprocess`(定義済み処理)/ `store`(円柱)/ `note`(メモ)
+   - `lanes` は担当ごとの帯(使うなら、どの箱にも `lane` を書く)。並びは線をたどった段数で決まる(戻る線=ループは段数に数えない)。揃えたいときは `rank`(0 から)
+   - 関係する資料がある箱は `documentId` を書くと、その資料を開くリンクになる
+   - 線: `label`(はい・いいえ など)、`style`: `solid`・`dashed`・`dotted`、`arrow`: `end`・`both`・`none`、`line`: `elbowed`(既定)・`straight`・`curved`
+3. `miro-diagram <JSONファイル|-> --anchor <目印の名前>` で描く(`--direction` で向き。**十字は使えない**)。書き終わるまで待ってから結果を返す
+4. フレームの URL を伝える。描いたあとに足したいことがあれば、`miro-layout` の `connectors`・`shapes` で足す(箱の key で線を引ける)
+
+- 資料とフロー図を一度に出すときは `miro-export --groups` に `[{"documentIds": [...], "direction": "右"}, {"diagram": {...}, "direction": "下"}]`
+- 指示に誤りがあれば何も描かずに理由の一覧(`details`。どの箱・線か)が返る。直して出し直す
+- Miro が一時的に断ったとき(結果に `retryDiagrams`)は、**勝手に出し直さず**、利用者に確かめてから同じ `miro-diagram` をもう一度実行する
 
 #### 十字で書き出す前のタグの見直し(「十字で出して」「どこに入るか見て」)
 

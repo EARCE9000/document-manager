@@ -583,3 +583,139 @@ test.describe.serial("プロジェクトを指定せずに書き出す", () => {
 		expect((await request.get("api/miro/layout-report", {headers: ro})).status()).toBe(400);
 	});
 });
+
+test.describe.serial("フロー図を描く(箱と線。資料の代わりに、目印の向きに新しいフレームで)", () => {
+	const docs = {};
+	const connectorsOf = async (request) => (await (await request.get(`${STUB_URL}/__connectors`)).json()).filter((c) => c.boardId === BOARD);
+	const FLOW = {
+		lanes: [{key: "sales", title: "営業"}, {key: "warehouse", title: "倉庫"}],
+		nodes: [
+			{key: "start", text: "受注", type: "start", lane: "sales"},
+			{key: "check", text: "在庫はあるか", type: "decision", lane: "warehouse"},
+			{key: "ship", text: "出荷", lane: "warehouse"},
+			{key: "order", text: "仕入れ", type: "subprocess", lane: "warehouse"},
+			{key: "bill", text: "請求", type: "end", lane: "sales"}
+		],
+		edges: [
+			{from: "start", to: "check"}, {from: "check", to: "ship", label: "ある"}, {from: "check", to: "order", label: "ない", style: "dashed"},
+			{from: "order", to: "ship"}, {from: "ship", to: "bill"}
+		]
+	};
+
+	test.beforeAll(async ({request}) => {
+		await control(request, {reset: true});
+		await connectMiro(request);
+		docs.manual = await upload(request, `出荷手順${STAMP}.pdf`, PDF);
+		docs.spec = await upload(request, `受注仕様${STAMP}.pdf`, PDF);
+		await control(request, {addItem: {id: "9500000000000000001", type: "sticky_note", x: 0, y: 0, width: 200, height: 200, content: "<p>[DM]業務フロー</p><p>(下)</p>"}});
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("箱と線の一覧を渡すと、目印の向きに新しいフレームを作り、レーン・箱・線を描く。箱の文書 ID は Document Manager で開くリンクになる", async ({request}) => {
+		const flow = {...FLOW, nodes: FLOW.nodes.map((n) => (n.key === "ship" ? {...n, documentId: docs.manual.id} : n))};
+		const record = await exportAndWait(request, null, {anchor: "業務フロー", diagram: flow, title: "受注から請求まで"});
+		expect(record.state).toBe("done");
+		expect(record.error).toBeNull();
+		expect(record.frames).toHaveLength(1);
+		expect(record.frames[0].title).toMatch(new RegExp(`^受注から請求まで ${STAMP_PATTERN.source}`));
+		expect(record.frames[0].direction).toBe("down");
+		expect(record.documents).toEqual([expect.objectContaining({kind: "diagram", state: "placed", nodes: 5, edges: 5})]);
+		expect(record).toMatchObject({retryDocumentIds: [], retryDiagrams: []});
+		const frameId = record.frames[0].frameId;
+		const frame = (await framesOf(request)).find((f) => f.id === frameId);
+		// 目印(-100〜100)の下に出る
+		expect(boxOf(frame).top).toBeGreaterThan(100);
+		const shapes = (await childrenOf(request, frameId)).filter((i) => i.type === "shape");
+		// レーン 2 つ(帯と見出し)+ 箱 5 つ
+		expect(shapes).toHaveLength(9);
+		const byText = (text) => shapes.find((s) => s.data.content.includes(text));
+		expect(byText("在庫はあるか").data.shape).toBe("rhombus");
+		expect(byText("営業").data.content).toContain("<strong>営業</strong>");
+		expect(byText("出荷").data.content).toMatch(/<a href="[^"]+\/api\/documents\/alias\/[^"]+\/viewer">出荷<\/a>/);
+		// 箱はフレームの中に収まり、重ならない
+		const nodes = Object.values(record.frames[0].diagram.nodes).map((id) => shapes.find((s) => s.id === id));
+		expect(nodes).toHaveLength(5);
+		for (const [i, a] of nodes.entries()) {
+			expect(a.position.x - a.geometry.width / 2).toBeGreaterThanOrEqual(0);
+			expect(a.position.y + a.geometry.height / 2).toBeLessThanOrEqual(frame.geometry.height);
+			for (const b of nodes.slice(i + 1)) expect(overlaps(boxOf(a), boxOf(b))).toBe(false);
+		}
+		// 線は枠の外(ボード)に置かれ、箱どうしをつなぐ。文字と点線
+		const connectors = await connectorsOf(request);
+		expect(connectors).toHaveLength(5);
+		const ids = record.frames[0].diagram.nodes;
+		const no = connectors.find((c) => c.captions[0]?.content === "ない");
+		expect(no).toMatchObject({startItem: {id: ids.check}, endItem: {id: ids.order}, shape: "elbowed"});
+		expect(no.style).toMatchObject({strokeStyle: "dashed", endStrokeCap: "arrow"});
+		// 履歴にも出る
+		const history = await (await request.get("api/miro/exports", {headers: ro})).json();
+		expect(history.exports[0]).toMatchObject({id: record.id, counts: {placed: 1, failed: 0}});
+	});
+
+	test("地図: フロー図の箱は key つきで出し、人が足したもの(others)に混ぜない", async ({request}) => {
+		const history = await (await request.get("api/miro/exports", {headers: ro})).json();
+		const map = await (await request.get(`api/miro/map?exportId=${history.exports[0].id}`, {headers: ro})).json();
+		expect(map.frames[0].diagram.nodes.map((n) => n.key)).toEqual(["start", "check", "ship", "order", "bill"]);
+		expect(map.frames[0].diagram.connectors).toBe(5);
+		expect(map.frames[0].others).toEqual([]);
+	});
+
+	test("資料とフロー図を 1 回で出せる(groups)。指示の誤りは何もせずに理由の一覧で断る。十字では出さない", async ({request}) => {
+		const before = (await framesOf(request)).length;
+		const record = await exportAndWait(request, null, {anchor: "業務フロー", groups: [
+			{documentIds: [docs.spec.id], direction: "右", title: "仕様"},
+			{diagram: {nodes: [{key: "a", text: "受付"}, {key: "b", text: "回答"}], edges: [{from: "a", to: "b"}]}, direction: "右下", title: "問い合わせ"}
+		]});
+		expect(record.state).toBe("done");
+		expect(record.documents.map((d) => d.kind ?? "document")).toEqual(["document", "diagram"]);
+		expect((await framesOf(request)).length).toBe(before + 2);
+
+		const bad = await request.post("api/miro/exports", {headers: rw, data: {anchor: "業務フロー", diagram: {nodes: [{key: "a", text: "受付"}], edges: [{from: "a", to: "z"}]}}});
+		expect(bad.status()).toBe(400);
+		expect((await bad.json()).details).toEqual([expect.stringContaining("diagram.edges[0].to「z」")]);
+		const both = await request.post("api/miro/exports", {headers: rw, data: {anchor: "業務フロー", diagram: FLOW, documentIds: [docs.spec.id]}});
+		expect(both.status()).toBe(400);
+		const cross = await request.post("api/miro/exports", {headers: rw, data: {anchor: "業務フロー", diagram: FLOW, direction: "十字"}});
+		expect(cross.status()).toBe(400);
+		expect((await cross.json()).code).toBe("diagram_direction");
+		expect((await framesOf(request)).length).toBe(before + 2);
+	});
+
+	test("Miro がフレームの作成を断り続けたら、図を失敗にして、出し直せる図の名前(retryDiagrams)を返す", async ({request}) => {
+		await control(request, {failFrames: 4});
+		const record = await exportAndWait(request, null, {anchor: "業務フロー", diagram: FLOW, title: "断られる図"});
+		expect(record.documents).toEqual([expect.objectContaining({kind: "diagram", state: "failed", code: "miro_unavailable", retryable: true})]);
+		expect(record.retryDiagrams).toEqual([expect.stringMatching(/^断られる図 \[/)]);
+		expect(record.retryDocumentIds).toEqual([]);
+	});
+
+	test("手直しで線を引ける: key を付けた図形・フロー図の箱どうしをつなぐ。当て直すと前の線を片付ける", async ({request}) => {
+		const history = await (await request.get("api/miro/exports", {headers: ro})).json();
+		const diagramExport = history.exports.find((e) => e.title === "受注から請求まで");
+		const layout = {
+			exportId: diagramExport.id,
+			shapes: [{key: "memo", shape: "rectangle", text: "例外: 返品", x: 200, y: 200, width: 200, height: 100}],
+			connectors: [{from: "memo", to: "order", label: "返品なら", style: "dotted"}, {from: "start", to: "bill", arrow: "both"}]
+		};
+		const res = await request.post("api/miro/layout", {headers: rw, data: layout});
+		expect(res.status(), await res.text()).toBe(200);
+		expect(await res.json()).toMatchObject({shapes: 1, connectors: 2});
+		const all = await connectorsOf(request);
+		const memoLine = all.find((c) => c.captions[0]?.content === "返品なら");
+		expect(memoLine.style).toMatchObject({strokeStyle: "dotted"});
+		expect(all.find((c) => c.style.startStrokeCap === "arrow")).toBeTruthy();
+		// 当て直すと、前に引いた線と図形を片付けてから引く
+		const again = await request.post("api/miro/layout", {headers: rw, data: {exportId: diagramExport.id, connectors: [{from: "start", to: "ship"}]}});
+		expect(again.status()).toBe(200);
+		const after = await connectorsOf(request);
+		expect(after.find((c) => c.captions[0]?.content === "返品なら")).toBeUndefined();
+		expect(after.find((c) => c.style.startStrokeCap === "arrow")).toBeUndefined();
+		// 無い key は何もせずに断る
+		const bad = await request.post("api/miro/layout", {headers: rw, data: {exportId: diagramExport.id, connectors: [{from: "start", to: "nai"}]}});
+		expect(bad.status()).toBe(400);
+		expect((await bad.json()).details).toEqual([expect.stringContaining("「nai」")]);
+	});
+});

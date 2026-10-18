@@ -16,6 +16,7 @@
  *   GET  /__requests                            受け取ったリクエストの記録(パスとメソッド)
  *   GET  /__state                               発行したトークンの数など(検証用)
  *   GET  /__items                               ボードの項目(種類・位置・枠・題名・中身の大きさ)
+ *   GET  /__connectors                          線(コネクター。両端の項目・形・文字・見た目)
  *   POST /__control {"failUploads": n}          次の n 回のファイルの作成・差し替えを 500 で断る
  *   POST /__control {"failFrames": n}           次の n 回のフレームの作成を 500 で断る(Miro が一時的に不調なとき)
  *   POST /__control {"deleteItem": "<id>"}      Miro で人が消したのと同じ(項目を消す)
@@ -55,6 +56,12 @@ module.exports.start = (port) => new Promise((resolve) => {
 	let revoked = 0;
 	// ボードの項目: id → {id, type, boardId, data, position, geometry, parent, size, contentType}
 	let items = new Map();
+	let connectors = new Map();
+	// 項目を消すと、つないでいた線も消える(実物と同じ)
+	const removeItem = (id) => {
+		items.delete(String(id));
+		for (const [cid, c] of connectors) if (c.startItem.id === String(id) || c.endItem.id === String(id)) connectors.delete(cid);
+	};
 	let nextItemId = 3458764600000100000n;
 	let failUploads = 0;
 	let failFrames = 0;
@@ -68,6 +75,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 		issued = 0;
 		revoked = 0;
 		items = new Map();
+		connectors = new Map();
 		failUploads = 0;
 		failFrames = 0;
 		requests.length = 0;
@@ -111,7 +119,7 @@ module.exports.start = (port) => new Promise((resolve) => {
 				if (body.expireAccess) for (const key of accessTokens.keys()) accessTokens.set(key, 0);
 				if (body.failUploads != null) failUploads = Number(body.failUploads);
 				if (body.failFrames != null) failFrames = Number(body.failFrames);
-				if (body.deleteItem != null) items.delete(String(body.deleteItem));
+				if (body.deleteItem != null) removeItem(body.deleteItem);
 				if (body.moveItem != null && items.has(String(body.moveItem.id))) {
 					const item = items.get(String(body.moveItem.id));
 					item.position = {...item.position, x: body.moveItem.x, y: body.moveItem.y};
@@ -140,6 +148,10 @@ module.exports.start = (port) => new Promise((resolve) => {
 			}
 			if (url.pathname === "/__items") {
 				send(res, 200, [...items.values()]);
+				return;
+			}
+			if (url.pathname === "/__connectors") {
+				send(res, 200, [...connectors.values()]);
 				return;
 			}
 			if (url.pathname === "/__state") {
@@ -234,8 +246,52 @@ module.exports.start = (port) => new Promise((resolve) => {
 				send(res, 200, {...found, type: "board", viewLink: `https://miro.com/app/board/${found.id}/`});
 				return;
 			}
+			// ---- 線(コネクター)。実物と同じく、枠には入れられず(parent は 400)、つないだ項目が消えると一緒に消える ----
+			const connectorPath = /^\/v2\/boards\/([^/]+)\/connectors(?:\/([^/]+))?$/.exec(url.pathname);
+			if (connectorPath) {
+				const boardId = decodeURIComponent(connectorPath[1]);
+				const id = connectorPath[2] != null ? decodeURIComponent(connectorPath[2]) : null;
+				if (req.method === "POST" && id == null) {
+					const body = raw ? JSON.parse(raw) : {};
+					if (body.parent !== undefined) {
+						send(res, 400, {type: "error", code: "2.0703", message: "Invalid parameters", context: {fields: [{field: "parent", message: "Field [parent] is not supported"}]}, status: 400});
+						return;
+					}
+					const start = items.get(String(body.startItem?.id));
+					const end = items.get(String(body.endItem?.id));
+					if (start == null || end == null || start.boardId !== boardId || end.boardId !== boardId) {
+						send(res, 400, {type: "error", code: "2.0703", message: "Item not found", status: 400});
+						return;
+					}
+					const newId = String(nextItemId++);
+					const connector = {id: newId, boardId, startItem: {id: start.id}, endItem: {id: end.id}, shape: body.shape ?? "curved",
+						captions: body.captions ?? [], style: body.style ?? {}};
+					connectors.set(newId, connector);
+					send(res, 201, connector);
+					return;
+				}
+				if (req.method === "GET" && id == null) {
+					const data = [...connectors.values()].filter((c) => c.boardId === boardId);
+					send(res, 200, {data, total: data.length, size: data.length, limit: 50});
+					return;
+				}
+				const connector = id != null ? connectors.get(id) : null;
+				if (connector == null || connector.boardId !== boardId) {
+					send(res, 404, {type: "error", code: "2.0703", message: "Item not found", status: 404});
+					return;
+				}
+				if (req.method === "GET") {
+					send(res, 200, connector);
+					return;
+				}
+				if (req.method === "DELETE") {
+					connectors.delete(id);
+					send(res, 204, null);
+					return;
+				}
+			}
 			// ---- ボードの項目 ----
-			const itemPath = /^\/v2\/boards\/([^/]+)\/(frames|documents|images|texts|shapes|sticky_notes|groups|items)(?:\/([^/]+))?$/.exec(url.pathname);
+			const itemPath =/^\/v2\/boards\/([^/]+)\/(frames|documents|images|texts|shapes|sticky_notes|groups|items)(?:\/([^/]+))?$/.exec(url.pathname);
 			if (itemPath) {
 				const boardId = decodeURIComponent(itemPath[1]);
 				const kind = itemPath[2];
@@ -347,8 +403,8 @@ module.exports.start = (port) => new Promise((resolve) => {
 					return;
 				}
 				if (req.method === "DELETE") {
-					items.delete(id);
-					if (item.type === "group" && url.searchParams.get("delete_items") === "true") for (const member of item.data.items) items.delete(String(member));
+					removeItem(id);
+					if (item.type === "group" && url.searchParams.get("delete_items") === "true") for (const member of item.data.items) removeItem(member);
 					send(res, 204, null);
 					return;
 				}

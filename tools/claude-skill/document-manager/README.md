@@ -128,6 +128,7 @@ python scripts/dm_client.py miro-export <文書ID> <文書ID> --anchor 設計書
 python scripts/dm_client.py miro-export --project 案件A --anchor 定例 --direction 十字   # プロジェクトの資料をタグで斜め 4 つのフレームに分けて書き出す
 python scripts/dm_client.py miro-move <文書ID> --next-to <文書ID> --side right   # 自分の最後の書き出しのフレームの中で資料を動かす
 python scripts/dm_client.py miro-layout-report --project 案件A                  # 十字で書き出したらどうなるか(Miro は変えない)
+python scripts/dm_client.py miro-diagram flow.json --anchor 業務フロー          # 箱と線の一覧(JSON)からフロー図を描く(位置は Document Manager が決める)
 python scripts/dm_client.py tags <文書ID> --add 経理                  # タグの追加(--remove / --set もある)
 python scripts/dm_client.py memo <文書ID> "次回レビューで確認"         # メモの更新
 python scripts/dm_client.py archive <文書ID>                         # アーカイブ(restore で戻せる)

@@ -38,9 +38,11 @@
  *   node dm_client.mjs miro-export [文書ID...] [--project <P>] (--anchor <目印の名前> | --anchor-url <付箋のリンク> | --free)
  *       [--direction 右|左|上|下|右上|右下|左上|左下|十字] [--title <タイトル>] [--groups <JSONファイル|->] [--no-wait]
  *       資料を Miro に書き出す(毎回新しいフレーム。自動では書き出さない。--free は利用者に確かめてから)
+ *   node dm_client.mjs miro-diagram <JSONファイル|-> (--anchor <目印の名前> | --anchor-url <付箋のリンク> | --free) [--direction 下] [--title <タイトル>] [--no-wait]
+ *       フロー図(箱と線の一覧の JSON)を Miro に描く(位置は Document Manager が決める)
  *   node dm_client.mjs miro-map [--export <ID>] / miro-layout-report [文書ID...] [--project <P>]
  *   node dm_client.mjs miro-move <文書ID> (--next-to <文書ID> [--side right|left|above|below] | [--frame <F>] --x N --y N) [--export <ID>]
- *   node dm_client.mjs miro-layout <JSONファイル|-> [--export <ID>]  (書き出したフレームに、位置・色・見出し・図形をまとめて当てる)
+ *   node dm_client.mjs miro-layout <JSONファイル|-> [--export <ID>]  (書き出したフレームに、位置・色・見出し・図形・線をまとめて当てる)
  *       --export を省くと、自分の最後の書き出し
  *       連携とボードの設定は管理者が画面で行う
  *   node dm_client.mjs folder-create <プロジェクト> <名前> [--parent 親フォルダ]
@@ -66,7 +68,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.13.0";
+const CLIENT_VERSION = "1.14.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -564,6 +566,9 @@ const summarizeExport = (record) => ({
 		code: d.code ?? null, retryable: d.retryable ?? false})),
 	error: record.error,
 	...(record.state === "running" ? {note: "まだ書き出している途中です。しばらくしてから miro で確かめてください"} : {}),
+	// Miro が一時的に断ったフロー図。勝手に出し直さず、利用者に確かめてから、同じ miro-diagram をもう一度実行する
+	...((record.retryDiagrams || []).length > 0 ? {retryDiagrams: {titles: record.retryDiagrams,
+		note: "Miro が一時的に断ったフロー図です(少し時間をおけば通ることが多い)。出し直すか利用者に確かめ、出し直すなら同じ miro-diagram をもう一度実行する"}} : {}),
 	...retryHint(record)
 });
 // Miro が一時的に断った資料。勝手に出し直さず、利用者に確かめてから、この資料だけを同じ場所に書き出す
@@ -856,6 +861,24 @@ const commands = {
 		} else if (documentIds.length > 0) {
 			body.documentIds = documentIds;
 		}
+		const started = await request("POST", "api/miro/exports", {json: body});
+		return summarizeExport(opts["no-wait"] ? started : await waitExport(started.id));
+	},
+	// フロー図を描く。JSON は {flow, lanes: [{key, title}], nodes: [{key, text, type, lane}], edges: [{from, to, label}]}。位置は Document Manager が決める
+	"miro-diagram": async ([file], opts) => {
+		let diagram;
+		try {
+			diagram = JSON.parse(fs.readFileSync(requireArg(file, "フロー図の JSON ファイル(- で標準入力)") === "-" ? 0 : file, "utf8"));
+		} catch (err) {
+			if (err instanceof DmError) throw err;
+			throw new DmError(`フロー図の JSON を読めません: ${err.message}`);
+		}
+		const body = {diagram};
+		if (opts.anchor != null) body.anchor = opts.anchor;
+		if (opts["anchor-url"] != null) body.anchorUrl = opts["anchor-url"];
+		if (opts.free) body.free = true;
+		if (opts.direction != null) body.direction = opts.direction;
+		if (opts.title != null) body.title = opts.title;
 		const started = await request("POST", "api/miro/exports", {json: body});
 		return summarizeExport(opts["no-wait"] ? started : await waitExport(started.id));
 	},

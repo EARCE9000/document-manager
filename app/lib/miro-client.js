@@ -251,6 +251,23 @@ module.exports.createShape = (token, boardId, {shape = "rectangle", content = ""
 		data: {shape, content}, position: {x, y}, geometry: {width, height}, ...(style ? {style} : {}), ...(parentId ? {parent: {id: parentId}} : {})
 	}});
 
+/**
+ * 線(コネクター)で 2 つの項目をつなぐ。実物の Miro で確かめた振る舞い:
+ *   - 線は枠(フレーム)の中に入れられない(parent を渡すと 400)。ボードに置かれ、両端の項目について動く(枠を動かしても付いてくる)
+ *   - つないだ項目を消すと、線も消える
+ *   - 枠の中の項目の一覧(items)には出ず、線の一覧(connectors)に出る
+ * @param {{startId: string, endId: string, shape?: "elbowed"|"straight"|"curved", caption?: string,
+ *          style?: {strokeColor?: string, strokeWidth?: string, strokeStyle?: string, startStrokeCap?: string, endStrokeCap?: string}}} connector
+ */
+module.exports.createConnector = (token, boardId, {startId, endId, shape = "elbowed", caption, style}) =>
+	call("POST", `${boardPath(boardId)}/connectors`, {token, body: {
+		startItem: {id: startId, snapTo: "auto"}, endItem: {id: endId, snapTo: "auto"}, shape,
+		...(style ? {style} : {}), ...(caption ? {captions: [{content: caption}]} : {})
+	}});
+
+/** 線を消す(線は items ではなく connectors で消す) */
+module.exports.deleteConnector = (token, boardId, connectorId) => call("DELETE", `${boardPath(boardId)}/connectors/${encodeURIComponent(connectorId)}`, {token});
+
 /** 付箋を置く(位置はボードの上の中心。枠には入れない) */
 module.exports.createStickyNote = (token, boardId, {content, x, y, width, fillColor = "light_yellow"}) =>
 	call("POST", `${boardPath(boardId)}/sticky_notes`, {token, body: {

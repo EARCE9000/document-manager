@@ -248,7 +248,8 @@ const clearOf = (boxes, direction, obstacles, gap) => {
 /**
  * 書き出しの配置をまとめて決める。
  * @param {object} options
- * @param {Array<{direction: string, title: string, documents: Array<{documentId: string, height: number}>}>} options.groups
+ * @param {Array<{direction: string, title: string, documents: Array<{documentId: string, height: number}>, frameSize?: {width: number, height: number}, diagram?: object}>} options.groups
+ *   frameSize があれば資料を並べず、その大きさのフレームにする(フロー図。diagram はそのまま返す)
  *   出す順。direction が cross のものは、input のタグで 4 つに分ける
  * @param {?{left: number, top: number, right: number, bottom: number}} options.anchor 目印の範囲(ボードの上)。
  *   null なら空いている所(free の左上)に、向きの形のまま出す
@@ -321,11 +322,13 @@ module.exports.planExport = ({groups, anchor = null, free = null, obstacles = []
 			}
 			if (card != null) unit.push({kind: "card", ...cardBox, card});
 		} else {
-			const plan = planFrame(group.direction, group.documents, G);
+			// フロー図の組は、資料の代わりに図の大きさ(frameSize)を受け取る
+			const plan = group.frameSize != null ? {width: group.frameSize.width, height: group.frameSize.height, items: []} : planFrame(group.direction, group.documents, G);
 			// 斜めは、付箋のまわりの空いているマスを輪の順に探す(無ければ斜めの角に置いて外へずらす)
 			const slot = (DIAGONALS[group.direction] != null ? ringSlot(base, group.direction, plan, gap, anchor == null ? blocked : [...blocked, anchor], cellsOf(group.direction)) : null)
 				?? slotFor(base, group.direction, plan, gap);
-			unit.push({kind: "frame", title: group.title, direction: group.direction, area: null, cell: slot.cell ?? null, ...boxOf(slot.left, slot.top, plan.width, plan.height), items: plan.items});
+			unit.push({kind: "frame", title: group.title, direction: group.direction, area: null, cell: slot.cell ?? null, ...boxOf(slot.left, slot.top, plan.width, plan.height), items: plan.items,
+				diagram: group.diagram ?? null});
 		}
 		// 重なるなら外側へずらす(十字はまとめて右へ。目印は真ん中にあるので、ぶつかる相手に数えない)
 		const against = group.direction === "cross" || anchor == null ? blocked : [...blocked, anchor];
@@ -352,7 +355,7 @@ module.exports.planExport = ({groups, anchor = null, free = null, obstacles = []
 	}
 	return {
 		frames: frames.map((f) => ({title: f.title, direction: f.direction, area: f.area, cell: anchor == null ? null : f.cell ?? null, left: Math.round(f.left), top: Math.round(f.top),
-			width: Math.ceil(f.width), height: Math.ceil(f.height), items: f.items})),
+			width: Math.ceil(f.width), height: Math.ceil(f.height), items: f.items, ...(f.diagram ? {diagram: f.diagram} : {})})),
 		cards: cards.map((c) => ({...c, x: Math.round(c.x), y: Math.round(c.y)})),
 		reports
 	};

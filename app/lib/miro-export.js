@@ -46,6 +46,7 @@ const ProjectManifest = require("./project-manifest.js");
 const DocumentAliases = require("./document-aliases.js");
 const MiroLayout = require("./miro-layout.js");
 const MiroLayoutPlan = require("./miro-layout-plan.js");
+const MiroDiagram = require("./miro-diagram.js");
 
 // ---- 大きさ(単位は Miro のボード上の長さ) ----
 const LAYOUT = Object.freeze({
@@ -478,6 +479,26 @@ const normalizeRequest = (body) => {
 };
 
 /**
+ * フロー図の指示を検める(miro-diagram.js)。箱に documentId があれば、その資料を Document Manager で開くリンクにする
+ * @returns {Promise<?object>} 正しくなければ null(理由は errors に入れる)
+ */
+const resolveDiagram = async (spec, label, errors, target) => {
+	const {errors: found, diagram} = MiroDiagram.normalizeDiagram(spec, label);
+	errors.push(...found);
+	if (diagram == null) return null;
+	for (const [i, node] of diagram.nodes.entries()) {
+		if (node.documentId == null) continue;
+		const doc = await currentDocument(node.documentId);
+		if (doc == null || doc.archived) {
+			errors.push(`${label}.nodes[${i}].documentId は${doc == null ? "無い" : "アーカイブされた"}資料です(${node.documentId})`);
+			continue;
+		}
+		node.link = aliasUrl(target.publicBaseUrl, doc.alias);
+	}
+	return diagram;
+};
+
+/**
  * 書き出しを始める(資料を置くのは裏で行う)。目印・資料・向きはここで確かめ、正しくなければ何もせずに断る。
  * @param {object} body project?(プロジェクト ID)・documentIds?・groups?・direction?・title?・anchor / anchorUrl / free
  * @returns {Promise<object>} 書き出しの記録(state: running)
@@ -493,7 +514,12 @@ module.exports.exportDocuments = async (user, body = {}) => {
 	const topDirection = request.direction(body.direction, "direction");
 	const topTitle = request.title(body.title, "title");
 	let groups;
-	if (body.groups != null) {
+	if (body.diagram != null && (body.groups != null || body.documentIds != null)) {
+		request.errors.push("diagram は groups・documentIds と一緒に指定できません(資料と図を一緒に出すときは groups の中に書きます)");
+	}
+	if (body.diagram != null && body.groups == null) {
+		groups = [{documents: [], direction: null, title: null, diagram: await resolveDiagram(body.diagram, "diagram", request.errors, target)}];
+	} else if (body.groups != null) {
 		if (body.documentIds != null) request.errors.push("groups と documentIds は一緒に指定できません(groups の中に書きます)");
 		if (!Array.isArray(body.groups) || body.groups.length === 0 || body.groups.length > 20) {
 			request.errors.push("groups は 1〜20 個の配列です");
@@ -501,9 +527,17 @@ module.exports.exportDocuments = async (user, body = {}) => {
 		} else {
 			groups = [];
 			for (const [i, g] of body.groups.entries()) {
+				const direction = request.direction(g?.direction, `groups[${i}].direction`);
+				const title = request.title(g?.title, `groups[${i}].title`);
+				// 組は、資料(documentIds)かフロー図(diagram)のどちらか
+				if (g?.diagram != null) {
+					if (g.documentIds != null) request.errors.push(`groups[${i}] は documentIds か diagram のどちらか一方です`);
+					groups.push({documents: [], direction, title, diagram: await resolveDiagram(g.diagram, `groups[${i}].diagram`, request.errors, target)});
+					continue;
+				}
 				const docs = await request.resolveIds(g?.documentIds, `groups[${i}].documentIds`);
-				if (docs == null || docs.length === 0) request.errors.push(`groups[${i}].documentIds に資料を 1 件以上指定します`);
-				groups.push({documents: docs ?? [], direction: request.direction(g?.direction, `groups[${i}].direction`), title: request.title(g?.title, `groups[${i}].title`)});
+				if (docs == null || docs.length === 0) request.errors.push(`groups[${i}].documentIds に資料を 1 件以上指定します(フロー図なら diagram)`);
+				groups.push({documents: docs ?? [], direction, title});
 			}
 		}
 	} else {
@@ -515,7 +549,8 @@ module.exports.exportDocuments = async (user, body = {}) => {
 		groups = [{documents: docs ?? [], direction: null, title: null}];
 	}
 	const total = groups.reduce((n, g) => n + g.documents.length, 0);
-	if (total === 0 && request.errors.length === 0) request.errors.push("書き出す資料がありません(プロジェクトに資料が無いか、documentIds が空です)");
+	const diagrams = groups.filter((g) => g.diagram != null).length;
+	if (total === 0 && diagrams === 0 && request.errors.length === 0) request.errors.push("書き出す資料がありません(プロジェクトに資料が無いか、documentIds が空です)");
 	if (total > MAX_DOCUMENTS) request.errors.push(`1 回に書き出せるのは ${MAX_DOCUMENTS} 件までです(${total} 件)`);
 	if (request.errors.length > 0) throw exportError("書き出しの指示に正しくないところがあります(何もしていません)", 400, {details: request.errors.slice(0, 50)});
 
@@ -563,16 +598,22 @@ module.exports.exportDocuments = async (user, body = {}) => {
 	const plannedGroups = groups.map((g) => ({
 		documents: g.documents,
 		direction: g.direction ?? topDirection ?? anchor?.parsed?.direction ?? MiroLayoutPlan.DEFAULT_DIRECTION,
-		title: g.title ?? baseTitle
+		title: g.title ?? baseTitle,
+		...(g.diagram ? {diagram: g.diagram} : {})
 	}));
+	// 十字は資料をタグで分ける並べ方なので、フロー図には使えない(目印が十字なら向きを言ってもらう)
+	if (plannedGroups.some((g) => g.diagram && g.direction === "cross")) {
+		throw exportError("フロー図は十字では出せません。direction で向き(右・下・右下 など)を指定してください", 400, {code: "diagram_direction"});
+	}
 
 	const exportId = crypto.randomUUID();
 	await ds.run(SQL_INSERT_EXPORT, {
 		id: exportId, project_id: project?.id ?? null, board_id: board, anchor_kind: anchorKind, anchor_name: anchor?.parsed?.name ?? null, anchor_item_id: anchor?.entry.id ?? null,
-		title: baseTitle, request: JSON.stringify({groups: plannedGroups.map((g) => ({direction: g.direction, title: g.title, documentIds: g.documents.map((d) => d.id)}))}),
+		title: baseTitle, request: JSON.stringify({groups: plannedGroups.map((g) => ({direction: g.direction, title: g.title, documentIds: g.documents.map((d) => d.id),
+			...(g.diagram ? {diagram: g.diagram} : {})}))}),
 		created_by: user, created_at: new Date().toISOString()
 	});
-	logger.info({audit: "miro_export_started", user, projectId: project?.id ?? null, exportId, anchor: anchorKind, anchorName: anchor?.parsed?.name ?? null, documents: total}, "audit");
+	logger.info({audit: "miro_export_started", user, projectId: project?.id ?? null, exportId, anchor: anchorKind, anchorName: anchor?.parsed?.name ?? null, documents: total, diagrams}, "audit");
 	const job = {exportId, user, target, project, groups: plannedGroups, when, anchorId: anchor?.entry.id ?? null};
 	// 同じ台の書き出しは 1 つずつ(続けて頼まれても、あとのものが先のフレームを避けられるように)
 	running.add(exportId);
@@ -637,10 +678,16 @@ const runExport = async (job) => {
 				}
 			}
 		}
-		const groups = job.groups.map((g) => ({
-			direction: g.direction, title: g.title,
-			documents: g.documents.filter((d) => ready.get(d.id)?.payload).map((d) => ({documentId: d.id, title: d.entry_file, height: ready.get(d.id).height}))
-		})).filter((g) => g.documents.length > 0);
+		const groups = job.groups.map((g) => {
+			if (g.diagram) {
+				const layout = MiroDiagram.layoutDiagram(g.diagram);
+				return {direction: g.direction, title: g.title, documents: [], frameSize: {width: layout.width, height: layout.height}, diagram: layout};
+			}
+			return {
+				direction: g.direction, title: g.title,
+				documents: g.documents.filter((d) => ready.get(d.id)?.payload).map((d) => ({documentId: d.id, title: d.entry_file, height: ready.get(d.id).height}))
+			};
+		}).filter((g) => g.documents.length > 0 || g.diagram);
 		const plan = MiroLayoutPlan.planExport({
 			groups, anchor: anchorBox, free: anchorBox == null ? freeSpot(scan) : null, obstacles, placed,
 			input, geometry: LAYOUT
@@ -660,6 +707,10 @@ const runExport = async (job) => {
 			} catch (err) {
 				if (err.needsReconnect) throw err;
 				logger.warn({exportId, title, error: err.message, requestId: err.requestId ?? null}, "フレームを作れませんでした(このフレームの資料を飛ばして続けます)");
+				if (planned.diagram) {
+					results.push({kind: "diagram", documentId: null, title, state: STATES.FAILED, ...failureCode(err),
+						reason: `フレーム「${title}」を作れませんでした: ${String(err.message).slice(0, 200)}`});
+				}
 				for (const item of planned.items) {
 					const {doc} = ready.get(item.documentId);
 					results.push({documentId: doc.id, title: doc.entry_file, state: STATES.FAILED, ...failureCode(err),
@@ -670,6 +721,21 @@ const runExport = async (job) => {
 			const record = {frameId: String(frame.id), title, direction: planned.direction, area: planned.area, ...(planned.cell ? {cell: planned.cell} : {}), left: planned.left, top: planned.top,
 				width: planned.width, height: planned.height};
 			frames.push(record);
+			if (planned.diagram) {
+				// フロー図: 資料の代わりに、箱と線を描く。途中で断られたら、そこまでを残して失敗にする(出し直しは新しいフレームに)
+				record.diagram = {nodes: {}, lanes: [], connectors: []};
+				try {
+					await drawDiagram(board, record, planned.diagram);
+					results.push({kind: "diagram", documentId: null, title, state: STATES.PLACED, frameId: record.frameId,
+						nodes: Object.keys(record.diagram.nodes).length, edges: record.diagram.connectors.length});
+				} catch (err) {
+					if (err.needsReconnect) throw err;
+					logger.warn({exportId, title, error: err.message, requestId: err.requestId ?? null}, "フロー図を描き切れませんでした");
+					results.push({kind: "diagram", documentId: null, title, state: STATES.FAILED, frameId: record.frameId, ...failureCode(err),
+						reason: `フロー図を描き切れませんでした(箱 ${Object.keys(record.diagram.nodes).length}/${planned.diagram.nodes.length}・線 ${record.diagram.connectors.length}/${planned.diagram.edges.length}): ${String(err.message).slice(0, 200)}`});
+				}
+				continue;
+			}
 			await forEachConcurrently(planned.items, CONCURRENCY, async (item) => {
 				const {doc, payload, height: plannedHeight} = ready.get(item.documentId);
 				let itemId = null;
@@ -729,6 +795,44 @@ const runExport = async (job) => {
 	}
 };
 
+/**
+ * フロー図を描く(フレームの中。位置は miro-diagram.js の layoutDiagram で決めたもの)。
+ * レーンの帯 → 見出し → 箱 → 線の順に置く(Miro では、あとから置いたものが上に重なる)。描いたものの ID は record.diagram に残す
+ */
+const drawDiagram = async (board, record, layout) => {
+	const make = (fn) => MiroConnection.withToken((token) => fn(token));
+	const frameId = record.frameId;
+	for (const lane of layout.lanes) {
+		const band = await make((token) => Miro.createShape(token, board, {
+			shape: "rectangle", content: "", ...lane.band, parentId: frameId,
+			style: {fillColor: lane.fill, borderColor: lane.border, borderWidth: "1"}
+		}));
+		record.diagram.lanes.push(String(band.id));
+		const header = await make((token) => Miro.createShape(token, board, {
+			shape: "rectangle", content: `<p><strong>${escapeHtml(lane.title)}</strong></p>`, ...lane.header, parentId: frameId,
+			style: {fillColor: lane.headerFill, borderColor: lane.border, borderWidth: "1", fontSize: "18"}
+		}));
+		record.diagram.lanes.push(String(header.id));
+	}
+	const ids = {};
+	await forEachConcurrently(layout.nodes, CONCURRENCY, async (node) => {
+		const item = await make((token) => Miro.createShape(token, board, {
+			shape: node.shape, content: `<p>${linked(textHtml(node.text), node.link)}</p>`,
+			x: node.x, y: node.y, width: node.width, height: node.height, parentId: frameId,
+			style: {fillColor: node.fill, borderColor: node.border, borderWidth: "2", color: node.color, fontSize: "14"}
+		}));
+		ids[node.key] = String(item.id);
+	});
+	// 箱の並びは指示の順で残す
+	for (const node of layout.nodes) if (ids[node.key]) record.diagram.nodes[node.key] = ids[node.key];
+	await forEachConcurrently(layout.edges, CONCURRENCY, async (edge) => {
+		const connector = await make((token) => Miro.createConnector(token, board, {
+			startId: ids[edge.from], endId: ids[edge.to], shape: edge.line, caption: edge.label ? escapeHtml(edge.label) : null, style: edge.style
+		}));
+		record.diagram.connectors.push(String(connector.id));
+	});
+};
+
 /** 置けなかった理由の印。code: miro_unavailable(一時的。出し直せば通るかもしれない)・miro_error(Miro が断った) */
 const failureCode = (err) => (Miro.isTemporary(err) ? {code: "miro_unavailable", retryable: true} : {code: "miro_error", retryable: false});
 
@@ -753,7 +857,12 @@ const exportView = (target, row, {withDocuments = true, projects = new Map()} = 
 	};
 };
 // 資料ごとの結果と、出し直せる資料(一時的に断られたもの。同じ目印に、この ID だけで書き出し直す)
-const retryView = (documents) => ({documents, retryDocumentIds: documents.filter((d) => d.state === STATES.FAILED && d.retryable).map((d) => d.documentId)});
+const retryView = (documents) => ({
+	documents,
+	retryDocumentIds: documents.filter((d) => d.state === STATES.FAILED && d.retryable && d.documentId != null).map((d) => d.documentId),
+	// 一時的に断られたフロー図の名前(同じ図の頼みをもう一度送れば出し直せる)
+	retryDiagrams: documents.filter((d) => d.kind === "diagram" && d.state === STATES.FAILED && d.retryable).map((d) => d.title)
+});
 const projectNames = async (rows) => {
 	const names = new Map();
 	for (const id of new Set(rows.map((r) => r.project_id).filter(Boolean))) names.set(id, (await Projects.getProject(id))?.name ?? null);
@@ -907,6 +1016,13 @@ module.exports.boardMap = async (exportId, user) => {
 			const item = byId.get(String(d.id));
 			return item == null ? null : {id: String(d.id), kind: item.type === "shape" ? "shape" : "label", text: plainText(item.data?.content), ...localBox(item)};
 		}).filter(Boolean);
+		// フロー図の箱(key で線をつなげる)とレーン
+		const nodes = Object.entries(frame.diagram?.nodes ?? {}).map(([key, id]) => {
+			known.add(String(id));
+			const item = byId.get(String(id));
+			return item == null ? null : {key, id: String(id), text: plainText(item.data?.content), ...localBox(item)};
+		}).filter(Boolean);
+		for (const id of frame.diagram?.lanes ?? []) known.add(String(id));
 		const others = children.filter((item) => !known.has(String(item.id)) && item.type !== "group").map((item) => ({
 			id: String(item.id), type: item.type, text: plainText(item.data?.content ?? item.data?.title ?? ""), ...localBox(item)
 		}));
@@ -914,13 +1030,14 @@ module.exports.boardMap = async (exportId, user) => {
 		documents.sort((a, b) => (Math.abs(a.top - b.top) > 1 ? a.top - b.top : a.left - b.left));
 		let right = 0;
 		let bottom = 0;
-		for (const box of [...documents.map((d) => ({...d, bottom: d.bottomWithCaption})), ...decor, ...others]) {
+		for (const box of [...documents.map((d) => ({...d, bottom: d.bottomWithCaption})), ...decor, ...nodes, ...others]) {
 			right = Math.max(right, box.right);
 			bottom = Math.max(bottom, box.bottom);
 		}
 		result.push({
 			frameId: frame.frameId, title: frame.title, direction: frame.direction, area: frame.area ?? null, url: itemUrl(target, frame.frameId),
 			width: frame.width, height: frame.height, documents, decorations: decor, others,
+			...(frame.diagram ? {diagram: {nodes, connectors: (frame.diagram.connectors ?? []).length}} : {}),
 			freeSpace: {
 				// 中身(資料・見出し・図形・人が足したもの)の下と右。ここに置けば何とも重ならない(フレームは広がる)
 				below: {left: LAYOUT.padding, top: Math.round(bottom + LAYOUT.gapY * 2)},
@@ -1005,8 +1122,8 @@ module.exports.moveDocument = async (exportId, documentId, instruction, user) =>
 
 // ---- まとめて置き直す・見出しや図形を足す(書き出したフレームの 1 つ) ----
 
-const LAYOUT_LIMITS = Object.freeze({items: 2000, labels: 500, shapes: 500, maxCoordinate: 200000, textLength: 300});
-const SHAPE_KINDS = Object.freeze(["rectangle", "round_rectangle", "circle", "triangle", "rhombus", "parallelogram", "trapezoid", "pentagon", "hexagon", "octagon", "star", "flow_chart_predefined_process", "can", "cross", "right_arrow", "left_arrow", "left_right_arrow", "left_brace", "right_brace"]);
+const LAYOUT_LIMITS = Object.freeze({items: 2000, labels: 500, shapes: 500, connectors: 500, maxCoordinate: 200000, textLength: 300});
+const SHAPE_KINDS = MiroDiagram.SHAPE_KINDS;
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 module.exports.LAYOUT_LIMITS = LAYOUT_LIMITS;
 module.exports.SHAPE_KINDS = SHAPE_KINDS;
@@ -1073,7 +1190,11 @@ const normalizeLayout = (layout) => {
 	const shapes = list(layout?.shapes, "shapes").map((shape, i) => {
 		const kind = shape?.shape ?? "rectangle";
 		if (!SHAPE_KINDS.includes(kind)) errors.push(`shapes[${i}].shape は ${SHAPE_KINDS.join(" / ")} のどれかです`);
+		// key を付けた図形は、connectors の from・to で指せる
+		const key = shape?.key == null || shape.key === "" ? null : String(shape.key);
+		if (key != null && [...key].length > 60) errors.push(`shapes[${i}].key は 60 文字までです`);
 		return {
+			...(key != null ? {key} : {}),
 			shape: kind,
 			text: shape?.text == null ? "" : String(shape.text).slice(0, LAYOUT_LIMITS.textLength),
 			x: number(shape?.x, `shapes[${i}].x`),
@@ -1090,16 +1211,40 @@ const normalizeLayout = (layout) => {
 			...(shape?.link == null ? {} : {link: url(shape.link, `shapes[${i}].link`)})
 		};
 	});
+	const shapeKeys = new Set();
+	for (const shape of shapes) {
+		if (shape.key == null) continue;
+		if (shapeKeys.has(shape.key)) errors.push(`shapes の key「${shape.key}」が 2 回あります`);
+		shapeKeys.add(shape.key);
+	}
+	// 線: from・to は、この指示の図形の key・フロー図の箱の key・この書き出しの資料の文書 ID のどれか
+	const connectors = list(layout?.connectors, "connectors").map((c, i) => {
+		const at = `connectors[${i}]`;
+		const ref = (value, side) => {
+			const r = value == null ? "" : String(value);
+			if (r === "") errors.push(`${at}.${side} が要ります(図形の key・フロー図の箱の key・資料の文書 ID)`);
+			return r;
+		};
+		const line = c?.line == null ? "elbowed" : String(c.line);
+		if (!["elbowed", "straight", "curved"].includes(line)) errors.push(`${at}.line は elbowed / straight / curved のどれかです`);
+		const stroke = c?.style == null ? "solid" : String(c.style);
+		if (!["solid", "dashed", "dotted"].includes(stroke)) errors.push(`${at}.style は solid / dashed / dotted のどれかです`);
+		const arrow = c?.arrow == null ? "end" : String(c.arrow);
+		if (!["end", "both", "none"].includes(arrow)) errors.push(`${at}.arrow は end / both / none のどれかです`);
+		const label = c?.label == null || c.label === "" ? null : String(c.label);
+		if (label != null && [...label].length > 100) errors.push(`${at}.label は 100 文字までです`);
+		return {from: ref(c?.from, "from"), to: ref(c?.to, "to"), label, line, stroke, arrow, color: color(c?.color, `${at}.color`)};
+	});
 	const frame = layout?.frame == null ? null : {
 		width: number(layout.frame.width, "frame.width", {min: 400, max: LAYOUT_LIMITS.maxCoordinate}),
 		height: number(layout.frame.height, "frame.height", {min: 400, max: LAYOUT_LIMITS.maxCoordinate})
 	};
 	// clearDecorations: true だけを渡すと、前に指示して置いた見出しの文字・図形を片付ける
 	const clearDecorations = layout?.clearDecorations === true;
-	if (items.length === 0 && labels.length === 0 && shapes.length === 0 && frame == null && !clearDecorations) {
-		errors.push("items・labels・shapes・frame のどれかを指定してください(指示して置いた見出し・図形を消すだけなら clearDecorations: true)");
+	if (items.length === 0 && labels.length === 0 && shapes.length === 0 && connectors.length === 0 && frame == null && !clearDecorations) {
+		errors.push("items・labels・shapes・connectors・frame のどれかを指定してください(指示して置いた見出し・図形・線を消すだけなら clearDecorations: true)");
 	}
-	return {errors, exportRef: layout?.exportId ?? null, frameRef: layout?.frameId ?? null, items, labels, shapes, frame, keepDecorations: layout?.keepDecorations === true};
+	return {errors, exportRef: layout?.exportId ?? null, frameRef: layout?.frameId ?? null, items, labels, shapes, connectors, frame, keepDecorations: layout?.keepDecorations === true};
 };
 module.exports.normalizeLayout = normalizeLayout;
 
@@ -1127,6 +1272,23 @@ module.exports.applyLayout = async (layout, user) => {
 		if (row == null) plan.errors.push(`この資料は、この書き出しで Miro に出ていません(${item.documentId})`);
 		else rows.set(item.documentId, row);
 	}
+	// 線の両端: この指示の図形の key → フロー図の箱の key → この書き出しの資料
+	const shapeKeys = new Set(plan.shapes.map((sh) => sh.key).filter((k) => k != null));
+	const diagramNodes = frame?.diagram?.nodes ?? {};
+	const ends = new Map();
+	for (const [i, c] of plan.connectors.entries()) {
+		for (const side of ["from", "to"]) {
+			const ref = c[side];
+			if (ref === "" || ends.has(ref)) continue;
+			if (shapeKeys.has(ref)) ends.set(ref, {shapeKey: ref});
+			else if (diagramNodes[ref] != null) ends.set(ref, {itemId: String(diagramNodes[ref])});
+			else {
+				const row = await placedRowOf(exportRow.id, ref).catch(() => null);
+				if (row?.item_id != null) ends.set(ref, {itemId: String(row.item_id)});
+				else plan.errors.push(`connectors[${i}].${side}「${ref}」は、この指示の図形の key・フロー図の箱の key・この書き出しの資料の文書 ID のどれでもありません`);
+			}
+		}
+	}
 	if (plan.errors.length > 0) throw exportError("レイアウトの指示に正しくないところがあります(何も動かしていません)", 400, {details: plan.errors.slice(0, 50)});
 	if (!(await takeLock(exportRow.id))) throw exportError("いまこの書き出しをほかの頼みで直しています。終わってからやり直してください", 409);
 	try {
@@ -1152,7 +1314,7 @@ module.exports.applyLayout = async (layout, user) => {
 			width: Math.max(plan.frame?.width ?? 0, right + LAYOUT.padding),
 			height: Math.max(plan.frame?.height ?? 0, bottom + LAYOUT.padding)
 		});
-		const drawn = await drawDecorations(exportRow.id, board, frame.frameId, plan);
+		const drawn = await drawDecorations(exportRow.id, board, frame.frameId, {...plan, ends});
 
 		let moved = 0;
 		await forEachConcurrently(plan.items, CONCURRENCY, async (item) => {
@@ -1175,8 +1337,8 @@ module.exports.applyLayout = async (layout, user) => {
 			moved++;
 		});
 		const current = frames.find((f) => f.frameId === frame.frameId);
-		logger.info({audit: "miro_layout_applied", user, exportId: exportRow.id, frameId: frame.frameId, moved, labels: drawn.labels, shapes: drawn.shapes}, "audit");
-		return {exportId: exportRow.id, frameId: frame.frameId, moved, labels: drawn.labels, shapes: drawn.shapes, frame: {width: current.width, height: current.height}};
+		logger.info({audit: "miro_layout_applied", user, exportId: exportRow.id, frameId: frame.frameId, moved, labels: drawn.labels, shapes: drawn.shapes, connectors: drawn.connectors}, "audit");
+		return {exportId: exportRow.id, frameId: frame.frameId, moved, labels: drawn.labels, shapes: drawn.shapes, connectors: drawn.connectors, frame: {width: current.width, height: current.height}};
 	} finally {
 		await releaseLock(exportRow.id);
 	}
@@ -1187,13 +1349,16 @@ module.exports.applyLayout = async (layout, user) => {
  * (keepDecorations なら前のものを残して足す)。人が Miro で足した付箋などには触らない
  */
 const decorationKey = (kind, spec) => `${kind}:${JSON.stringify(spec)}`;
-const drawDecorations = async (exportId, board, frameId, {labels, shapes, keepDecorations}) => {
+const drawDecorations = async (exportId, board, frameId, {labels, shapes, connectors = [], ends = new Map(), keepDecorations}) => {
 	const all = parseJson((await ds.get(SQL_GET_EXPORT, [exportId]))?.decorations, {});
-	const before = all[frameId] ?? {decor: [], labels: [], shapes: []};
+	const before = all[frameId] ?? {decor: [], labels: [], shapes: [], connectors: []};
 	if (!keepDecorations) {
-		for (const d of before.decor) {
-			await MiroConnection.withToken((token) => Miro.deleteItem(token, board, d.id)).catch((err) => {
-				if (err.status !== 404) logger.warn({err: err.message}, "見出しの文字・図形を消せませんでした");
+		// 線を先に消す(図形を消せば線も消えるが、資料どうしをつないだ線は残るため)
+		const ordered = [...before.decor.filter((d) => d.key.startsWith("connector:")), ...before.decor.filter((d) => !d.key.startsWith("connector:"))];
+		for (const d of ordered) {
+			const remove = d.key.startsWith("connector:") ? Miro.deleteConnector : Miro.deleteItem;
+			await MiroConnection.withToken((token) => remove(token, board, d.id)).catch((err) => {
+				if (err.status !== 404) logger.warn({err: err.message}, "見出しの文字・図形・線を消せませんでした");
 			});
 		}
 	}
@@ -1224,17 +1389,36 @@ const drawDecorations = async (exportId, board, frameId, {labels, shapes, keepDe
 		});
 		return created.filter(Boolean);
 	};
-	const created = [
-		...(await create(wanted.filter((w) => w.kind === "shape"))),
-		...(await create(wanted.filter((w) => w.kind === "label")))
-	];
+	const createdShapes = await create(wanted.filter((w) => w.kind === "shape"));
+	const createdLabels = await create(wanted.filter((w) => w.kind === "label"));
+	// key を付けた図形の ID(線の両端に使う)
+	const shapeIds = new Map();
+	for (const d of createdShapes) {
+		const spec = shapes.find((sh) => decorationKey("shape", sh) === d.key);
+		if (spec?.key != null) shapeIds.set(spec.key, d.id);
+	}
+	const idOf = (ref) => {
+		const end = ends.get(ref);
+		return end?.shapeKey != null ? shapeIds.get(end.shapeKey) : end?.itemId;
+	};
+	const createdConnectors = [];
+	await forEachConcurrently(connectors, CONCURRENCY, async (c) => {
+		const connector = await MiroConnection.withToken((token) => Miro.createConnector(token, board, {
+			startId: idOf(c.from), endId: idOf(c.to), shape: c.line, caption: c.label ? escapeHtml(c.label) : null,
+			style: {strokeColor: c.color ?? "#4a5568", strokeWidth: "2", strokeStyle: c.stroke === "solid" ? "normal" : c.stroke,
+				startStrokeCap: c.arrow === "both" ? "arrow" : "none", endStrokeCap: c.arrow === "none" ? "none" : "arrow"}
+		}));
+		createdConnectors.push({key: decorationKey("connector", c), id: String(connector.id)});
+	});
+	const created = [...createdShapes, ...createdLabels, ...createdConnectors];
 	all[frameId] = {
 		decor: [...(keepDecorations ? before.decor : []), ...created],
 		labels: [...(keepDecorations ? before.labels : []), ...labels],
-		shapes: [...(keepDecorations ? before.shapes : []), ...shapes]
+		shapes: [...(keepDecorations ? before.shapes : []), ...shapes],
+		connectors: [...(keepDecorations ? before.connectors ?? [] : []), ...connectors]
 	};
 	await ds.run(SQL_SET_EXPORT_DECORATIONS, {id: exportId, decorations: JSON.stringify(all)});
-	return {labels: created.filter((d) => d.key.startsWith("label:")).length, shapes: created.filter((d) => d.key.startsWith("shape:")).length};
+	return {labels: createdLabels.length, shapes: createdShapes.length, connectors: createdConnectors.length};
 };
 
 module.exports.INSTANCE_ID = INSTANCE_ID;
