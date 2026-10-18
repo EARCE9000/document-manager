@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /wp-admin/
+Allow: /wp-admin/admin-ajax.php
+Disallow: /webapi/
+Disallow: /pub/test/
+
+Sitemap: https://www.earce.biz/?sitemap=index

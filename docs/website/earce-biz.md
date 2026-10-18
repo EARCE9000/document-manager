@@ -22,6 +22,10 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
   サーバーは送られた内容を保存しない(アクセスログは一定期間保存)。ただし DIG・WHOIS と QR コード生成は
   GET で送るため、入力が URL の一部としてアクセスログに残る(ポリシーにもそう書いた)。POST に変えたら直す。
   連絡先は載せない。制定日 2026-10-18。
+- robots(2026-10-18 時点): WordPress の「検索エンジンがインデックスしないようにする」はオフで、検索エンジンにも
+  AI のクローラーにも見せる方針。パーマリンクが「基本」のため WordPress の robots.txt は `/?robots=1` にしか出ず、
+  `/robots.txt` は 404 だった。docs/website/robots.txt を Web サーバーのドキュメントルートに置く(サーバー側の作業)。
+  隠したい場所は robots.txt に書かない(誰でも読めるので、場所を教えることになる)。
 
 置き方:
 - (A) はフロントページの本文の**先頭**に置く入口。
