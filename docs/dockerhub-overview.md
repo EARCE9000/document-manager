@@ -5,7 +5,7 @@ Docker Hub (https://hub.docker.com/r/earce9000/document-manager) の
 
 短い説明(Description)欄には次の1行を使う。Docker Hub側の上限は100文字なので、
 書き換えるときは必ず文字数を数えること(超えると入らない)。
-Self-hosted document manager: versioning, tagging, full-text/semantic search, API for AI agents.
+Self-hosted document manager: versions, tags, full-text/semantic search, Miro export, AI agent API.
 
 画像はGitHub(raw.githubusercontent.com)の公開URLを参照している。スクリーンショットを
 撮り直した場合(npm run screenshots)は、pushすればDocker Hub側の表示も自動的に新しくなる。
@@ -25,8 +25,8 @@ docs/logo.png は同じ絵の512px版(紹介ページ以外で使う用)。ロ�
 
 *Self-hosted document management service for single-file documents (HTML / MHTML / Markdown / PDF / images /
 CSV / TSV / text / log / JSON / draw.io / Excel / Word / PowerPoint). Versioning, tagging, projects with
-annotated contents lists, sandboxed hosting of web-page mockups, full-text and semantic search, and a
-token-authenticated REST API designed for AI agents. Documentation below is in Japanese; see the
+annotated contents lists, sandboxed hosting of web-page mockups, full-text and semantic search, export to
+Miro boards, and a token-authenticated REST API designed for AI agents. Documentation below is in Japanese; see the
 [GitHub repository](https://github.com/EARCE9000/document-manager) for details.*
 
 ## どんなシステムか
@@ -85,17 +85,12 @@ A4 には区切らないので表や図が途中で切れず、横に長い表�
 説明は**プロジェクトごとに持ちます**。同じ設計書でも「A案件では前提資料、B案件では参考」と
 書き分けられます。
 
-プロジェクトの構成は、既定では**表示だけ**の状態で開きます。並べ替えや資料の出し入れをするときに、
-見出しのトグルで編集モードにします(触るつもりのない操作を誤って押さないためです)。これは開いている
-画面だけの切り替えで、AIエージェントからの編集は止まりません。案件が仕上がって全員の編集を止めたい
-ときは、隣の南京錠で**完全ロック**します。こちらは画面からもAIからも編集できなくなります。
+案件が仕上がったら、南京錠で**ロック**して画面からもAIからも編集できなくできます。
 
 ![おしながき](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/project-manifest.png)
 
-**人に渡すリンクは、更新しても変わりません。** 資料は更新のたびに別のものとして保存されますが、
-それとは別に「常に最新版を指すリンク」を自動で持ちます。これを渡しておけば、あとで差し替えても
-相手は最新を見られます(リンクを送り直す必要がありません)。「この版を見てほしい」と伝えたいときは、
-版を固定したリンクも1クリックでコピーできます。
+**人に渡すリンクは、更新しても変わりません。** 「常に最新版を指すリンク」を渡しておけば、あとで差し替えても
+相手は最新を見られます。版を固定したリンクも1クリックでコピーできます。
 
 **削除はありません。** 「アーカイブ」は Gmail と同じ論理削除で、実ファイルは残り、いつでも元に戻せます。
 誰が何をしたかは操作履歴に残り、他の利用者がアップロードやタグ付けをすると、画面の右下に小さな通知が出ます。
@@ -138,14 +133,21 @@ Google Antigravity 用の Skill も画面からダウンロードでき、「こ
 (フォルダを渡すだけでよく、ZIPに固める必要はありません)。おしながきも「この案件の資料一覧ちょうだい」で
 そのまま受け取れます。
 
+**Miro のボードに書き出せます(任意)。** 打ち合わせで使う Miro のボードに、資料を並べて出します。書き出すのは
+頼まれたときだけで、ボードが知らないうちに変わることはありません。ボードに置いた目印の付箋(`[DM]名前` と向き)の
+横に、書き出すたびに新しいフレームを作って並べます(向きは8方向と十字)。
+前に出したフレームには触りません。PDF・画像はそのまま、HTML・Markdown・draw.io は PDF に、Office は体裁つきの
+PDF にして出し、各資料に「Document Manager で開く」リンクを付けます。AIエージェントに「この資料を Miro に
+書き出して」と頼むか、プレビューのアイコンから1件ずつ出します。画面の上の「Miro」で目印を置き、書き出しの履歴を見られます。
+
+![Miro](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/miro.png)
+
 ![AIエージェント用Skillの配布](https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/tools.png)
 
 **構成は後から変えられます。** 既定では1コンテナで完結し、文書のメタデータは SQLite、ファイルは
 ローカルディスクに保存します。環境変数を変えるだけで、メタデータを PostgreSQL に、ファイルを S3 や
 GCS に移せるので、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)で複数インスタンス構成にもできます。
-モックアップも同じで、原本(ZIP)は S3・GCS に置けます。ただし1ページ開くたびに多数の小さなファイルを
-取りに行くため、**展開したものだけは各インスタンスのローカルに置いて**配信します。無ければ原本から
-作り直すので、台が増えてもコンテナを作り直しても動きます(そのぶん一時的にディスクを使います)。
+モックアップの原本(ZIP)も S3・GCS に置けます。
 
 ## 構成
 
@@ -169,12 +171,10 @@ GCS に移せるので、AWS(ECS/Fargate)や GCP(Cloud Run / GKE)で複数イン
   ファイルだけ残っている文書は登録し直せます。逆に**ファイルが見つからない文書の記録は消しません**
   (ストレージが一時的に見えていないだけの可能性があり、消すとタグ・メモ・版の紐付けまで失うため)
 - **変換サービス**: 2つの変換サービスが動いているか、変換に失敗した文書はあるか(その場で再実行できます)
+- **Miro 連携**: Miro との連携と、書き出すボードの選択
 - **アクセス許可ユーザー**: ログインできる人とその権限の管理
-- **セッション**: 不正アクセスが疑われるときに、利用者を**まとめて切断**できます
-  (ログイン中のセッション・その人が発行したAPIキー・開いているモックアップの表示を一式で止め、
-  認証からやり直しになります)。切るかどうかを判断できるよう、ログイン時刻・最終アクセス・
-  接続元IP・ブラウザを一覧します。**IDとパスワードそのものが漏れている場合は、認証基盤側での
-  パスワード変更が必要です**(切断してもまたログインされます)
+- **セッション**: 不正アクセスが疑われるときに、利用者のセッション・APIキー・モックアップの表示を
+  **まとめて切断**できます(パスワードが漏れているなら、認証基盤側での変更も必要です)
 
 ## 立ち上げるために必要な作業
 
@@ -214,9 +214,6 @@ docker run -d \
 `SESSION_SECRET` を指定しないと、起動のたびに鍵が変わり、再起動のたびに全員がログアウトされます。
 必ず固定の値を渡してください。
 
-Windows の Git Bash から実行する場合は、`-v` のパスが書き換えられてしまうため、先頭に
-`MSYS_NO_PATHCONV=1` を付けてください。
-
 ### 3. 最初のログイン
 
 **許可リストが空の間は誰もログインできません。** そこで `ADMIN_EMAIL` が働きます。管理者が1人もいない間に
@@ -230,11 +227,10 @@ Windows の Git Bash から実行する場合は、`-v` のパスが書き換え
 
 公開するパスを `BASE_PATH` に設定します。ホスト全体をこのサービスに使うなら `/`、
 サブパスで公開するなら `/document_management` のように指定します。`OIDC_REDIRECT_URI` も
-公開URLに合わせてください。アプリはリクエストからURLを組み立てるので、ほかの設定は不要です。
+公開URLに合わせてください。
 
-画面の自動更新と通知に Server-Sent Events を使っています。プロキシが応答を溜め込む設定だと通知が
-届かないため、その場合はバッファリングを無効にしてください(Apache なら `flushpackets=on`、
-nginx 向けにはアプリ側から `X-Accel-Buffering: no` を返しています)。
+画面の自動更新に Server-Sent Events を使うので、プロキシの応答の溜め込みは無効にしてください
+(Apache なら `flushpackets=on`。nginx 向けにはアプリが `X-Accel-Buffering: no` を返します)。
 
 ### 5. 意味検索を使う場合
 
@@ -288,23 +284,26 @@ volumes:
   weaviate_data:
 ```
 
-登録済みの文書は、起動後にバックグラウンドで順に索引付けされます(1件あたり数秒。進み具合は画面の
-「ベクトル索引」で確認できます)。推論サーバーは 1.0〜1.4GB 程度のメモリを使い、索引付けの間は
-CPU を複数コア使います。
+登録済みの文書は起動後に順に索引付けされます(進み具合は画面の「ベクトル索引」)。推論サーバーは 1.0〜1.4GB ほどのメモリを使います。
 
-podman 用の構成ファイル(コンテナの固定IP、Weaviate のポート非公開)は
-[`deploy/compose.yml`](https://github.com/EARCE9000/document-manager/blob/main/deploy/compose.yml)
-にあります。podman では、イメージ名を `docker.io/` から完全に指定してください(短い名前は
-`registries.conf` の検索順で解決されるため、RHEL系ホストでは失敗します)。
+podman 用の構成は [`deploy/compose.yml`](https://github.com/EARCE9000/document-manager/blob/main/deploy/compose.yml) にあります。
 
 ### 6. PDFでダウンロードを使う場合
 
+Miro に HTML・Markdown・draw.io を書き出すときも、この変換を使います。
 PDF変換サービス(`earce9000/document-manager-pdf-converter`)を**外へ出られないネットワーク**に起動し、
 アプリに `HTML_PDF_URL`(例: `http://pdf-converter:3000`)を渡します。**ポートは公開しないでください**
 (認証を持ちません)。compose の例・安全面の考え方・更新の仕方は
 [変換サービスのページ](https://hub.docker.com/r/earce9000/document-manager-pdf-converter)にあります。
 
-### 7. 主な環境変数
+### 7. Miro に書き出す場合
+
+Miro の開発者ハブでアプリを作り(権限は `boards:read` と `boards:write`)、クライアントIDとシークレットを
+`MIRO_CLIENT_ID` / `MIRO_CLIENT_SECRET` で渡すか、管理画面の「Miro 連携」に入力します。管理者が1回連携し、
+書き出すボードを選べば使えます。サーバーから `api.miro.com` へ出られる必要があります。
+手順は [docs/miro.md](https://github.com/EARCE9000/document-manager/blob/main/docs/miro.md) にあります。
+
+### 8. 主な環境変数
 
 | 変数 | 既定値 | 説明 |
 | --- | --- | --- |
@@ -330,23 +329,26 @@ PDF変換サービス(`earce9000/document-manager-pdf-converter`)を**外へ出�
 | `MOCKUP_STORAGE_PREFIX` | `mockups` | S3/GCS利用時に、モックアップの原本を置くキーの先頭。文書側(既定 `documents`)とは必ず別にしてください |
 | `MOCKUP_VIEW_TOKEN_MINUTES` | `60` | モックアップを開いていられる時間(分)。切れても開き直せます |
 | `PROJECT_NOTE_MAX_CHARS` | `500` | おしながきの説明書き1件の上限(文字数) |
+| `MIRO_CLIENT_ID` / `MIRO_CLIENT_SECRET` | (未設定) | Miro のアプリの値。未設定なら管理画面で入力した値を使う |
 | `AUTH_DISABLED` | (未設定) | `true` で認証を無効化(開発用。本番では使わない) |
 | `RATE_LIMIT_DISABLED` | (未設定) | `true` でレート制限を無効化(開発・テスト用。本番では使わない) |
 | `LOG_LEVEL` | `info` | ログレベル |
-| `TZ` | (ホスト依存) | タイムゾーン(例: `Asia/Tokyo`) |
+| `TZ` | `Asia/Tokyo` | タイムゾーン |
 
 S3 の認証情報は AWS SDK の標準の取得順(IAMロール優先)、GCS は Application Default Credentials に従います。
 全変数の一覧は GitHub の README にあります。
 
-### 8. データの扱いと更新・切り戻し
+### 9. データの扱いと更新・切り戻し
 
 `/data` をマウントしておけば、文書・モックアップと SQLite のデータベースはそこに残ります。
 
-SQLite のスキーマにはバージョンがあり、更新時には**新しいファイルを作ってデータを移し、古いファイルは
-そのまま残します**。古いイメージへ戻せるようにするためです。更新前に `/data/db` のバックアップを取ってください。
-なお、更新後に登録した文書は、古いイメージへ戻すと見えません(古いイメージは古いファイルを読むためです)。
+SQLite のスキーマを上げるときは、**新しいファイルにデータを移し、古いファイルは残します**(古いイメージへ戻せるように)。
+更新前に `/data/db` のバックアップを取ってください。戻すと、更新後に登録した文書は見えません。
 
 PostgreSQL 構成の場合、スキーマの更新は起動時に自動で適用されます。
+
+タグは `latest`(最新)と、ビルドした日時の `YYYYMMDD.HHMM`(JST。直近10世代を残す)です。
+切り戻しは日時のタグを指定します。amd64 と arm64 に対応しています。
 
 ## ライセンス
 

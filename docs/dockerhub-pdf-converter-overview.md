@@ -11,8 +11,9 @@ HTML / draw.io to PDF converter for Document Manager (headless Chromium, no netw
 
 *HTML-to-PDF conversion service for [Document Manager](https://hub.docker.com/r/earce9000/document-manager).
 Renders HTML / Markdown / MHTML documents with headless Chromium into a single long PDF page that looks like
-the on-screen preview, and draw.io diagrams into one PDF page per diagram page. Document scripts are never
-executed and nothing but the document itself is loaded.
+the on-screen preview, and draw.io diagrams into one PDF page per diagram page. Used for "Download as PDF"
+and for exporting documents to Miro boards. Document scripts are never executed and nothing but the
+document itself is loaded.
 Documentation below is in Japanese.*
 
 ## これは何か
@@ -22,6 +23,11 @@ Documentation below is in Japanese.*
 draw.io の図(`.drawio`)は、**図の1ページを紙1枚**にしたPDFにします。
 HTML をメールに添付すると相手の環境では文字の羅列として出てしまうことがあるため、人に渡すための形として
 用意しています。
+
+**Miro への書き出しでも使います。** Document Manager から Miro のボードへ資料を書き出すとき、
+HTML・Markdown・MHTML・draw.io の文書は、このサービスで PDF にしてから出します。
+このサービスが無い環境では、それらの文書は Miro に書き出せません(PDF・画像はそのまま出せます。
+Office 文書は、もう一つの変換サービス `earce9000/document-manager-converter` で作った PDF を出します)。
 
 **単体で使うものではありません。** Document Manager 本体から、内部ネットワーク経由で呼び出します。
 認証を持たないので、**ポートを外へ公開しないでください**。

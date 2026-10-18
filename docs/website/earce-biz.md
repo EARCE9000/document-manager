@@ -47,6 +47,7 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
 <li>Markdown・PDF・draw.io・Excel/Word/PowerPoint など、よく使う形式をブラウザでそのまま閲覧</li>
 <li>版の管理、タグとプロジェクトでの整理、全文検索と意味検索</li>
 <li>Claude Code・Codex などの AI エージェントから「この資料アップして」で登録・検索</li>
+<li>Miro のボードへ、資料を並べて書き出し(任意)</li>
 </ul>
 <!-- /wp:list -->
 
@@ -142,6 +143,27 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
 
 <!-- wp:image {"sizeSlug":"large"} -->
 <figure class="wp-block-image size-large"><img src="https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/tools.png" alt="AI エージェント用 Skill の配布"/></figure>
+<!-- /wp:image -->
+
+<!-- wp:heading -->
+<h2 class="wp-block-heading">Miro のボードに書き出す</h2>
+<!-- /wp:heading -->
+
+<!-- wp:paragraph -->
+<p>打ち合わせで使う Miro のボードに、資料を並べて書き出せます(任意の機能)。書き出すのは頼まれたときだけで、ボードが知らないうちに変わることはありません。</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:list -->
+<ul class="wp-block-list">
+<li>ボードに置いた目印の付箋(「[DM]名前」と向き)の横に、書き出すたびに新しいフレームを作って並べます。前に書き出したフレームには触りません</li>
+<li>向きは右・左・上・下・斜めの 8 方向と十字。十字ではタグで 4 つに分けて、目印の斜め 4 か所に出します</li>
+<li>PDF・画像はそのまま、HTML・Markdown・draw.io は PDF に、Office は体裁つきの PDF にして出し、各資料に「Document Manager で開く」リンクを付けます</li>
+<li>AI エージェントに「この資料を Miro に書き出して」と頼むか、文書のプレビューのアイコンから 1 件ずつ書き出します。画面の上の「Miro」で目印を置き、書き出しの履歴を見られます</li>
+</ul>
+<!-- /wp:list -->
+
+<!-- wp:image {"sizeSlug":"large"} -->
+<figure class="wp-block-image size-large"><img src="https://raw.githubusercontent.com/EARCE9000/document-manager/main/docs/screenshots/miro.png" alt="Miro の画面(ボードの目印と書き出しの履歴)"/></figure>
 <!-- /wp:image -->
 
 <!-- wp:heading -->
