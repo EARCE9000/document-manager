@@ -10,6 +10,7 @@
  * サンプルデータ(文書・版・タグ体系・プロジェクト・メモ)をAPIで登録してから、Chromiumで
  * 各画面を 1280x800 で撮影する。既存のPNGは上書きされる。機能追加で画面が変わったら
  * これを再実行して README の画像を更新する。
+ * Miro の画面は、テストで使う Miro の代わり(test/api/miro-stub.js)につないで撮る(本物の Miro には触らない)。
  */
 
 const {spawn} = require("node:child_process");
@@ -23,6 +24,8 @@ const OUT_DIR = __dirname;
 const PORT = Number(process.env.SCREENSHOT_PORT || 18097);
 const BASE_URL = `http://127.0.0.1:${PORT}/`;
 const VIEWPORT = {width: 1280, height: 800};
+const MIRO_STUB_PORT = Number(process.env.SCREENSHOT_MIRO_PORT || PORT + 1);
+const miroStub = require(path.join(REPO, "test", "api", "miro-stub.js"));
 
 const api = async (method, apiPath, body) => {
 	const init = {method};
@@ -272,6 +275,33 @@ const seed = async () => {
 	return {specV2, project};
 };
 
+// Miro の画面用: 目印を置き、書き出しの履歴を作る(ほかの画面を撮り終えてから。文書一覧に出る資料を増やさないため)
+const MIRO_PDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+	+ "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n";
+const MIRO_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/yWWk2QAAAABJRU5ErkJggg==", "base64");
+const seedMiro = async (page) => {
+	// 連携(Miro の代わりが許可の画面をそのまま通す)と、書き出すボードの選択
+	await page.goto(new URL("api/miro/connect", BASE_URL).href);
+	await api("PUT", "api/miro/settings", {boardId: "uXjVStubBoard1="});
+	const design = await upload("画面設計書.pdf", MIRO_PDF);
+	const screen = await upload("画面イメージ.png", MIRO_PNG);
+	const review = await upload("レビュー指摘一覧.pdf", MIRO_PDF);
+	await api("POST", "api/miro/anchors", {name: "設計書", direction: "右", note: "画面設計書と画面イメージの最新版"});
+	await api("POST", "api/miro/anchors", {name: "定例", direction: "下", note: "定例で見る指摘の一覧"});
+	await api("POST", "api/miro/anchors", {name: "全体", direction: "十字", note: "サンプル案件プロジェクトの資料を全部"});
+	const exportAndWait = async (body) => {
+		let record = await api("POST", "api/miro/exports", body);
+		for (let i = 0; i < 100 && record.state === "running"; i++) {
+			await new Promise((r) => setTimeout(r, 200));
+			record = await api("GET", `api/miro/exports/${record.id}`);
+		}
+		if (record.state !== "done") throw new Error(`Miro への書き出しが終わりません: ${JSON.stringify(record)}`);
+	};
+	await exportAndWait({anchor: "設計書", documentIds: [design.id, screen.id]});
+	await exportAndWait({anchor: "定例", documentIds: [review.id], title: "定例 指摘の確認"});
+	await exportAndWait({anchor: "設計書", documentIds: [design.id], title: "設計書 改訂版"});
+};
+
 const waitForServer = async (proc) => {
 	for (let i = 0; i < 60; i++) {
 		if (proc.exitCode != null) throw new Error("server exited");
@@ -286,9 +316,12 @@ const waitForServer = async (proc) => {
 
 const main = async () => {
 	const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dm-screenshots-"));
+	const stub = await miroStub.start(MIRO_STUB_PORT);
+	const miroUrl = `http://127.0.0.1:${MIRO_STUB_PORT}`;
 	const server = spawn(process.execPath, [path.join(REPO, "app", "server.js")], {
 		cwd: path.join(REPO, "app"),
-		env: {...process.env, AUTH_DISABLED: "true", DATA_DIR: dataDir, LISTEN_PORT: String(PORT), LOG_LEVEL: "warn", SESSION_SECRET: "screenshots", MOCKUPS_ENABLED: "true"},
+		env: {...process.env, AUTH_DISABLED: "true", DATA_DIR: dataDir, LISTEN_PORT: String(PORT), LOG_LEVEL: "warn", SESSION_SECRET: "screenshots", MOCKUPS_ENABLED: "true",
+			MIRO_API_URL: miroUrl, MIRO_AUTH_URL: miroUrl, MIRO_CLIENT_ID: miroStub.CLIENT_ID, MIRO_CLIENT_SECRET: miroStub.CLIENT_SECRET},
 		stdio: "inherit"
 	});
 	const browser = await chromium.launch();
@@ -372,8 +405,26 @@ const main = async () => {
 		await page.waitForTimeout(400);
 		await shot("tools");
 		await page.setViewportSize(VIEWPORT);
+
+		// 9. Miro(左にボードの目印と書き出しの履歴、右に目印を置く欄と、選んだ向きにフレームが並ぶ順番の図)
+		await seedMiro(page);
+		await page.goto(BASE_URL);
+		await page.locator("#menuMiroLink").click();
+		await page.locator("#miroAnchorList tr", {hasText: "設計書"}).first().waitFor();
+		await page.locator("#miroAnchorName").fill("議事録");
+		await page.locator('#miroDirectionChooser [data-direction="lower-right"]').click();
+		await page.locator("#miroAnchorNote").fill("定例の議事録を新しい順に");
+		await page.setViewportSize({width: VIEWPORT.width, height: 960});
+		// 欄に書き込むと、その欄が見えるところまで下へ流れるので、上の端に戻してから撮る
+		await page.evaluate(() => {
+			for (const el of document.querySelectorAll("#miroPane, #miroPane *")) el.scrollTop = 0;
+			window.scrollTo(0, 0);
+		});
+		await shot("miro");
+		await page.setViewportSize(VIEWPORT);
 	} finally {
 		await browser.close();
+		await new Promise((resolve) => stub.server.close(resolve));
 		// Windowsではサーバーがファイル(SQLite)を掴んだままだと削除できないため、終了を待ってから消す
 		const exited = server.exitCode != null ? Promise.resolve() : new Promise((resolve) => server.once("exit", resolve));
 		server.kill();

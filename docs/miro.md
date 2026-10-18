@@ -49,6 +49,8 @@ Compose で動かす場合は、`deploy/compose.env` に `MIRO_CLIENT_ID` / `MIR
 
 ## 4. 資料を Miro に書き出す
 
+![Miro の画面(ボードの目印・書き出しの履歴と、目印を置く欄)](screenshots/miro.png)
+
 Document Manager は、**頼まれたときだけ**資料を Miro に書き出します。自動では書き出しません
 (打ち合わせで使っているボードが、知らないうちに変わらないように)。資料を足した・新しい版にしたあとも、頼まれるまでボードは変わりません。
 

@@ -27,6 +27,10 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 |---|---|
 | ![モックアップ](docs/screenshots/mockups.png) | ![操作履歴](docs/screenshots/history.png) |
 
+| Miro(書き出しの目印・履歴と、目印を置く欄。向きを選ぶとフレームが並ぶ順番が図で出る) |
+|---|
+| <img src="docs/screenshots/miro.png" alt="Miro(書き出しの目印と履歴)" width="720"> |
+
 | ツール(AIエージェント用 Skill の配布) |
 |---|
 | <img src="docs/screenshots/tools.png" alt="ツール(AIエージェント用Skillの配布)" width="720"> |
