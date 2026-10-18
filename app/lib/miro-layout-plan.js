@@ -161,7 +161,9 @@ const slotFor = (anchor, direction, {width, height}, gap) => {
 //   段は棚のように積む: 外側の段は、内側の段のフレーム(付箋も)のいちばん外の端から間を空けて置き、同じ段のフレームは付箋の側の端がそろう。
 //   同じ段の中では、内側の列のフレーム(付箋の段なら付箋も)のいちばん外の端から間を空けて横へ並べる(フレームの大きさがまちまちでも重ならない)。
 // 同じ目印に前に出したフレームがどのマスにあるかは、書き出しの記録(frames[].cell)から受け取る。
-// ふさがっているマス(前に出したフレームがある・ほかのものと重なる)は飛ばす。右下・左上・左下は向きを変えただけ
+// 前に出したフレームがあるマスは飛ばす。ほかのもの(手で置いた付箋・図形など)と重なるときは、マスを飛ばさずに重ならない所まで外へずらす:
+// 付箋と同じ列のマス(上・下)は縦へ、それ以外(付箋と同じ段のマス・斜めのマス)は段を崩さないよう横へ。
+// 次のマスはずらしたあとの位置から決めるので、順番は崩れない。右下・左上・左下は向きを変えただけ
 const DIAGONALS = Object.freeze({"upper-right": [1, -1], "lower-right": [1, 1], "upper-left": [-1, -1], "lower-left": [-1, 1]});
 const RING_LIMIT = 8;
 /** 輪の順に並べたマス([横へ何マス, 縦へ何マス])。図の順番の表示にも使う */
@@ -197,8 +199,15 @@ const ringSlot = (anchor, direction, {width, height}, gap, obstacles, placed = [
 		if (j === 0) top = sy > 0 ? anchor.top : anchor.bottom - height;
 		else if (sy > 0) top = Math.max(...innerRows.map((b) => b.bottom)) + gap;
 		else top = Math.min(...innerRows.map((b) => b.top)) - gap - height;
-		const grown = {left: left - margin, right: left + width + margin, top: top - margin, bottom: top + height + margin};
-		if (!obstacles.some((o) => overlaps(grown, o))) return {left, top, cell: [i, j]};
+		// 重なるものがあれば、その外の端から間を空けた所まで外へずらす(ずらした先でまた重なれば、その先へ)
+		const vertical = i === 0;
+		for (let n = 0; n < 1000; n++) {
+			const grown = {left: left - margin, right: left + width + margin, top: top - margin, bottom: top + height + margin};
+			const hits = obstacles.filter((o) => overlaps(grown, o));
+			if (hits.length === 0) return {left, top, cell: [i, j]};
+			if (vertical) top = sy > 0 ? Math.max(...hits.map((o) => o.bottom)) + gap : Math.min(...hits.map((o) => o.top)) - gap - height;
+			else left = sx > 0 ? Math.max(...hits.map((o) => o.right)) + gap : Math.min(...hits.map((o) => o.left)) - gap - width;
+		}
 	}
 	return null;
 };

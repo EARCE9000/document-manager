@@ -91,12 +91,12 @@ test("ほかのもの(フレーム・付箋)と重なるときは、向きの外
 	assert.equal(down.top, 1800 + 200);
 	const twice = plan([{direction: "right", title: "1", documents: docs}, {direction: "right", title: "2", documents: sized([doc("b.pdf")])}]).frames.map(boxOf);
 	assert.ok(twice[1].left >= twice[0].right + 200);
-	// 斜めは、ふさがっているマスを飛ばして、輪の順で次のマスへ(左上の 1 つ目は左。ふさがっていれば上。上は右の端を付箋にそろえる)
+	// 斜めも、重なるときはマスを飛ばさずに外へずらす(左上の 1 つ目は左。手で置いた付箋があれば、その左。下の端は付箋にそろえたまま)
 	const leftCell = {left: 0, top: 960, right: 900, bottom: 1300};
 	const diagonal = plan([{direction: "upper-left", title: "t", documents: docs}], {obstacles: [leftCell]}).frames[0];
-	assert.deepEqual(diagonal.cell, [0, 1]);
-	assert.equal(boxOf(diagonal).bottom, ANCHOR.top - 120);
-	assert.equal(boxOf(diagonal).right, ANCHOR.right);
+	assert.deepEqual(diagonal.cell, [1, 0]);
+	assert.equal(boxOf(diagonal).right, leftCell.left - 120);
+	assert.equal(boxOf(diagonal).bottom, ANCHOR.bottom);
 });
 
 test("目印が無いとき(free): 向きの形のまま、まとめて空いている所(ボードの中身の右)へ出す", () => {
@@ -197,6 +197,29 @@ test("斜め: 付箋のまわりを輪を広げるように埋める(右上な�
 		for (let a = 0; a < all.length; a++) {
 			for (let b = a + 1; b < all.length; b++) assert.ok(!Plan.overlaps(all[a], all[b]), `${direction}: ${a} と ${b} が重なる`);
 		}
+	}
+});
+
+test("斜め: 手で置いた付箋と重なるときは外へずらし、順番(右 → 上 → 右上 → 右右)は崩さない。上のマスは縦へずらす", () => {
+	const memoRight = {left: ANCHOR.right + 50, top: ANCHOR.top, right: ANCHOR.right + 250, bottom: ANCHOR.bottom};
+	const memoAbove = {left: ANCHOR.left, top: ANCHOR.top - 260, right: ANCHOR.right, bottom: ANCHOR.top - 60};
+	const groups = Array.from({length: 4}, (_, i) => ({direction: "upper-right", title: String(i), documents: sized([doc("a.pdf")])}));
+	const frames = plan(groups, {obstacles: [memoRight, memoAbove]}).frames;
+	assert.deepEqual(frames.map((f) => f.cell), [[1, 0], [0, 1], [1, 1], [2, 0]]);
+	const [right, up, upperRight, rightRight] = frames.map(boxOf);
+	// 右: 手書きの付箋の右へ(下の端は付箋にそろえたまま)。右右: その右
+	assert.equal(right.left, memoRight.right + 120);
+	assert.equal(right.bottom, ANCHOR.bottom);
+	assert.equal(rightRight.left, right.right + 120);
+	assert.equal(rightRight.bottom, ANCHOR.bottom);
+	// 上: 左の端は付箋にそろえたまま、下の段(右のフレーム)と手書きの付箋の上へ
+	assert.equal(up.left, ANCHOR.left);
+	assert.equal(up.bottom, Math.min(right.top, memoAbove.top) - 120);
+	assert.equal(upperRight.left, up.right + 120);
+	assert.equal(upperRight.bottom, up.bottom);
+	const all = [ANCHOR, memoRight, memoAbove, ...frames.map(boxOf)];
+	for (let a = 0; a < all.length; a++) {
+		for (let b = a + 1; b < all.length; b++) assert.ok(!Plan.overlaps(all[a], all[b]), `${a} と ${b} が重なる`);
 	}
 });
 

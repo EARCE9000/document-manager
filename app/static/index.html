@@ -7029,7 +7029,7 @@ const renderMiroDirectionOrder = () => {
 		const trim = cell / 2 + 4;
 		parts.push('<line class="order" x1="' + (a.x + ux * trim) + '" y1="' + (a.y + uy * trim) + '" x2="' + (b.x - ux * trim) + '" y2="' + (b.y - uy * trim) + '" marker-end="url(#miroOrderHead)"/>');
 	}
-	parts.push('<text class="caption" x="8" y="263">' + (diagonal ? "数字は書き出す順(空いていない所は飛ばす)" : "数字は書き出す順(同じ目印に続けて出したとき)") + '</text>');
+	parts.push('<text class="caption" x="8" y="263">' + (diagonal ? "数字は書き出す順(ほかのものと重なるときは外へずらす)" : "数字は書き出す順(同じ目印に続けて出したとき)") + '</text>');
 	miroDirectionPreview.innerHTML = parts.join("");
 	document.getElementById("miroDirectionNote").innerHTML = '<b>' + escapeHtml(MIRO_DIRECTION_NAMES[chosen]) + '</b>: ' + escapeHtml(MIRO_DIRECTION_NOTES[chosen])
 		+ '。ほかのフレームや付箋に重なるときは、その先へずらして出します。';
