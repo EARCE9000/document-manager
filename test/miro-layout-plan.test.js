@@ -56,7 +56,7 @@ test("フレームの中は読む順で並べ、行の上の端をそろえる�
 	assert.ok(bottom <= frame.height - 80 + 1);
 });
 
-test("8 つの向き: 目印の横・上下・斜めに置き、目印とは重ねない。横は上の端、上下は左の端を目印にそろえる", () => {
+test("8 つの向き: 目印の横・上下・斜めの方へ置き、目印とは重ねない。横は上の端、上下は左の端を目印にそろえる", () => {
 	const docs = sized([doc("a.pdf"), doc("b.pdf")]);
 	const at = (direction) => boxOf(plan([{direction, title: "t", documents: docs}]).frames[0]);
 	assert.equal(at("right").left, ANCHOR.right + 120);
@@ -66,10 +66,11 @@ test("8 つの向き: 目印の横・上下・斜めに置き、目印とは重�
 	assert.equal(at("down").top, ANCHOR.bottom + 120);
 	assert.equal(at("down").left, ANCHOR.left);
 	assert.equal(at("up").bottom, ANCHOR.top - 120);
-	assert.equal(at("upper-right").left, ANCHOR.right + 120);
-	assert.equal(at("upper-right").bottom, ANCHOR.top - 120);
-	assert.equal(at("lower-left").right, ANCHOR.left - 120);
-	assert.equal(at("lower-left").top, ANCHOR.bottom + 120);
+	// 斜めの 1 つ目は、付箋を真ん中にしたマスの横(右上・右下は右、左上・左下は左)。高さは付箋の真ん中にそろう
+	const centerOf = (b) => ({x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2});
+	const frame = Plan.planFrame("upper-right", docs, G);
+	assert.deepEqual(centerOf(at("upper-right")), {x: 1100 + frame.width + 120, y: 1100});
+	assert.deepEqual(centerOf(at("lower-left")), {x: 1100 - frame.width - 120, y: 1100});
 	for (const direction of ["right", "left", "up", "down", "upper-right", "lower-right", "upper-left", "lower-left"]) {
 		const box = at(direction);
 		assert.ok(!(box.left < ANCHOR.right && ANCHOR.left < box.right && box.top < ANCHOR.bottom && ANCHOR.top < box.bottom), `${direction} が目印に重なる`);
@@ -86,9 +87,11 @@ test("ほかのもの(フレーム・付箋)と重なるときは、向きの外
 	assert.equal(down.top, 1800 + 200);
 	const twice = plan([{direction: "right", title: "1", documents: docs}, {direction: "right", title: "2", documents: sized([doc("b.pdf")])}]).frames.map(boxOf);
 	assert.ok(twice[1].left >= twice[0].right + 200);
-	// 斜めは横へずらす(同じ段のまま)
-	const diagonal = boxOf(plan([{direction: "upper-left", title: "t", documents: docs}], {obstacles: [{left: 0, top: 0, right: 900, bottom: 900}]}).frames[0]);
-	assert.ok(diagonal.right <= 0 - 200);
+	// 斜めは、ふさがっているマスを飛ばして、輪の順で次のマスへ(左上の 1 つ目は左。ふさがっていれば上)
+	const leftCell = {left: 0, top: 900, right: 900, bottom: 1300};
+	const diagonal = boxOf(plan([{direction: "upper-left", title: "t", documents: docs}], {obstacles: [leftCell]}).frames[0]);
+	assert.ok(diagonal.bottom <= ANCHOR.top, "上のマスに置く");
+	assert.equal((diagonal.left + diagonal.right) / 2, 1100);
 });
 
 test("目印が無いとき(free): 向きの形のまま、まとめて空いている所(ボードの中身の右)へ出す", () => {
@@ -159,4 +162,19 @@ test("概要カードの文字: 説明があれば 3 行(100 文字で切って 
 	const long = "あ".repeat(120);
 	assert.equal(Plan.summaryText({name: "P", description: long}, 1, ""), `P\n${"あ".repeat(100)}…\n資料 1 件`);
 	assert.equal(Plan.summaryText({name: "P", description: "  改行\nあり  "}, 2, ""), "P\n改行 あり\n資料 2 件");
+});
+
+test("斜め: 付箋のまわりを輪を広げるように埋める(右上なら 右 → 上 → 右上 → 右右 → 右右上 → 上上 …)。右下・左上・左下は向きを変えただけ", () => {
+	assert.deepEqual(Plan.ringCells(2), [[1, 0], [0, 1], [1, 1], [2, 0], [2, 1], [0, 2], [1, 2], [2, 2]]);
+	const sized1 = () => sized([doc("a.pdf")]);
+	const frame = Plan.planFrame("upper-right", sized1(), G);
+	const stepX = frame.width + 120;
+	const stepY = frame.height + 120;
+	const cellOf = (b, sx, sy) => [Math.round(((b.left + b.right) / 2 - 1100) / stepX) * sx + 0, Math.round(((b.top + b.bottom) / 2 - 1100) / stepY) * sy + 0];
+	for (const [direction, sx, sy] of [["upper-right", 1, -1], ["lower-right", 1, 1], ["upper-left", -1, -1], ["lower-left", -1, 1]]) {
+		// 同じ目印に 5 回続けて書き出す(前のフレームはボードにあるもの)
+		const groups = Array.from({length: 5}, (_, i) => ({direction, title: String(i), documents: sized1()}));
+		const cells = plan(groups).frames.map((f) => cellOf(boxOf(f), sx, sy));
+		assert.deepEqual(cells, [[1, 0], [0, 1], [1, 1], [2, 0], [2, 1]], direction);
+	}
 });

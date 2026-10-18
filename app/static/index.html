@@ -433,18 +433,27 @@
 	#miroAnchorForm input[type="text"], #miroAnchorForm textarea { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; font-family: inherit; }
 	#miroAnchorForm textarea { resize: vertical; line-height: 1.5; }
 	/* 向き: 真ん中が付箋、周りの 8 マスが向き。その下に十字 */
-	/* 向き: 付箋のまわりの 8 つの置き場所を図で見せ、押して選ぶ。選んだ向きはフレームの形と中の並びまで描く */
-	#miroDirectionPreview { display: block; width: 100%; height: auto; background: #fafafa; border: 1px solid #e5e7eb; border-radius: 8px; user-select: none; }
-	#miroDirectionPreview .slot { cursor: pointer; outline: none; }
-	#miroDirectionPreview .slot rect.frame { fill: #ffffff; stroke: #cbd5e1; stroke-width: 6; stroke-dasharray: 24 14; }
-	#miroDirectionPreview .slot text { fill: #94a3b8; font-size: 64px; }
-	#miroDirectionPreview .slot:hover rect.frame, #miroDirectionPreview .slot:focus-visible rect.frame { stroke: #93c5fd; }
-	#miroDirectionPreview .slot.selected rect.frame { fill: #eff6ff; stroke: #2563eb; stroke-width: 10; stroke-dasharray: none; }
-	#miroDirectionPreview .slot.selected text { fill: #1e3a8a; font-weight: bold; }
-	#miroDirectionPreview rect.card { fill: #ffffff; stroke: #64748b; stroke-width: 4; }
-	#miroDirectionPreview .sticky rect { fill: #fff2a8; stroke: #d6b656; stroke-width: 6; }
-	#miroDirectionPreview .sticky text { fill: #5c4a00; font-size: 50px; font-weight: bold; }
-	#miroDirectionNote { margin-top: 4px; font-size: 0.85em; color: #333; line-height: 1.5; }
+	/* 向き: 左の 3×3 の図で選び(真ん中が付箋)、右の図で、選んだ向きにフレームが並ぶ順番を見せる */
+	.miroDirectionRow { display: flex; gap: 16px; align-items: stretch; }
+	#miroDirectionChooser, #miroDirectionPreview { display: block; height: auto; background: #fafafa; border: 1px solid #e5e7eb; border-radius: 8px; user-select: none; }
+	#miroDirectionChooser { width: 240px; flex: none; }
+	#miroDirectionPreview { flex: 1; min-width: 0; }
+	#miroDirectionChooser .slot { cursor: pointer; outline: none; }
+	#miroDirectionChooser .slot rect { fill: #ffffff; stroke: #e5e7eb; stroke-width: 2; }
+	#miroDirectionChooser .slot text { fill: #555; font-size: 13px; }
+	#miroDirectionChooser .slot text.arrow { font-size: 18px; }
+	#miroDirectionChooser .slot:hover rect, #miroDirectionChooser .slot:focus-visible rect { stroke: #93c5fd; }
+	#miroDirectionChooser .slot.selected rect { fill: #eff6ff; stroke: #2563eb; stroke-width: 2.5; }
+	#miroDirectionChooser .slot.selected text { fill: #1e3a8a; font-weight: bold; }
+	#miroDirectionChooser .sticky rect, #miroDirectionPreview .sticky rect { fill: #fff2a8; stroke: #d6b656; stroke-width: 2; }
+	#miroDirectionChooser .sticky text, #miroDirectionPreview .sticky text { fill: #5c4a00; font-size: 12px; font-weight: bold; }
+	#miroDirectionPreview .file path { fill: #ffffff; stroke: #334155; stroke-width: 1.5; }
+	#miroDirectionPreview .file text { fill: #1e293b; font-size: 15px; font-weight: bold; }
+	#miroDirectionPreview .file.later path { stroke: #94a3b8; stroke-dasharray: 4 3; }
+	#miroDirectionPreview .file.later text { fill: #94a3b8; font-size: 12px; font-weight: normal; }
+	#miroDirectionPreview .order { stroke: #b85450; stroke-width: 3; fill: none; }
+	#miroDirectionPreview .caption { fill: #555; font-size: 11px; }
+	#miroDirectionNote { margin-top: 6px; font-size: 0.85em; color: #333; line-height: 1.5; }
 	.miroDirectionRadios { display: none; }
 	/* 「ボードに置く」は入力欄の右端にそろえる */
 	.miroAnchorActions { display: flex; justify-content: flex-end; }
@@ -1825,7 +1834,10 @@
 						<input type="text" id="miroAnchorName" maxlength="60" placeholder="例: 設計書・定例10/20">
 						<label>向き(付箋から見て、どちらにフレームを出すか)</label>
 						<div>
-							<svg id="miroDirectionPreview" viewBox="100 100 1800 1400" role="radiogroup" aria-label="向き" xmlns="http://www.w3.org/2000/svg"></svg>
+							<div class="miroDirectionRow">
+								<svg id="miroDirectionChooser" viewBox="0 0 240 240" role="radiogroup" aria-label="向き" xmlns="http://www.w3.org/2000/svg"></svg>
+								<svg id="miroDirectionPreview" viewBox="0 0 330 270" role="img" aria-label="選んだ向きにフレームが並ぶ順番" xmlns="http://www.w3.org/2000/svg"></svg>
+							</div>
 							<div id="miroDirectionNote"></div>
 							<div class="miroDirectionRadios">
 								<input type="radio" name="miroAnchorDirection" value="upper-left"><input type="radio" name="miroAnchorDirection" value="up"><input type="radio" name="miroAnchorDirection" value="upper-right">
@@ -6779,70 +6791,117 @@ document.getElementById("miroAnchorPlaceButton").addEventListener("click", async
 });
 document.getElementById("miroAnchorReloadButton").addEventListener("click", loadMiroAnchors);
 
-// 向きの図。付箋(真ん中)のまわりに 8 つの置き場所を描き、押して選ぶ。選んだ向きは、フレームの形(横は横長・上下は縦長・斜めは正方形に近い)と
-// 中の資料の並び(読む順)まで描く。大きさの比は実際の書き出し(lib/miro-layout-plan.js)に合わせてある
-const MIRO_DIRECTION_SLOTS = [
-	{id: "upper-left", x: 420, y: 220, w: 360, h: 360, columns: 3, rows: 3, note: "付箋の左上に、フレームの右下の角を付箋の左上の角へ向けて出します(正方形に近い形)"},
-	{id: "up", x: 900, y: 140, w: 260, h: 440, columns: 3, rows: 4, note: "付箋の上に、左の端をそろえて出します(縦長。1 行 3 枚)"},
-	{id: "upper-right", x: 1220, y: 220, w: 360, h: 360, columns: 3, rows: 3, note: "付箋の右上に、フレームの左下の角を付箋の右上の角へ向けて出します(正方形に近い形)"},
-	{id: "left", x: 140, y: 700, w: 640, h: 200, columns: 8, rows: 1, note: "付箋の左に、上の端をそろえて出します(横長。1 行 8 枚で折り返す)"},
-	{id: "right", x: 1220, y: 700, w: 640, h: 200, columns: 8, rows: 1, note: "付箋の右に、上の端をそろえて出します(横長。1 行 8 枚で折り返す)"},
-	{id: "lower-left", x: 420, y: 1020, w: 360, h: 360, columns: 3, rows: 3, note: "付箋の左下に、フレームの右上の角を付箋の左下の角へ向けて出します(正方形に近い形)"},
-	{id: "down", x: 900, y: 1020, w: 260, h: 440, columns: 3, rows: 4, note: "付箋の下に、左の端をそろえて出します(縦長。1 行 3 枚)"},
-	{id: "lower-right", x: 1220, y: 1020, w: 360, h: 360, columns: 3, rows: 3, note: "付箋の右下に、フレームの左上の角を付箋の右下の角へ向けて出します(正方形に近い形)"}
+// 向きの図。左の 3×3(真ん中が付箋)で選び、右に、選んだ向きにフレームが並ぶ順番を描く
+// (書き出しの置き方は lib/miro-layout-plan.js。横・上下はまっすぐ外へ、斜めは付箋のまわりを輪を広げるように埋める)
+const MIRO_DIRECTION_CELLS = [
+	{id: "upper-left", col: 0, row: 0, arrow: "↖"}, {id: "up", col: 1, row: 0, arrow: "↑"}, {id: "upper-right", col: 2, row: 0, arrow: "↗"},
+	{id: "left", col: 0, row: 1, arrow: "←"}, {id: "right", col: 2, row: 1, arrow: "→"},
+	{id: "lower-left", col: 0, row: 2, arrow: "↙"}, {id: "down", col: 1, row: 2, arrow: "↓"}, {id: "lower-right", col: 2, row: 2, arrow: "↘"}
 ];
+const MIRO_DIRECTION_NOTES = {
+	"right": "付箋の右に、上の端をそろえて出します(横長。1 行 8 枚で折り返す)。2 回目からは、その右へ並べます",
+	"left": "付箋の左に、上の端をそろえて出します(横長。1 行 8 枚で折り返す)。2 回目からは、その左へ並べます",
+	"up": "付箋の上に、左の端をそろえて出します(縦長。1 行 3 枚)。2 回目からは、その上へ並べます",
+	"down": "付箋の下に、左の端をそろえて出します(縦長。1 行 3 枚)。2 回目からは、その下へ並べます",
+	"upper-right": "付箋のまわりを、右上へ向かって輪を広げるように埋めます(右 → 上 → 右上 → その外側の輪)。フレームは正方形に近い形",
+	"lower-right": "付箋のまわりを、右下へ向かって輪を広げるように埋めます(右 → 下 → 右下 → その外側の輪)。フレームは正方形に近い形",
+	"upper-left": "付箋のまわりを、左上へ向かって輪を広げるように埋めます(左 → 上 → 左上 → その外側の輪)。フレームは正方形に近い形",
+	"lower-left": "付箋のまわりを、左下へ向かって輪を広げるように埋めます(左 → 下 → 左下 → その外側の輪)。フレームは正方形に近い形"
+};
+// 斜めの輪の順(lib/miro-layout-plan.js の ringCells と同じ)。[横へ何マス, 縦へ何マス]
+const MIRO_RING_ORDER = [[1, 0], [0, 1], [1, 1], [2, 0], [2, 1], [0, 2], [1, 2], [2, 2]];
+const miroDirectionChooser = document.getElementById("miroDirectionChooser");
 const miroDirectionPreview = document.getElementById("miroDirectionPreview");
 const miroDirectionChosen = () => document.querySelector('input[name="miroAnchorDirection"]:checked')?.value || "right";
-const renderMiroDirectionPreview = () => {
-	const chosen = miroDirectionChosen();
+const miroStickyLabel = () => {
 	const name = document.getElementById("miroAnchorName").value.trim();
-	const parts = [];
-	for (const slot of MIRO_DIRECTION_SLOTS) {
-		const selected = slot.id === chosen;
-		const label = MIRO_DIRECTION_NAMES[slot.id];
-		parts.push('<g class="slot' + (selected ? " selected" : "") + '" data-direction="' + slot.id + '" role="radio" tabindex="0" aria-checked="' + selected + '" aria-label="' + label + '">'
-			+ '<rect class="frame" x="' + slot.x + '" y="' + slot.y + '" width="' + slot.w + '" height="' + slot.h + '" rx="12"/>');
-		if (selected) {
-			// フレームの中の資料(読む順。左上から右へ、行が埋まったら次の行)
-			const pad = 24;
-			const gap = 14;
-			const cw = (slot.w - pad * 2 - gap * (slot.columns - 1)) / slot.columns;
-			const ch = Math.min(cw * 1.35, (slot.h - pad * 2 - 70 - gap * (slot.rows - 1)) / slot.rows);
-			for (let r = 0; r < slot.rows; r++) {
-				for (let c = 0; c < slot.columns; c++) {
-					parts.push('<rect class="card" x="' + (slot.x + pad + c * (cw + gap)) + '" y="' + (slot.y + pad + 70 + r * (ch + gap)) + '" width="' + cw + '" height="' + ch + '" rx="4"/>');
-				}
-			}
-			// フレームの名前(フレームの幅に収まらなければ「…」で切る)
-			const fontSize = 34;
-			const maxChars = Math.max(3, Math.floor((slot.w - pad * 2) / fontSize));
-			const title = [...((name || "名前") + " [日時]")];
-			const shown = title.length > maxChars ? title.slice(0, maxChars - 1).join("") + "…" : title.join("");
-			parts.push('<text x="' + (slot.x + pad) + '" y="' + (slot.y + pad + 40) + '" font-size="' + fontSize + '">' + escapeHtml(shown) + '</text>');
-		} else {
-			parts.push('<text x="' + (slot.x + slot.w / 2) + '" y="' + (slot.y + slot.h / 2 + 22) + '" text-anchor="middle">' + label + '</text>');
-		}
-		parts.push('</g>');
+	return name === "" ? "付箋" : (name.length > 5 ? name.slice(0, 5) + "…" : name);
+};
+const renderMiroDirectionChooser = () => {
+	const chosen = miroDirectionChosen();
+	const size = 70;
+	const gap = 6;
+	const at = (n) => 8 + n * (size + gap);
+	const parts = MIRO_DIRECTION_CELLS.map((c) => {
+		const selected = c.id === chosen;
+		return '<g class="slot' + (selected ? " selected" : "") + '" data-direction="' + c.id + '" role="radio" tabindex="0" aria-checked="' + selected + '" aria-label="' + MIRO_DIRECTION_NAMES[c.id] + '">'
+			+ '<rect x="' + at(c.col) + '" y="' + at(c.row) + '" width="' + size + '" height="' + size + '" rx="8"/>'
+			+ '<text class="arrow" x="' + (at(c.col) + size / 2) + '" y="' + (at(c.row) + 30) + '" text-anchor="middle">' + c.arrow + '</text>'
+			+ '<text x="' + (at(c.col) + size / 2) + '" y="' + (at(c.row) + 52) + '" text-anchor="middle">' + MIRO_DIRECTION_NAMES[c.id] + '</text></g>';
+	});
+	parts.push('<g class="sticky"><rect x="' + at(1) + '" y="' + at(1) + '" width="' + size + '" height="' + size + '" rx="6"/>'
+		+ '<text x="' + (at(1) + size / 2) + '" y="' + (at(1) + 31) + '" text-anchor="middle">[DM]</text>'
+		+ '<text x="' + (at(1) + size / 2) + '" y="' + (at(1) + 49) + '" text-anchor="middle">' + escapeHtml(miroStickyLabel()) + '</text></g>');
+	miroDirectionChooser.innerHTML = parts.join("");
+};
+/** 選んだ向きに、フレームが並ぶ順番(付箋を真ん中のマスにして、1 → 2 → 3 …)。紙の絵はフレーム 1 つ */
+const renderMiroDirectionOrder = () => {
+	const chosen = miroDirectionChosen();
+	const cell = 64;
+	const gap = 22;
+	const step = cell + gap;
+	const diagonal = ["upper-right", "lower-right", "upper-left", "lower-left"].includes(chosen);
+	const sx = chosen.includes("left") ? -1 : chosen.includes("right") ? 1 : 0;
+	const sy = chosen.includes("up") || chosen.startsWith("upper") ? -1 : chosen.includes("down") || chosen.startsWith("lower") ? 1 : 0;
+	// 並ぶマス([横, 縦]。付箋が [0, 0])。斜めは輪の順(1 周目は濃く、2 周目は薄く)、横・上下はまっすぐ 3 つ
+	const cells = diagonal ? MIRO_RING_ORDER : [1, 2, 3].map((n) => [sx !== 0 ? n : 0, sy !== 0 ? n : 0]);
+	const xs = cells.map(([i]) => i * (sx || 1)).concat([0]);
+	const ys = cells.map(([, j]) => j * (sy || 1)).concat([0]);
+	const minX = Math.min(...xs);
+	const minY = Math.min(...ys);
+	const width = (Math.max(...xs) - minX + 1) * step - gap;
+	const height = (Math.max(...ys) - minY + 1) * step - gap;
+	const ox = (330 - width) / 2;
+	const oy = (250 - height) / 2;
+	const pos = ([i, j]) => ({x: ox + (i * (sx || 1) - minX) * step, y: oy + (j * (sy || 1) - minY) * step});
+	const center = (c) => {
+		const p = pos(c);
+		return {x: p.x + cell / 2, y: p.y + cell / 2};
+	};
+	const parts = ['<defs><marker id="miroOrderHead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b85450"/></marker></defs>'];
+	const anchor = pos([0, 0]);
+	parts.push('<g class="sticky"><rect x="' + anchor.x + '" y="' + anchor.y + '" width="' + cell + '" height="' + cell + '" rx="4"/>'
+		+ '<text x="' + (anchor.x + cell / 2) + '" y="' + (anchor.y + 28) + '" text-anchor="middle">[DM]</text>'
+		+ '<text x="' + (anchor.x + cell / 2) + '" y="' + (anchor.y + 45) + '" text-anchor="middle">' + escapeHtml(miroStickyLabel()) + '</text></g>');
+	cells.forEach((c, index) => {
+		const p = pos(c);
+		const later = diagonal && index >= 3;
+		const fold = 12;
+		parts.push('<g class="file order-' + (index + 1) + (later ? " later" : " first") + '"><path d="M' + p.x + ',' + p.y + ' h' + (cell - fold) + ' l' + fold + ',' + fold + ' v' + (cell - fold) + ' h-' + cell + ' z M' + (p.x + cell - fold) + ',' + p.y + ' v' + fold + ' h' + fold + '"/>'
+			+ '<text x="' + (p.x + cell / 2) + '" y="' + (p.y + cell / 2 + 5) + '" text-anchor="middle">' + (index + 1) + '</text></g>');
+	});
+	// 順番の矢印(付箋 → 1 → 2 → 3)。マスの端から端へ
+	const route = [[0, 0], ...cells.slice(0, 3)];
+	for (let k = 0; k + 1 < route.length; k++) {
+		const a = center(route[k]);
+		const b = center(route[k + 1]);
+		const len = Math.hypot(b.x - a.x, b.y - a.y);
+		const ux = (b.x - a.x) / len;
+		const uy = (b.y - a.y) / len;
+		const trim = cell / 2 + 4;
+		parts.push('<line class="order" x1="' + (a.x + ux * trim) + '" y1="' + (a.y + uy * trim) + '" x2="' + (b.x - ux * trim) + '" y2="' + (b.y - uy * trim) + '" marker-end="url(#miroOrderHead)"/>');
 	}
-	parts.push('<g class="sticky"><rect x="900" y="700" width="200" height="200" rx="6"/><text x="1000" y="790" text-anchor="middle">[DM]</text>'
-		+ '<text x="1000" y="850" text-anchor="middle">' + escapeHtml(name.length > 4 ? name.slice(0, 4) + "…" : name || "付箋") + '</text></g>');
+	parts.push('<text class="caption" x="8" y="263">' + (diagonal ? "数字は書き出す順(空いていない所は飛ばす)" : "数字は書き出す順(同じ目印に続けて出したとき)") + '</text>');
 	miroDirectionPreview.innerHTML = parts.join("");
-	const slot = MIRO_DIRECTION_SLOTS.find((s) => s.id === chosen);
-	document.getElementById("miroDirectionNote").innerHTML = '<b>' + escapeHtml(MIRO_DIRECTION_NAMES[chosen]) + '</b>: ' + escapeHtml(slot.note)
-		+ '。ほかのフレームや付箋に重なるときは、さらに外側へずらして出します。';
+	document.getElementById("miroDirectionNote").innerHTML = '<b>' + escapeHtml(MIRO_DIRECTION_NAMES[chosen]) + '</b>: ' + escapeHtml(MIRO_DIRECTION_NOTES[chosen])
+		+ '。ほかのフレームや付箋に重なるときは、その先へずらして出します。';
+};
+const renderMiroDirectionPreview = () => {
+	renderMiroDirectionChooser();
+	renderMiroDirectionOrder();
 };
 const chooseMiroDirection = (direction) => {
 	const input = document.querySelector('input[name="miroAnchorDirection"][value="' + direction + '"]');
 	if (input == null) return;
 	input.checked = true;
 	renderMiroDirectionPreview();
-	miroDirectionPreview.querySelector('[data-direction="' + direction + '"]')?.focus();
+	miroDirectionChooser.querySelector('[data-direction="' + direction + '"]')?.focus();
 };
-miroDirectionPreview.addEventListener("click", (ev) => {
+miroDirectionChooser.addEventListener("click", (ev) => {
 	const slot = ev.target.closest(".slot");
 	if (slot) chooseMiroDirection(slot.dataset.direction);
 });
-miroDirectionPreview.addEventListener("keydown", (ev) => {
+miroDirectionChooser.addEventListener("keydown", (ev) => {
 	const slot = ev.target.closest(".slot");
 	if (slot && (ev.key === "Enter" || ev.key === " ")) {
 		ev.preventDefault();

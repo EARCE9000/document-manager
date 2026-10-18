@@ -5,7 +5,7 @@
  *
  * 書き出しは、ボードの目印(付箋)を基準にした向きで、毎回新しいフレームを置く。Miro には触らない。
  *   right / left / up / down                              目印の横・上・下
- *   upper-right / lower-right / upper-left / lower-left    目印の斜め(フレームの角を目印の角に向ける)
+ *   upper-right / lower-right / upper-left / lower-left    目印の斜めの方へ、目印のまわりのマスを輪を広げるように埋める(右上なら 右 → 上 → 右上 → …)
  *   cross  十字。資料をタグで 4 つに分け(miro-layout.js)、斜め 4 つのフレームに出す。フレームの隙間が十字の線になる。
  *          プロジェクトを渡されたときは、プロジェクトの概要カード(名前・説明・件数)を目印のすぐ下に。どこにも当たらない資料は「未分類」のフレームを下に
  * フレームの中は向きにかかわらず読む順(左上から右へ、行が埋まったら次の行)。フレームの形は向きに合わせる
@@ -151,6 +151,38 @@ const slotFor = (anchor, direction, {width, height}, gap) => {
 	}
 };
 
+// ---- 斜めの置き場所(付箋のまわりを、輪を広げるように埋める) ----
+// 付箋を真ん中にしたマス(フレームと同じ大きさ。資料は置かない)を 0 番目とし、フレームの大きさのマス目で数える。
+// 右上なら 1 周目は 右 → 上 → 右上、2 周目は 右右 → 右右上 → 上上 → 右上上 → 右右上上 … と、付箋に近い所から外へ。
+// 輪 k の中は、まず横へ k マスの列を付箋の高さから(j = 0..k-1)、次に縦へ k マスの段を付箋の列から(i = 0..k)。
+// ふさがっているマス(ほかのフレーム・付箋がある)は飛ばす。右下・左上・左下は向きを変えただけ
+const DIAGONALS = Object.freeze({"upper-right": [1, -1], "lower-right": [1, 1], "upper-left": [-1, -1], "lower-left": [-1, 1]});
+const RING_LIMIT = 8;
+/** 輪の順に並べたマス([横へ何マス, 縦へ何マス])。図の順番の表示にも使う */
+const ringCells = (rings = RING_LIMIT) => {
+	const cells = [];
+	for (let k = 1; k <= rings; k++) {
+		for (let j = 0; j < k; j++) cells.push([k, j]);
+		for (let i = 0; i <= k; i++) cells.push([i, k]);
+	}
+	return cells;
+};
+module.exports.ringCells = ringCells;
+/** 斜めの向きで、空いているいちばん近いマスの左上。どこも空いていなければ null */
+const ringSlot = (anchor, direction, {width, height}, gap, obstacles) => {
+	const [sx, sy] = DIAGONALS[direction];
+	const cx = (anchor.left + anchor.right) / 2;
+	const cy = (anchor.top + anchor.bottom) / 2;
+	const margin = gap / 2;
+	for (const [i, j] of ringCells()) {
+		const left = cx + sx * i * (width + gap) - width / 2;
+		const top = cy + sy * j * (height + gap) - height / 2;
+		const grown = {left: left - margin, right: left + width + margin, top: top - margin, bottom: top + height + margin};
+		if (!obstacles.some((o) => overlaps(grown, o))) return {left, top};
+	}
+	return null;
+};
+
 // ずらす向き(斜めは横へ。同じ段のまま外へ出す)
 const PUSH = Object.freeze({
 	"right": [1, 0], "left": [-1, 0], "up": [0, -1], "down": [0, 1],
@@ -257,7 +289,9 @@ module.exports.planExport = ({groups, anchor = null, free = null, obstacles = []
 			if (card != null) unit.push({kind: "card", ...cardBox, card});
 		} else {
 			const plan = planFrame(group.direction, group.documents, G);
-			const slot = slotFor(base, group.direction, plan, gap);
+			// 斜めは、付箋のまわりの空いているマスを輪の順に探す(無ければ斜めの角に置いて外へずらす)
+			const slot = (DIAGONALS[group.direction] != null ? ringSlot(base, group.direction, plan, gap, anchor == null ? blocked : [...blocked, anchor]) : null)
+				?? slotFor(base, group.direction, plan, gap);
 			unit.push({kind: "frame", title: group.title, direction: group.direction, area: null, ...boxOf(slot.left, slot.top, plan.width, plan.height), items: plan.items});
 		}
 		// 重なるなら外側へずらす(十字はまとめて右へ。目印は真ん中にあるので、ぶつかる相手に数えない)

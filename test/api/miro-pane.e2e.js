@@ -74,16 +74,21 @@ test.describe.serial("Miro の画面(実ブラウザ)", () => {
 
 		// 向きの既定は右
 		await expect(page.locator('input[name="miroAnchorDirection"]:checked')).toHaveValue("right");
-		// 向きは図で選ぶ: 付箋(真ん中)のまわりに 8 つの置き場所。選んだ向きはフレームの形と中の並びまで描く
-		const preview = page.locator("#miroDirectionPreview");
-		await expect(preview.locator(".slot")).toHaveCount(8);
-		await expect(preview.locator(".slot.selected")).toHaveAttribute("data-direction", "right");
+		// 向きは 3×3 の図(真ん中が付箋)で選び、右の図に、選んだ向きにフレームが並ぶ順番が出る
+		const chooser = page.locator("#miroDirectionChooser");
+		const order = page.locator("#miroDirectionPreview");
+		await expect(chooser.locator(".slot")).toHaveCount(8);
+		await expect(chooser.locator(".slot.selected")).toHaveAttribute("data-direction", "right");
+		await expect(order.locator(".file")).toHaveCount(3);
 		await expect(page.locator("#miroDirectionNote")).toContainText("付箋の右に");
 		await page.locator("#miroAnchorName").fill("定例");
-		await preview.locator('[data-direction="lower-left"]').click();
-		await expect(preview.locator(".slot.selected")).toHaveAttribute("data-direction", "lower-left");
-		await expect(preview.locator(".slot.selected .card")).toHaveCount(9);
-		await expect(preview.locator(".sticky")).toContainText("[DM]");
+		await chooser.locator('[data-direction="lower-left"]').click();
+		await expect(chooser.locator(".slot.selected")).toHaveAttribute("data-direction", "lower-left");
+		// 斜めは、付箋のまわりを輪を広げるように埋める(1 周目の 3 つと、その外側の輪)
+		await expect(order.locator(".file.first")).toHaveCount(3);
+		await expect(order.locator(".file.later")).toHaveCount(5);
+		await expect(order.locator(".sticky")).toContainText("定例");
+		await expect(page.locator("#miroDirectionNote")).toContainText("左 → 下 → 左下");
 		await expect(page.locator('input[name="miroAnchorDirection"]:checked')).toHaveValue("lower-left");
 		await page.locator("#miroAnchorNote").fill("議事録の最新");
 		await page.locator("#miroAnchorPlaceButton").click();
