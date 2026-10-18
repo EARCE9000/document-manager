@@ -6979,7 +6979,7 @@ const renderMiroDirectionChooser = () => {
 		+ '<text x="' + (at(1) + size / 2) + '" y="' + (at(1) + 49) + '" text-anchor="middle">' + escapeHtml(miroStickyLabel()) + '</text></g>');
 	miroDirectionChooser.innerHTML = parts.join("");
 };
-/** 選んだ向きに、フレームが並ぶ順番(付箋を真ん中のマスにして、1 → 2 → 3 …)。紙の絵はフレーム 1 つ */
+/** 選んだ向きに、フレームが並ぶ順番(付箋のマスから、1 → 2 → 3 …)。紙の絵はフレーム 1 つ。大きさや端のそろえ方は表さない(図は順番だけ) */
 const renderMiroDirectionOrder = () => {
 	const chosen = miroDirectionChosen();
 	const diagonal = ["upper-right", "lower-right", "upper-left", "lower-left"].includes(chosen);

@@ -115,6 +115,8 @@ const SQL_SET_EXPORT_DECORATIONS = `UPDATE miro_exports SET decorations = @decor
 const SQL_GET_EXPORT = `SELECT * FROM miro_exports WHERE id = ?`;
 const SQL_LIST_EXPORTS = `SELECT * FROM miro_exports ORDER BY created_at DESC LIMIT ?`;
 const SQL_LAST_EXPORT_OF = `SELECT * FROM miro_exports WHERE created_by = ? AND board_id = ? AND state = 'done' ORDER BY created_at DESC LIMIT 1`;
+// 同じ目印に前に出したフレーム(斜めのマスの埋まり方を知るため)
+const SQL_FRAMES_AT_ANCHOR = `SELECT frames FROM miro_exports WHERE board_id = ? AND anchor_item_id = ? AND state <> 'running'`;
 const SQL_LAST_EXPORT_AT_ANCHOR = `SELECT anchor_item_id, MAX(created_at) AS last_at FROM miro_exports WHERE board_id = ? AND anchor_item_id IS NOT NULL AND state = 'done' GROUP BY anchor_item_id`;
 // 手直しの順番取り(同じ書き出しを 2 つの頼みで同時に動かさない。複数台でも)
 const SQL_TAKE_LOCK = `
@@ -625,12 +627,22 @@ const runExport = async (job) => {
 			if (anchorBox == null) throw new Error("書き出す前に、目印が Miro で消されました");
 		}
 		const obstacles = scan.filter((e) => e.parentId == null && e.id !== job.anchorId).map((e) => e.box);
+		// 同じ目印に前に出した斜めのフレームのマス(消されたフレームは数えない。動かされていれば今の位置)
+		const placed = [];
+		if (job.anchorId != null) {
+			const frameBoxes = new Map(scan.filter((e) => e.parentId == null).map((e) => [String(e.id), e.box]));
+			for (const row of await ds.all(SQL_FRAMES_AT_ANCHOR, [board, job.anchorId])) {
+				for (const f of parseJson(row.frames, [])) {
+					if (Array.isArray(f.cell) && frameBoxes.has(String(f.frameId))) placed.push({direction: f.direction, cell: f.cell, box: frameBoxes.get(String(f.frameId))});
+				}
+			}
+		}
 		const groups = job.groups.map((g) => ({
 			direction: g.direction, title: g.title,
 			documents: g.documents.filter((d) => ready.get(d.id)?.payload).map((d) => ({documentId: d.id, title: d.entry_file, height: ready.get(d.id).height}))
 		})).filter((g) => g.documents.length > 0);
 		const plan = MiroLayoutPlan.planExport({
-			groups, anchor: anchorBox, free: anchorBox == null ? freeSpot(scan) : null, obstacles,
+			groups, anchor: anchorBox, free: anchorBox == null ? freeSpot(scan) : null, obstacles, placed,
 			input, geometry: LAYOUT
 		});
 
@@ -654,7 +666,7 @@ const runExport = async (job) => {
 				}
 				continue;
 			}
-			const record = {frameId: String(frame.id), title, direction: planned.direction, area: planned.area, left: planned.left, top: planned.top,
+			const record = {frameId: String(frame.id), title, direction: planned.direction, area: planned.area, ...(planned.cell ? {cell: planned.cell} : {}), left: planned.left, top: planned.top,
 				width: planned.width, height: planned.height};
 			frames.push(record);
 			await forEachConcurrently(planned.items, CONCURRENCY, async (item) => {

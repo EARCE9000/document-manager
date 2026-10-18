@@ -213,6 +213,34 @@ test.describe.serial("Miro に書き出す", () => {
 		expect(boxOf(frame).top).toBeGreaterThan(boxOf(memo).bottom);
 	});
 
+	test("斜め: 同じ目印に出すたびに 右 → 上 → 右上 のマスへ。付箋の側の端でそろえ、上の段は下の段のフレームの上に積む。消したフレームのマスは空く", async ({request}) => {
+		// ボードのほかのものから離れた所に、右上の目印(200 × 200。中心 (-20000, -20000))
+		await control(request, {addItem: {id: "9150000000000000001", type: "sticky_note", x: -20000, y: -20000, width: 200, height: 200, content: "<p>[DM]右上の試し</p><p>(右上)</p>"}});
+		const anchor = {left: -20100, right: -19900, top: -20100, bottom: -19900};
+		const exportOne = async (doc) => {
+			const record = await exportAndWait(request, null, {anchor: "右上の試し", documentIds: [doc.id]});
+			expect(record.state).toBe("done");
+			const frame = (await framesOf(request)).find((f) => f.id === record.frames[0].frameId);
+			return {record, cell: record.frames[0].cell, box: boxOf(frame)};
+		};
+		const first = await exportOne(docs.md);
+		const second = await exportOne(docs.png);
+		const third = await exportOne(docs.pdf);
+		expect([first.cell, second.cell, third.cell]).toEqual([[1, 0], [0, 1], [1, 1]]);
+		// 右: 下の端を付箋の下の端に。上: 左の端を付箋の左の端に、下の段(右のフレーム)の上に。右上: 上と同じ段で、上のフレームの右
+		expect(first.box.left).toBeCloseTo(anchor.right + 120, 3);
+		expect(first.box.bottom).toBeCloseTo(anchor.bottom, 3);
+		expect(second.box.left).toBeCloseTo(anchor.left, 3);
+		expect(second.box.bottom).toBeCloseTo(Math.min(anchor.top, first.box.top) - 120, 3);
+		expect(third.box.left).toBeCloseTo(second.box.right + 120, 3);
+		expect(third.box.bottom).toBeCloseTo(second.box.bottom, 3);
+		// 上のフレームを Miro で消すと、次はそのマスに出す
+		await control(request, {deleteItem: second.record.frames[0].frameId});
+		const again = await exportOne(docs.png);
+		expect(again.cell).toEqual([0, 1]);
+		expect(again.box.left).toBeCloseTo(anchor.left, 3);
+	});
+
 	test("向きは頼みで変えられる。目印の向きが読めないときは、向きを言われなければ断る", async ({request}) => {
 		await control(request, {addItem: {id: "9100000000000000003", type: "sticky_note", x: -3000, y: 0, width: 300, height: 300, content: "<p>[DM]読めない</p><p>(ななめ)</p>"}});
 		const list = await (await request.get("api/miro/anchors", {headers: ro})).json();

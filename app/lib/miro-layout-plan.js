@@ -152,10 +152,16 @@ const slotFor = (anchor, direction, {width, height}, gap) => {
 };
 
 // ---- 斜めの置き場所(付箋のまわりを、輪を広げるように埋める) ----
-// 付箋を真ん中にしたマス(フレームと同じ大きさ。資料は置かない)を 0 番目とし、フレームの大きさのマス目で数える。
+// 付箋のマスを [0, 0] とし、[横へ何マス, 縦へ何マス] で数える。
 // 右上なら 1 周目は 右 → 上 → 右上、2 周目は 右右 → 右右上 → 上上 → 右上上 → 右右上上 … と、付箋に近い所から外へ。
 // 輪 k の中は、まず横へ k マスの列を付箋の高さから(j = 0..k-1)、次に縦へ k マスの段を付箋の列から(i = 0..k)。
-// ふさがっているマス(ほかのフレーム・付箋がある)は飛ばす。右下・左上・左下は向きを変えただけ
+// 置く位置は付箋の側の端でそろえる:
+//   付箋と同じ段(j = 0)は、右下・左下ならフレームの上の端を付箋の上の端に、右上・左上なら下の端を付箋の下の端にそろえる。
+//   付箋と同じ列(i = 0)は、右上・右下ならフレームの左の端を付箋の左の端に、左上・左下なら右の端を付箋の右の端にそろえる。
+//   段は棚のように積む: 外側の段は、内側の段のフレーム(付箋も)のいちばん外の端から間を空けて置き、同じ段のフレームは付箋の側の端がそろう。
+//   同じ段の中では、内側の列のフレーム(付箋の段なら付箋も)のいちばん外の端から間を空けて横へ並べる(フレームの大きさがまちまちでも重ならない)。
+// 同じ目印に前に出したフレームがどのマスにあるかは、書き出しの記録(frames[].cell)から受け取る。
+// ふさがっているマス(前に出したフレームがある・ほかのものと重なる)は飛ばす。右下・左上・左下は向きを変えただけ
 const DIAGONALS = Object.freeze({"upper-right": [1, -1], "lower-right": [1, 1], "upper-left": [-1, -1], "lower-left": [-1, 1]});
 const RING_LIMIT = 8;
 /** 輪の順に並べたマス([横へ何マス, 縦へ何マス])。図の順番の表示にも使う */
@@ -168,17 +174,31 @@ const ringCells = (rings = RING_LIMIT) => {
 	return cells;
 };
 module.exports.ringCells = ringCells;
-/** 斜めの向きで、空いているいちばん近いマスの左上。どこも空いていなければ null */
-const ringSlot = (anchor, direction, {width, height}, gap, obstacles) => {
+/**
+ * 斜めの向きで、空いているいちばん近いマスの左上とマス。どこも空いていなければ null
+ * @param {Array<{cell: number[], box: {left, top, right, bottom}}>} placed 同じ目印・同じ向きに前に出したフレーム(ボードの今の位置)
+ */
+const ringSlot = (anchor, direction, {width, height}, gap, obstacles, placed = []) => {
 	const [sx, sy] = DIAGONALS[direction];
-	const cx = (anchor.left + anchor.right) / 2;
-	const cy = (anchor.top + anchor.bottom) / 2;
 	const margin = gap / 2;
+	const taken = new Set(placed.map((p) => p.cell.join(",")));
 	for (const [i, j] of ringCells()) {
-		const left = cx + sx * i * (width + gap) - width / 2;
-		const top = cy + sy * j * (height + gap) - height / 2;
+		if (taken.has(`${i},${j}`)) continue;
+		// 同じ段で内側の列にあるもの・内側の段にあるもの(付箋も入れる)
+		const sameRow = placed.filter((p) => p.cell[1] === j && p.cell[0] < i).map((p) => p.box);
+		const innerRows = placed.filter((p) => p.cell[1] < j).map((p) => p.box);
+		if (j === 0) sameRow.push(anchor);
+		innerRows.push(anchor);
+		let left;
+		if (i === 0) left = sx > 0 ? anchor.left : anchor.right - width;
+		else if (sx > 0) left = Math.max(anchor.right, ...sameRow.map((b) => b.right)) + gap;
+		else left = Math.min(anchor.left, ...sameRow.map((b) => b.left)) - gap - width;
+		let top;
+		if (j === 0) top = sy > 0 ? anchor.top : anchor.bottom - height;
+		else if (sy > 0) top = Math.max(...innerRows.map((b) => b.bottom)) + gap;
+		else top = Math.min(...innerRows.map((b) => b.top)) - gap - height;
 		const grown = {left: left - margin, right: left + width + margin, top: top - margin, bottom: top + height + margin};
-		if (!obstacles.some((o) => overlaps(grown, o))) return {left, top};
+		if (!obstacles.some((o) => overlaps(grown, o))) return {left, top, cell: [i, j]};
 	}
 	return null;
 };
@@ -225,14 +245,18 @@ const clearOf = (boxes, direction, obstacles, gap) => {
  *   null なら空いている所(free の左上)に、向きの形のまま出す
  * @param {?{left: number, top: number}} options.free 目印が無いときの置き場所(ボードの中身の右)
  * @param {Array<{left, top, right, bottom}>} options.obstacles ボードにあるもの(重ねない)。目印そのものは入れない
+ * @param {Array<{direction: string, cell: number[], box: object}>} [options.placed] 同じ目印に前に出した斜めのフレームのマス(書き出しの記録の frames[].cell と、ボードの今の位置)
  * @param {{project: ?object, documents: object[]}} options.input miro-layout.js の loadDocumentsInput() の形(十字の振り分けに使う。project が無ければ概要カードを置かない)
  * @param {object} options.geometry miro-export.js の LAYOUT
  * @returns {{frames: Array<{title: string, direction: string, area: ?string, left: number, top: number, width: number, height: number,
  *            items: Array<{documentId: string, x: number, y: number, color: ?string}>}>,
  *            cards: Array<{text: string, x: number, y: number, width: number, fontSize: number}>, reports: object[]}}
  */
-module.exports.planExport = ({groups, anchor = null, free = null, obstacles = [], input = {documents: []}, geometry: G}) => {
+module.exports.planExport = ({groups, anchor = null, free = null, obstacles = [], placed = [], input = {documents: []}, geometry: G}) => {
 	const frames = [];
+	// 斜めのマスの埋まり方(向きごと)。前の書き出しの分に、この書き出しで置いた分を足していく
+	const cellsOf = (direction) => placedHere.filter((p) => p.direction === direction && Array.isArray(p.cell) && p.box != null);
+	const placedHere = [...placed];
 	const cards = [];
 	const reports = [];
 	const blocked = anchor == null ? [] : [...obstacles];
@@ -290,16 +314,18 @@ module.exports.planExport = ({groups, anchor = null, free = null, obstacles = []
 		} else {
 			const plan = planFrame(group.direction, group.documents, G);
 			// 斜めは、付箋のまわりの空いているマスを輪の順に探す(無ければ斜めの角に置いて外へずらす)
-			const slot = (DIAGONALS[group.direction] != null ? ringSlot(base, group.direction, plan, gap, anchor == null ? blocked : [...blocked, anchor]) : null)
+			const slot = (DIAGONALS[group.direction] != null ? ringSlot(base, group.direction, plan, gap, anchor == null ? blocked : [...blocked, anchor], cellsOf(group.direction)) : null)
 				?? slotFor(base, group.direction, plan, gap);
-			unit.push({kind: "frame", title: group.title, direction: group.direction, area: null, ...boxOf(slot.left, slot.top, plan.width, plan.height), items: plan.items});
+			unit.push({kind: "frame", title: group.title, direction: group.direction, area: null, cell: slot.cell ?? null, ...boxOf(slot.left, slot.top, plan.width, plan.height), items: plan.items});
 		}
 		// 重なるなら外側へずらす(十字はまとめて右へ。目印は真ん中にあるので、ぶつかる相手に数えない)
 		const against = group.direction === "cross" || anchor == null ? blocked : [...blocked, anchor];
 		const {dx, dy} = clearOf(unit, group.direction, against, G.frameGap);
 		for (const u of unit) {
-			const moved = {...u, left: u.left + dx, right: u.right + dx, top: u.top + dy, bottom: u.bottom + dy};
+			const moved = {...u, cell: dx === 0 && dy === 0 ? u.cell ?? null : null, left: u.left + dx, right: u.right + dx, top: u.top + dy, bottom: u.bottom + dy};
 			blocked.push(moved);
+			// マスに置けたもの(ずらしていないもの)だけ、次の斜めのマスの基準にする
+			if (moved.cell != null) placedHere.push({direction: u.direction, cell: u.cell, box: moved});
 			if (u.kind === "frame") frames.push(moved);
 			else cards.push({...u.card, x: u.card.x + dx, y: u.card.y + dy});
 		}
@@ -316,7 +342,7 @@ module.exports.planExport = ({groups, anchor = null, free = null, obstacles = []
 		for (const c of cards) Object.assign(c, {x: c.x + dx, y: c.y + dy});
 	}
 	return {
-		frames: frames.map((f) => ({title: f.title, direction: f.direction, area: f.area, left: Math.round(f.left), top: Math.round(f.top),
+		frames: frames.map((f) => ({title: f.title, direction: f.direction, area: f.area, cell: anchor == null ? null : f.cell ?? null, left: Math.round(f.left), top: Math.round(f.top),
 			width: Math.ceil(f.width), height: Math.ceil(f.height), items: f.items})),
 		cards: cards.map((c) => ({...c, x: Math.round(c.x), y: Math.round(c.y)})),
 		reports
