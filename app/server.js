@@ -1600,7 +1600,7 @@ const deliverDocumentActivity = (payload) => {
 // 即座にローカル配信され、Postgres(複数インスタンス)ではLISTEN/NOTIFYで全インスタンスへ伝播し、
 // 各インスタンスが自分に繋がるSSEクライアントへ配信する(発行元インスタンスにも届く)。
 // 呼び出し側の使い勝手は従来と同じ(broadcast*()を呼ぶだけ)。
-// Miro へは自動で書き出さない(人が頼んだときだけ: lib/miro-sync.js)
+// Miro へは自動で書き出さない(人が頼んだときだけ: lib/miro-export.js)
 const broadcastDocumentsChanged = () => {
 	ds.notify("documents_changed").catch((err) => logger.error({err}, "::notify:documents_changed"));
 };
@@ -3410,6 +3410,7 @@ app.get(BASE_URL_PATH + 'api/openapi.json', requireAuth, async (req, res) => {
 			baseUrl: resolveSpecBaseUrl(req),
 			vectorSearchEnabled: VectorSearch.isEnabled(),
 			mockupsEnabled: await mockupsEnabled(),
+			miroEnabled: await MiroConnection.isConfigured(),
 			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0",
 			clientVersion: bundledSkillClientVersion()
 		}));
@@ -3427,6 +3428,7 @@ app.get(BASE_URL_PATH + 'api/usage.md', requireAuth, async (req, res) => {
 			baseUrl: resolveSpecBaseUrl(req),
 			vectorSearchEnabled: VectorSearch.isEnabled(),
 			mockupsEnabled: await mockupsEnabled(),
+			miroEnabled: await MiroConnection.isConfigured(),
 			version: versionInfo != null ? String(versionInfo.VERSION || "0") : "0",
 			clientVersion: bundledSkillClientVersion()
 		}));
@@ -4109,9 +4111,9 @@ app.get(BASE_URL_PATH + 'api/projects/:id/tree', requireAuth, async (req, res) =
  * 画面とMarkdownで並びが食い違わないよう、組み立ては lib/project-manifest.js に寄せている。
  */
 /**
- * ---- Miro に資料を出す(プロジェクト単位) ----
- * 連携で選んだボードに、プロジェクトごとの枠を作って資料を並べ、連動しているあいだ変更を反映する
- * (lib/miro-sync.js)。Miro に出すのは写しで、正本は Document Manager のまま。
+ * ---- Miro に資料を書き出す ----
+ * 連携で選んだボードに、頼まれたときだけ、目印を基準に新しいフレームを作って資料を並べる(lib/miro-export.js)。
+ * 自動では書き出さない。Miro に出すのは写しで、正本は Document Manager のまま。
  *
  * 資料ごとに Miro へ出す中身を用意する。Miro に置けるのは PDF(資料)と画像。
  *   .pdf                        元ファイルのまま
@@ -5307,7 +5309,6 @@ const main = async () => {
 			if (health != null) logger.info({libreOffice: health.libreOffice, maxBytes: health.maxBytes}, "体裁つき表示: 変換サービスに接続できました");
 		}).catch((err) => logger.error(err, "::checkHealth"));
 	}
-	// Miro に連動しているプロジェクトの定期の反映(Miro 側で消された・動かされたことを見に行く)
 	// PDFでの持ち出し(HTML→PDF)の接続確認。こちらも繋がらなくてもアプリは動く
 	if (HtmlPdf.isEnabled()) {
 		HtmlPdf.checkHealth().then((health) => {

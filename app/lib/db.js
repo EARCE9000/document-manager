@@ -337,7 +337,7 @@ const createSchema = (targetDb) => {
 			-- 資料の見出しに付ける、Document Manager を開くリンクの元(連携した画面の公開URL)
 			public_base_url TEXT
 		);
-		-- プロジェクトごとの連動(ボード上の枠)
+		-- プロジェクトごとの連動(ボード上の枠)。自動の同期をやめる前の表で、今は使わない(書き出しは miro_exports)
 		CREATE TABLE IF NOT EXISTS miro_projects (
 			project_id TEXT PRIMARY KEY,
 			board_id TEXT NOT NULL,

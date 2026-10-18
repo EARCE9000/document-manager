@@ -1,6 +1,6 @@
 ---
 name: document-manager
-description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索(全文/意味検索)・版履歴の確認・ダウンロード・タグ付け・メモ・アーカイブと復元・関連文書の紐づけ・プロジェクトやフォルダへの配置・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「タグを付けて」「プロジェクトに入れて」「アーカイブして」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io/Excel・Word・PowerPoint等の成果物をDocument Managerへ保存・更新するときに使う。
+description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索(全文/意味検索)・版履歴の確認・ダウンロード・タグ付け・メモ・アーカイブと復元・関連文書の紐づけ・プロジェクトやフォルダへの配置・Miroのボードへの書き出し(目印の付箋を基準に新しいフレームへ)・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「タグを付けて」「プロジェクトに入れて」「アーカイブして」「Miroに書き出して」「Miroに目印を置いて」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io/Excel・Word・PowerPoint等の成果物をDocument Managerへ保存・更新するときに使う。
 ---
 
 # Document Manager

@@ -113,10 +113,43 @@ test.describe.serial("Miro の画面(実ブラウザ)", () => {
 		const row = page.locator("#miroExportList tbody tr").first();
 		await expect(row).toContainText("[DM]定例");
 		await expect(row).toContainText(`画面からMiro${STAMP}`);
-		await expect(row).toContainText("出した 2 件・出せない 1 件");
+		// 結果はバッジ(成功・失敗・処理中)。出せない資料が 1 件あるので失敗で、理由を下に出す
+		await expect(row.locator(".miroStatusBadge")).toHaveText("失敗");
+		await expect(row).toContainText("出せない形式など 1 件");
 		await expect(row.locator(".frames a")).toContainText(/^定例 \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\(左下\)$/);
 		await expect(row.locator(".frames a")).toHaveAttribute("href", /moveToWidget=/);
 		await expect(page.locator("#miroAnchorList tr", {hasText: "定例"})).not.toContainText("右(書いていない)");
+	});
+
+	test("プレビューのアイコンから、表示中の資料を目印を選んで書き出せる。出せない形式ではアイコンを出さない", async ({page}) => {
+		await page.goto("./");
+		await page.locator("#filterInput").fill(`メモ${STAMP}`);
+		await page.locator("#documentList li", {hasText: `メモ${STAMP}.txt`}).first().click();
+		await expect(page.locator("#previewTitle")).toContainText(`メモ${STAMP}.txt`);
+		await expect(page.locator("#previewMiroButton")).toBeHidden();
+
+		await page.locator("#filterInput").fill(`要件${STAMP}`);
+		await page.locator("#documentList li", {hasText: `要件${STAMP}.pdf`}).first().click();
+		await expect(page.locator("#previewTitle")).toContainText(`要件${STAMP}.pdf`);
+		await page.locator("#previewMiroButton").click();
+		const dialog = page.locator("#miroExportOverlay");
+		await expect(dialog).toBeVisible();
+		await expect(page.locator("#miroExportDocName")).toHaveText(`要件${STAMP}.pdf`);
+		// 目印の一覧(ボードの [DM]定例)と、空いている所に出す選択肢
+		await expect(page.locator("#miroExportAnchor option")).toHaveCount(2);
+		await expect(page.locator("#miroExportAnchor option").first()).toContainText("[DM]定例(左下)");
+		// 向きは選ばない(目印の付箋に書いた向きに従う)
+		await expect(page.locator("#miroExportDirection")).toHaveCount(0);
+		await page.locator("#miroExportTitleInput").fill("プレビューから");
+		const before = (await (await page.request.get(`${STUB_URL}/__items`)).json()).filter((i) => i.type === "frame").length;
+		await page.locator("#miroExportOkButton").click();
+		await expect(page.locator("#miroExportResult")).toContainText("書き出しました", {timeout: 15000});
+		await expect(page.locator("#miroExportResult a")).toHaveAttribute("href", /moveToWidget=/);
+		await expect(page.locator("#miroExportResult a")).toContainText("プレビューから [");
+		const frames = (await (await page.request.get(`${STUB_URL}/__items`)).json()).filter((i) => i.type === "frame");
+		expect(frames.length).toBe(before + 1);
+		await page.locator("#miroExportCancelButton").click();
+		await expect(dialog).toBeHidden();
 	});
 
 	test("閲覧だけの権限では、目印と履歴は見られるが、目印は置けない", async ({page}) => {

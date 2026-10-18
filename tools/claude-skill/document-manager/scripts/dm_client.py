@@ -49,7 +49,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
   python dm_client.py miro-layout <JSONファイル|-> [--export <ID>]   書き出したフレームに、位置・色・見出し・図形をまとめて当てる
                                                   (--export を省くと、自分の最後の書き出し)
   python dm_client.py miro-layout-report [文書ID...] [--project <P>]   十字で書き出したらどうなるか(タグの見直し用。Miro は変えない)
-    レイアウト: folder-columns(フォルダ列) / timeline(時系列) / split-shelves(左右分割・棚) / quadrant-cross(十字) / matrix(マトリクス) / custom(ユーザーカスタム)
+    向き(--direction): 右・左・上・下・右上・右下・左上・左下・十字(right / left / up / down / upper-right / lower-right / upper-left / lower-left / cross)
   python dm_client.py project-create <名前> [--description 説明]   プロジェクトの作成
   python dm_client.py project-update <プロジェクト> [--name 名前] [--description 説明]   名前・説明の変更(説明は "" で消す)
   python dm_client.py folder-create <プロジェクト> <名前> [--parent 親フォルダ]

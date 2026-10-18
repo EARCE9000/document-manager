@@ -471,8 +471,7 @@ const OPERATIONS = [
 		id: "listMiroExports", method: "get", path: "/api/miro/exports", role: "readonly", tag: "その他",
 		summary: "Miro への書き出しの状態と履歴",
 		description: "`exporting`: いま書き出しているか。`exports`: 書き出しの履歴(新しい順。`?limit=` 既定 30・最大 200。いつ・誰が・どのプロジェクト(`project`。省いたものは null)・どの目印に(`anchor`)・作ったフレーム(`frames[].url` で開ける)・件数(`counts`)・失敗(`error`))。"
-			+ "`directions`: 書き出せる向き。`available:false`は Miro との連携が無いか、書き出すボードが決まっていない。書き出しは自動では行わない(頼まれたときだけ)",
-		aiGuide: false
+			+ "`directions`: 書き出せる向き。`available:false`は Miro との連携が無いか、書き出すボードが決まっていない。書き出しは自動では行わない(頼まれたときだけ)"
 	},
 	{
 		id: "getMiroLayoutTags", method: "get", path: "/api/miro/layout-tags", role: "readonly", tag: "その他",
@@ -514,31 +513,27 @@ const OPERATIONS = [
 			400: "指示に正しくないところがある(details)・目印の向きが読めない(code: anchor_unreadable)・リンクが正しくない",
 			404: "目印がボードに無い(code: anchor_not_found。anchors にボードの目印の名前)・プロジェクトが無い",
 			409: "目印もリンクも無い(code: anchor_required)・同じ名前の目印が複数(code: anchor_ambiguous)・Miro と連携していない"
-		},
-		aiGuide: false
+		}
 	},
 	{
 		id: "getMiroExport", method: "get", path: "/api/miro/exports/:exportId", role: "readonly", tag: "その他",
 		summary: "1 回の書き出しの記録",
 		description: "`state`: `running` / `done` / `failed`。作ったフレーム(`frames[]`: `frameId`・`title`・`direction`・`url`・大きさ)、資料ごとの結果(`documents[]`: `placed` / `skipped` 出せない形式など / `failed` Miro が断った)と理由",
-		responses: {404: "無い"},
-		aiGuide: false
+		responses: {404: "無い"}
 	},
 	{
 		id: "listMiroAnchors", method: "get", path: "/api/miro/anchors", role: "readonly", tag: "その他",
 		summary: "ボードにある書き出しの目印の一覧",
 		description: "付箋・図形・文字で、1 行目が「[DM]名前」のもの。`name`・`direction`(かっこで囲んだ行の向き。無ければ null = 右)・`note`(それ以外の行。何を書き出すかのメモ)・`url`(Miro で開く)・`lastExportedAt`。"
 			+ "書き方が読めないものは `problem` に理由(向きが読めない・同じ名前が複数など)",
-		responses: {409: "Miro と連携していない"},
-		aiGuide: false
+		responses: {409: "Miro と連携していない"}
 	},
 	{
 		id: "placeMiroAnchor", method: "post", path: "/api/miro/anchors", role: "readwrite", tag: "その他",
 		summary: "書き出しの目印の付箋をボードに置く",
 		description: "「[DM]名前」「(向き)」「メモ」の付箋を、ボードの中身の右の空いている所に置く(利用者が Miro で好きな場所へ動かす)。名前は 60 文字まで、メモは 300 文字まで",
 		body: {schema: {type: "object", required: ["name"], properties: {name: {type: "string"}, direction: {type: "string"}, note: {type: "string"}}, example: {name: "設計書", direction: "右", note: "基本設計書と画面設計の最新版"}}},
-		responses: {400: "名前・向き・メモが正しくない", 409: "Miro と連携していない"},
-		aiGuide: false
+		responses: {400: "名前・向き・メモが正しくない", 409: "Miro と連携していない"}
 	},
 	{
 		id: "moveMiroDocument", method: "patch", path: "/api/miro/items/:documentId", role: "readwrite", tag: "その他",
@@ -821,11 +816,12 @@ const GUIDE_SECTIONS = [
 		entries: [{id: "listProjects"}, {id: "listArchivedProjects"}]
 	},
 	{
-		title: "プロジェクト作成・名前変更", roleNote: ROLE_NOTES.readwrite,
+		title: "プロジェクト作成・名前と説明の変更", roleNote: ROLE_NOTES.readwrite,
 		entries: [
-			{id: "createProject", trail: "JSONボディ: `{\"name\": \"プロジェクト名\"}`"},
-			{id: "renameProject", trail: "JSONボディ: `{\"name\": \"新しい名前\"}`"}
-		]
+			{id: "createProject", trail: "JSONボディ: `{\"name\": \"プロジェクト名\", \"description\": \"説明(任意)\"}`"},
+			{id: "renameProject", trail: "JSONボディ: `{\"name\": \"新しい名前\"}`・`{\"description\": \"説明\"}`(どちらか・両方。説明は空文字で消す)"}
+		],
+		notes: ["説明は 2000 文字まで。Miro に十字で書き出すと、目印の下の概要カードに出る"]
 	},
 	{
 		title: "プロジェクトのアーカイブ・復元・完全削除", roleNote: ROLE_NOTES.readwrite,
@@ -963,6 +959,26 @@ const GUIDE_SECTIONS = [
 		]
 	},
 	{
+		title: "Miro に書き出す(頼まれたときだけ)", miroOnly: true,
+		entries: [
+			{id: "listMiroAnchors", trail: "ボードの目印(付箋の `[DM]名前`)の一覧。名前・向き・メモ(何を書き出すかの覚え書き)・`url`"},
+			{id: "placeMiroAnchor", trail: "目印の付箋を置く(要 admin/readwrite ロール)。JSONボディ: `{\"name\": \"設計書\", \"direction\": \"右\", \"note\": \"メモ\"}`"},
+			{id: "exportMiro", trail: "書き出す(要 admin/readwrite ロール。202 で受け付け、裏で置く)。JSONボディ: `{\"documentIds\": [\"<文書ID>\"], \"anchor\": \"設計書\"}`"},
+			{id: "getMiroExport", trail: "1 回の書き出しの記録。`state` が `running` でなくなるまで数秒おきに取り直し、`frames[].url` を利用者に伝える"},
+			{id: "listMiroExports", trail: "書き出しの履歴(新しい順)"}
+		],
+		notes: [
+			"**自動では書き出さない。頼まれたときだけ書き出す**(打ち合わせで使っているボードが、知らないうちに変わらないように)。資料を更新したあとに「Miro にも出しますか」と聞くのはよいが、聞かずに出さない",
+			"書き出すたびに新しいフレームを作り、前に書き出したフレームには触らない。フレームの名前は「タイトル [YYYY-MM-DD hh:mm]」",
+			"場所はボードの目印(付箋の 1 行目が `[DM]名前`、かっこの行が向き)。`anchor` に名前、または `anchorUrl` に Miro の「リンクをコピー」で取った付箋・図形のリンクを渡す",
+			"目印もリンクも無いと 409(`code: anchor_required`)。**ボードの右の空いている所に出してよいか利用者に確かめてから** `free: true` で書き出す",
+			"向き(`direction`): 右・左・上・下・右上・右下・左上・左下・十字(`right` などの英語も可)。省くと目印に書いた向き。十字は資料をタグで 4 つに分ける",
+			"目印のメモは何を書き出すかの覚え書き。資料を言われず「設計書の目印に出して」とだけ頼まれたら、メモから資料を選び、**どれを出すか利用者に確かめてから**書き出す",
+			"書き出したあとの手直し(資料を動かす・見出しや囲みを足す)は `GET /api/miro/map`・`PATCH /api/miro/items/:documentId`・`POST /api/miro/layout`(詳しくは OpenAPI)。同梱クライアント(Skill)を使えば `miro-*` のコマンドで行える",
+			"Miro との連携と書き出すボードは管理者が画面で設定する。`code: not_connected` なら、管理者に設定を頼むよう利用者に伝える"
+		]
+	},
+	{
 		title: "同梱クライアント(Skill)の取得",
 		entries: [{id: "getSkillZip", trail: "Python/Node.jsのクライアントと手順書(SKILL.md)をZIPで返す"}],
 		notes: [
@@ -1018,6 +1034,14 @@ const CURL_EXAMPLES = (baseUrl) => [
  * x-ai-instructions と、利用ガイドの「AIへの指示」章で共用する
  */
 const AI_INSTRUCTIONS = [
+	{
+		when: "「Miro に出して」「〇〇の目印に書き出して」",
+		miroOnly: true,
+		do: `上記の「Miro に書き出す」のとおり、まず目印の一覧を取り、頼まれた目印に頼まれた資料を書き出してください。
+目印が無い・名前が曖昧なときは一覧を見せて確かめ、目印もリンクも無ければ、空いている所に出してよいか確かめてから書き出してください。
+**頼まれていないのに書き出さないでください**(打ち合わせで使っているボードが変わってしまうため)。
+書き出したら、フレームを開く URL(\`frames[].url\`)と、出せなかった資料があればその理由を伝えてください。`
+	},
 	{
 		when: "「アップして」「これ登録して」「保存しておいて」「アップロードして」",
 		do: `直前にあなたが作成・提示した文書(Markdown/HTMLなど)を単一ファイルとして保存し、
@@ -1155,10 +1179,10 @@ const buildSourcesTable = ({base, version, clientVersion, today}) => [
 	`| サーバーの版の確認 | - | \`GET ${base}/api/version\` (認証不要・数十バイト) |`
 ].join("\n");
 
-module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, mockupsEnabled, version, clientVersion}) => {
+module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, mockupsEnabled, miroEnabled = false, version, clientVersion}) => {
 	const base = String(baseUrl).replace(/\/$/, "");
-	// 無効な機能は載せない。載っていると、AIが呼んで503を食う(意味検索と同じ扱い)
-	const include = (item) => (!item.vectorOnly || vectorSearchEnabled) && (!item.mockupOnly || mockupsEnabled);
+	// 無効な機能は載せない。載っていると、AIが呼んで503を食う(意味検索と同じ扱い)。Miro は連携が無い環境では載せない
+	const include = (item) => (!item.vectorOnly || vectorSearchEnabled) && (!item.mockupOnly || mockupsEnabled) && (!item.miroOnly || miroEnabled);
 
 	const sections = GUIDE_SECTIONS.filter(include).map((section) => {
 		const lines = [`### ${section.title}${section.roleNote ? ` (${section.roleNote})` : ""}`];
@@ -1245,7 +1269,7 @@ const COMMON_RESPONSES = {
 /**
  * OpenAPI 3.1 ドキュメントを組み立てる(GET api/openapi.json)
  */
-module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, mockupsEnabled, version, clientVersion}) => {
+module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, mockupsEnabled, miroEnabled = false, version, clientVersion}) => {
 	const base = String(baseUrl).replace(/\/$/, "");
 	const paths = {};
 	for (const op of OPERATIONS) {
@@ -1294,7 +1318,7 @@ module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, mockupsEnabled, ve
 	}
 
 	const instructions = AI_INSTRUCTIONS
-		.filter((item) => !item.vectorOnly || vectorSearchEnabled)
+		.filter((item) => (!item.vectorOnly || vectorSearchEnabled) && (!item.miroOnly || miroEnabled))
 		.map(({when, do: what}) => ({when, do: what}));
 
 	return {

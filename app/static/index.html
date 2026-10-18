@@ -464,6 +464,11 @@
 	.miroTable th { color: #555; font-weight: normal; font-size: 0.85em; white-space: nowrap; }
 	.miroTable td.note { white-space: pre-line; color: #555; }
 	.miroTable .problem { color: #c0392b; font-size: 0.85em; }
+	/* 書き出しの結果(ベクトル索引の一覧の状態と同じ形) */
+	.miroStatusBadge { display: inline-block; font-size: 0.85em; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: #f4f5f7; color: #666; }
+	.miroStatusBadge.ok { background: #eaf7ea; color: #2f9e44; }
+	.miroStatusBadge.error { background: #fdecea; color: #c92a2a; }
+	.miroStatusBadge.processing { background: #e7f1fd; color: #1c6fd1; }
 	/* 目印の一覧: 名前は広め(表の 1/4)、向きは 2 文字分、残りはメモ */
 	.miroAnchorTable { table-layout: fixed; }
 	.miroAnchorTable col.name { width: 26%; }
@@ -1077,6 +1082,15 @@
 	#confirmOverlay { z-index: 1100; }
 	/* 確認の文は改行で段落を分けて書いている(\n)。詰めずにそのまま見せる */
 	#confirmOverlay .modalBox { max-width: 520px; }
+	/* プレビューから Miro に書き出す */
+	#miroExportModalBox { max-width: 560px; }
+	#miroExportForm { display: grid; gap: 6px; margin: 10px 0 4px; }
+	#miroExportForm label { font-size: 0.85em; color: #555; margin-top: 6px; }
+	#miroExportForm select, #miroExportForm input { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; font-family: inherit; }
+	#miroExportResult { margin: 10px 0 0; line-height: 1.7; }
+	#miroExportResult:empty { display: none; }
+	#miroExportResult .problem { color: #c0392b; }
+	#miroExportResult a { display: block; }
 	#confirmMessage { white-space: pre-line; }
 	/* プロジェクトの作成・編集(名前と説明) */
 	#projectEditModalBox { max-width: 560px; }
@@ -1753,6 +1767,10 @@
 					<button type="button" id="previewRenderButton" class="previewActionButton" title="体裁つきで開く(元のレイアウトをPDFで表示。別ウィンドウ)" aria-label="体裁つきで開く" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
 					</button>
+					<!-- 表示中の資料を Miro のボードに書き出す(Miro 連携がある環境で、Miro に出せる形式のときだけ出す) -->
+					<button type="button" id="previewMiroButton" class="previewActionButton previewWriteAction" title="Miro に書き出す(ボードの目印を選んで、新しいフレームに出します)" aria-label="Miro に書き出す" style="display:none;">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="6.5" y="6.5" width="4.5" height="5"/><rect x="13" y="6.5" width="4.5" height="3.5"/><rect x="13" y="12" width="4.5" height="5.5"/><rect x="6.5" y="13.5" width="4.5" height="4"/></svg>
+					</button>
 					<button type="button" id="previewReviseButton" class="previewActionButton previewWriteAction" title="新しい版をアップロード(この文書はアーカイブされ、タグ・プロジェクトは新しい版へ引き継がれます)" aria-label="新しい版をアップロード" style="display:none;">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 					</button>
@@ -1858,7 +1876,8 @@
 						Miro で付箋に直接「[DM]名前」「(右)」と書いても同じです。</li>
 					<li><b>書き出しを頼む</b>: Claude Code(Document Manager の Skill)に、目印の名前を言って頼みます。
 						<div class="example">「基本設計書と画面設計を、Miro の『設計書』の目印に書き出して」</div>
-						<div class="example">「定例の目印に、〇〇プロジェクトの議事録を十字で書き出して」(十字は、タグで資料を斜め 4 つに分けます)</div></li>
+						<div class="example">「定例の目印に、〇〇プロジェクトの議事録を十字で書き出して」(十字は、タグで資料を斜め 4 つに分けます)</div>
+						1 件だけなら、文書のプレビューの「Miro に書き出す」のアイコン(ボードの絵)からも書き出せます。</li>
 					<li><b>手直しを頼む</b>: 書き出したあとの並べ替えや、囲み・矢印の追加も頼めます(言わなければ、頼んだ人の最後の書き出しが対象)。</li>
 				</ol>
 			</div>
@@ -2230,6 +2249,25 @@
 	</div>
 </div>
 
+<div id="miroExportOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="miroExportModalBox" role="dialog" aria-labelledby="miroExportTitle">
+		<p id="miroExportTitle">Miro に書き出す</p>
+		<div class="docMeta" id="miroExportDocName"></div>
+		<div id="miroExportForm">
+			<label for="miroExportAnchor">書き出す場所(ボードの目印)</label>
+			<select id="miroExportAnchor"></select>
+			<label for="miroExportTitleInput">フレームの名前(空なら目印の名前。後ろに [日時] が付きます)</label>
+			<input type="text" id="miroExportTitleInput" maxlength="100">
+			<div class="docMeta">ボードに新しいフレームを作り、この資料を出します。向きは目印の付箋に書いた向きに従います(空いている所に出すときは右)。前に書き出したフレームには触りません。目印は上のメニューの「Miro」で置けます。</div>
+		</div>
+		<div id="miroExportResult"></div>
+		<div class="modalButtons">
+			<button id="miroExportCancelButton" type="button" class="modalButton">キャンセル</button>
+			<button id="miroExportOkButton" type="button" class="modalButton save">書き出す</button>
+		</div>
+	</div>
+</div>
+
 <div id="docPickerOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="docPickerModalBox">
 		<p id="docPickerTitle">文書を選択</p>
@@ -2507,6 +2545,7 @@ const versionHistoryRow = document.getElementById("versionHistoryRow");
 const previewReviseButton = document.getElementById("previewReviseButton");
 const previewRenderButton = document.getElementById("previewRenderButton");
 const previewPdfButton = document.getElementById("previewPdfButton");
+const previewMiroButton = document.getElementById("previewMiroButton");
 // PDFにできる文書(元ファイルの拡張子)。サーバ側(lib/html-pdf.js の SOURCE_EXTENSIONS)と揃える
 const PDF_SOURCE_EXTENSIONS = [".html", ".htm", ".md", ".markdown", ".mhtml", ".mht", ".drawio"];
 // 変換サービス(pdf-converter)がある環境か。ログイン時の応答で決まる
@@ -3252,6 +3291,7 @@ const clearPreview = () => {
 	copyLinkButton.style.display = "none";
 	copyVersionLinkButton.style.display = "none";
 	previewReviseButton.style.display = "none";
+	previewMiroButton.style.display = "none";
 	previewRenderButton.style.display = "none";
 	previewPdfButton.style.display = "none";
 	previewLinkPreviousButton.style.display = "none";
@@ -3327,6 +3367,9 @@ const showPreview = (doc) => {
 	const pdfSourceExtension = (String(doc.entryFile || "").match(/\.[^.]+$/) || [""])[0].toLowerCase();
 	previewPdfButton.style.display = htmlPdfEnabled && PDF_SOURCE_EXTENSIONS.includes(pdfSourceExtension) ? "inline-flex" : "none";
 	previewPdfButton.onclick = () => downloadAsPdf(doc);
+	// Miro に書き出す。Miro に出せる形式(PDF・画像・HTML などは変換サービスがあるとき・Office は体裁つき PDF があるとき)だけ
+	previewMiroButton.style.display = miroEnabled && !isArchived && canExportToMiro(doc) ? "inline-flex" : "none";
+	previewMiroButton.onclick = () => openMiroExportDialog(doc);
 	// 旧版の紐づけ(まだ旧版が無い文書)/紐付けの解除(既に旧版がある文書)
 	previewLinkPreviousButton.style.display = isArchived ? "none" : "inline-flex";
 	previewLinkPreviousButton.title = doc.previousId == null ? "旧版を紐づける" : "旧版の紐付けを解除";
@@ -6671,8 +6714,107 @@ const openMiroResultIfReturned = () => {
 	else showMiroFlash(false, MIRO_ERROR_REASONS[reason] || "Miro と連携できませんでした。");
 };
 
+// ---- プレビューから Miro に書き出す(表示中の資料 1 件) ----
+// 押してすぐには書き出さず、目印・向き・フレームの名前を選んで確かめてから書き出す(打ち合わせ中のボードにうっかり出さないように)
+const MIRO_IMAGE_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg"];
+const canExportToMiro = (doc) => {
+	const extension = (String(doc.entryFile || "").match(/\.[^.]+$/) || [""])[0].toLowerCase();
+	return MIRO_IMAGE_EXTENSIONS.includes(extension) || (htmlPdfEnabled && PDF_SOURCE_EXTENSIONS.includes(extension)) || doc.renderStatus === "ok";
+};
+const miroExportOverlay = document.getElementById("miroExportOverlay");
+const miroExportAnchor = document.getElementById("miroExportAnchor");
+const miroExportResult = document.getElementById("miroExportResult");
+const miroExportOkButton = document.getElementById("miroExportOkButton");
+const miroExportCancelButton = document.getElementById("miroExportCancelButton");
+let miroExportDoc = null;
+let miroExportBusy = false;
+const MIRO_EXPORT_FREE = "__free__";
+const closeMiroExportDialog = () => {
+	if (miroExportBusy) return;
+	miroExportOverlay.style.display = "none";
+	miroExportDoc = null;
+};
+const openMiroExportDialog = async (doc) => {
+	miroExportDoc = doc;
+	miroExportBusy = false;
+	document.getElementById("miroExportDocName").textContent = doc.entryFile || "";
+	document.getElementById("miroExportTitleInput").value = "";
+	miroExportResult.innerHTML = "";
+	document.getElementById("miroExportForm").style.display = "";
+	miroExportOkButton.style.display = "";
+	miroExportOkButton.disabled = true;
+	miroExportCancelButton.textContent = "キャンセル";
+	miroExportAnchor.innerHTML = '<option value="">目印を読んでいます...</option>';
+	miroExportOverlay.style.display = "flex";
+	try {
+		const res = await fetch("./api/miro/anchors");
+		const body = await res.json().catch(() => ({}));
+		if (miroExportDoc !== doc) return;
+		const anchors = res.ok ? body.anchors : [];
+		miroExportAnchor.innerHTML = anchors.map((a, i) => '<option value="' + i + '">[DM]' + escapeHtml(a.name || "(名前なし)") + "(" + escapeHtml(a.directionName || "右") + ")" + (a.problem ? " ※" + escapeHtml(a.problem) : "") + '</option>').join("")
+			+ '<option value="' + MIRO_EXPORT_FREE + '">目印を使わず、ボードの右の空いている所に出す</option>';
+		miroExportAnchor.dataset.anchors = JSON.stringify(anchors.map((a) => ({id: a.id, name: a.name, url: a.url})));
+		if (!res.ok) miroExportResult.innerHTML = '<span class="problem">' + escapeHtml(body.error || "目印を読めませんでした") + '</span>';
+		else if (anchors.length === 0) miroExportResult.innerHTML = 'ボードに目印がありません。上のメニューの「Miro」で目印を置くと、そこに出せます。';
+		miroExportOkButton.disabled = !res.ok;
+	} catch {
+		miroExportAnchor.innerHTML = "";
+		miroExportResult.innerHTML = '<span class="problem">目印を読めませんでした</span>';
+	}
+};
+miroExportOkButton.addEventListener("click", async () => {
+	const doc = miroExportDoc;
+	if (doc == null || miroExportBusy) return;
+	const choice = miroExportAnchor.value;
+	const anchors = JSON.parse(miroExportAnchor.dataset.anchors || "[]");
+	const body = {documentIds: [doc.id]};
+	if (choice === MIRO_EXPORT_FREE) body.free = true;
+	else if (anchors[Number(choice)]?.url) body.anchorUrl = anchors[Number(choice)].url;
+	else if (anchors[Number(choice)]) body.anchor = anchors[Number(choice)].name;
+	else return;
+	const title = document.getElementById("miroExportTitleInput").value.trim();
+	if (title) body.title = title;
+	miroExportBusy = true;
+	miroExportOkButton.disabled = true;
+	miroExportCancelButton.disabled = true;
+	miroExportResult.innerHTML = '<span class="miroStatusBadge processing">処理中</span> 変換があると少しかかります...';
+	try {
+		const res = await fetch("./api/miro/exports", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+		let record = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			miroExportResult.innerHTML = '<span class="problem">' + escapeHtml(record.error || "書き出せませんでした") + (record.details ? "<br>" + record.details.map(escapeHtml).join("<br>") : "") + '</span>';
+			return;
+		}
+		for (let i = 0; i < 400 && record.state === "running"; i++) {
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+			record = await (await fetch("./api/miro/exports/" + encodeURIComponent(record.id))).json();
+		}
+		const notPlaced = (record.documents || []).filter((d) => d.state !== "placed");
+		miroExportResult.innerHTML = (record.state === "done" && notPlaced.length === 0 ? '<span class="miroStatusBadge ok">成功</span> 書き出しました' : '<span class="miroStatusBadge error">失敗</span> 書き出せませんでした')
+			+ (record.frames || []).map((f) => miroOpenLink(f.url, f.title + " を Miro で開く")).join("")
+			+ notPlaced.map((d) => '<div class="problem">' + escapeHtml(d.reason || "") + '</div>').join("")
+			+ (record.error ? '<div class="problem">' + escapeHtml(record.error) + '</div>' : "");
+		document.getElementById("miroExportForm").style.display = "none";
+		miroExportOkButton.style.display = "none";
+		miroExportCancelButton.textContent = "閉じる";
+	} catch {
+		miroExportResult.innerHTML = '<span class="problem">書き出せませんでした(通信できませんでした)</span>';
+	} finally {
+		miroExportBusy = false;
+		miroExportOkButton.disabled = false;
+		miroExportCancelButton.disabled = false;
+	}
+});
+miroExportCancelButton.addEventListener("click", closeMiroExportDialog);
+miroExportOverlay.addEventListener("click", (ev) => {
+	if (ev.target === miroExportOverlay) closeMiroExportDialog();
+});
+miroExportOverlay.addEventListener("keydown", (ev) => {
+	if (ev.key === "Escape") closeMiroExportDialog();
+});
+
 // ---- Miro の画面(上のメニューの「Miro」): 目印の付箋を置く・ボードの目印の一覧・書き出しの履歴 ----
-// 書き出しそのものは Claude Code などから API で頼む(画面からは頼まない)
+// 書き出しは Claude Code などから API で頼むか、文書のプレビューのアイコンから 1 件ずつ(ここには書き出すボタンを置かない)
 const miroPaneStatus = document.getElementById("miroPaneStatus");
 const miroAnchorList = document.getElementById("miroAnchorList");
 const miroExportList = document.getElementById("miroExportList");
@@ -6694,13 +6836,16 @@ const renderMiroExports = (status) => {
 		return;
 	}
 	const anchorText = (e) => (e.anchor.kind === "free" ? "空いている所" : (e.anchor.name ? "[DM]" + escapeHtml(e.anchor.name) : "リンクで指した所"));
+	// 結果は ベクトル索引の一覧と同じ形のバッジ(成功・失敗・処理中)。1 件でも出せなかったら失敗とし、理由を下に出す
 	const stateText = (e) => {
-		if (e.state === "running") return '<span class="adminStatus ok">書き出し中</span>';
+		if (e.state === "running") return '<span class="miroStatusBadge processing">処理中</span>';
 		const c = e.counts || {};
-		const parts = ["出した " + (c.placed || 0) + " 件"];
-		if (c.skipped) parts.push("出せない " + c.skipped + " 件");
-		if (c.failed) parts.push("失敗 " + c.failed + " 件");
-		return escapeHtml(parts.join("・")) + (e.error ? '<div class="problem">' + escapeHtml(e.error) + '</div>' : "");
+		if (e.state === "done" && !c.skipped && !c.failed && !e.error) return '<span class="miroStatusBadge ok">成功</span>';
+		const reasons = [];
+		if (c.skipped) reasons.push("出せない形式など " + c.skipped + " 件");
+		if (c.failed) reasons.push("Miro が断った " + c.failed + " 件");
+		if (e.error) reasons.push(e.error);
+		return '<span class="miroStatusBadge error">失敗</span>' + (reasons.length > 0 ? '<div class="problem">' + escapeHtml(reasons.join("・")) + '</div>' : "");
 	};
 	miroExportList.innerHTML = '<table class="miroTable"><thead><tr><th>日時</th><th>書き出した人</th><th>プロジェクト</th><th>目印</th><th>フレーム</th><th>結果</th></tr></thead><tbody>'
 		+ exports.map((e) => '<tr><td>' + escapeHtml(formatDateTime(e.createdAt)) + '</td><td>' + escapeHtml(e.createdBy || "") + '</td>'
@@ -6748,7 +6893,7 @@ const loadMiroExports = async () => {
 				+ (appShell.classList.contains("adminMode") ? '管理画面の「Miro 連携」で設定してください。' : '管理者に設定を頼んでください。');
 		} else {
 			miroPaneStatus.innerHTML = (status.boardUrl ? miroOpenLink(status.boardUrl, "ボードを開く") : "")
-				+ (status.exporting ? ' <span class="adminStatus ok">書き出し中</span> 資料の数によって数分かかります。' : "");
+				+ (status.exporting ? ' <span class="miroStatusBadge processing">処理中</span> 資料の数によって数分かかります。' : "");
 		}
 		document.getElementById("miroAnchorSection").style.display = status.available && miroCanEdit() ? "" : "none";
 		renderMiroExports(status);
