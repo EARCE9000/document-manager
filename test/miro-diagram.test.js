@@ -48,7 +48,7 @@ test("指示を検める: 正しくないところは、場所つきの理由の
 	has("diagram.nodes[2].lane が要ります");
 	has("diagram.nodes[2].color");
 	has("diagram.edges[0].to「nai」");
-	has("diagram.edges[1] は同じ箱どうし");
+	has("diagram.edges[1] は同じものどうし");
 	has("diagram.edges[2].line");
 	has("diagram.edges[2].arrow");
 	assert.ok(Diagram.normalizeDiagram({nodes: []}).errors.some((e) => e.includes("1 つ以上")));
@@ -144,4 +144,53 @@ test("箱の大きさ: 長い文字は箱を広げ(上限まで)、それでも�
 	assert.ok(at.long.height > 120);
 	assert.deepEqual([at.fixed.width, at.fixed.height], [300, 90]);
 	assertTidy(result);
+});
+
+test("付箋の島: 島ごとに見出しと付箋をまとめ、島を左から右へ、行が埋まったら次の行へ並べる。色を書かなければ島ごとに順に色を変える", () => {
+	const notes = (n, prefix) => Array.from({length: n}, (_, i) => ({text: `${prefix}${i + 1}`}));
+	const result = layout({type: "stickies", columns: 2, groups: [
+		{title: "良かった点", notes: notes(5, "良")},
+		{title: "困った点", color: "light_pink", notes: [...notes(2, "困"), {key: "slow", text: "表示が遅い", color: "orange"}]},
+		{title: "次に試すこと", notes: notes(1, "次")}
+	]});
+	assertTidy(result);
+	assert.equal(result.islands.length, 3);
+	const [good, bad, next] = result.islands;
+	// 1 行に 2 島(columns)。3 つ目は次の行(1 行目でいちばん高い島の下)
+	assert.equal(good.band.y - good.band.height / 2, bad.band.y - bad.band.height / 2);
+	assert.ok(good.band.x < bad.band.x);
+	assert.ok(next.band.y - next.band.height / 2 > Math.max(good.band.y + good.band.height / 2, bad.band.y + bad.band.height / 2));
+	// 付箋は島の中。5 枚は 3 列(√5 を切り上げ)、key を省くと「島の番号-付箋の番号」
+	const inside = (n, band) => Math.abs(n.x - band.x) + n.width / 2 <= band.width / 2 && Math.abs(n.y - band.y) + n.height / 2 <= band.height / 2;
+	const at = Object.fromEntries(result.nodes.map((n) => [n.key, n]));
+	for (const key of ["1-1", "1-2", "1-3", "1-4", "1-5"]) assert.ok(inside(at[key], good.band), `${key} が島の外`);
+	assert.ok(inside(at.slow, bad.band));
+	assert.equal(at["1-1"].y, at["1-3"].y);
+	assert.ok(at["1-4"].y > at["1-1"].y);
+	// 色: 島の色を書かなければ順に(1 つ目は light_yellow)、付箋の色は島の色より付箋に書いた色
+	assert.equal(at["1-1"].color, "light_yellow");
+	assert.equal(at["2-1"].color, "light_pink");
+	assert.equal(at.slow.color, "orange");
+	assert.equal(at["3-1"].color, "light_blue");
+	assert.equal(at["1-1"].item, "sticky");
+	assert.equal(at["1-1"].height, Math.round(Diagram.STICKY.width * Diagram.STICKY.aspect));
+	// 見出しは島の上の端の近く
+	assert.ok(good.titleAt.y < at["1-1"].y);
+});
+
+test("付箋の島: 島に分けないなら notes だけ。線でつなげる。誤りは理由の一覧", () => {
+	const plain = layout({type: "stickies", notes: [{key: "a", text: "案A"}, {key: "b", text: "案B"}], edges: [{from: "a", to: "b", label: "比べる"}]});
+	assert.equal(plain.islands.length, 1);
+	assert.equal(plain.islands[0].titleAt, null);
+	assert.deepEqual(plain.edges.map((e) => [e.from, e.to, e.label]), [["a", "b", "比べる"]]);
+	const {errors} = Diagram.normalizeDiagram({type: "stickies", groups: [{title: "x", color: "金色", notes: [{text: ""}, {key: "k", text: "y"}, {key: "k", text: "z"}]}],
+		notes: [{text: "両方"}], edges: [{from: "k", to: "nai"}], columns: 9});
+	const has = (part) => assert.ok(errors.some((e) => e.includes(part)), `${part} の理由が無い: ${errors.join(" | ")}`);
+	has("groups(島ごと)か notes(島に分けない)のどちらか一方");
+	has("diagram.groups[0].color は付箋の色");
+	has("diagram.groups[0].notes[0].text が要ります");
+	has("diagram.groups[0].notes[2].key「k」が 2 回");
+	has("diagram.edges[0].to「nai」は付箋の key");
+	has("diagram.columns");
+	assert.ok(Diagram.normalizeDiagram({type: "表"}).errors[0].includes("diagram.type"));
 });

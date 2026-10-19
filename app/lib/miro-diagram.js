@@ -99,6 +99,32 @@ module.exports.normalizeDiagram = (spec, label = "diagram") => {
 		if (value.length > max) errors.push(`${at} は ${max} 個までです(${value.length} 個)`);
 		return value.slice(0, max);
 	};
+	const link = (value, at) => {
+		if (value == null) return null;
+		const s = String(value);
+		if (!/^https?:\/\/\S+$/.test(s) || s.length > 2000) errors.push(`${at} は http:// か https:// で始まる URL です`);
+		return s;
+	};
+	// 線(フロー図・付箋の島で共通)。from・to は箱・付箋の key
+	const edgesOf = (nodeKeys, what) => list(spec.edges, `${label}.edges`, LIMITS.edges).map((edge, i) => {
+		const at = `${label}.edges[${i}]`;
+		const from = edge?.from == null ? "" : String(edge.from);
+		const to = edge?.to == null ? "" : String(edge.to);
+		if (!nodeKeys.has(from)) errors.push(`${at}.from「${from}」は${what}の key にありません`);
+		if (!nodeKeys.has(to)) errors.push(`${at}.to「${to}」は${what}の key にありません`);
+		if (from !== "" && from === to) errors.push(`${at} は同じものどうしをつないでいます`);
+		const line = edge?.line == null ? "elbowed" : String(edge.line);
+		if (!LINES.includes(line)) errors.push(`${at}.line は ${LINES.join(" / ")} のどれかです`);
+		const stroke = edge?.style == null ? "solid" : String(edge.style);
+		if (!STROKES.includes(stroke)) errors.push(`${at}.style は ${STROKES.join(" / ")} のどれかです`);
+		const arrow = edge?.arrow == null ? "end" : String(edge.arrow);
+		if (!ARROWS.includes(arrow)) errors.push(`${at}.arrow は ${ARROWS.join(" / ")} のどれかです`);
+		return {from, to, label: edge?.label == null || edge.label === "" ? null : text(edge.label, `${at}.label`, LIMITS.labelLength), line, style: stroke, arrow, color: color(edge?.color, `${at}.color`)};
+	});
+
+	const type = spec.type == null || spec.type === "" ? "flow" : String(spec.type);
+	if (type === "stickies") return normalizeStickies(spec, label, {errors, text, key, list, link, edgesOf});
+	if (type !== "flow") return {errors: [`${label}.type は flow(フロー図。既定)か stickies(付箋の島)です(${JSON.stringify(spec.type)})`], diagram: null};
 
 	const flow = spec.flow == null || spec.flow === "" ? "right" : FLOWS[String(spec.flow).trim().toLowerCase()] ?? null;
 	if (flow == null) errors.push(`${label}.flow は right(左から右)か down(上から下)です(${JSON.stringify(spec.flow)})`);
@@ -134,32 +160,142 @@ module.exports.normalizeDiagram = (spec, label = "diagram") => {
 			rank = Number(node.rank);
 			if (!Number.isInteger(rank) || rank < 0 || rank > LIMITS.rank) errors.push(`${at}.rank は 0〜${LIMITS.rank} の整数です`);
 		}
-		const link = node?.link == null ? null : String(node.link);
-		if (link != null && (!/^https?:\/\/\S+$/.test(link) || link.length > 2000)) errors.push(`${at}.link は http:// か https:// で始まる URL です`);
-		if (link != null && node?.documentId != null) errors.push(`${at} は link と documentId のどちらか一方です`);
+		const url = link(node?.link, `${at}.link`);
+		if (url != null && node?.documentId != null) errors.push(`${at} は link と documentId のどちらか一方です`);
 		return {
 			key: k, text: text(node?.text, `${at}.text`, LIMITS.textLength), type, shape, lane, rank,
-			color: color(node?.color, `${at}.color`), link, documentId: node?.documentId == null ? null : String(node.documentId),
+			color: color(node?.color, `${at}.color`), link: url, documentId: node?.documentId == null ? null : String(node.documentId),
 			width: size(node?.width, `${at}.width`, 80, 1000), height: size(node?.height, `${at}.height`, 40, 1000)
 		};
 	});
 
-	const edges = list(spec.edges, `${label}.edges`, LIMITS.edges).map((edge, i) => {
-		const at = `${label}.edges[${i}]`;
-		const from = edge?.from == null ? "" : String(edge.from);
-		const to = edge?.to == null ? "" : String(edge.to);
-		if (!nodeKeys.has(from)) errors.push(`${at}.from「${from}」は nodes の key にありません`);
-		if (!nodeKeys.has(to)) errors.push(`${at}.to「${to}」は nodes の key にありません`);
-		if (from !== "" && from === to) errors.push(`${at} は同じ箱どうしをつないでいます`);
-		const line = edge?.line == null ? "elbowed" : String(edge.line);
-		if (!LINES.includes(line)) errors.push(`${at}.line は ${LINES.join(" / ")} のどれかです`);
-		const stroke = edge?.style == null ? "solid" : String(edge.style);
-		if (!STROKES.includes(stroke)) errors.push(`${at}.style は ${STROKES.join(" / ")} のどれかです`);
-		const arrow = edge?.arrow == null ? "end" : String(edge.arrow);
-		if (!ARROWS.includes(arrow)) errors.push(`${at}.arrow は ${ARROWS.join(" / ")} のどれかです`);
-		return {from, to, label: edge?.label == null || edge.label === "" ? null : text(edge.label, `${at}.label`, LIMITS.labelLength), line, style: stroke, arrow, color: color(edge?.color, `${at}.color`)};
+	const edges = edgesOf(nodeKeys, " nodes ");
+	return {errors, diagram: errors.length > 0 ? null : {type: "flow", flow, lanes, nodes, edges}};
+};
+
+// ---- 付箋の島(親和図) ----
+// {"type": "stickies", "groups": [{"title": "良かった点", "color": "light_green", "notes": [{"text": "…"}, …]}, …], "columns": 3}
+// 島(グループ)ごとに見出しと付箋をまとめ、島を左上から右へ、行が埋まったら次の行へ並べる。島を使わないなら notes だけ書く
+
+/** Miro の付箋の色(名前で指定する)と、島の枠に使う色 */
+const STICKY_COLORS = Object.freeze({
+	light_yellow: "#fff9b1", yellow: "#f5d128", orange: "#ff9d48", light_green: "#d5f692", green: "#c9df56", dark_green: "#93d275",
+	cyan: "#6cd8fa", light_pink: "#ffcee0", pink: "#ea94bb", violet: "#be88c7", red: "#f24726", light_blue: "#a6ccf5",
+	blue: "#6c95f3", dark_blue: "#414bb2", gray: "#e6e6e6", black: "#1a1a1a"
+});
+module.exports.STICKY_COLORS = STICKY_COLORS;
+// 色を書かなかった島の付箋の色(島ごとに順に使う)
+const STICKY_CYCLE = Object.freeze(["light_yellow", "light_green", "light_blue", "light_pink", "orange", "violet", "cyan", "gray"]);
+const STICKY_LIMITS = Object.freeze({groups: 30, notes: 300, perRow: 8});
+module.exports.STICKY_LIMITS = STICKY_LIMITS;
+
+const normalizeStickies = (spec, label, {errors, text, key, list, link, edgesOf}) => {
+	const stickyColor = (value, at) => {
+		if (value == null || value === "") return null;
+		const name = String(value);
+		if (STICKY_COLORS[name] == null) errors.push(`${at} は付箋の色(${Object.keys(STICKY_COLORS).join(" / ")})のどれかです(${JSON.stringify(value)})`);
+		return name;
+	};
+	if (spec.groups != null && spec.notes != null) errors.push(`${label} は groups(島ごと)か notes(島に分けない)のどちらか一方です`);
+	const rawGroups = spec.groups != null
+		? list(spec.groups, `${label}.groups`, STICKY_LIMITS.groups, {required: true})
+		: [{title: null, notes: spec.notes ?? null}];
+	const keys = new Set();
+	let count = 0;
+	const groups = rawGroups.map((group, g) => {
+		const at = spec.groups != null ? `${label}.groups[${g}]` : label;
+		const notes = list(group?.notes, `${at}.notes`, STICKY_LIMITS.notes, {required: true}).map((note, n) => {
+			const noteAt = `${at}.notes[${n}]`;
+			// key は線や手直しで指すときの名前。省くと「島の番号-付箋の番号」(1 から)
+			const k = note?.key == null || note.key === "" ? `${g + 1}-${n + 1}` : key(note.key, `${noteAt}.key`);
+			if (k && keys.has(k)) errors.push(`${noteAt}.key「${k}」が 2 回あります`);
+			keys.add(k);
+			const url = link(note?.link, `${noteAt}.link`);
+			if (url != null && note?.documentId != null) errors.push(`${noteAt} は link と documentId のどちらか一方です`);
+			return {key: k, text: text(note?.text, `${noteAt}.text`, LIMITS.textLength), color: stickyColor(note?.color, `${noteAt}.color`),
+				link: url, documentId: note?.documentId == null ? null : String(note.documentId)};
+		});
+		count += notes.length;
+		return {
+			title: group?.title == null || group.title === "" ? null : text(group.title, `${at}.title`, LIMITS.titleLength),
+			color: stickyColor(group?.color, `${at}.color`) ?? STICKY_CYCLE[g % STICKY_CYCLE.length],
+			notes
+		};
 	});
-	return {errors, diagram: errors.length > 0 ? null : {flow, lanes, nodes, edges}};
+	if (count > STICKY_LIMITS.notes) errors.push(`${label} の付箋は合わせて ${STICKY_LIMITS.notes} 枚までです(${count} 枚)`);
+	let columns = null;
+	if (spec.columns != null) {
+		columns = Number(spec.columns);
+		if (!Number.isInteger(columns) || columns < 1 || columns > STICKY_LIMITS.perRow) errors.push(`${label}.columns(1 行に並べる島の数)は 1〜${STICKY_LIMITS.perRow} の整数です`);
+	}
+	const edges = edgesOf(keys, "付箋");
+	// 付箋の documentId は、呼び出し側(miro-export.js)が資料を確かめてリンクにする。nodes として渡す
+	const nodes = groups.flatMap((group) => group.notes);
+	return {errors, diagram: errors.length > 0 ? null : {type: "stickies", groups, columns, nodes, edges}};
+};
+
+/** 付箋の大きさ(実物の Miro: 正方形の付箋は幅だけを渡し、高さは幅の 1.146 倍になる) */
+const STICKY = Object.freeze({width: 200, aspect: 1.146, gap: 30, islandPad: 40, titleHeight: 70, islandGap: 100, maxPerIslandRow: 4});
+module.exports.STICKY = STICKY;
+
+/** 付箋の島の位置とフレームの大きさを決める(位置はフレームの左上からの中心) */
+const layoutStickies = (diagram) => {
+	const G = GEOMETRY;
+	const S = STICKY;
+	const noteHeight = Math.round(S.width * S.aspect);
+	const islands = diagram.groups.map((group) => {
+		const n = group.notes.length;
+		const cols = Math.min(S.maxPerIslandRow, Math.max(1, Math.ceil(Math.sqrt(n))));
+		const rows = Math.ceil(n / cols);
+		const title = group.title ? S.titleHeight : 0;
+		return {
+			group, cols,
+			width: S.islandPad * 2 + cols * S.width + (cols - 1) * S.gap,
+			height: S.islandPad * 2 + title + rows * noteHeight + (rows - 1) * S.gap,
+			titleHeight: title
+		};
+	});
+	const perRow = diagram.columns ?? Math.min(4, Math.max(1, Math.ceil(Math.sqrt(islands.length))));
+	// 島を棚のように並べる: 同じ行の島は上の端をそろえ、次の行はその行でいちばん高い島の下から
+	const placedIslands = [];
+	const nodes = [];
+	let top = G.padding;
+	let right = 0;
+	for (let r = 0; r < islands.length; r += perRow) {
+		const row = islands.slice(r, r + perRow);
+		let left = G.padding;
+		for (const island of row) {
+			const fill = STICKY_COLORS[island.group.color];
+			placedIslands.push({
+				title: island.group.title,
+				band: {x: left + island.width / 2, y: top + island.height / 2, width: island.width, height: island.height},
+				border: fill,
+				titleAt: island.group.title ? {x: left + island.width / 2, y: top + S.islandPad / 2 + island.titleHeight / 2, width: island.width - S.islandPad * 2} : null
+			});
+			island.group.notes.forEach((note, i) => {
+				const col = i % island.cols;
+				const line = Math.floor(i / island.cols);
+				nodes.push({
+					key: note.key, item: "sticky", text: note.text, link: note.link, color: note.color ?? island.group.color,
+					x: Math.round(left + S.islandPad + col * (S.width + S.gap) + S.width / 2),
+					y: Math.round(top + S.islandPad + island.titleHeight + line * (noteHeight + S.gap) + noteHeight / 2),
+					width: S.width, height: noteHeight
+				});
+			});
+			left += island.width + S.islandGap;
+			right = Math.max(right, left - S.islandGap);
+		}
+		top += Math.max(...row.map((island) => island.height)) + S.islandGap;
+	}
+	const bottom = top - S.islandGap;
+	const edges = diagram.edges.map((e) => ({
+		from: e.from, to: e.to, label: e.label, line: e.line,
+		style: {
+			strokeColor: e.color ?? STYLE.line, strokeWidth: "2", strokeStyle: e.style === "solid" ? "normal" : e.style,
+			startStrokeCap: e.arrow === "both" ? "arrow" : "none", endStrokeCap: e.arrow === "none" ? "none" : "arrow"
+		}
+	}));
+	return {width: Math.max(Math.ceil(right + G.padding), 400), height: Math.max(Math.ceil(bottom + G.padding), 400), lanes: [], islands: placedIslands, nodes, edges};
 };
 
 /** 文字の量から箱の大きさを決める(全角 1 文字を charWidth、半角はその 0.6 倍とみなす) */
@@ -245,6 +381,7 @@ module.exports.ranksOf = ranksOf;
  * @returns {{width: number, height: number, lanes: object[], nodes: object[], edges: object[]}}
  */
 module.exports.layoutDiagram = (diagram) => {
+	if (diagram.type === "stickies") return layoutStickies(diagram);
 	const G = GEOMETRY;
 	const down = diagram.flow === "down";
 	const rank = ranksOf(diagram.nodes, diagram.edges);
@@ -308,7 +445,7 @@ module.exports.layoutDiagram = (diagram) => {
 	const order = new Map(diagram.nodes.map((n, i) => [n.key, i]));
 	placed.sort((a, b) => order.get(a.key) - order.get(b.key));
 	const nodes = placed.map((n) => ({
-		key: n.key, text: n.text, type: n.type, shape: n.shape, link: n.link,
+		key: n.key, item: "shape", text: n.text, type: n.type, shape: n.shape, link: n.link,
 		x: Math.round(n.x), y: Math.round(n.y), width: n.width, height: n.height,
 		fill: n.color ?? NODE_TYPES[n.type].fill, border: STYLE.border, color: STYLE.text
 	}));
@@ -321,5 +458,5 @@ module.exports.layoutDiagram = (diagram) => {
 	}));
 	const width = Math.ceil((down ? crossEnd : mainEnd) + G.padding);
 	const height = Math.ceil((down ? mainEnd : crossEnd) + G.padding);
-	return {width: Math.max(width, 400), height: Math.max(height, 400), lanes, nodes, edges};
+	return {width: Math.max(width, 400), height: Math.max(height, 400), lanes, islands: [], nodes, edges};
 };

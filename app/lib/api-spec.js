@@ -508,12 +508,23 @@ const OPERATIONS = [
 			+ "`diagram`: `{flow?: \"right\"|\"down\", lanes?: [{key, title}], nodes: [{key, text, type?, lane?, rank?, color?, documentId?, link?, width?, height?}], edges?: [{from, to, label?, line?, style?, arrow?, color?}]}`。"
 			+ "`type`: start・end(角丸)/ process(四角。既定)/ decision(菱形)/ data(平行四辺形)/ subprocess(定義済み処理)/ store(円柱)/ note(付箋色の四角)。`shape` で Miro の図形を直接選んでもよい。"
 			+ "`lanes` を使うと担当ごとの帯に分ける(どの箱にも `lane` が要る)。並びは線をたどった段数で決まり(戻る線は数えない)、`rank` で段を指定できる。`documentId` を書いた箱は、その資料を Document Manager で開くリンクになる。"
-			+ "`line`: elbowed(既定)/ straight / curved、`style`: solid / dashed / dotted、`arrow`: end(既定)/ both / none。上限は箱 200・線 400・レーン 20。十字には出せない",
+			+ "`line`: elbowed(既定)/ straight / curved、`style`: solid / dashed / dotted、`arrow`: end(既定)/ both / none。上限は箱 200・線 400・レーン 20。十字には出せない。"
+			+ "**付箋の島**(親和図・ふりかえり・ブレスト): `diagram: {type: \"stickies\", groups: [{title, color?, notes: [{text, key?, color?, documentId?, link?}]}], columns?, edges?}`。"
+			+ "島(グループ)ごとに見出しと付箋をまとめ、島を左から右へ、`columns` 個ごとに次の行へ並べる。島に分けないなら `groups` の代わりに `notes`。"
+			+ "`color` は Miro の付箋の色の名前(light_yellow・yellow・orange・light_green・green・dark_green・cyan・light_pink・pink・violet・red・light_blue・blue・dark_blue・gray・black)。省くと島ごとに順に色を変える。"
+			+ "`key` を省くと「島の番号-付箋の番号」(1 から)。上限は島 30・付箋 300",
 		body: {schema: {type: "object", properties: {
 			project: {type: "string"}, anchor: {type: "string"}, anchorUrl: {type: "string"}, free: {type: "boolean"},
 			documentIds: {type: "array", items: {type: "string"}}, direction: {type: "string"}, title: {type: "string"},
-			diagram: {type: "object", required: ["nodes"], properties: {
+			diagram: {type: "object", properties: {
+				type: {type: "string", enum: ["flow", "stickies"]},
 				flow: {type: "string", enum: ["right", "down"]},
+				groups: {type: "array", items: {type: "object", required: ["notes"], properties: {
+					title: {type: "string"}, color: {type: "string"},
+					notes: {type: "array", items: {type: "object", required: ["text"], properties: {
+						text: {type: "string"}, key: {type: "string"}, color: {type: "string"}, documentId: {type: "string"}, link: {type: "string"}}}}}}},
+				notes: {type: "array", items: {type: "object", required: ["text"]}},
+				columns: {type: "integer"},
 				lanes: {type: "array", items: {type: "object", required: ["key"], properties: {key: {type: "string"}, title: {type: "string"}}}},
 				nodes: {type: "array", items: {type: "object", required: ["key", "text"], properties: {
 					key: {type: "string"}, text: {type: "string"}, type: {type: "string", enum: ["start", "end", "process", "decision", "data", "subprocess", "store", "note"]},
@@ -996,6 +1007,7 @@ const GUIDE_SECTIONS = [
 			"目印のメモは何を書き出すかの覚え書き。資料を言われず「設計書の目印に出して」とだけ頼まれたら、メモから資料を選び、**どれを出すか利用者に確かめてから**書き出す",
 			"**Miro が一時的に断った資料**(`documents[].code: miro_unavailable`・`retryDocumentIds`)は、サーバーが間を空けて 3 回やり直したあとのもの(Miro はフレームの作成をときどき数十秒続けて断る)。Miro には何も残っていない。**勝手に出し直さず**、エラーを見せて、少し時間をおいて出し直すか利用者に確かめる。出し直すなら `retryDocumentIds` の資料だけを同じ目印に書き出す(次の空いている所に出る)",
 			"**フロー図を描く**(「業務フローを Miro に描いて」): `diagram: {flow: \"right\", lanes: [{key, title}], nodes: [{key, text, type, lane}], edges: [{from, to, label}]}` を渡す。位置は Document Manager が決めるので、座標は要らない。`type` は start・end・process・decision・data・subprocess・store・note。担当ごとに分けるなら lanes。関係する資料がある箱には `documentId` を書くと、その資料を開くリンクになる。**描く前に、箱と線の一覧(どんな流れか)を利用者に見せて確かめる**",
+			"**付箋の島を描く**(「意見を付箋で Miro にまとめて」「ふりかえりを付箋にして」): `diagram: {type: \"stickies\", groups: [{title: \"良かった点\", notes: [{text: \"…\"}]}]}` を渡す。島ごとに見出しと付箋をまとめて並べる(位置は Document Manager が決める)。色は付箋の色の名前(light_yellow・light_green・light_pink など)。**描く前に、島と付箋の一覧を利用者に見せて確かめる**",
 			"書き出したあとの手直し(資料を動かす・見出しや囲みを足す・線でつなぐ)は `GET /api/miro/map`・`PATCH /api/miro/items/:documentId`・`POST /api/miro/layout`(詳しくは OpenAPI)。同梱クライアント(Skill)を使えば `miro-*` のコマンドで行える",
 			"Miro との連携と書き出すボードは管理者が画面で設定する。`code: not_connected` なら、管理者に設定を頼むよう利用者に伝える"
 		]
@@ -1064,7 +1076,7 @@ const AI_INSTRUCTIONS = [
 **頼まれていないのに書き出さないでください**(打ち合わせで使っているボードが変わってしまうため)。
 書き出したら、フレームを開く URL(\`frames[].url\`)と、出せなかった資料があればその理由を伝えてください。
 Miro が一時的に断った資料(\`retryDocumentIds\`)やフロー図(\`retryDiagrams\`)があれば、勝手に出し直さず、少し時間をおいて出し直すか確かめてから、その資料(または同じ図)だけを同じ目印に書き出してください。
-フロー図を頼まれたら、箱と線の一覧(どんな流れか)を先に利用者に見せて確かめてから描いてください。`
+フロー図や付箋の島を頼まれたら、箱と線の一覧(どんな流れか)や島と付箋の一覧を先に利用者に見せて確かめてから描いてください。`
 	},
 	{
 		when: "「アップして」「これ登録して」「保存しておいて」「アップロードして」",

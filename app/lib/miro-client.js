@@ -268,10 +268,15 @@ module.exports.createConnector = (token, boardId, {startId, endId, shape = "elbo
 /** 線を消す(線は items ではなく connectors で消す) */
 module.exports.deleteConnector = (token, boardId, connectorId) => call("DELETE", `${boardPath(boardId)}/connectors/${encodeURIComponent(connectorId)}`, {token});
 
-/** 付箋を置く(位置はボードの上の中心。枠には入れない) */
-module.exports.createStickyNote = (token, boardId, {content, x, y, width, fillColor = "light_yellow"}) =>
+/**
+ * 付箋を置く。位置は中心(parentId を渡すと枠の左上から)。fillColor は Miro の色の名前(light_yellow など)。
+ * 付箋は縦横の比が決まっていて、幅か高さの片方しか渡せない(両方渡すと 400。実物で確かめた)。
+ * 正方形(square)の高さは幅の約 1.146 倍、長方形(rectangle)は約 0.651 倍になる
+ */
+module.exports.createStickyNote = (token, boardId, {content, x, y, width, fillColor = "light_yellow", shape = "rectangle", parentId, style}) =>
 	call("POST", `${boardPath(boardId)}/sticky_notes`, {token, body: {
-		data: {content, shape: "rectangle"}, style: {fillColor}, position: {x, y}, ...(width ? {geometry: {width}} : {})
+		data: {content, shape}, style: {fillColor, ...(style ?? {})}, position: {x, y}, ...(width ? {geometry: {width}} : {}),
+		...(parentId ? {parent: {id: parentId}} : {})
 	}});
 
 /** 項目をまとめる(人が画面で動かすと一緒に動く。APIで動かすときは1つずつ動かす必要がある) */

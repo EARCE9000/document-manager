@@ -308,6 +308,38 @@ AI(Claude Code など)に「〇〇を△△の右に置いて」「囲みを付�
 | 結果 | 書き出しの記録の `documents[]` に `kind: diagram` の 1 件(箱と線の数)。フレームの `diagram.nodes` に箱の key と Miro の ID。地図にも箱が key つきで出る |
 | 一時的に断られた | `retryDiagrams` に図の名前が入る。利用者に確かめてから、同じ頼みをもう一度送る |
 
+### 付箋の島を描く
+
+付箋を島(グループ)ごとにまとめて、見出しと一緒に並べます(親和図・ふりかえり・ブレストの整理)。`diagram` に `"type": "stickies"` を付けます(フロー図は `"type": "flow"`。省くとフロー図)。
+
+```json
+{
+  "anchor": "ふりかえり",
+  "title": "スプリント 12 のふりかえり",
+  "diagram": {
+    "type": "stickies",
+    "columns": 3,
+    "groups": [
+      {"title": "良かった点", "color": "light_green", "notes": [{"text": "レビューが早い"}, {"key": "deploy", "text": "デプロイが楽"}]},
+      {"title": "困った点", "notes": [{"key": "slow", "text": "画面が遅い", "color": "orange"}, {"text": "仕様の変更が多い"}]}
+    ],
+    "edges": [{"from": "slow", "to": "deploy", "label": "関係?", "style": "dashed"}]
+  }
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| 並び | 島を左から右へ並べ、`columns` 個(省くと島の数に合わせて最大 4)ごとに次の行へ。同じ行の島は上の端をそろえ、次の行はその行でいちばん高い島の下から |
+| 島の中 | 見出し(太字の文字)の下に付箋を並べる(1 行に √枚数 を切り上げた数、最大 4 枚)。島の枠は角丸の白い図形で、枠線は島の色 |
+| 付箋 | 正方形・幅 200(高さは Miro が決める。幅の約 1.146 倍)。文字は真ん中。`documentId`・`link` でリンクにできる |
+| 色 | Miro の付箋の色の名前(`light_yellow`・`yellow`・`orange`・`light_green`・`green`・`dark_green`・`cyan`・`light_pink`・`pink`・`violet`・`red`・`light_blue`・`blue`・`dark_blue`・`gray`・`black`)。島に書けばその島の付箋、付箋に書けばその付箋だけ。省くと島ごとに順に変える |
+| 島に分けない | `groups` の代わりに `notes` |
+| key | 省くと「島の番号-付箋の番号」(1 から)。`edges` や手直しの `connectors` で指す |
+| 上限 | 島 30・付箋 300 |
+
+付箋は、実物の Miro では縦横の比が決まっていて、幅か高さの片方しか渡せません(両方渡すと断られる)。
+
 ### 見る人
 
 ボードは Miro の共有のしかた(チームのメンバー・招待)で見せます。見る人に Document Manager 側の作業は要りません。

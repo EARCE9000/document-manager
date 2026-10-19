@@ -1,6 +1,6 @@
 ---
 name: document-manager
-description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索(全文/意味検索)・版履歴の確認・ダウンロード・タグ付け・メモ・アーカイブと復元・関連文書の紐づけ・プロジェクトやフォルダへの配置・Miroのボードへの書き出し(目印の付箋を基準に新しいフレームへ)とフロー図(箱と線)の作図・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「タグを付けて」「プロジェクトに入れて」「アーカイブして」「Miroに書き出して」「Miroに目印を置いて」「業務フローをMiroに描いて」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io/Excel・Word・PowerPoint等の成果物をDocument Managerへ保存・更新するときに使う。
+description: 社内のDocument Manager(文書管理Webサービス)へのファイルのアップロード・新しい版の登録・検索(全文/意味検索)・版履歴の確認・ダウンロード・タグ付け・メモ・アーカイブと復元・関連文書の紐づけ・プロジェクトやフォルダへの配置・Miroのボードへの書き出し(目印の付箋を基準に新しいフレームへ)とフロー図(箱と線)・付箋の島の作図・操作の通知の待ち受けを、同梱のPython/Node.jsクライアントでAPI経由で行う。「アップして」「Document Managerに登録して」「新しい版で上げて」「前のを置き換えて」「Document Managerで探して」「版履歴を見せて」「タグを付けて」「プロジェクトに入れて」「アーカイブして」「Miroに書き出して」「Miroに目印を置いて」「業務フローをMiroに描いて」「付箋でMiroにまとめて」「新しい資料が上がったら教えて」などと言われたとき、またはMarkdown/HTML/PDF/draw.io/Excel・Word・PowerPoint等の成果物をDocument Managerへ保存・更新するときに使う。
 ---
 
 # Document Manager
@@ -101,7 +101,7 @@ APIキーをチャットの応答やコミットに書き出さない(`config` �
 | `tree <プロジェクト>` | フォルダ階層と文書の配置 |
 | `miro [書き出しのID]` / `miro-anchors` / `miro-anchor-add <名前> [--direction 右] [--note メモ]` | Miro への**書き出しの履歴**・ボードの**目印**(付箋の `[DM]名前`)の一覧・目印の付箋を置く(下記) |
 | `miro-export [文書ID...] [--project P] (--anchor 名前 | --anchor-url リンク | --free) [--direction 右] [--title T] [--groups JSON]` | 資料を **Miro に書き出す**(毎回新しいフレーム。プロジェクトは省ける。自動では書き出さない。下記) |
-| `miro-diagram <JSONファイル|-> (--anchor 名前 | --anchor-url リンク | --free) [--direction 下] [--title T]` | **フロー図を Miro に描く**(箱と線の一覧を渡す。位置は Document Manager が決める。下記) |
+| `miro-diagram <JSONファイル|-> (--anchor 名前 | --anchor-url リンク | --free) [--direction 下] [--title T]` | **フロー図・付箋の島を Miro に描く**(箱と線・島と付箋の一覧を渡す。位置は Document Manager が決める。下記) |
 | `miro-map [--export ID]` / `miro-move <文書ID> ... [--export ID]` / `miro-layout <JSONファイル|-> [--export ID]` | **書き出したあとの手直し**(書き出しごと。省くと自分の最後の書き出し): 地図・資料を動かす・位置と見出し・図形・線をまとめて当てる(下記) |
 | `miro-layout-report [文書ID...] [--project P]` | 十字で書き出したらどうなるかの報告(タグの見直し用。下記) |
 | `folder-create <プロジェクト> <名前> [--parent 親]` | フォルダの作成 |
@@ -409,6 +409,25 @@ Document Manager の画面の上のメニューの「Miro」でできること�
 - 資料とフロー図を一度に出すときは `miro-export --groups` に `[{"documentIds": [...], "direction": "右"}, {"diagram": {...}, "direction": "下"}]`
 - 指示に誤りがあれば何も描かずに理由の一覧(`details`。どの箱・線か)が返る。直して出し直す
 - Miro が一時的に断ったとき(結果に `retryDiagrams`)は、**勝手に出し直さず**、利用者に確かめてから同じ `miro-diagram` をもう一度実行する
+
+#### 付箋の島を描く(「意見を付箋で Miro にまとめて」「ふりかえりを付箋にして」「ブレストの結果を Miro に出して」)
+
+付箋を島(グループ)ごとにまとめて、見出しと一緒に並べる(親和図)。`miro-diagram` に `"type": "stickies"` の JSON を渡す。位置は Document Manager が決める。
+
+1. 意見を島に分け、**島と付箋の一覧を利用者に見せて確かめる**
+2. JSON を作る:
+   ```json
+   {"type": "stickies", "columns": 3,
+    "groups": [{"title": "良かった点", "color": "light_green", "notes": [{"text": "レビューが早い"}, {"key": "deploy", "text": "デプロイが楽"}]},
+               {"title": "困った点", "notes": [{"key": "slow", "text": "画面が遅い", "color": "orange"}]}],
+    "edges": [{"from": "slow", "to": "deploy", "label": "関係?", "style": "dashed"}]}
+   ```
+   - `columns`: 1 行に並べる島の数(省くと島の数に合わせる)。島に分けないなら `groups` の代わりに `notes`
+   - `color`: 付箋の色の名前(`light_yellow`・`yellow`・`orange`・`light_green`・`green`・`dark_green`・`cyan`・`light_pink`・`pink`・`violet`・`red`・`light_blue`・`blue`・`dark_blue`・`gray`・`black`)。
+     島に書くとその島の付箋の色、付箋に書くとその付箋だけ。省くと島ごとに順に色を変える
+   - `key` を省くと「島の番号-付箋の番号」(1 から)。線(`edges`)や、あとの手直し(`miro-layout` の `connectors`)で指すときに使う
+   - 関係する資料がある付箋は `documentId` でリンクにできる。上限は島 30・付箋 300
+3. `miro-diagram <JSONファイル|-> --anchor <目印の名前>` で描き、フレームの URL を伝える
 
 #### 十字で書き出す前のタグの見直し(「十字で出して」「どこに入るか見て」)
 

@@ -39,7 +39,7 @@
  *       [--direction 右|左|上|下|右上|右下|左上|左下|十字] [--title <タイトル>] [--groups <JSONファイル|->] [--no-wait]
  *       資料を Miro に書き出す(毎回新しいフレーム。自動では書き出さない。--free は利用者に確かめてから)
  *   node dm_client.mjs miro-diagram <JSONファイル|-> (--anchor <目印の名前> | --anchor-url <付箋のリンク> | --free) [--direction 下] [--title <タイトル>] [--no-wait]
- *       フロー図(箱と線の一覧の JSON)を Miro に描く(位置は Document Manager が決める)
+ *       フロー図(箱と線)・付箋の島("type": "stickies")の JSON を Miro に描く(位置は Document Manager が決める)
  *   node dm_client.mjs miro-map [--export <ID>] / miro-layout-report [文書ID...] [--project <P>]
  *   node dm_client.mjs miro-move <文書ID> (--next-to <文書ID> [--side right|left|above|below] | [--frame <F>] --x N --y N) [--export <ID>]
  *   node dm_client.mjs miro-layout <JSONファイル|-> [--export <ID>]  (書き出したフレームに、位置・色・見出し・図形・線をまとめて当てる)

@@ -355,8 +355,15 @@ module.exports.start = (port) => new Promise((resolve) => {
 						send(res, 400, {message: "Parent frame not found"});
 						return;
 					}
-					const width = input?.geometry?.width ?? (kind === "frames" ? 800 : naturalWidth);
-					const height = kind === "frames" || kind === "shapes" ? (input?.geometry?.height ?? 600) : kind === "texts" ? 50 : heightFor(width);
+					// 付箋は縦横の比が決まっていて、幅か高さの片方しか渡せない(実物と同じく、両方なら 400)
+					if (kind === "sticky_notes" && input?.geometry?.width != null && input?.geometry?.height != null) {
+						send(res, 400, {type: "error", code: "2.0703", message: "Invalid parameters", context: {fields: [{field: "geometry", message: "Only height or width should be passed for widgets with fixed aspect ratio"}]}, status: 400});
+						return;
+					}
+					const width = input?.geometry?.width ?? (kind === "frames" ? 800 : kind === "sticky_notes" ? 199 : naturalWidth);
+					// 付箋の高さは形で決まる(正方形は幅の約 1.146 倍、長方形は約 0.651 倍。実物で確かめた)
+					const stickyHeight = (input?.data?.shape === "square" ? 1.146 : 0.651) * width;
+					const height = kind === "frames" || kind === "shapes" ? (input?.geometry?.height ?? 600) : kind === "texts" ? 50 : kind === "sticky_notes" ? stickyHeight : heightFor(width);
 					// 本物と同じく、図形は幅・高さとも 8 以上、枠線の太さは 1 以上(0 は断られる)
 					if (kind === "shapes" && (width < 8 || height < 8)) {
 						send(res, 400, {message: "Unable to complete operation because of the validation errors."});

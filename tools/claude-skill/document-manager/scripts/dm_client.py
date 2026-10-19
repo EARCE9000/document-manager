@@ -45,7 +45,7 @@ AIエージェント(Claude Code / Codex / Antigravity)の Skill から呼び出
       [--direction 右|左|上|下|右上|右下|左上|左下|十字] [--title <タイトル>] [--groups <JSONファイル|->] [--no-wait]
                                                   資料を Miro に書き出す(毎回新しいフレーム。--free は利用者に確かめてから)
   python dm_client.py miro-diagram <JSONファイル|-> (--anchor <目印の名前> | --anchor-url <付箋のリンク> | --free) [--direction 下] [--title <タイトル>] [--no-wait]
-                                                  フロー図(箱と線の一覧の JSON)を Miro に描く(位置は Document Manager が決める)
+                                                  フロー図(箱と線)・付箋の島("type": "stickies")の JSON を Miro に描く(位置は Document Manager が決める)
   python dm_client.py miro-map [--export <ID>]   書き出したフレームの地図(資料の位置・人が足したもの・空いている所)
   python dm_client.py miro-move <文書ID> (--next-to <文書ID> [--side right|left|above|below] | [--frame <F>] --x N --y N) [--export <ID>]
   python dm_client.py miro-layout <JSONファイル|-> [--export <ID>]   書き出したフレームに、位置・色・見出し・図形・線をまとめて当てる
@@ -1495,7 +1495,7 @@ def main():
     p.add_argument("--groups", help='向きごとの組の JSON ファイル(- で標準入力)。[{"documentIds": [...], "direction": "右", "title": "..."}]')
     p.add_argument("--no-wait", action="store_true", help="書き終わるのを待たずに返す")
     p.set_defaults(func=cmd_miro_export)
-    p = sub.add_parser("miro-diagram", help="フロー図(箱と線の一覧)を Miro に描く(新しいフレーム。書き終わるまで待つ)")
+    p = sub.add_parser("miro-diagram", help="フロー図(箱と線)・付箋の島を Miro に描く(新しいフレーム。書き終わるまで待つ)")
     p.add_argument("file", help='フロー図の JSON ファイル(- で標準入力)。{"flow": "right", "lanes": [...], "nodes": [...], "edges": [...]}')
     p.add_argument("--anchor", help="目印の名前(ボードの付箋の [DM]名前)")
     p.add_argument("--anchor-url", help="付箋・図形のリンク(Miro の「リンクをコピー」)")

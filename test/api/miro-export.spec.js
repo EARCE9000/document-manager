@@ -719,3 +719,50 @@ test.describe.serial("フロー図を描く(箱と線。資料の代わりに、
 		expect((await bad.json()).details).toEqual([expect.stringContaining("「nai」")]);
 	});
 });
+
+test.describe.serial("付箋の島を描く(親和図。diagram の type: stickies)", () => {
+	test.beforeAll(async ({request}) => {
+		await control(request, {reset: true});
+		await connectMiro(request);
+		await control(request, {addItem: {id: "9600000000000000001", type: "sticky_note", x: 0, y: 0, width: 200, height: 200, content: "<p>[DM]ふりかえり</p><p>(右)</p>"}});
+	});
+
+	test.afterAll(async ({request}) => {
+		await request.delete("api/miro/connection", {headers: admin});
+	});
+
+	test("島ごとの見出しと付箋をフレームに描く。付箋は島の色、付箋に書いた色が優先。線でつなげる", async ({request}) => {
+		const record = await exportAndWait(request, null, {anchor: "ふりかえり", title: "スプリント 12 のふりかえり", diagram: {type: "stickies", groups: [
+			{title: "良かった点", color: "light_green", notes: [{text: "レビューが早い"}, {text: "テストが増えた"}, {key: "deploy", text: "デプロイが楽"}]},
+			{title: "困った点", notes: [{key: "slow", text: "画面が遅い", color: "orange"}, {text: "仕様の変更が多い"}]}
+		], edges: [{from: "slow", to: "deploy", label: "関係?", style: "dashed"}]}});
+		expect(record.state).toBe("done");
+		expect(record.documents).toEqual([expect.objectContaining({kind: "diagram", state: "placed", nodes: 5, edges: 1})]);
+		const frameId = record.frames[0].frameId;
+		const frame = (await framesOf(request)).find((f) => f.id === frameId);
+		const children = await childrenOf(request, frameId);
+		const stickies = children.filter((i) => i.type === "sticky_note");
+		expect(stickies).toHaveLength(5);
+		const byText = (text) => stickies.find((s) => s.data.content.includes(text));
+		expect(byText("レビューが早い").style.fillColor).toBe("light_green");
+		expect(byText("画面が遅い").style.fillColor).toBe("orange");
+		// 2 つ目の島は色を書いていないので、順に使う色の 2 つ目
+		expect(byText("仕様の変更が多い").style.fillColor).toBe("light_green");
+		expect(byText("レビューが早い").data.shape).toBe("square");
+		// 見出しの文字と島の枠
+		const titles = children.filter((i) => i.type === "text").map((t) => t.data.content);
+		expect(titles).toEqual(expect.arrayContaining(["<p><strong>良かった点</strong></p>", "<p><strong>困った点</strong></p>"]));
+		expect(children.filter((i) => i.type === "shape" && i.data.shape === "round_rectangle")).toHaveLength(2);
+		// 付箋はフレームに収まり、重ならない
+		for (const [i, a] of stickies.entries()) {
+			expect(boxOf(a).bottom).toBeLessThanOrEqual(frame.geometry.height);
+			for (const b of stickies.slice(i + 1)) expect(overlaps(boxOf(a), boxOf(b))).toBe(false);
+		}
+		const connectors = (await (await request.get(`${STUB_URL}/__connectors`)).json()).filter((c) => c.boardId === BOARD);
+		expect(connectors).toEqual([expect.objectContaining({startItem: {id: record.frames[0].diagram.nodes.slow}, endItem: {id: record.frames[0].diagram.nodes.deploy}})]);
+		// 地図には key つきで出る(省いた key は「島の番号-付箋の番号」)
+		const map = await (await request.get(`api/miro/map?exportId=${record.id}`, {headers: ro})).json();
+		expect(map.frames[0].diagram.nodes.map((n) => n.key)).toEqual(["1-1", "1-2", "deploy", "slow", "2-2"]);
+		expect(map.frames[0].others).toEqual([]);
+	});
+});

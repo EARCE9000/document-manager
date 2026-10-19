@@ -814,13 +814,35 @@ const drawDiagram = async (board, record, layout) => {
 		}));
 		record.diagram.lanes.push(String(header.id));
 	}
+	// 付箋の島: 島の枠(背景) → 見出し
+	for (const island of layout.islands ?? []) {
+		const band = await make((token) => Miro.createShape(token, board, {
+			shape: "round_rectangle", content: "", ...island.band, parentId: frameId,
+			style: {fillColor: "#ffffff", fillOpacity: "1", borderColor: island.border, borderWidth: "3"}
+		}));
+		record.diagram.lanes.push(String(band.id));
+		if (island.titleAt) {
+			const title = await make((token) => Miro.createText(token, board, {
+				content: `<p><strong>${escapeHtml(island.title)}</strong></p>`, ...island.titleAt, parentId: frameId,
+				style: {fontSize: "28", textAlign: "left"}
+			}));
+			record.diagram.lanes.push(String(title.id));
+		}
+	}
 	const ids = {};
 	await forEachConcurrently(layout.nodes, CONCURRENCY, async (node) => {
-		const item = await make((token) => Miro.createShape(token, board, {
-			shape: node.shape, content: `<p>${linked(textHtml(node.text), node.link)}</p>`,
-			x: node.x, y: node.y, width: node.width, height: node.height, parentId: frameId,
-			style: {fillColor: node.fill, borderColor: node.border, borderWidth: "2", color: node.color, fontSize: "14"}
-		}));
+		const content = `<p>${linked(textHtml(node.text), node.link)}</p>`;
+		const item = node.item === "sticky"
+			// 付箋は幅だけを渡す(高さは Miro が決める)
+			? await make((token) => Miro.createStickyNote(token, board, {
+				content, shape: "square", fillColor: node.color, x: node.x, y: node.y, width: node.width, parentId: frameId,
+				style: {textAlign: "center", textAlignVertical: "middle"}
+			}))
+			: await make((token) => Miro.createShape(token, board, {
+				shape: node.shape, content,
+				x: node.x, y: node.y, width: node.width, height: node.height, parentId: frameId,
+				style: {fillColor: node.fill, borderColor: node.border, borderWidth: "2", color: node.color, fontSize: "14"}
+			}));
 		ids[node.key] = String(item.id);
 	});
 	// 箱の並びは指示の順で残す
