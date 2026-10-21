@@ -388,6 +388,30 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "getRateLimit", method: "get", path: "/api/rate-limit", role: "admin", tag: "その他",
+		summary: "APIの回数の上限(5 分あたり)",
+		description: "`authenticated`(ログインした人・APIキー。利用者ごと)と `anonymous`(ログインしていない呼び出し。IP ごと)の上限。"
+			+ "`source`: `setting`(管理画面で変えた値)/ `env`(環境変数 RATE_LIMIT_AUTHENTICATED・RATE_LIMIT_ANONYMOUS)/ `default`(既定 10000・300)。"
+			+ "`disabled` が true なら RATE_LIMIT_DISABLED で上限をかけていない。上限を超えると 429(`code: rate_limited`・`retryAfterSeconds`・Retry-After ヘッダー)",
+		aiGuide: false
+	},
+	{
+		id: "updateRateLimit", method: "put", path: "/api/rate-limit", role: "admin", tag: "その他",
+		summary: "APIの回数の上限を変える",
+		description: "変えるものだけを渡す。DB に保存するので再起動は要らない(保存した台はすぐ、ほかの台は 30 秒以内に効く)。1 つでも範囲外なら何も保存しない",
+		body: {schema: {type: "object", properties: {authenticated: {type: "integer", minimum: 100, maximum: 1000000}, anonymous: {type: "integer", minimum: 10, maximum: 100000}}},
+			example: {authenticated: 10000}},
+		responses: {400: "範囲外・どちらも無い"},
+		aiGuide: false
+	},
+	{
+		id: "resetRateLimit", method: "delete", path: "/api/rate-limit/:kind", role: "admin", tag: "その他",
+		summary: "APIの回数の上限を既定に戻す",
+		description: "`kind`: `authenticated` か `anonymous`。管理画面で変えた値を消し、環境変数(無ければ既定)に戻す",
+		responses: {404: "種類が違う"},
+		aiGuide: false
+	},
+	{
 		id: "getStorageReconcile", method: "get", path: "/api/storage-reconcile", role: "admin", tag: "その他",
 		summary: "DBと実ファイルの照合",
 		description: "読み取りのみ。実ファイルだけある文書(孤立ファイル)と、DBだけある文書(実ファイルが無い)を返す。ストレージへ到達できていない疑いがあるときは`unavailable:true`を返し、何も報告しない(未マウント時に全件を欠損として報告しないため)。ローカル保存のみ対応",

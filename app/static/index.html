@@ -2151,6 +2151,13 @@
 					</div>
 					<div id="featureList"></div>
 
+					<h3>APIの回数の上限</h3>
+					<div class="adminSectionNote">
+						5 分あたりに受け付ける API の回数です。超えると 429(<code>rate_limited</code>)で断ります。ログインした人・APIキーは<strong>利用者ごと</strong>、ログインしていない呼び出しは<strong>IPごと</strong>に数えます。
+						保存するとこのサーバーにはすぐ効き、複数台で動かしている場合も 30 秒以内に全台に効きます(再起動は要りません)。上限に当たった利用者と API はログに残ります(<code>rate_limited</code>)。
+					</div>
+					<div id="rateLimitList"></div>
+
 					<h3>データベースのファイル</h3>
 					<div class="adminSectionNote">スキーマを更新すると新しいファイルを作り、古いファイルは消さずに残します(1つ前へ戻せるようにするため)。</div>
 					<div id="serverDbFilesWrap"></div>
@@ -6049,6 +6056,64 @@ const loadFeatures = async () => {
 	renderFeatures(await res.json());
 };
 
+// ---- API の回数の上限(管理者のみ)。管理画面で保存した値 → 環境変数 → 既定 ----
+const rateLimitList = document.getElementById("rateLimitList");
+const RATE_LIMIT_KINDS = [
+	{kind: "authenticated", name: "ログインした人・APIキー", desc: "利用者ごとに数えます。AI(Claude Code など)からまとめて登録・タグ付けすると多くなります。", env: "RATE_LIMIT_AUTHENTICATED"},
+	{kind: "anonymous", name: "ログインしていない呼び出し", desc: "IPごとに数えます。総当たりやのぞき見を防ぐため、低めにしておきます。", env: "RATE_LIMIT_ANONYMOUS"}
+];
+const renderRateLimit = (view) => {
+	const metaOf = (item, spec) => (item.source === "setting"
+		? `この画面で変更されました(${escapeHtml(item.updatedBy || "不明")} / ${formatDateTime(item.updatedAt)})。既定に戻すと ${item.envDefault.toLocaleString()} 回`
+		: item.source === "env" ? `環境変数 ${spec.env} の値です` : `既定の値です(環境変数 ${spec.env} で変えられます)`);
+	rateLimitList.innerHTML = (view.disabled ? `<div class="adminSectionNote"><strong>いまは RATE_LIMIT_DISABLED で上限をかけていません</strong>(開発・テスト用)。保存した値は、外したときに使われます。</div>` : "")
+		+ RATE_LIMIT_KINDS.map((spec) => {
+			const item = view[spec.kind];
+			const range = view.ranges[spec.kind];
+			return `<div class="featureRow" data-kind="${spec.kind}">
+				<div class="featureBody">
+					<div class="featureName">${escapeHtml(spec.name)}<span class="featureState on">5 分で ${item.limit.toLocaleString()} 回</span></div>
+					<div class="featureDesc">${escapeHtml(spec.desc)}(${range.min.toLocaleString()} 〜 ${range.max.toLocaleString()})</div>
+					<div class="featureMeta">${metaOf(item, spec)}</div>
+				</div>
+				<div class="toolbarRow">
+					<input type="number" class="rateLimitInput" min="${range.min}" max="${range.max}" step="100" value="${item.limit}" aria-label="${escapeHtml(spec.name)}の上限(5 分あたり)" style="width: 9em;">
+					<button type="button" class="modalButton save rateLimitSave">保存</button>
+					${item.source === "setting" ? `<button type="button" class="modalButton rateLimitReset">既定に戻す</button>` : ""}
+				</div>
+			</div>`;
+		}).join("");
+	for (const row of rateLimitList.querySelectorAll(".featureRow[data-kind]")) {
+		const kind = row.dataset.kind;
+		row.querySelector(".rateLimitSave").addEventListener("click", async () => {
+			const value = Number(row.querySelector(".rateLimitInput").value);
+			const res = await fetch("./api/rate-limit", {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({[kind]: value})});
+			if (res.status !== 200) {
+				alert((await res.json().catch(() => ({}))).error || "保存できませんでした");
+				return;
+			}
+			renderRateLimit(await res.json());
+		});
+		row.querySelector(".rateLimitReset")?.addEventListener("click", async () => {
+			if (!await showConfirmDialog("この画面で変えた上限を消して、環境変数(無ければ既定)の値に戻しますか?")) return;
+			const res = await fetch("./api/rate-limit/" + kind, {method: "DELETE"});
+			if (res.status !== 200) {
+				alert((await res.json().catch(() => ({}))).error || "戻せませんでした");
+				return;
+			}
+			renderRateLimit(await res.json());
+		});
+	}
+};
+const loadRateLimit = async () => {
+	const res = await fetch("./api/rate-limit");
+	if (res.status !== 200) {
+		rateLimitList.innerHTML = `<div class="emptyMessage">回数の上限を取得できませんでした。</div>`;
+		return;
+	}
+	renderRateLimit(await res.json());
+};
+
 // ---- セッションの切断(管理者のみ) ----
 // 不正アクセスが疑われるときに、対象の利用者を一式で切る。取り消せない操作なので、
 // 切るかどうかを判断できる材料(いつ・どこから・何で・最後にいつ動いたか)を先に並べる
@@ -6156,7 +6221,7 @@ document.getElementById("sessionReloadButton").addEventListener("click", () => l
 const ADMIN_TABS = [
 	{key: "allowedUsers", label: "アクセス許可ユーザー", load: () => loadAllowedUsers()},
 	{key: "sessions", label: "セッション", load: () => loadSessionsTab()},
-	{key: "server", label: "サーバー", load: () => Promise.all([loadServerStatus(), loadFeatures()])},
+	{key: "server", label: "サーバー", load: () => Promise.all([loadServerStatus(), loadFeatures(), loadRateLimit()])},
 	{key: "database", label: "データベース", load: () => loadDatabaseTab()},
 	{key: "convert", label: "変換サービス", load: () => loadConvertTab()},
 	// アプリの値(クライアントID・シークレット)もここで入れられるので、管理者には常に出す

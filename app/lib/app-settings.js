@@ -1,5 +1,5 @@
 /*!
- * app-settings.js : 管理画面から変えられる設定(機能のOn/Off)
+ * app-settings.js : 管理画面から変えられる設定(機能のOn/Off・API の回数の上限)
  * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
  * MIT Licensed
  *
@@ -75,6 +75,26 @@ module.exports.clear = async (key, updatedBy) => {
 };
 
 module.exports.toBoolean = toBoolean;
+
+/**
+ * 文字列の設定を読む(無ければ null)。読めなければ null(呼ぶ側が既定値を使う)
+ * @returns {Promise<?{value: string, updatedBy: ?string, updatedAt: ?string}>}
+ */
+module.exports.getValue = async (key) => {
+	let row = null;
+	try {
+		row = await ds.get(SQL_GET, [key]);
+	} catch (err) {
+		logger.warn({err, key}, "::app-settings: 設定を読めませんでした。既定値を使います");
+	}
+	return row == null ? null : {value: String(row.value), updatedBy: row.updated_by ?? null, updatedAt: row.updated_at ?? null};
+};
+
+/** 文字列の設定を書く(誰がいつ変えたかも残す) */
+module.exports.setValue = async (key, value, updatedBy) => {
+	await ds.run(SQL_UPSERT, {key, value: String(value), updated_by: updatedBy ?? null, updated_at: new Date().toISOString()});
+	logger.info({audit: "app_setting_changed", key, value: String(value), user: updatedBy}, "audit");
+};
 
 /** 設定のキー(文字列を散らさないためここにまとめる) */
 module.exports.KEYS = {

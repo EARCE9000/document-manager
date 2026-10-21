@@ -292,7 +292,9 @@ const resolveAuth = async (req, res, next) => {
 // 未認証(総当たり・スクレイピング等の悪用が主目的)と認証済み(正規利用者・AI連携APIキー等)を
 // 別枠にする。api/*は全リクエストが原則認証必須なため、未認証側の上限は低めのままでよい一方、
 // 認証済み側は複数文書の一括操作等でまとまった量のリクエストが発生するAI連携の実利用を踏まえ、
-// 大幅に緩めている(実機でのAI連携テスト中に旧来の一律300/5分へ到達した実績があったため)。
+// 大幅に緩めている(実機でのAI連携テスト中に旧来の一律300/5分へ到達した実績があったため。
+// さらに 1000/5分 でも上限に当たる利用者が出たため、既定を 10000/5分 にし、管理画面と環境変数で変えられるようにした。
+// 上限の決まり方と、上限に当たったときのログは lib/rate-limit.js)。
 // 認証済み側は、trust proxy配下で複数利用者が同一IPに見える環境(社内共有ネットワーク等)でも
 // 利用者ごとに正しく分離されるよう、IPではなく利用者識別子(APIキー発行者/ログインユーザー)で
 // カウントする
@@ -301,33 +303,22 @@ const resolveAuth = async (req, res, next) => {
 // テストの通し実行は正規の利用者1人として数えられるため、本数が増えると上限に届き、
 // 無関係なテストが429で落ちる(実際にそうなった。しかも落ちるのは後ろのテストなので
 // 原因が分かりにくい)。本番の上限を緩めて誤魔化すのではなく、テスト側で切る
-const {rateLimit, ipKeyGenerator} = require('express-rate-limit');
+const {rateLimit} = require('express-rate-limit');
+const RateLimit = require('./lib/rate-limit.js');
 const RATE_LIMIT_DISABLED = /^(1|true)$/i.test(process.env.RATE_LIMIT_DISABLED || "");
 if (RATE_LIMIT_DISABLED) {
 	logger.warn("RATE_LIMIT_DISABLED=true: レート制限を無効化して起動しています(開発・テスト用途のみ)");
 }
 // 無効化時は素通しのミドルウェアに差し替える(上限ヘッダーも付かなくなる)
 const rateLimiter = (options) => (RATE_LIMIT_DISABLED ? (req, res, next) => next() : rateLimit(options));
-const RATE_LIMIT_MESSAGE = {error: "リクエストが多すぎます。しばらく待ってから再度お試しください。"};
-const apiRateLimiterAnonymous = rateLimiter({
-	windowMs: 5 * 60 * 1000,
-	limit: 300,
-	standardHeaders: 'draft-7',
-	legacyHeaders: false,
-	message: RATE_LIMIT_MESSAGE,
-	skip: (req) => req.authData != null
-});
-const apiRateLimiterAuthenticated = rateLimiter({
-	windowMs: 5 * 60 * 1000,
-	limit: 1000,
-	standardHeaders: 'draft-7',
-	legacyHeaders: false,
-	message: RATE_LIMIT_MESSAGE,
-	skip: (req) => req.authData == null,
-	// IP フォールバック時は ipKeyGenerator で包み、IPv6 を /64 サブネット単位に正しく集約する
-	// (素の req.ip だと IPv6 の完全アドレス単位になり、上限を回避され得る)
-	keyGenerator: (req) => req.authData?.user_identifier || ipKeyGenerator(req.ip)
-});
+const RATE_LIMIT_MESSAGE = {error: "リクエストが多すぎます。しばらく待ってから再度お試しください。", code: "rate_limited"};
+// api/* の上限(5 分あたり。未認証は IP ごと、認証済みは利用者ごと)。管理画面で保存した値 → 環境変数 → 既定
+const rateLimitSettings = RateLimit.createLimitSettings({appSettings: require("./lib/app-settings.js")});
+// 管理者が上限を見る・変える API は数えない(上限を下げすぎて自分も 429 になっても、管理画面から戻せるように)
+const apiLimiters = RateLimit.createApiLimiters({limitOf: rateLimitSettings.limitOf, logger, disabled: RATE_LIMIT_DISABLED,
+	exempt: (req) => req.authData?.role === AllowedUsers.ROLES.ADMIN && (req.path === "/rate-limit" || req.path.startsWith("/rate-limit/"))});
+const apiRateLimiterAnonymous = apiLimiters.anonymous;
+const apiRateLimiterAuthenticated = apiLimiters.authenticated;
 const loginRateLimiter = rateLimiter({
 	windowMs: 15 * 60 * 1000,
 	limit: 20,
@@ -4818,6 +4809,70 @@ app.put(BASE_URL_PATH + 'api/features/mockups', requireAuth, requireAdmin, async
 		res.status(200).json({enabled: mockups.enabled, updatedBy: mockups.updatedBy, updatedAt: mockups.updatedAt});
 	} catch (err) {
 		logger.error(err, "::api/features/mockups");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** API の回数の上限(5 分あたり)。いまの値と、何で決まっているか(setting: 管理画面 / env: 環境変数 / default: 既定) */
+const rateLimitView = async () => {
+	const current = await rateLimitSettings.current();
+	return {
+		windowMinutes: RateLimit.WINDOW_MS / 60000,
+		disabled: RATE_LIMIT_DISABLED,
+		ranges: RateLimit.RANGES,
+		...Object.fromEntries(RateLimit.KINDS.map((kind) => [kind, current[kind]]))
+	};
+};
+
+app.get(BASE_URL_PATH + 'api/rate-limit', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(await rateLimitView());
+	} catch (err) {
+		logger.error(err, "::api/rate-limit");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 上限を変える。{authenticated?, anonymous?}(5 分あたりの回数)。保存した台はすぐ、ほかの台は 30 秒以内に効く */
+app.put(BASE_URL_PATH + 'api/rate-limit', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const body = req.body ?? {};
+		const kinds = RateLimit.KINDS.filter((kind) => body[kind] != null);
+		if (kinds.length === 0) {
+			res.status(400).json({error: "authenticated か anonymous(5 分あたりの回数)を指定してください"});
+			return;
+		}
+		// 全部を確かめてから保存する(片方だけ変わらないように)
+		for (const kind of kinds) {
+			const n = Number(body[kind]);
+			const range = RateLimit.RANGES[kind];
+			if (!Number.isInteger(n) || n < range.min || n > range.max) {
+				res.status(400).json({error: `${kind} は ${range.min} 〜 ${range.max} の整数です(5 分あたりの回数)`});
+				return;
+			}
+		}
+		for (const kind of kinds) await rateLimitSettings.set(kind, Number(body[kind]), req.authData.user_identifier);
+		res.status(200).json(await rateLimitView());
+	} catch (err) {
+		logger.error(err, "::api/rate-limit");
+		res.status(err.status === 400 ? 400 : 500).json({error: err.status === 400 ? err.message : "Internal Error"});
+	}
+});
+
+/** 管理画面で保存した上限を消して、環境変数(無ければ既定)に戻す */
+app.delete(BASE_URL_PATH + 'api/rate-limit/:kind', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (!RateLimit.KINDS.includes(req.params.kind)) {
+			res.status(404).json({error: `種類は ${RateLimit.KINDS.join(" / ")} のどれかです`});
+			return;
+		}
+		await rateLimitSettings.clear(req.params.kind, req.authData.user_identifier);
+		res.status(200).json(await rateLimitView());
+	} catch (err) {
+		logger.error(err, "::api/rate-limit");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

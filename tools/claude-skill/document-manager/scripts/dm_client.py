@@ -445,7 +445,34 @@ def cmd_setup(args):
     return {"configPath": os.path.abspath(CONFIG_PATH), "baseUrl": base_url, "apiKey": api_key[:6] + "...", "verified": not args.no_verify}
 
 
+# 回数の上限(429)に当たったとき: サーバーが言う秒数(Retry-After。長くても 60 秒)だけ待って、3 回まで頼み直す。
+# すぐ頼み直すと、上限の中でさらに回数を重ねてしまうため
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_MAX_WAIT = 60
+
+
 def request(method, path, *, query=None, body=None, content_type=None, raw=False):
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        try:
+            return _request_once(method, path, query=query, body=body, content_type=content_type, raw=raw)
+        except RateLimited as limited:
+            if attempt >= RATE_LIMIT_RETRIES:
+                raise DmError(limited.message) from None
+            wait = min(max(limited.retry_after, 1), RATE_LIMIT_MAX_WAIT)
+            print(f"[document-manager] 回数の上限に当たりました。{wait} 秒待って頼み直します({attempt + 1}/{RATE_LIMIT_RETRIES})", file=sys.stderr)
+            time.sleep(wait)
+
+
+class RateLimited(Exception):
+    """429 を受けた(request の中で待って頼み直す)"""
+
+    def __init__(self, message, retry_after):
+        super().__init__(message)
+        self.message = message
+        self.retry_after = retry_after
+
+
+def _request_once(method, path, *, query=None, body=None, content_type=None, raw=False):
     base_url, api_key = load_config()
     url = urllib.parse.urljoin(base_url, path)
     if query:
@@ -478,7 +505,14 @@ def request(method, path, *, query=None, body=None, content_type=None, raw=False
             detail = {"error": text}
         if err.code == 401:
             detail.update(unauthorized_detail(base_url))
-        raise DmError(json.dumps({"status": err.code, **detail}, ensure_ascii=False)) from None
+        message = json.dumps({"status": err.code, **detail}, ensure_ascii=False)
+        if err.code == 429:
+            try:
+                retry_after = int(err.headers.get("Retry-After") or detail.get("retryAfterSeconds") or 30)
+            except (TypeError, ValueError):
+                retry_after = 30
+            raise RateLimited(message, retry_after) from None
+        raise DmError(message) from None
     except urllib.error.URLError as err:
         raise DmError(f"接続できません: {url} ({err.reason})") from None
 

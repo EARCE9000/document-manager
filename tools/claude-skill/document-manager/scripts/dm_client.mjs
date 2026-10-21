@@ -357,8 +357,26 @@ const loadConfig = () => {
 	return {baseUrl: baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`, apiKey};
 };
 
+// 回数の上限(429)に当たったとき: サーバーが言う秒数(Retry-After。長くても 60 秒)だけ待って、3 回まで頼み直す。
+// すぐ頼み直すと、上限の中でさらに回数を重ねてしまうため
+const RATE_LIMIT_RETRIES = 3;
+const RATE_LIMIT_MAX_WAIT = 60;
+
 // withHeaders: true を付けると、raw の本体に加えて応答ヘッダーも返す({payload, headers})
-const request = async (method, apiPath, {query, json, formData, raw = false, withHeaders = false} = {}) => {
+const request = async (method, apiPath, options = {}) => {
+	for (let attempt = 0; ; attempt++) {
+		try {
+			return await requestOnce(method, apiPath, options);
+		} catch (err) {
+			if (err.retryAfter == null || attempt >= RATE_LIMIT_RETRIES) throw err;
+			const wait = Math.min(Math.max(err.retryAfter, 1), RATE_LIMIT_MAX_WAIT);
+			process.stderr.write(`[document-manager] 回数の上限に当たりました。${wait} 秒待って頼み直します(${attempt + 1}/${RATE_LIMIT_RETRIES})\n`);
+			await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+		}
+	}
+};
+
+const requestOnce = async (method, apiPath, {query, json, formData, raw = false, withHeaders = false} = {}) => {
 	const {baseUrl, apiKey} = loadConfig();
 	const url = new URL(apiPath, baseUrl);
 	for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, v);
@@ -386,7 +404,9 @@ const request = async (method, apiPath, {query, json, formData, raw = false, wit
 		} catch {
 			detail = {error: text};
 		}
-		throw new DmError(JSON.stringify({status: res.status, ...detail, ...(res.status === 401 ? unauthorizedDetail(baseUrl) : {})}));
+		const error = new DmError(JSON.stringify({status: res.status, ...detail, ...(res.status === 401 ? unauthorizedDetail(baseUrl) : {})}));
+		if (res.status === 429) error.retryAfter = Number(res.headers.get("retry-after")) || Number(detail.retryAfterSeconds) || 30;
+		throw error;
 	}
 	if (raw && withHeaders) return {payload: Buffer.from(await res.arrayBuffer()), headers: res.headers};
 	if (raw) return Buffer.from(await res.arrayBuffer());
