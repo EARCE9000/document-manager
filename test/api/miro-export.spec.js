@@ -192,7 +192,9 @@ test.describe.serial("Miro に書き出す", () => {
 		expect(overlaps(boxOf(first), boxOf(second))).toBe(false);
 		// 前のフレームの中は変わっていない
 		expect(await childrenOf(request, first.id)).toEqual(firstChildren);
-		const titles = (await childrenOf(request, second.id)).filter((i) => i.type === "document").map((i) => i.data.title);
+		// 中は頼んだ順に左から右。資料は数件ずつ同時に置くので、Miro に作られた順は決まっていない(位置で見る)
+		const titles = (await childrenOf(request, second.id)).filter((i) => i.type === "document")
+			.sort((a, b) => a.position.x - b.position.x).map((i) => i.data.title);
 		expect(titles).toEqual([`議事録${STAMP}.md`, `仕様書${STAMP}.pdf`]);
 		expect(record.documents.find((d) => d.title === `仕様書${STAMP}.pdf`).documentId).toBe(docs.pdf.id);
 	});

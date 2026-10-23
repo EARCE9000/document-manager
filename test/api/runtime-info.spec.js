@@ -23,7 +23,11 @@ test.describe("動いている部品の版", () => {
 		expect(Object.keys(byKey)).toEqual(["app", "database", "storage", "idp", "office", "pdf", "weaviate"]);
 		expect(byKey.app).toMatchObject({configured: true, reachable: true, product: "Document Manager"});
 		expect(byKey.app.runtime).toMatchObject({node: expect.stringMatching(/^\d+\.\d+\.\d+$/), openssl: expect.any(String), arch: expect.any(String)});
-		expect(byKey.database).toMatchObject({configured: true, reachable: true, product: "SQLite(本体に同梱)", version: expect.stringMatching(/^3\./)});
+		// 試験は SQLite でも PostgreSQL でも流せる(DATABASE_BACKEND)。PostgreSQL の版は server_version(例: 16.4)
+		const database = (process.env.DATABASE_BACKEND || "sqlite") === "postgres"
+			? {product: "PostgreSQL", version: expect.stringMatching(/^\d+\.\d+/)}
+			: {product: "SQLite(本体に同梱)", version: expect.stringMatching(/^3\./)};
+		expect(byKey.database).toMatchObject({configured: true, reachable: true, ...database});
 		expect(byKey.weaviate).toEqual({key: "weaviate", name: "意味検索(Weaviate)", configured: false});
 		// 試験では OIDC を使わない(serve.js)
 		expect(byKey.idp).toEqual({key: "idp", name: "IdP(ログイン)", configured: false});

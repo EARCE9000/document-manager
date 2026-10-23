@@ -26,6 +26,35 @@ const saveCredentials = (request, clientId = CLIENT_ID, clientSecret = CLIENT_SE
 	request.put("api/miro/credentials", {headers: admin, data: {clientId, clientSecret}});
 
 /**
+ * テストサーバーのデータベースから 1 行を読む(API を通さずに、暗号化して保存しているかを確かめるため)。
+ * テストサーバーと同じく DATABASE_BACKEND で SQLite / PostgreSQL を切り替える
+ */
+const queryRow = async (sql) => {
+	if ((process.env.DATABASE_BACKEND || "sqlite") === "postgres") {
+		const {Client} = require("../../app/node_modules/pg");
+		const client = new Client({
+			connectionString: process.env.DATABASE_URL,
+			...(process.env.DATABASE_SSL === "true" ? {ssl: {rejectUnauthorized: false}} : {})
+		});
+		await client.connect();
+		try {
+			return (await client.query(sql)).rows[0];
+		} finally {
+			await client.end();
+		}
+	}
+	const path = require("node:path");
+	const Database = require("../../app/node_modules/better-sqlite3");
+	const {TEST_DATA_DIR} = require("./config.js");
+	const db = new Database(path.join(TEST_DATA_DIR, "db", "document_manager_v21.sqlite"), {readonly: true});
+	try {
+		return db.prepare(sql).get();
+	} finally {
+		db.close();
+	}
+};
+
+/**
  * 管理者として連携する(許可の画面 → 戻り先 → 画面へ戻る、を手でたどる)。
  * 途中のリダイレクトを1つずつ追い、セッションの cookie を保ったまま戻り先を開く
  */
@@ -67,17 +96,9 @@ test.describe.serial("Miro のアプリの値(管理画面で入力する場合)
 		expect(JSON.parse(text)).toMatchObject({configured: true, credentials: {source: "settings", clientId: CLIENT_ID, editable: true}});
 		expect((await (await request.get("api/check_access_token", {headers: admin})).json()).miroEnabled).toBe(true);
 
-		const path = require("node:path");
-		const Database = require("../../app/node_modules/better-sqlite3");
-		const {TEST_DATA_DIR} = require("./config.js");
-		const db = new Database(path.join(TEST_DATA_DIR, "db", "document_manager_v21.sqlite"), {readonly: true});
-		try {
-			const row = db.prepare("SELECT value FROM app_settings WHERE key = 'miro.client_secret'").get();
-			expect(row.value).toMatch(/^v1:/);
-			expect(row.value).not.toContain(CLIENT_SECRET);
-		} finally {
-			db.close();
-		}
+		const row = await queryRow("SELECT value FROM app_settings WHERE key = 'miro.client_secret'");
+		expect(row.value).toMatch(/^v1:/);
+		expect(row.value).not.toContain(CLIENT_SECRET);
 	});
 
 	test("形の違う値は保存しない(貼り損ねの空白・引用符など)", async ({request}) => {
@@ -159,19 +180,11 @@ test.describe.serial("Miro 連携(管理者)", () => {
 	// データベースのファイルや退避(バックアップ)が漏れても、トークンがそのまま読めないこと
 	test("トークンはデータベースに暗号化して持つ", async ({request}) => {
 		await connect(request);
-		const path = require("node:path");
-		const Database = require("../../app/node_modules/better-sqlite3");
-		const {TEST_DATA_DIR} = require("./config.js");
-		const db = new Database(path.join(TEST_DATA_DIR, "db", "document_manager_v21.sqlite"), {readonly: true});
-		try {
-			const row = db.prepare("SELECT access_token, refresh_token FROM miro_connection WHERE id = 1").get();
-			expect(row.access_token).toMatch(/^v1:/);
-			expect(row.refresh_token).toMatch(/^v1:/);
-			expect(row.access_token).not.toContain("stub-access-");
-			expect(row.refresh_token).not.toContain("stub-refresh-");
-		} finally {
-			db.close();
-		}
+		const row = await queryRow("SELECT access_token, refresh_token FROM miro_connection WHERE id = 1");
+		expect(row.access_token).toMatch(/^v1:/);
+		expect(row.refresh_token).toMatch(/^v1:/);
+		expect(row.access_token).not.toContain("stub-access-");
+		expect(row.refresh_token).not.toContain("stub-refresh-");
 	});
 
 	// 戻り先の URL を、別の人(または攻撃者)が作って踏ませても連携されないこと

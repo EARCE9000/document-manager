@@ -308,16 +308,24 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		const result = page.locator("#dbIntegrityResult");
 		await expect(result.locator(".status_badge")).toBeVisible();
 
+		// 検査するのは SQLite のときだけ。PostgreSQL では、整合性はデータベースの側が担うので「対象外」と出す
+		const sqlite = (process.env.DATABASE_BACKEND || "sqlite") === "sqlite";
 		await page.click("#dbIntegrityQuickButton");
-		await expect(result.locator(".status_badge")).toHaveText("問題なし");
-		await expect(result).toContainText("簡易(索引の整合検査を省く)");
-		await expect(result).toContainText("問題の件数");
+		if (sqlite) {
+			await expect(result.locator(".status_badge")).toHaveText("問題なし");
+			await expect(result).toContainText("簡易(索引の整合検査を省く)");
+			await expect(result).toContainText("問題の件数");
+		} else {
+			await expect(result.locator(".status_badge")).toHaveText("対象外");
+			await expect(result).toContainText("データベースの側の責務");
+		}
 
 		await page.click("#dbIntegrityFullButton");
 		// サーバーが止まることを必ず知らせてから実行する
 		await expect(page.locator(".modal_box")).toContainText("サーバーのほかの処理が止まる");
 		await page.click("[data-ans=yes]");
-		await expect(result).toContainText("厳密(索引と表の整合まで検査)");
+		if (sqlite) await expect(result).toContainText("厳密(索引と表の整合まで検査)");
+		else await expect(result.locator(".status_badge")).toHaveText("対象外");
 	});
 
 	// 照合は「消さない」ことが設計の要。画面の言葉と操作もそれに合わせている
