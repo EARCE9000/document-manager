@@ -35,6 +35,10 @@ Node.js (Express) 製。既定では単一コンテナ(メタデータはSQLite�
 |---|
 | <img src="docs/screenshots/tools.png" alt="ツール(AIエージェント用Skillの配布)" width="720"> |
 
+| 管理の画面(監査ログ。利用者・セッション・監査ログ・サーバーは共通の形、その後ろに独自のタブ) |
+|---|
+| <img src="docs/screenshots/admin-audit.png" alt="管理の画面(監査ログ)" width="720"> |
+
 画像はダミーのサンプルデータで撮影したもの。画面が変わったら `npm run screenshots`([docs/screenshots/capture.js](docs/screenshots/capture.js))で撮り直せる。
 
 ## 主な機能
@@ -178,13 +182,22 @@ LLMなどで作ったWebページのモックアップ(ビルド済みの一式)
 - **開発用バイパス**: `AUTH_DISABLED=true` で認証を丸ごと無効化できる(本番では未設定のこと)
 
 ### 管理画面(adminロールのみ)
-画面右上の歯車アイコンから開く。モーダルではなくページとして開き、タブで切り替える([docs/admin-screen.md](docs/admin-screen.md)に定義と決めた理由を残してある)。
+画面右上の歯車アイコンから開く別のページ(`admin.html`)で、タブで切り替える([docs/admin-screen.md](docs/admin-screen.md)に定義と決めた理由を残してある)。
 運用者が**SSHせずに「異常の有無」と「次に何をすべきか」を判断できる**ことを目的にしている。
 
-- **アクセス許可ユーザー**: ホワイトリストの追加・ロール変更・削除(従来モーダルだったもの)
+共通アーキテクチャで決めた「管理機能の画面」の形にそろえてある。**利用者 → セッション → 監査ログ → サーバー**の 4 つのタブは、どのサービスでも同じ順・同じ中身で、
+同じ形の WebAPI(`api/admin/users`・`api/admin/sessions`・`api/admin/audit`・`api/server-status`)の応答から、デザインテンプレートの共通のスクリプト(`app/static/admin/admin.js`。手を入れずに写したもの)が描く。
+その後ろに区切りを入れて、Document Manager の独自のタブ(**データベース・変換サービス・Miro 連携**)を並べる。タブは `?tab=` で開け、切り替えると URL に残る。
+ページはスクリプトを自分のファイルだけに絞る CSP(`script-src 'self'`)で配る。ログインしていなければ戻り先つきでログインの画面へ移り、管理者でなければ中身を出さない(WebAPI も 403)。
+
+- **利用者**: 台帳(アクセス許可ユーザー)の追加・権限の変更・削除と、最終ログインの日時。**最後の管理者は、下げることも外すこともできない**(409)。台帳から外すと、その人のログイン中のセッションと APIキーも止める(入れ直しても、止めたキーは戻らない)
 - **セッション**: 利用者ごとのログイン中のセッションと有効なAPIキーの一覧、利用者単位の切断、切断の履歴(上の「利用者の切断」参照)。切断ではできないこと(パスワードが漏れている場合はIdP側での変更が要る)を、一覧より先に表示する
-- **機能のOn/Off**: モックアップ管理など、使う構成でだけ開ける機能の切り替え(「サーバー」タブ内)。DBに保存するため再起動不要・全インスタンスに効く。今の状態が環境変数の既定のままか、誰かが画面で変えた値かも表示する
-- **サーバー**: 版・リビジョン・**ビルド時刻**(イメージが作られた時刻)・**起動時刻**(コンテナが起動した時刻)・稼働時間・同梱クライアントの版・DBファイルの一覧とサイズ。更新したはずなのにビルド時刻が変わっていなければ入れ替わっていない、と画面上で判断できる。DBファイルの一覧には旧バージョンも並ぶため、切り戻せる状態かも分かる(`GET api/server-status`)。**動いている部品の版**も並べる: 本体・データベース(SQLite/PostgreSQL)・変換サービス(Office・PDF)・意味検索(Weaviate と埋め込みモデル)の版と、その土台(Node.js・OpenSSL・OS。本体は V8・カーネル・CPU・メモリも)。土台の部品に脆弱性が見つかったとき、当てはまるかを SSH せずに確かめるためのもの(`GET api/server-status/components`)。あわせて**部品表**(イメージを作ったときに実際に入った npm の部品と版。名前で探せ、入れ子の別の版も出る。`GET api/server-status/packages`)を見られる。版の情報は弱点を探す手がかりにもなるため、admin だけが見られ、公開の `api/version` には載せない
+- **監査ログ**: **全員ぶん**の操作の記録を、期間(今日・7 日・30 日)・利用者・操作・対象で探す(新しい順に 100 件ずつ。続きも読める)。残すのは、ログイン(台帳に無くて断ったものも)、文書とモックアップの書き込み、管理の操作(利用者・切断・機能の切り替え・回数の上限・意味検索と Miro 連携の設定・DB の整合性の確認)、**権限で断った呼び出し**(同じ人の同じ口は 1 分に 1 回)。行ごとに、結果(成功・拒否・失敗)、経路(画面か APIキーか、キーの権限)、接続元の IP を出す。文書のダウンロードは標準出力のログだけに残す(数が多いため)。自分の分だけなら、全員が文書一覧の右上の「操作履歴」で見られる(こちらは今までどおり、文書とプロジェクトの操作だけ)
+- **サーバー**: 上に**設定**、下に**確認**を並べる
+  - 設定: **API の回数の上限**(ログインした人・ログインしていない呼び出し。値の出どころも出す)と**機能の On/Off**(モックアップ管理はその場で切り替え。意味検索・変換サービス・Miro 連携は構成で決まるので表示だけ)。どちらも DB に保存するため再起動不要・全インスタンスに効き、監査ログに残る
+  - **接続の確認**: データベース・ファイルの置き場・IdP・変換サービス(Office・PDF)・Weaviate へ、届くか・掛かった時間・最後に届いた時刻。使っていない相手は Not set(異常ではない)と出す
+  - **セキュリティ設定**: 認証の方式(開発用の AUTH_DISABLED でないこと)・回数の上限を切っていないか(RATE_LIMIT_DISABLED)・セッションの寿命・APIキーの最長の期限・期限を超えるキーの数など。危ない設定の行は赤くなる
+  - このサーバー: 版・リビジョン・**ビルド時刻**(イメージが作られた時刻)・**起動時刻**(コンテナが起動した時刻)・稼働時間・同梱クライアントの版・DBファイルの一覧とサイズ。更新したはずなのにビルド時刻が変わっていなければ入れ替わっていない、と画面上で判断できる。DBファイルの一覧には旧バージョンも並ぶため、切り戻せる状態かも分かる(`GET api/server-status`)。**動いている部品の版**も並べる: 本体・データベース(SQLite/PostgreSQL)・変換サービス(Office・PDF)・意味検索(Weaviate と埋め込みモデル)の版と、その土台(Node.js・OpenSSL・OS。本体は V8・カーネル・CPU・メモリも)。土台の部品に脆弱性が見つかったとき、当てはまるかを SSH せずに確かめるためのもの(`GET api/server-status/components`)。あわせて**部品表**(イメージを作ったときに実際に入った npm の部品と版。名前で探せ、入れ子の別の版も出る。`GET api/server-status/packages`)を見られる。版の情報は弱点を探す手がかりにもなるため、admin だけが見られ、公開の `api/version` には載せない
 - **データベース**: 破損の検知(`PRAGMA quick_check`/`integrity_check`)と、**DBと実ファイルの照合**
   - SQLiteの破損は「書き込みは通るのに一部だけ読めない」形で進むことがあり、画面上は正常に見える。**起動のたびに自動で簡易確認**し、結果をログと画面に残す(`GET api/db-integrity`)
   - 照合は、実ファイルだけある文書(孤立ファイル)と、DBだけある文書(実ファイルが無い)を報告する。前者は**アーカイブ済みとして登録し直せる**(元がアーカイブ済みだったか知る手段が無いため。必要なら既存の「復元」で戻す)。後者は**報告のみで削除しない**——ボリュームが未マウントのときは全件が欠損に見えるため、消すと「復旧可能な障害」を「恒久的なデータ消失」に変えてしまう(`GET api/storage-reconcile`)
@@ -286,6 +299,8 @@ document-manager/
 │   │   └── logger.js          # 共通ロガー (標準出力のみ)
 │   └── static/
 │       ├── index.html        # フロントエンド(単一HTML)
+│       ├── admin.html        # 管理の画面(admin のみ)。admin-page.js・admin-page.css が独自のタブを描く
+│       ├── admin/            # デザインテンプレートの admin.js と CSS(共通の 4 つのタブを描く。手を入れずに写したもの)
 │       ├── drawio-viewer.*   # .drawio をブラウザ上で描画するページ(html/js/css)
 │       └── vendor/drawio/    # draw.io公式のビューア(viewer-static.min.js)と拡張図形(stencils/。約42MB)。Apache-2.0
 ├── deploy/                  # 運用サーバ(podman + リバースプロキシ)向けのcompose構成
@@ -461,7 +476,7 @@ python tools/claude-skill/ci_smoke_test.py  # AIエージェント用Skillのク
   - `test/api/` の webServer 環境変数はパススルー式(既定は sqlite + local)。`DATABASE_BACKEND=postgres`/`DATABASE_URL`/`STORAGE_BACKEND=s3`/`S3_*`/`AWS_*` を与えれば、同じAPIテストを **Postgres + S3(MinIO等)** 構成でも実行できる(実際にこの構成で全件パスを確認済み)
   - ブラウザE2E(`*.e2e.js`、`npm run test:e2e`)は、serve.jsが払い出した管理者のログイン済みセッションcookieをChromiumへ注入して操作する。保存型XSSがCSPで実際にブロックされること(`preview-xss.e2e.js`)と、アップロード→検索→タグ付け→プレビュー→APIキー発行・利用、.drawio(ビューアでの描画・ページ送り)、新しい版のアップロードと版履歴、APIキー管理画面からのSkill ZIPダウンロード(`ui-flow.e2e.js`)を検証する
   - `hardening.spec.js`は、防御ヘッダー・壊れたリクエストの応答・管理APIの権限(APIキーでは403)・応答に載る値の上限を、実サーバの応答として確認する(ミドルウェアの並び順やルートごとのヘッダー上書きで壊れるため)
-  - `admin-pane.e2e.js`は管理画面(ページ切替・タブ・各タブの操作・adminでなければ開かないこと)を実ブラウザで確認する
+  - `admin-page.e2e.js`は管理画面(入口・タブの並び・各タブの操作・adminでなければ開かないこと・ログインへの戻り)を実ブラウザで確認する。管理の WebAPI の形(共通アーキテクチャの形どおりか)は `admin-api.spec.js` で確かめる
   - モックアップは`mockups.spec.js`(登録・配信・引換券・置き場所の外への脱出・権限)、`mockups-archived-access.spec.js`(**アーカイブ済みへ至る経路の総当たり**。一覧を断るだけでは足りず、IDが分かれば中身に触れられてしまう穴を塞いだときに追加した)、`mockup-view.e2e.js`(実ブラウザで、JSは動くがオリジンを持たず、かつ**モックアップ自身のファイルが1つも遮断されないこと**)、`mockups-ui.e2e.js`(画面からの通し)で確認する
   - おしながきは`project-manifest.spec.js`(説明書きの保存・プロジェクトごとに別であること・Markdown・権限・完全ロック)と、`project-manifest.e2e.js`/`project-manifest-xss.e2e.js`(実ブラウザでの編集と、**仕込まれた文字列が実行されないこと**)で確認する
   - スペース区切りのAND検索は`search-and.spec.js`で確認する(全角スペース・語順・余分なスペース・3文字未満の語・ファイル名とタグにまたがる指定・アーカイブ側)
@@ -734,3 +749,4 @@ docker run -d \
 | ファイル | 出典 | ライセンス |
 |---|---|---|
 | [app/static/vendor/drawio/viewer-static.min.js](app/static/vendor/drawio/viewer-static.min.js) と [stencils/](app/static/vendor/drawio/stencils) | [jgraph/drawio](https://github.com/jgraph/drawio) v31.4.6 | Apache-2.0([全文](app/static/vendor/drawio/LICENSE)) |
+| [app/static/admin/](app/static/admin)(admin.js・components.css・design.css・flexbox.css) | [EARCE9000/DesignTemplate](https://github.com/EARCE9000/DesignTemplate) Template01(ブランチ template01-admin、272d284) | MIT |

@@ -422,6 +422,11 @@ const main = async () => {
 		});
 		await shot("miro");
 		await page.setViewportSize(VIEWPORT);
+
+		// 10. 管理の画面の監査ログ(ここまでの登録・Miro の設定が、全員ぶんの記録として並ぶ)
+		await page.goto(new URL("admin.html?tab=audit", BASE_URL).href);
+		await page.locator(".admin_audit tbody tr").nth(3).waitFor();
+		await shot("admin-audit");
 	} finally {
 		await browser.close();
 		await new Promise((resolve) => stub.server.close(resolve));
