@@ -6,7 +6,7 @@
  * document-manager から内部ネットワーク経由でのみ呼ばれる小さなHTTPサービス。
  * 外部に公開しない前提のため認証は持たない(composeで内部ネットワークに閉じる)。
  *
- *   GET  /health          稼働確認。{status, apiVersion, chromium, maxBytes, timeoutSeconds, viewportWidth} を返す
+ *   GET  /health          稼働確認。{status, apiVersion, chromium, runtime, maxBytes, timeoutSeconds, viewportWidth} を返す(runtime: Node.js・OpenSSL・OS の版)
  *   POST /convert         本体にHTMLのバイト列(UTF-8)。application/pdf を返す
  *   POST /convert-drawio  本体に .drawio(XML)のバイト列。図の1ページを紙1枚にした application/pdf を返す
  *
@@ -502,6 +502,18 @@ const printDrawio = async (send) => {
 };
 
 /** 入っているChromiumの版(健全性の確認と、障害時の切り分け用)。1度取れたら覚えておく */
+
+// 動いている土台の版(Node.js・OpenSSL・OS)。土台の部品に脆弱性が出たとき、当てはまるかを管理画面からすぐ判断できるように返す
+const osRelease = (() => {
+	try {
+		return /^PRETTY_NAME="?([^"\n]*)"?/m.exec(require("node:fs").readFileSync("/etc/os-release", "utf8"))?.[1] ?? null;
+	} catch {
+		// /etc/os-release が無い環境(開発の Windows など)は OS の名前と版
+		return `${require("node:os").type()} ${require("node:os").release()}`;
+	}
+})();
+const RUNTIME = Object.freeze({node: process.versions.node, openssl: process.versions.openssl ?? null, os: osRelease, arch: process.arch});
+
 let knownChromiumVersion = null;
 const chromiumVersion = () => new Promise((resolve) => {
 	if (knownChromiumVersion != null) {
@@ -527,6 +539,7 @@ const server = http.createServer(async (req, res) => {
 			status: "ok",
 			apiVersion: API_VERSION,
 			chromium: await chromiumVersion(),
+			runtime: RUNTIME,
 			// 実際に効いている設定。反映されているかを外から確認できるようにする
 			maxBytes: MAX_BYTES,
 			timeoutSeconds: TIMEOUT_MS / 1000,

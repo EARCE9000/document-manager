@@ -2145,6 +2145,24 @@
 						<button type="button" id="serverStatusRefreshButton" class="modalButton">再読み込み</button>
 					</div>
 					<dl class="adminDefList" id="serverStatusList"></dl>
+
+					<h3>動いている部品の版</h3>
+					<div class="adminSectionNote">
+						本体と、いっしょに動いているコンテナ(データベース・変換サービス・意味検索)の版と、その土台(Node.js・OpenSSL・OS)です。
+						土台の部品に脆弱性が見つかったときに、当てはまるかをここで確かめられます。変換サービスと意味検索には問い合わせるので、数秒かかることがあります。
+					</div>
+					<div id="componentsWrap"></div>
+
+					<h3>ライブラリ(部品表)</h3>
+					<div class="adminSectionNote">
+						本体に入っている npm の部品です。イメージを作ったときに実際に入った版を出します。「この部品のこの版が入っているか」を名前で探せます(入れ子に入った別の版も出ます)。
+					</div>
+					<div class="toolbarRow" style="margin-bottom: 8px;">
+						<input type="search" id="packageSearchInput" placeholder="部品の名前で探す(例: express・multer)" style="min-width: 18em;">
+						<a href="./api/server-status/packages" target="_blank" rel="noopener">すべてを JSON で開く</a>
+					</div>
+					<div id="packagesWrap"></div>
+
 					<h3>機能のOn/Off</h3>
 					<div class="adminSectionNote">
 						使う構成でだけ開ける機能です。切り替えは<strong>すぐ反映され、再起動は要りません</strong>(複数台で動かしている場合も全台に効きます)。
@@ -6056,6 +6074,80 @@ const loadFeatures = async () => {
 	renderFeatures(await res.json());
 };
 
+// ---- 動いている部品の版(管理者のみ)。本体・DB・変換サービス・Weaviate と、その土台 ----
+// 土台(Node.js・OpenSSL・OS)を 1 行にする。古い変換サービスのイメージは返さないので、そう書く
+const runtimeText = (runtime) => (runtime == null
+	? "(このイメージは返しません。新しいイメージにすると出ます)"
+	: [runtime.node ? `Node.js ${runtime.node}` : null, runtime.openssl ? `OpenSSL ${runtime.openssl}` : null, runtime.os, runtime.arch].filter(Boolean).join(" / "));
+const componentsWrap = document.getElementById("componentsWrap");
+const packagesWrap = document.getElementById("packagesWrap");
+const packageSearchInput = document.getElementById("packageSearchInput");
+let directDependencies = [];
+const packagesTable = (list, {showPath = false} = {}) => (list.length === 0
+	? `<div class="emptyMessage">見つかりません。</div>`
+	: `<table><thead><tr><th>部品</th><th>版</th>${showPath ? "<th>場所</th>" : ""}</tr></thead><tbody>${list.map((pkg) => `<tr>
+		<td class="mono">${escapeHtml(pkg.name)}</td><td class="mono">${escapeHtml(pkg.version)}</td>
+		${showPath ? `<td class="mono">${escapeHtml(pkg.path)}</td>` : ""}</tr>`).join("")}</tbody></table>`);
+const loadComponents = async () => {
+	componentsWrap.innerHTML = `<div class="adminSectionNote">問い合わせ中...</div>`;
+	packagesWrap.innerHTML = "";
+	let result;
+	try {
+		const res = await fetch("./api/server-status/components");
+		if (res.status !== 200) throw new Error();
+		result = await res.json();
+	} catch {
+		componentsWrap.innerHTML = `<div class="emptyMessage">部品の版を取得できませんでした。</div>`;
+		return;
+	}
+	const stateOf = (c) => (!c.configured ? `<span class="adminStatus unknown">使っていない</span>`
+		: c.reachable ? `<span class="adminStatus ok">動作中</span>` : `<span class="adminStatus bad">応答なし</span>`);
+	const detailOf = (c) => {
+		if (!c.configured || !c.reachable) return c.error ? escapeHtml(c.error) : "-";
+		const lines = [];
+		if (c.key === "app") {
+			const r = c.runtime;
+			lines.push(escapeHtml(runtimeText(r)), escapeHtml(`V8 ${r.v8} / libuv ${r.uv} / カーネル ${r.kernel} / CPU ${r.cpus} コア`),
+				escapeHtml(`メモリ 使用 ${formatBytes(r.memory.rssBytes)}(サーバー全体 ${formatBytes(r.memory.totalBytes)})`));
+		} else if (c.runtime !== undefined) {
+			lines.push(escapeHtml(runtimeText(c.runtime)));
+		}
+		for (const m of c.modules ?? []) lines.push(escapeHtml(`モジュール ${m.name}${m.model ? `(${m.model})` : ""}${m.version ? ` ${m.version}` : ""}`));
+		return lines.join("<br>") || "-";
+	};
+	componentsWrap.innerHTML = `<table><thead><tr><th>部品</th><th>製品と版</th><th>土台・詳しく</th><th>状態</th></tr></thead><tbody>${
+		result.components.map((c) => `<tr>
+			<td>${escapeHtml(c.name)}</td>
+			<td class="mono">${c.configured && c.reachable ? escapeHtml(`${c.product ?? ""} ${c.version ?? "-"}`) : "-"}</td>
+			<td class="mono" style="font-size: 0.85em;">${detailOf(c)}</td>
+			<td>${stateOf(c)}</td>
+		</tr>`).join("")}</tbody></table>
+		<div class="adminSectionNote" style="margin-top: 6px;">確認日時 ${escapeHtml(formatDateTime(result.checkedAt))}・入っている部品 ${result.packageCount} 個(${escapeHtml(result.packageSource)})</div>`;
+	directDependencies = result.dependencies;
+	renderPackages();
+};
+// 探す言葉が無ければ直接使っているライブラリ、あれば部品表の全部から名前の部分一致(入れ子の別の版も出す)
+let packageSearchTimer = null;
+const renderPackages = async () => {
+	const q = packageSearchInput.value.trim();
+	if (q === "") {
+		packagesWrap.innerHTML = `<div class="adminSectionNote">直接使っているライブラリ(${directDependencies.length} 個)</div>` + packagesTable(directDependencies);
+		return;
+	}
+	const res = await fetch("./api/server-status/packages?q=" + encodeURIComponent(q));
+	if (res.status !== 200) {
+		packagesWrap.innerHTML = `<div class="emptyMessage">部品表を取得できませんでした。</div>`;
+		return;
+	}
+	const found = await res.json();
+	if (packageSearchInput.value.trim() !== q) return;
+	packagesWrap.innerHTML = `<div class="adminSectionNote">「${escapeHtml(q)}」を含む部品 ${found.count} 個(全 ${found.total} 個中)</div>` + packagesTable(found.packages, {showPath: true});
+};
+packageSearchInput.addEventListener("input", () => {
+	clearTimeout(packageSearchTimer);
+	packageSearchTimer = setTimeout(renderPackages, 300);
+});
+
 // ---- API の回数の上限(管理者のみ)。管理画面で保存した値 → 環境変数 → 既定 ----
 const rateLimitList = document.getElementById("rateLimitList");
 const RATE_LIMIT_KINDS = [
@@ -6221,7 +6313,7 @@ document.getElementById("sessionReloadButton").addEventListener("click", () => l
 const ADMIN_TABS = [
 	{key: "allowedUsers", label: "アクセス許可ユーザー", load: () => loadAllowedUsers()},
 	{key: "sessions", label: "セッション", load: () => loadSessionsTab()},
-	{key: "server", label: "サーバー", load: () => Promise.all([loadServerStatus(), loadFeatures(), loadRateLimit()])},
+	{key: "server", label: "サーバー", load: () => Promise.all([loadServerStatus(), loadComponents(), loadFeatures(), loadRateLimit()])},
 	{key: "database", label: "データベース", load: () => loadDatabaseTab()},
 	{key: "convert", label: "変換サービス", load: () => loadConvertTab()},
 	// アプリの値(クライアントID・シークレット)もここで入れられるので、管理者には常に出す
@@ -6365,7 +6457,7 @@ const runIntegrityCheck = async (mode) => {
 	}
 };
 
-document.getElementById("serverStatusRefreshButton").addEventListener("click", () => loadServerStatus());
+document.getElementById("serverStatusRefreshButton").addEventListener("click", () => Promise.all([loadServerStatus(), loadComponents()]));
 document.getElementById("dbIntegrityQuickButton").addEventListener("click", () => runIntegrityCheck("quick"));
 document.getElementById("dbIntegrityFullButton").addEventListener("click", async () => {
 	// 厳密な検査は同期的に走り、その間サーバー全体が止まる。実行前に必ず知らせる
@@ -6490,6 +6582,7 @@ const renderConvertHealth = (health) => {
 		<span class="adminStatus ok">正常</span>
 		<dl class="adminDefList" style="margin-top:12px;">
 			<dt>LibreOffice</dt><dd>${escapeHtml(health.libreOffice || "-")}</dd>
+			<dt>土台</dt><dd>${escapeHtml(runtimeText(health.runtime))}</dd>
 			<dt>受け付ける上限</dt><dd>${escapeHtml(formatBytes(health.maxBytes))}</dd>
 			<dt>変換の打ち切り</dt><dd>${escapeHtml(String(health.timeoutSeconds ?? "-"))} 秒</dd>
 			<dt>確認日時</dt><dd>${escapeHtml(formatDateTime(health.checkedAt))}</dd>
@@ -6548,6 +6641,7 @@ const renderPdfHealth = (health) => {
 		<span class="adminStatus ok">正常</span>
 		<dl class="adminDefList" style="margin-top:12px;">
 			<dt>Chromium</dt><dd>${escapeHtml(health.chromium || "-")}</dd>
+			<dt>土台</dt><dd>${escapeHtml(runtimeText(health.runtime))}</dd>
 			<dt>受け付ける上限</dt><dd>${escapeHtml(formatBytes(health.maxBytes))}</dd>
 			<dt>変換の打ち切り</dt><dd>${escapeHtml(String(health.timeoutSeconds ?? "-"))} 秒</dd>
 			<dt>draw.io</dt><dd id="pdfHealthDrawio">${(health.formats || []).includes("drawio")

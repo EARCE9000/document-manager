@@ -6,7 +6,7 @@
  * document-manager から内部ネットワーク経由でのみ呼ばれる小さなHTTPサービス。
  * 外部に公開しない前提のため認証は持たない(composeで内部ネットワークに閉じる)。
  *
- *   GET  /health          稼働確認。{status, apiVersion, libreOffice, maxBytes, timeoutSeconds} を返す
+ *   GET  /health          稼働確認。{status, apiVersion, libreOffice, runtime, maxBytes, timeoutSeconds} を返す(runtime: Node.js・OpenSSL・OS の版)
  *   POST /convert         本体に変換対象のバイト列、X-Extension に拡張子。application/pdf を返す
  *
  * ファイル名は受け取らない。医療機関の資料などでは**ファイル名自体に患者名・施設名が入り得る**ため、
@@ -157,6 +157,18 @@ const libreOfficeVersion = () => new Promise((resolve) => {
 	});
 });
 
+
+// 動いている土台の版(Node.js・OpenSSL・OS)。土台の部品に脆弱性が出たとき、当てはまるかを管理画面からすぐ判断できるように返す
+const osRelease = (() => {
+	try {
+		return /^PRETTY_NAME="?([^"\n]*)"?/m.exec(require("node:fs").readFileSync("/etc/os-release", "utf8"))?.[1] ?? null;
+	} catch {
+		// /etc/os-release が無い環境(開発の Windows など)は OS の名前と版
+		return `${require("node:os").type()} ${require("node:os").release()}`;
+	}
+})();
+const RUNTIME = Object.freeze({node: process.versions.node, openssl: process.versions.openssl ?? null, os: osRelease, arch: process.arch});
+
 const sendJson = (res, status, body) => {
 	const payload = Buffer.from(JSON.stringify(body), "utf-8");
 	res.writeHead(status, {"Content-Type": "application/json; charset=utf-8", "Content-Length": payload.length});
@@ -170,6 +182,7 @@ const server = http.createServer(async (req, res) => {
 			status: "ok",
 			apiVersion: API_VERSION,
 			libreOffice: await libreOfficeVersion(),
+			runtime: RUNTIME,
 			// 実際に効いている上限。設定が反映されているかを外から確認できるようにする
 			maxBytes: MAX_BYTES,
 			timeoutSeconds: TIMEOUT_MS / 1000

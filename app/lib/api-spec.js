@@ -639,6 +639,20 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "getServerComponents", method: "get", path: "/api/server-status/components", role: "admin", tag: "その他",
+		summary: "動いている部品の版(本体・DB・変換サービス・Weaviate)",
+		description: "`components[]`: `key`(app / database / office / pdf / weaviate)・`configured`(使っているか)・`reachable`・`product` と `version`・`runtime`(土台の Node.js・OpenSSL・OS)。"
+			+ "本体の `runtime` には V8・カーネル・CPU・メモリも入る。Weaviate はモジュール(埋め込みモデル)も。`dependencies`: 直接使っているライブラリと版。"
+			+ "土台の部品に脆弱性が出たとき、当てはまるかを確かめるのに使う。変換サービスと Weaviate に問い合わせるので数秒かかることがある",
+		aiGuide: false
+	},
+	{
+		id: "getServerPackages", method: "get", path: "/api/server-status/packages", role: "admin", tag: "その他",
+		summary: "入っている npm の部品の一覧(部品表)",
+		description: "イメージを作ったときに実際に入った部品と版(`node_modules/.package-lock.json`)。`?q=` で名前の部分一致。入れ子に入った別の版も出る(`path`)。`direct` は直接使っているもの",
+		aiGuide: false
+	},
+	{
 		id: "getDbIntegrity", method: "get", path: "/api/db-integrity", role: "admin", tag: "その他",
 		summary: "DBの整合性確認(破損の検知)",
 		description: "SQLiteのみ。`?mode=full`で索引と表の整合まで検査する(遅い。検査中はサーバーの他の処理が止まる)。既定は簡易確認。Postgresでは`supported:false`を返す",

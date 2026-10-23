@@ -871,6 +871,7 @@ const {extractDrawioText} = require("./lib/drawio.js");
 const {OFFICE_EXTENSIONS, convertOfficeDocument} = require("./lib/office.js");
 const OfficeRender = require("./lib/office-render.js");
 const HtmlPdf = require("./lib/html-pdf.js");
+const RuntimeInfo = require("./lib/runtime-info.js");
 const MiroConnection = require("./lib/miro-connection.js");
 const MiroExport = require("./lib/miro-export.js");
 const MiroLayout = require("./lib/miro-layout.js");
@@ -1931,6 +1932,8 @@ app.get(BASE_URL_PATH + 'api/office-render/health', requireAuth, requireAdmin, a
 			checkedAt: new Date().toISOString(),
 			...(health != null ? {
 				libreOffice: health.libreOffice ?? null,
+				// 変換サービスの土台(Node.js・OpenSSL・OS)。古いイメージは返さない
+				runtime: health.runtime ?? null,
 				apiVersion: health.apiVersion ?? null,
 				maxBytes: health.maxBytes ?? null,
 				timeoutSeconds: health.timeoutSeconds ?? null
@@ -2127,6 +2130,8 @@ app.get(BASE_URL_PATH + 'api/html-pdf/health', requireAuth, requireAdmin, async 
 			checkedAt: new Date().toISOString(),
 			...(health != null ? {
 				chromium: health.chromium ?? null,
+				// 変換サービスの土台(Node.js・OpenSSL・OS)。古いイメージは返さない
+				runtime: health.runtime ?? null,
 				apiVersion: health.apiVersion ?? null,
 				maxBytes: health.maxBytes ?? null,
 				timeoutSeconds: health.timeoutSeconds ?? null,
@@ -2186,6 +2191,68 @@ app.get(BASE_URL_PATH + 'api/server-status', requireAuth, requireAdmin, async (r
 		});
 	} catch (err) {
 		logger.error(err, "::api/server-status");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 動いている部品の版(要 admin ロール)。本体・DB・変換サービス(Office・PDF)・Weaviate を 1 行ずつ返す。
+ * 土台の部品(Node.js・OpenSSL・OS・DB)に脆弱性が出たとき、当てはまるかを SSH せずに判断できるようにする。
+ * 変換サービスと Weaviate には問い合わせるので数秒かかることがある(画面は先に api/server-status を出し、これはあとから読む)
+ */
+app.get(BASE_URL_PATH + 'api/server-status/components', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const build = versionInfo != null ? String(versionInfo.VERSION || "") : "";
+		const serviceOf = async (key, name, enabled, check, describe) => {
+			if (!enabled) return {key, name, configured: false};
+			const health = await check();
+			if (health == null || health.reachable === false) return {key, name, configured: true, reachable: false, error: health?.error ?? null};
+			return {key, name, configured: true, reachable: true, ...describe(health)};
+		};
+		const [databaseVersion, office, pdf, weaviate] = await Promise.all([
+			RuntimeInfo.databaseVersion(ds),
+			serviceOf("office", "変換サービス(Office → PDF)", OfficeRender.isEnabled(), () => OfficeRender.checkHealth(),
+				(h) => ({version: h.libreOffice ?? null, product: "LibreOffice", runtime: h.runtime ?? null, apiVersion: h.apiVersion ?? null})),
+			serviceOf("pdf", "変換サービス(HTML・draw.io → PDF)", HtmlPdf.isEnabled(), () => HtmlPdf.checkHealth(),
+				(h) => ({version: h.chromium ?? null, product: "Chromium", runtime: h.runtime ?? null, apiVersion: h.apiVersion ?? null})),
+			serviceOf("weaviate", "意味検索(Weaviate)", VectorSearch.isEnabled(), () => RuntimeInfo.weaviateInfo(process.env.WEAVIATE_URL),
+				(h) => ({version: h.version, product: "Weaviate", modules: h.modules}))
+		]);
+		const installed = RuntimeInfo.packages();
+		res.status(200).json({
+			checkedAt: new Date().toISOString(),
+			components: [
+				{key: "app", name: "Document Manager", configured: true, reachable: true, product: "Document Manager", version: displayVersion(build) || null,
+					runtime: RuntimeInfo.appRuntime()},
+				{key: "database", name: "データベース", configured: true, reachable: databaseVersion != null,
+					product: ds.backend === "sqlite" ? "SQLite(本体に同梱)" : "PostgreSQL", version: databaseVersion},
+				office, pdf, weaviate
+			],
+			// 直接使っているライブラリ(全部は api/server-status/packages)
+			dependencies: installed.packages.filter((pkg) => pkg.direct).map(({name, version}) => ({name, version})),
+			packageCount: installed.packages.length,
+			packageSource: installed.source
+		});
+	} catch (err) {
+		logger.error(err, "::api/server-status/components");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 入っている npm の部品の一覧(部品表。要 admin ロール)。`?q=` で名前の部分一致。
+ * 「この部品のこの版が入っているか」を調べるのに使う(入れ子に入った別の版も出る)
+ */
+app.get(BASE_URL_PATH + 'api/server-status/packages', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const installed = RuntimeInfo.packages();
+		const q = String(req.query.q ?? "").trim().toLowerCase();
+		const list = q === "" ? installed.packages : installed.packages.filter((pkg) => pkg.name.toLowerCase().includes(q));
+		res.status(200).json({source: installed.source, total: installed.packages.length, count: list.length, packages: list});
+	} catch (err) {
+		logger.error(err, "::api/server-status/packages");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

@@ -84,6 +84,7 @@ Chromium は **155** (Debian 13 trixie の `chromium-headless-shell`。追加リ
 ```
 
 `formats` は変換できる形式です(1.1.0 から)。`DRAWIO_DISABLED=1` のときは `["html"]` になります。
+`runtime` は土台の版(`node`・`openssl`・`os`・`arch`)です。Document Manager の管理画面(「サーバー」・「変換サービス」タブ)に並び、土台の部品に脆弱性が出たときに当てはまるかを確かめるのに使います。
 
 ### `POST /convert`
 

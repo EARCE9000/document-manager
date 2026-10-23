@@ -52,7 +52,7 @@ PDFは「Excelで印刷したときの見え方」になります。**列幅が�
 
 | | 内容 |
 |---|---|
-| `GET /health` | 稼働確認。`{status, apiVersion, libreOffice, maxBytes, timeoutSeconds}` を返す(設定が効いているか外から確認できる) |
+| `GET /health` | 稼働確認。`{status, apiVersion, libreOffice, runtime, maxBytes, timeoutSeconds}` を返す(設定が効いているか外から確認できる)。`runtime` は土台の版(`node`・`openssl`・`os`・`arch`)で、Document Manager の管理画面に並ぶ |
 | `POST /convert` | 本体に変換対象のバイト列、`X-Extension` に拡張子、`X-Document-Id` にログ用の文書ID。`application/pdf` を返す |
 
 対応拡張子: `.xlsx .docx .pptx .odt .ods .odp`
