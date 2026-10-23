@@ -198,8 +198,10 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		await openAdmin(page, "server");
 		const server = page.locator(".admin_server");
 		await expect(server.locator("[data-part=status]")).toContainText("起動日時");
-		await expect(server.locator("[data-part=status]")).toContainText("sqlite");
-		await expect(server.locator("[data-part=dbfiles]")).toContainText("使用中");
+		// 試験は SQLite でも PostgreSQL でも流せる(DATABASE_BACKEND)
+		await expect(server.locator("[data-part=status]")).toContainText(/sqlite|postgres/);
+		// DB のファイルの一覧は SQLite のときだけ出る
+		if ((process.env.DATABASE_BACKEND || "sqlite") === "sqlite") await expect(server.locator("[data-part=dbfiles]")).toContainText("使用中");
 		const connections = server.locator("[data-part=connections]");
 		await expect(connections.locator("tr", {hasText: "データベース"})).toContainText("Connected");
 		await expect(connections.locator("tr", {hasText: "IdP"})).toContainText("Not set");

@@ -1959,6 +1959,7 @@ app.post(BASE_URL_PATH + 'api/storage-reconcile/restore', requireAuth, requireAd
 		});
 
 		logger.info({audit: "reconcile_restore", user: req.authData.user_identifier, documentId: id, entryFile: found.entryFile}, "audit");
+		await AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "reconcile_restore", documentId: id, entryFile: found.entryFile});
 		broadcastDocumentsChanged();
 		res.status(200).json({
 			id,

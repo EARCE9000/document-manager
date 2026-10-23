@@ -76,6 +76,8 @@ const main = async () => {
 		check(!active.some((doc) => doc.id === orphanId), "現役の一覧には現れない(一覧を汚さない)");
 		const archived = await (await fetch(`${BASE}/api/documents/archived`)).json();
 		check(archived.some((doc) => doc.id === orphanId), "アーカイブ一覧に現れる");
+		const logged = await (await fetch(`${BASE}/api/admin/audit?action=reconcile_restore&range=1d`)).json();
+		check(logged.entries?.[0]?.target === "孤立した資料.html", "管理の監査ログに「照合で見つけたファイルの登録」が残る", JSON.stringify(logged.entries?.[0]));
 		// 復元操作で全文検索に戻る
 		await fetch(`${BASE}/api/documents/${orphanId}/restore`, {method: "POST"});
 		const searched = await (await fetch(`${BASE}/api/documents?q=${encodeURIComponent("孤立した本文サンプル")}`)).json();
