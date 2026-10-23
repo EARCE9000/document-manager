@@ -260,12 +260,14 @@ services:
       - weaviate
 
   weaviate:
-    image: docker.io/semitechnologies/weaviate:latest
+    image: docker.io/semitechnologies/weaviate:1.36.24
     restart: always
     environment:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
       PERSISTENCE_DATA_PATH: /var/lib/weaviate
       ENABLE_MODULES: text2vec-transformers,text2vec-cohere,text2vec-openai,text2vec-aws
+      API_BASED_MODULES_DISABLED: "true"   # ENABLE_MODULES の物だけにする(v1.33 から、ほかの外部連携モジュールが既定で有効)
+      DISABLE_TELEMETRY: "true"
       DEFAULT_VECTORIZER_MODULE: text2vec-transformers
       TRANSFORMERS_INFERENCE_API: http://t2v-transformers:8080
       CLUSTER_HOSTNAME: node1

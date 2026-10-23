@@ -53,7 +53,8 @@ services:
 
   # ベクトルDB本体。REST(8080)とgRPC(50051)の両方をappコンテナから使う
   weaviate:
-    image: docker.io/semitechnologies/weaviate:latest
+    # 版は決めておく(latest だと、作り直すたびに知らないうちに版が変わる)
+    image: docker.io/semitechnologies/weaviate:${WEAVIATE_VERSION:-1.36.24}
     restart: unless-stopped
     ports:
       - "8081:8080"
@@ -66,6 +67,11 @@ services:
       # 組み込み済みで外部APIを呼ぶだけ)なため、appのWEAVIATE_VECTORIZERを
       # いつでも切り替えられるようまとめて有効化しておく(未使用の方式は単に呼ばれない)
       - ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai,text2vec-aws
+      # Weaviate は v1.33 から、外の AI サービスにつなぐモジュール(generative-* など)を既定で全部有効にする。
+      # 上の ENABLE_MODULES の物だけにする
+      - API_BASED_MODULES_DISABLED=true
+      # 使い方の統計を Weaviate 社へ送らない
+      - DISABLE_TELEMETRY=true
       - DEFAULT_VECTORIZER_MODULE=text2vec-transformers
       - TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080
       - CLUSTER_HOSTNAME=node1

@@ -2423,6 +2423,8 @@ app.get(BASE_URL_PATH + 'api/server-status/components', requireAuth, requireAdmi
 			return {...common, ...describe(m.value)};
 		};
 		const storageProducts = {local: "ローカルのディスク", s3: "Amazon S3(互換)", gcs: "Google Cloud Storage"};
+		// Weaviate のモジュールは、いま使っているベクトライザーを先に出し、ほかは数と名前を 1 行にまとめる
+		const vectorizer = VectorSearch.isEnabled() ? await VectorSearch.getVectorizerSetting().catch(() => null) : null;
 		const [database, storageRow, idp, office, pdf, weaviate] = await Promise.all([
 			serviceOf("database", "データベース", true, async () => {
 				const version = await RuntimeInfo.databaseVersion(ds);
@@ -2441,7 +2443,8 @@ app.get(BASE_URL_PATH + 'api/server-status/components', requireAuth, requireAdmi
 			serviceOf("pdf", "変換サービス(HTML・draw.io → PDF)", HtmlPdf.isEnabled(), () => HtmlPdf.checkHealth(),
 				(h) => ({version: h.chromium ?? null, product: "Chromium", runtime: h.runtime ?? null, apiVersion: h.apiVersion ?? null})),
 			serviceOf("weaviate", "意味検索(Weaviate)", VectorSearch.isEnabled(), () => RuntimeInfo.weaviateInfo(process.env.WEAVIATE_URL),
-				(h) => ({version: h.version, product: "Weaviate", modules: h.modules}))
+				(h) => ({version: h.version, product: "Weaviate",
+					...RuntimeInfo.summarizeWeaviateModules(h.modules, vectorizer?.vectorizer ?? null, (vectorizer?.options ?? []).map((o) => o.key))}))
 		]);
 		// データベースの行は、届かなくても製品の名前は出す(何につながっていないのかが分かるように)
 		if (database.reachable === false) database.product = ds.backend === "sqlite" ? "SQLite(本体に同梱)" : "PostgreSQL";

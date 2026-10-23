@@ -115,3 +115,26 @@ test("つながりの確認: 掛かった時間と、最後に成功した時刻
 	const slow = await RuntimeInfo.createConnectionTracker().measure("slow", () => new Promise(() => {}), {timeoutMs: 50});
 	assert.deepEqual({reachable: slow.reachable, error: slow.error}, {reachable: false, error: "応答がありません"});
 });
+
+test("Weaviate のモジュール: 使っている物を先に出し、ほかは数と名前を 1 行に。Document Manager が使わない物が有効なら注意を出す", () => {
+	const modules = [
+		{name: "generative-openai", model: null, version: null},
+		{name: "text2vec-transformers", model: "./models/model", version: null},
+		{name: "text2vec-cohere", model: null, version: null},
+		{name: "reranker-cohere", model: null, version: null}
+	];
+	const candidates = ["text2vec-transformers", "text2vec-cohere", "text2vec-openai", "text2vec-aws"];
+	const summary = RuntimeInfo.summarizeWeaviateModules(modules, "text2vec-transformers", candidates);
+	assert.deepEqual(summary.modules.map((m) => m.name), ["text2vec-transformers"]);
+	assert.deepEqual(summary.details[0], {label: "ほかに有効なモジュール", value: "3 個: generative-openai、text2vec-cohere、reranker-cohere"});
+	assert.equal(summary.details[1].label, "注意");
+	assert.match(summary.details[1].value, /使わないモジュールが 2 個有効/);
+	assert.match(summary.details[1].value, /API_BASED_MODULES_DISABLED=true/);
+
+	// 切り替え先の候補だけが有効なら、注意は出さない
+	const tidy = RuntimeInfo.summarizeWeaviateModules(modules.filter((m) => candidates.includes(m.name)), "text2vec-transformers", candidates);
+	assert.deepEqual(tidy.details.map((d) => d.label), ["ほかに有効なモジュール"]);
+	// モジュールが 1 つだけなら、補足は無し。読めない応答でも落ちない
+	assert.deepEqual(RuntimeInfo.summarizeWeaviateModules([modules[1]], "text2vec-transformers", candidates).details, []);
+	assert.deepEqual(RuntimeInfo.summarizeWeaviateModules(undefined, null, []), {modules: [], details: []});
+});

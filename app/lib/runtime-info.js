@@ -185,3 +185,29 @@ module.exports.createConnectionTracker = ({now = Date.now} = {}) => {
 		}
 	};
 };
+
+/**
+ * Weaviate のモジュールを、使っている物と、ほかに有効な物に分ける(管理の画面の「稼働中の部品の版」)。
+ * Weaviate は v1.33 から、外の AI サービスにつなぐモジュール(generative-* など)を既定で全部有効にするため、
+ * そのままだと 40 個以上が 1 行ずつ並び、どれを使っているのかが読めない。
+ * ただし、使っていない物が有効なのは「設定の抜け」の手がかりなので、隠さずに数と名前を 1 行で出す
+ * @param {{name: string}[]} modules weaviateInfo の modules
+ * @param {string|null} inUse いま使っているベクトライザー(例: text2vec-transformers)
+ * @param {string[]} candidates Document Manager が切り替え先として扱うベクトライザー(使う見込みがある物)
+ * @returns {{modules: object[], details: {label: string, value: string}[]}}
+ */
+module.exports.summarizeWeaviateModules = (modules, inUse, candidates = []) => {
+	const list = Array.isArray(modules) ? modules : [];
+	const used = list.filter((m) => m.name === inUse);
+	const others = list.filter((m) => m.name !== inUse);
+	const unexpected = others.filter((m) => !candidates.includes(m.name));
+	const details = [];
+	if (others.length > 0) {
+		details.push({label: "ほかに有効なモジュール", value: `${others.length} 個: ${others.map((m) => m.name).join("、")}`});
+	}
+	if (unexpected.length > 0) {
+		details.push({label: "注意", value: `Document Manager が使わないモジュールが ${unexpected.length} 個有効。`
+			+ "外の AI サービスにつなぐ物(generative-* など)は、Weaviate の API_BASED_MODULES_DISABLED=true で切れる(ENABLE_MODULES に書いた物だけになる)"});
+	}
+	return {modules: used, details};
+};

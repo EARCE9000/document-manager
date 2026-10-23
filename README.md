@@ -561,10 +561,12 @@ docker run -d \
   -e AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true \
   -e PERSISTENCE_DATA_PATH=/var/lib/weaviate \
   -e ENABLE_MODULES=text2vec-transformers,text2vec-cohere,text2vec-openai,text2vec-aws \
+  -e API_BASED_MODULES_DISABLED=true \
+  -e DISABLE_TELEMETRY=true \
   -e DEFAULT_VECTORIZER_MODULE=text2vec-transformers \
   -e TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080 \
   -e CLUSTER_HOSTNAME=node1 \
-  docker.io/semitechnologies/weaviate:latest
+  docker.io/semitechnologies/weaviate:1.36.24
 
 # 4. document-manager本体(同じネットワークに参加させ、WEAVIATE_URLはコンテナ名で指定)
 docker build -t document-manager .
@@ -588,6 +590,8 @@ MSYS_NO_PATHCONV=1 docker run -d \
 ```
 
 Cohere(SaaS)/OpenAI/Cohere on AWS Bedrockを使う場合は手順2を省略し、手順4に`-e WEAVIATE_VECTORIZER="text2vec-cohere" -e COHERE_APIKEY="<APIキー>"`(OpenAIなら`text2vec-openai`/`OPENAI_APIKEY`、AWS Bedrockなら`text2vec-aws`/`AWS_BEDROCK_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)を追加するだけでよい。手順3の`weaviate`はENABLE_MODULESにあらかじめ全方式含めてあるため、Weaviate側の設定変更は不要。
+
+Weaviate は v1.33 から、外の AI サービスにつなぐモジュール(`generative-*` など 40 個ほど)を既定で全部有効にする。Document Manager が使うのは `ENABLE_MODULES` の 4 つだけなので、`API_BASED_MODULES_DISABLED=true` でそれ以外を切る(使わない物を有効にしておかない)。`DISABLE_TELEMETRY=true` は、使い方の統計を Weaviate 社へ送らないための物。Weaviate の版は `latest` にせず決めておく(例: `1.36.24`)。入れ替えのたびに知らないうちに版が上がると、索引の移し替えが要る版に当たることがあり、脆弱性の知らせと見比べる版も定まらない。管理の画面(サーバー →「稼働中の部品の版」)の Weaviate の行で、使っているモジュールと、ほかに有効なモジュールを確かめられる
 
 停止・削除する場合は次の順序で(依存関係の都合上、appから止めるのが無難)。
 

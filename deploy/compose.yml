@@ -134,7 +134,9 @@ services:
   # ベクトルDB本体。ホストにポートを公開せず、内部ネットワークからのみ使う
   # (公開すると匿名アクセス有効のまま外部から触れてしまうため)
   weaviate:
-    image: docker.io/semitechnologies/weaviate:${WEAVIATE_VERSION:-latest}
+    # 版は決めておく(latest だと、入れ替えのたびに知らないうちに版が変わる。脆弱性の知らせと見比べる版も定まらない)。
+    # 上げるときは compose.env の WEAVIATE_VERSION で指定し、リリースノートで索引の移し替えの要否を確かめてから上げる
+    image: docker.io/semitechnologies/weaviate:${WEAVIATE_VERSION:-1.36.24}
     container_name: ${DOCUMENT_MANAGER_CONTAINER:-document_manager}_weaviate
     restart: always
     logging:
@@ -144,6 +146,12 @@ services:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
       PERSISTENCE_DATA_PATH: /var/lib/weaviate
       ENABLE_MODULES: text2vec-transformers,text2vec-cohere,text2vec-openai,text2vec-aws
+      # Weaviate は v1.33 から、外の AI サービスにつなぐモジュール(generative-* など 40 個ほど)を既定で全部有効にする。
+      # Document Manager が使うのは上の ENABLE_MODULES だけなので、それ以外は切る(使わない物を有効にしておかない)。
+      # 管理の画面「サーバー」→「稼働中の部品の版」の Weaviate の行で、ほかに有効なモジュールが無いことを確かめられる
+      API_BASED_MODULES_DISABLED: "true"
+      # 使い方の統計を Weaviate 社へ送らない(DMZ に置くサーバーから、要らない外への通信をしない)
+      DISABLE_TELEMETRY: "true"
       DEFAULT_VECTORIZER_MODULE: text2vec-transformers
       TRANSFORMERS_INFERENCE_API: http://t2v-transformers:8080
       CLUSTER_HOSTNAME: node1
