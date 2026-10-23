@@ -2296,16 +2296,56 @@ const securityRows = async (rateLimit) => {
 	return rows;
 };
 
+/** 大きさを人の読める形にする(管理の画面の「このサーバー」用。admin.js と同じ 1024 区切り) */
+const formatBytesForAdmin = (n) => {
+	const units = ["B", "KB", "MB", "GB", "TB"];
+	let value = Number(n) || 0;
+	let i = 0;
+	while (value >= 1024 && i < units.length - 1) {
+		value /= 1024;
+		i += 1;
+	}
+	return `${i ? value.toFixed(1) : value} ${units[i]}`;
+};
+
+// 取り扱っている物の数(管理の画面の「このサーバー」)。数えるだけなので、開くたびに数えても軽い
+const SQL_COUNT_DOCUMENTS_FOR_ADMIN = `
+	SELECT COUNT(*) AS total, SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active, COALESCE(SUM(size), 0) AS bytes
+	FROM documents
+`;
+const SQL_COUNT_MOCKUPS_FOR_ADMIN = `SELECT COUNT(*) AS total, SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active FROM mockups`;
+const SQL_COUNT_PROJECTS_FOR_ADMIN = `SELECT COUNT(*) AS total, SUM(CASE WHEN archived_at IS NULL THEN 1 ELSE 0 END) AS active FROM projects`;
+/** 現役・アーカイブ・合計を 1 つの文にする */
+const countText = (row) => {
+	const total = Number(row?.total ?? 0);
+	const active = Number(row?.active ?? 0);
+	return `現役 ${active} 件・アーカイブ ${total - active} 件(合計 ${total} 件)`;
+};
+
 /** 「このサーバー」に足す項目(共通の形の extra) */
-const statusExtras = () => {
+const statusExtras = async () => {
 	const integrity = DbIntegrity.getLastResult();
 	const integrityText = integrity == null ? "未確認"
 		: !integrity.supported ? `このデータベース(${integrity.backend})では確かめない`
 			: `${integrity.healthy ? "問題なし" : `問題あり(${integrity.problemCount} 件)`}・${integrity.modeLabel ?? integrity.mode}・${integrity.checkedAt}`;
-	return [
+	const [documents, projects, mockupsOn] = await Promise.all([
+		ds.get(SQL_COUNT_DOCUMENTS_FOR_ADMIN),
+		ds.get(SQL_COUNT_PROJECTS_FOR_ADMIN),
+		mockupsEnabled()
+	]);
+	const extras = [
+		// 旧い版は、新しい版を登録したときにアーカイブへ移るので、アーカイブの数に入る
+		{label: "文書", value: countText(documents)},
+		// 登録したときの大きさの合計。プレビュー用に作った PDF などは入らない(ディスクの使用量とは少し違う)
+		{label: "文書の大きさの合計(登録したファイル)", value: formatBytesForAdmin(documents?.bytes)},
+		{label: "プロジェクト", value: countText(projects)}
+	];
+	if (mockupsOn) extras.push({label: "モックアップ", value: countText(await ds.get(SQL_COUNT_MOCKUPS_FOR_ADMIN))});
+	extras.push(
 		{label: "同梱クライアントの版", value: bundledSkillClientVersion() ?? "不明"},
 		{label: "DB の整合性(最後の確認)", value: integrityText}
-	];
+	);
+	return extras;
 };
 
 /**
@@ -2356,7 +2396,7 @@ app.get(BASE_URL_PATH + 'api/server-status', requireAuth, requireAdmin, async (r
 			rateLimit,
 			features: await featureList(),
 			security: await securityRows(rateLimit),
-			extra: statusExtras()
+			extra: await statusExtras()
 		});
 	} catch (err) {
 		logger.error(err, "::api/server-status");

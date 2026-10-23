@@ -83,6 +83,30 @@ test.describe("サーバー(共通の形)", () => {
 		expect(JSON.stringify(body)).not.toMatch(/dm-api-test|postgres:\/\//);
 	});
 
+	test("server-status: 取り扱っている文書(アーカイブを含む)・大きさ・プロジェクトの数を「このサーバー」に出す", async () => {
+		const counts = async () => {
+			const extra = (await (await (await as(admin)).get("api/server-status")).json()).extra;
+			const value = (label) => extra.find((item) => item.label === label)?.value;
+			const match = /^現役 (\d+) 件・アーカイブ (\d+) 件\(合計 (\d+) 件\)$/.exec(value("文書"));
+			expect(match, `文書の数の形: ${value("文書")}`).not.toBeNull();
+			const [active, archived, total] = match.slice(1).map(Number);
+			expect(active + archived).toBe(total);
+			expect(value("文書の大きさの合計(登録したファイル)")).toMatch(/^[\d.]+ (B|KB|MB|GB|TB)$/);
+			expect(value("プロジェクト")).toMatch(/^現役 \d+ 件・アーカイブ \d+ 件\(合計 \d+ 件\)$/);
+			return {active, archived, total};
+		};
+		const before = await counts();
+		const upload = await (await as(rw)).post("api/documents", {
+			multipart: {uploadfile: {name: "admin-count.md", mimeType: "text/markdown", buffer: Buffer.from("# 数える試験\n")}}
+		});
+		expect(upload.status()).toBe(200);
+		const after = await counts();
+		expect(after).toEqual({active: before.active + 1, archived: before.archived, total: before.total + 1});
+		// アーカイブしても合計は変わらず、アーカイブの数に移る
+		expect((await (await as(rw)).delete(`api/documents/${(await upload.json()).id}`)).status()).toBeLessThan(300);
+		expect(await counts()).toEqual({active: before.active, archived: before.archived + 1, total: before.total + 1});
+	});
+
 	test("components: 相手ごとに、届くか・掛かった時間・最後に成功した時刻。使っていない相手は未設定", async () => {
 		const res = await (await as(admin)).get("api/server-status/components");
 		expect(res.status()).toBe(200);
