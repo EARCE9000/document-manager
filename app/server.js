@@ -5351,18 +5351,37 @@ app.put(BASE_URL_PATH + 'api/rate-limit', requireAuth, requireAdmin, async (req,
 });
 
 /** 管理画面で保存した上限を消して、環境変数(無ければ既定)に戻す */
+/**
+ * 画面で変えた上限を消す(api/rate-limit/{kind} と api/server-status/rate-limit/{kind} で共有)。
+ * 知らない種類なら 404 を返して false。消したら監査ログに残して true
+ */
+const resetRateLimit = async (req, res) => {
+	if (!RateLimit.KINDS.includes(req.params.kind)) {
+		res.status(404).json({error: `種類は ${RateLimit.KINDS.join(" / ")} のどれかです`});
+		return false;
+	}
+	await rateLimitSettings.clear(req.params.kind, req.authData.user_identifier);
+	await auditAdmin(req, "rate_limit", {target: `${RATE_LIMIT_KIND_LABELS[req.params.kind]}(既定に戻す)`, detail: {kind: req.params.kind, reset: true}});
+	return true;
+};
+
 app.delete(BASE_URL_PATH + 'api/rate-limit/:kind', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		if (!RateLimit.KINDS.includes(req.params.kind)) {
-			res.status(404).json({error: `種類は ${RateLimit.KINDS.join(" / ")} のどれかです`});
-			return;
-		}
-		await rateLimitSettings.clear(req.params.kind, req.authData.user_identifier);
-		await auditAdmin(req, "rate_limit", {target: `${RATE_LIMIT_KIND_LABELS[req.params.kind]}(既定に戻す)`, detail: {kind: req.params.kind, reset: true}});
-		res.status(200).json(await rateLimitView());
+		if (await resetRateLimit(req, res)) res.status(200).json(await rateLimitView());
 	} catch (err) {
 		logger.error(err, "::api/rate-limit");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 既定(環境変数か既定の値)に戻す(共通の形。要 admin ロール)。新しい rateLimit を返す */
+app.delete(BASE_URL_PATH + 'api/server-status/rate-limit/:kind', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		if (await resetRateLimit(req, res)) res.status(200).json(await commonRateLimitView());
+	} catch (err) {
+		logger.error(err, "::api/server-status/rate-limit");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

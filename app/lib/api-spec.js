@@ -650,6 +650,13 @@ const OPERATIONS = [
 		aiGuide: false
 	},
 	{
+		id: "resetServerRateLimit", method: "delete", path: "/api/server-status/rate-limit/:kind", role: "admin", tag: "その他",
+		summary: "APIの回数の上限を既定に戻す(管理の画面の共通の形)",
+		description: "`kind`: `authenticated` か `anonymous`。画面で変えた値を消し、環境変数(無ければ既定)に戻す。応答は新しい `rateLimit`。監査ログに残る",
+		responses: {404: "種類が違う"},
+		aiGuide: false
+	},
+	{
 		id: "updateServerFeature", method: "put", path: "/api/server-status/features/:key", role: "admin", tag: "その他",
 		summary: "機能を切り替える(管理の画面の共通の形)",
 		description: "`key` は `GET /api/server-status` の `features[].key`。`editable` の機能(いまは `mockups`)だけ切り替えられる。応答はその機能の新しい状態。監査ログに残る",

@@ -111,9 +111,17 @@ test.describe("サーバー(共通の形)", () => {
 		const logged = await audit({action: "rate_limit", range: "1d"});
 		expect(logged.entries[0]).toMatchObject({user: keys.owner, result: "success", via: "screen"});
 
-		// 元に戻す(ほかの試験に持ち越さない)
-		await api.delete("api/rate-limit/anonymous");
-		expect((await (await api.get("api/server-status")).json()).rateLimit.anonymous.source).toBe(before.source);
+		// 既定に戻す(共通の形の DELETE)。画面で変えた値を消して、新しい rateLimit を返す
+		const reset = await api.delete("api/server-status/rate-limit/anonymous");
+		expect(reset.status()).toBe(200);
+		const afterReset = await reset.json();
+		expect(afterReset.anonymous.source).toBe(before.source);
+		expect(afterReset.anonymous).toMatchObject({limit: before.limit, updatedBy: null, updatedAt: null});
+		expect(afterReset.windowMinutes).toBe(5);
+		expect((await api.delete("api/server-status/rate-limit/everyone")).status()).toBe(404);
+		const resetLogged = await audit({action: "rate_limit", range: "1d"});
+		expect(resetLogged.entries[0].target).toContain("既定に戻す");
+		expect((await (await as(rw)).delete("api/server-status/rate-limit/anonymous")).status()).toBe(403);
 	});
 
 	test("PUT features/{key}: 切り替えられる機能は切り替え、構成で決まる機能は 400、知らない機能は 404", async () => {

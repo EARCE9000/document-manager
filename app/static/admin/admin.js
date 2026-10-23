@@ -15,6 +15,13 @@
  *   data-login … 401 のときに移る先(認証の資料: 画面の中の認証切れは、必ずログインの画面へ戻す)
  * 見本(テンプレート)では、data-base の代わりに data-sample="<JSON を埋めた script の id>" を付ける。
  *
+ * 置き方の決まり:
+ *   - 管理の画面は、ほかの画面とは別のページにする(components.css などはページ全体に効くので、既存の画面の中に埋め込まない)。
+ *   - 管理者でない人には、このページを出さない(サービスが先に権限を確かめ、このスクリプトを読み込まない)。
+ *     取りこぼして 403 が返ったときは、ページの上に 1 つだけ知らせを出す。
+ *   - タブの中の物は、そのタブを開いたときに読む。JS でタブを切り替えたら AdminUI.refresh() を呼ぶ。
+ *   - 確認のモーダルは AdminUI.confirm({title, body, ok, danger}) で、独自のタブからも使える。
+ *
  * 各タブの WebAPI の形は、それぞれの描き方の上に書いてある。
  * サービスごとの足し方: 知らない項目は読み飛ばす。サーバーのタブは、下の「サーバー」の説明のとおり足せる。
  * サービス独自のタブは、この 4 つの後ろに、サービスが自分で作る。
@@ -24,7 +31,7 @@
  * セキュリティの点検(部品の脆弱性、設定の抜け)のときに、この画面だけで判断できる情報量にする。
  * 上に、管理者が変更できる設定。下に、確認するだけの表示を並べる。
  *   設定(管理者が変更可)。上に、このサーバー全体の共通の設定。下に、サービスが機能に応じて足す物
- *         1. API の回数の上限(共通。PUT {base}/rate-limit {authenticated | anonymous: 回数})
+ *         1. API の回数の上限(共通。PUT {base}/rate-limit {authenticated | anonymous: 回数}、既定に戻すのは DELETE {base}/rate-limit/{kind})
  *         2. 機能の On/Off(editable の機能は、その場で切り替え。PUT {base}/features/{key} {enabled})
  *         3. サービスが足した設定の節(class="admin_server_extra" を付けて、この要素の中に書いた物)
  *   確認(表示だけ)
@@ -138,6 +145,21 @@
 		return rows.join("<br>");
 	}
 
+	// 403(管理者でない)は、タブごとに出さず、ページの上に 1 つだけ出す。
+	// 管理者でない人には、そもそもこの画面を出さない(サービスが先に権限を確かめる)のが本筋。これは、その取りこぼしの受け皿
+	var forbiddenShown = false;
+	function notifyForbidden() {
+		if (forbiddenShown) return;
+		forbiddenShown = true;
+		var host = document.querySelector(".tab_set") || document.querySelector("[class^=admin_]");
+		if (!host) return;
+		var box = document.createElement("div");
+		box.className = "msg_error";
+		box.style.margin = "8px 14px";
+		box.textContent = "この画面は管理者だけが使える(403)。管理者の権限が要る場合は、管理者に依頼。";
+		host.parentNode.insertBefore(box, host);
+	}
+
 	function AdminServer(root) {
 		this.root = root;
 		this.base = root.getAttribute("data-base");
@@ -172,6 +194,7 @@
 				window.location.href = self.login;
 				throw new Error("unauthenticated");
 			}
+			if (res.status === 403) { notifyForbidden(); throw new Error("権限なし"); }
 			if (!res.ok) throw new Error("HTTP " + res.status);
 			return res.json();
 		});
@@ -291,12 +314,35 @@
 					(item.min != null ? " min=\"" + esc(item.min) + "\"" : "") + (item.max != null ? " max=\"" + esc(item.max) + "\"" : "") +
 					" value=\"" + esc(item.limit) + "\"> 回" + (item.min != null ? "<div class=\"runtime_text\">" + esc(item.min) + " 〜 " + esc(item.max) + "</div>" : "") + "</td>" +
 					"<td class=\"runtime_text\" data-rate-note=\"" + k[0] + "\">" + src(item) + "</td>" +
-					"<td style=\"white-space:nowrap\"><button type=\"button\" class=\"search_btn\" data-rate-save=\"" + k[0] + "\">保存</button></td></tr>";
+					"<td style=\"white-space:nowrap\"><button type=\"button\" class=\"search_btn\" data-rate-save=\"" + k[0] + "\">保存</button>" +
+					(item.source === "setting" ? " <button type=\"button\" class=\"search_btn\" data-rate-reset=\"" + k[0] + "\">既定に戻す</button>" : "") + "</td></tr>";
 			}));
 		var buttons = box.querySelectorAll("[data-rate-save]");
 		for (var i = 0; i < buttons.length; i += 1) {
 			buttons[i].addEventListener("click", function (e) { self.saveRateLimit(e.target.getAttribute("data-rate-save")); });
 		}
+		var resets = box.querySelectorAll("[data-rate-reset]");
+		for (var j = 0; j < resets.length; j += 1) {
+			resets[j].addEventListener("click", function (e) { self.resetRateLimit(e.target.getAttribute("data-rate-reset")); });
+		}
+	};
+
+	// この画面で変えた値を消して、環境変数(無ければ既定)の値に戻す
+	AdminServer.prototype.resetRateLimit = function (kind) {
+		var self = this;
+		var note = this.root.querySelector("[data-rate-note=\"" + kind + "\"]");
+		confirmModal({title: "回数の上限を戻す", ok: "戻す", body: "この画面で変えた上限を消して、環境変数(無ければ既定)の値に戻す。"}).then(function (yes) {
+			if (!yes) return;
+			if (self.sample) { note.textContent = "見本のため保存しない(既定に戻す)"; return; }
+			fetch(self.base + "/rate-limit/" + encodeURIComponent(kind), {method: "DELETE", credentials: "same-origin", headers: {"Accept": "application/json"}}).then(function (res) {
+				if (res.status === 401) { window.location.href = self.login; throw new Error("unauthenticated"); }
+				if (res.status === 403) { notifyForbidden(); throw new Error("権限なし"); }
+				if (!res.ok) throw new Error("HTTP " + res.status);
+				return res.json();
+			}).then(function (rl) { self.showRateLimit(rl); }, function (err) {
+				note.innerHTML = "<span class=\"msg_error\" style=\"display:inline-block;padding:2px 8px\">戻せなかった: " + esc(err.message) + "</span>";
+			});
+		});
 	};
 
 	AdminServer.prototype.saveRateLimit = function (kind) {
@@ -438,6 +484,7 @@
 				window.location.href = self.login;
 				throw new Error("unauthenticated");
 			}
+			if (res.status === 403) { notifyForbidden(); throw new Error("権限なし"); }
 			return res.json().catch(function () { return {}; }).then(function (data) {
 				if (!res.ok) throw new Error((data && data.error) || "HTTP " + res.status);
 				return data;
@@ -585,7 +632,7 @@
 	// セッション(利用者ごとのカード)
 	//   GET  {base}          → {users: [{user, role, isSelf, sessions: [{id, loginAt, lastSeenAt, ip, userAgent, expiresAt, current}],
 	//                                    apiKeys: [{label, role, createdAt, expiresAt, lastUsedAt}]}]}
-	//   GET  {base}/history  → [{id, at, by, targetUser, sessions, apiKeys}]
+	//   GET  {base}/history  → [{id, at, by, targetUser, sessions, apiKeys, sessionDetails: [{loginAt, lastSeenAt, ip, userAgent}](任意)}]
 	//   POST {base}/revoke   ← {user}  → {user, sessions, apiKeys, revokedAt, keptCurrentSession}
 	// ======================================================================
 
@@ -643,9 +690,15 @@
 	};
 
 	AdminSessions.prototype.showHistory = function (h) {
-		this.part("history").innerHTML = table(["日時", "切断した利用者", "切断した人", "止めた物"], (h || []).map(function (r) {
+		// sessionDetails(任意): 切ったセッションの、ログイン・最終アクセス・接続元 IP・ブラウザ等。どこから入られていたかを、後から追う手がかり
+		this.part("history").innerHTML = table(["日時", "切断した利用者", "切断した人", "止めた物", "切ったセッションの手がかり"], (h || []).map(function (r) {
+			var details = (r.sessionDetails || []).map(function (d) {
+				return unknown(d.ip) + "・" + unknown(d.userAgent) + "<br><span class=\"runtime_text\">ログイン " + unknown(d.loginAt, function (v) { return esc(when(v)); }) +
+					" / 最終アクセス " + unknown(d.lastSeenAt, function (v) { return esc(when(v)); }) + "</span>";
+			}).join("<hr style=\"border:0;border-top:1px solid #eee;margin:4px 0\">");
 			return "<tr><td style=\"white-space:nowrap\">" + esc(when(r.at)) + "</td><td>" + esc(r.targetUser) + "</td><td>" + esc(r.by) + "</td>" +
-				"<td>セッション " + unknown(r.sessions) + "、APIキー " + unknown(r.apiKeys) + "</td></tr>";
+				"<td style=\"white-space:nowrap\">セッション " + unknown(r.sessions) + "、APIキー " + unknown(r.apiKeys) + "</td>" +
+				"<td class=\"session_ua\">" + (details || "―") + "</td></tr>";
 		}), "切断の履歴なし");
 	};
 
@@ -668,13 +721,13 @@
 
 	// ======================================================================
 	// 監査ログ(全員ぶん)
-	//   GET {base}?range=1d|7d|30d&user=&action=&target=&before=
+	//   GET {base}?range=1d|7d|30d&user=&action=&target=&before=   (range は、いまから遡る 24 時間・7 日・30 日)
 	//     → {entries: [{id, at, user, action, target, result, via, keyRole, ip}], actions: [{value, label}], limit, nextBefore}
 	//   result は success / denied / failed、via は screen / apikey。nextBefore があれば、その続きがある
 	// ======================================================================
 
 	var RESULT = {success: ["completed", "Success"], denied: ["failed", "Denied"], failed: ["failed", "Error"]};
-	var RANGES = [["1d", "今日"], ["7d", "直近7日間"], ["30d", "直近30日間"]];
+	var RANGES = [["1d", "直近24時間"], ["7d", "直近7日間"], ["30d", "直近30日間"]];   // どれも、いまから遡る期間
 
 	function AdminAudit(root) { Api.call(this, root); this.range = "7d"; this.entries = []; this.actions = []; }
 	AdminAudit.prototype = Object.create(Api.prototype);
@@ -754,17 +807,40 @@
 		if (this.nextBefore) moreBox.querySelector("button").addEventListener("click", function () { self.load(true); });
 	};
 
+	// タブ(tab_set)の中にある物は、そのタブが見えたときに初めて読む(サーバーのタブの、相手への問い合わせを、見ないときに走らせない)。
+	// タブの外の物は、すぐ読む。data-load="eager" を付けると、タブの中でもすぐ読む
+	var KINDS = [["admin_users", AdminUsers], ["admin_sessions", AdminSessions], ["admin_audit", AdminAudit], ["admin_server", AdminServer]];
+	var pending = [];
+	function visible(el) { return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length); }
+	function loadVisible() {
+		pending = pending.filter(function (a) {
+			if (!visible(a.root)) return true;
+			a.load();
+			return false;
+		});
+	}
 	function start() {
-		var kinds = [["admin_users", AdminUsers], ["admin_sessions", AdminSessions], ["admin_audit", AdminAudit], ["admin_server", AdminServer]];
-		kinds.forEach(function (k) {
+		KINDS.forEach(function (k) {
 			var nodes = document.querySelectorAll("." + k[0]);
 			for (var i = 0; i < nodes.length; i += 1) {
 				var a = new k[1](nodes[i]);
 				a.render();
-				a.load();
+				if (nodes[i].getAttribute("data-load") === "eager" || !nodes[i].closest(".tab_panel")) a.load();
+				else pending.push(a);
 			}
 		});
+		loadVisible();
+		document.addEventListener("change", function (e) { if (e.target.classList && e.target.classList.contains("tab_toggle")) loadVisible(); });
 	}
+
+	// サービスの独自のタブや、JS でタブを切り替える画面から使う部品
+	window.AdminUI = {
+		confirm: confirmModal,   // AdminUI.confirm({title, body(HTML), ok, danger}) → Promise<boolean>。左にキャンセル、右に実行
+		esc: esc,
+		when: when,
+		refresh: loadVisible     // JS でタブを切り替えたあとに呼ぶと、見えるようになったタブを読む
+	};
+
 	if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
 	else start();
 })();

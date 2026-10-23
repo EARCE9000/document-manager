@@ -177,16 +177,47 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		await expect(server.locator("[data-part=packages]")).toContainText("「express」を含む部品");
 	});
 
-	test("サーバー: 回数の上限を、その場で変えられる", async ({page, request}) => {
+	test("サーバー: 回数の上限を、その場で変えて、既定に戻せる", async ({page}) => {
 		await openAdmin(page, "server");
 		const server = page.locator(".admin_server");
 		await server.locator("[data-rate=anonymous]").fill("555");
 		await server.locator("[data-rate-save=anonymous]").click();
 		await expect(server.locator("[data-rate-note=anonymous]")).toContainText("この画面で変更");
 		await expect(server.locator("[data-rate=anonymous]")).toHaveValue("555");
-		// 元に戻す
-		const reset = await request.delete("api/rate-limit/anonymous", {headers: {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(keys.sessionCookie)}`}});
-		expect(reset.status()).toBe(200);
+
+		// 画面で変えた行にだけ「既定に戻す」が出て、確認を挟んで戻せる
+		await expect(server.locator("[data-rate-reset=authenticated]")).toHaveCount(0);
+		await server.locator("[data-rate-reset=anonymous]").click();
+		await expect(page.locator(".modal_box")).toContainText("回数の上限を戻す");
+		await page.click("[data-ans=yes]");
+		await expect(server.locator("[data-rate=anonymous]")).toHaveValue("300");
+		await expect(server.locator("[data-rate-note=anonymous]")).not.toContainText("この画面で変更");
+		await expect(server.locator("[data-rate-reset=anonymous]")).toHaveCount(0);
+	});
+
+	// サーバーのタブは相手へ問い合わせる(数秒掛かることがある)。見ていないときには走らせない
+	test("共通のタブは、開いたときに初めて読む(?tab= で開いたタブは、すぐ読む)", async ({page}) => {
+		const calls = [];
+		page.on("request", (request) => {
+			const url = new URL(request.url());
+			if (url.pathname.includes("/api/")) calls.push(url.pathname.replace(/^.*\/api\//, ""));
+		});
+		await openAdmin(page, "users");
+		await expect(page.locator(".admin_users [data-part=count]")).toContainText("人");
+		expect(calls).toContain("admin/users");
+		expect(calls.filter((c) => c.startsWith("server-status") || c.startsWith("admin/audit") || c.startsWith("admin/sessions"))).toEqual([]);
+
+		await page.click("label[for=tab_server]");
+		await expect(page.locator(".admin_server [data-part=connections]")).toContainText("Connected");
+		expect(calls).toContain("server-status/components");
+		expect(calls.filter((c) => c.startsWith("admin/audit"))).toEqual([]);
+
+		// ?tab= で(JS から)選んだタブも読む
+		calls.length = 0;
+		await openAdmin(page, "audit");
+		await expect(page.locator(".admin_audit [data-part=count]")).toContainText("件");
+		expect(calls.some((c) => c.startsWith("admin/audit"))).toBe(true);
+		expect(calls.filter((c) => c.startsWith("server-status") || c === "admin/users")).toEqual([]);
 	});
 
 	// 機能の On/Off は、文書一覧のメニューにすぐ効かないと「効いたのか」が分からない

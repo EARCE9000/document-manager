@@ -63,26 +63,15 @@
 		return data;
 	};
 
-	/** 確認のモーダル(admin.js と同じ作り。左にキャンセル、右に実行)。押すまで待つ */
-	const confirmModal = ({title, body, ok, danger}) => new Promise((resolve) => {
-		const wrap = document.createElement("div");
-		wrap.innerHTML = "<input type=\"checkbox\" class=\"modal_toggle\" hidden checked>"
-			+ "<div class=\"modal_overlay\"><div class=\"modal_backdrop\"></div><div class=\"modal_box\">"
-			+ `<div class="modal_title${danger ? " danger" : ""}">${esc(title)}</div>`
-			+ `<div class="modal_body">${body}</div>`
-			+ "<div class=\"modal_actions\"><button type=\"button\" class=\"cancel_button\" style=\"width:auto\" data-ans=\"no\">キャンセル</button>"
-			+ `<button type="button" class="${danger ? "caution_button" : "entry_button"}" style="width:auto" data-ans="yes">${esc(ok)}</button></div>`
-			+ "</div></div>";
-		document.body.appendChild(wrap);
-		const done = (answer) => {
-			document.body.removeChild(wrap);
-			resolve(answer);
-		};
-		wrap.querySelector("[data-ans=yes]").addEventListener("click", () => done(true));
-		wrap.querySelector("[data-ans=no]").addEventListener("click", () => done(false));
-		wrap.querySelector(".modal_backdrop").addEventListener("click", () => done(false));
-		wrap.querySelector("[data-ans=no]").focus();
-	});
+	// 共通のスクリプト(admin/admin.js)が読み込まれたら、その部品(AdminUI)を使う。読み込むのは、管理者だと確かめた後
+	let adminUiLoaded;
+	const adminUiReady = new Promise((resolve) => { adminUiLoaded = resolve; });
+
+	/** 確認のモーダル(共通のスクリプトの AdminUI.confirm。左にキャンセル、右に実行)。押すまで待つ */
+	const confirmModal = async (options) => {
+		await adminUiReady;
+		return window.AdminUI.confirm(options);
+	};
 	const flash = (box, ok, text) => {
 		box.innerHTML = `<div class="${ok ? "msg_success" : "msg_error"} admin_flash">${esc(text)}</div>`;
 	};
@@ -515,6 +504,12 @@
 		document.querySelectorAll("[data-login]").forEach((node) => node.setAttribute("data-login", loginUrl()));
 		const script = document.createElement("script");
 		script.src = "./admin/admin.js";
+		script.addEventListener("load", () => {
+			adminUiLoaded();
+			// 共通のタブは、見えているタブだけを読む。?tab= でタブを JS から選んだので、選んだ後に読み直させる
+			// (ラジオを JS で選んだだけでは change が起きない)
+			window.AdminUI.refresh();
+		});
 		document.body.appendChild(script);
 
 		openTab(initial.value);
