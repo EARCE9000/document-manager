@@ -189,10 +189,14 @@ const DIAGRAM_VIEWER_CSP = [
  * 図のビューアは自分で描くのでiframeを使わない。緩めるのはこのページだけに留める
  */
 const ALIAS_VIEWER_CSP = `${DIAGRAM_VIEWER_CSP}; frame-src 'self'`;
+// 管理の画面。スクリプトは自分のファイルだけ(admin.html・admin-page.js・admin/admin.js)。
+// 監査ログや利用者の一覧には、利用者が書いた文字(文書の名前など)が出るので、紛れ込んだ物が動かないように閉じておく
+const ADMIN_PAGE_CSP = DIAGRAM_VIEWER_CSP.replace("form-action 'none'", "form-action 'self'");
 const VIEWER_PAGE_CSP = {
 	'drawio-viewer.html': DIAGRAM_VIEWER_CSP,
 	'mermaid-viewer.html': DIAGRAM_VIEWER_CSP,
-	'alias-viewer.html': ALIAS_VIEWER_CSP
+	'alias-viewer.html': ALIAS_VIEWER_CSP,
+	'admin.html': ADMIN_PAGE_CSP
 };
 for (const [page, csp] of Object.entries(VIEWER_PAGE_CSP)) {
 	app.get(BASE_URL_PATH + page, (req, res) => {
@@ -2072,7 +2076,8 @@ app.get(BASE_URL_PATH + 'api/miro/connect', requireAuth, requireAdmin, requireMi
  * (?miro=connected / ?miro=error&reason=…)。理由の詳細はログにだけ残す
  */
 app.get(BASE_URL_PATH + 'api/miro/callback', requireAuth, requireAdmin, requireMiroConfigured, async (req, res) => {
-	const back = (query) => res.redirect(BASE_URL_PATH + "?" + new URLSearchParams(query).toString());
+	// 結果は管理の画面の「Miro 連携」のタブで知らせる
+	const back = (query) => res.redirect(BASE_URL_PATH + "admin.html?" + new URLSearchParams({tab: "miro", ...query}).toString());
 	const user = req.authData.user_identifier;
 	const expectedNonce = req.session.miroOAuthNonce;
 	delete req.session.miroOAuthNonce;

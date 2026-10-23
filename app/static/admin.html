@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<!--
+  admin.html : Document Manager の管理の画面(管理者だけ)
+  Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
+  MIT Licensed
+
+  共通アーキテクチャ(画面 8 章・構成 6.2〜6.4)の「管理機能の画面」。デザインテンプレートの Template01/template_admin.html を写して作った。
+  共通のタブ(利用者 → セッション → 監査ログ → サーバー)は、どのサービスでも同じ順・同じ中身にする。中身は admin/admin.js が
+  共通の WebAPI(api/admin/users・api/admin/sessions・api/admin/audit・api/server-status)の応答から描く。
+  Document Manager の独自のタブ(データベース・変換サービス・Miro 連携)は、区切りの後ろに並べ、admin-page.js が描く。
+
+  admin/ の中(admin.js・components.css・design.css・flexbox.css)はデザインテンプレートのものを、手を入れずに写している
+  (写した元: EARCE9000/DesignTemplate のブランチ template01-admin、コミット 272d284)。直すときは、テンプレートの側を直して写し直す。
+  このページのスクリプトは全部外のファイルにしている(サーバーが script-src 'self' の CSP を付けるため)。
+-->
+<html lang="ja">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>管理 | Document Manager</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="./logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./admin/flexbox.css" type="text/css">
+<link rel="stylesheet" href="./admin/design.css" type="text/css">
+<link rel="stylesheet" href="./admin/components.css" type="text/css">
+<link rel="stylesheet" href="./admin-page.css" type="text/css">
+</head>
+<body>
+<div class="header">
+  <div class="header_title">Document Manager</div>
+  <!-- アイコン出典: Feather Icons (MIT) settings / log-out -->
+  <div class="header_actions">
+    <span class="header_user" id="adminUser"></span>
+    <a href="./admin.html" class="header_icon_button" title="管理" aria-label="管理">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </a>
+    <a href="./logout" class="header_icon_button" title="ログアウト" aria-label="ログアウト">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </a>
+  </div>
+</div>
+<div class="flex_menubar">
+  <a href="./"><svg class="inline_icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>文書一覧</a>
+</div>
+<div class="flex_container">
+  <div class="flex_main" style="min-width:0;max-width:100%;">
+    <!-- 管理者でないとき・確かめられないときの知らせ(admin-page.js が出す) -->
+    <div id="adminGate" class="msg_error" hidden></div>
+    <div class="item_group" id="adminBody" style="min-width:0;" hidden>
+      <div class="item_title">
+        <div class="title">管理</div>
+        <a href="./" class="cancel_button admin_back" id="adminBackLink">文書一覧へ戻る</a>
+      </div>
+      <div class="tab_set">
+        <!-- ===================== 利用者(共通) ===================== -->
+        <input type="radio" name="admin_tab" id="tab_users" class="tab_toggle" value="users" checked>
+        <label for="tab_users" class="tab_label">利用者</label>
+        <div class="tab_panel">
+          <div class="panel_note">
+            ログインできるのは、台帳に登録したメールアドレスの利用者だけ(台帳に無い利用者は、IdP でログインできても入れない)。
+            <ul>
+              <li><b>管理者</b>: この管理の画面を使用可(利用者の追加・権限の変更・削除、切断、サーバーの設定)</li>
+              <li><b>編集可</b>: 文書の追加・アーカイブ・タグの編集など</li>
+              <li><b>閲覧のみ</b>: 文書の閲覧だけ</li>
+            </ul>
+            台帳から外すと、その人のログイン中のセッションと APIキーも止まる(台帳に入れ直しても、止めたキーは戻らない)。
+          </div>
+          <div class="admin_users" data-base="./api/admin/users" data-login="./login"></div>
+        </div>
+        <!-- ===================== セッション(共通) ===================== -->
+        <input type="radio" name="admin_tab" id="tab_sessions" class="tab_toggle" value="sessions">
+        <label for="tab_sessions" class="tab_label">セッション</label>
+        <div class="tab_panel">
+          <div class="panel_note">
+            不正なアクセスが疑われるときに、利用者を<b>まとめて切断</b>。切断で次の物が一式で止まり、認証からやり直し。
+            <ul>
+              <li>ログイン中のセッション(全部の端末・ブラウザ)</li>
+              <li>その利用者が発行した APIキー(<b>元に戻せない</b>。必要なら、本人が発行し直す)</li>
+              <li>開いているモックアップの表示と、画面への知らせ(SSE)</li>
+            </ul>
+            <b>切断だけでは防げないこと</b>: ID とパスワードそのものが漏れているときは、切断してもまたログインされる(IdP の側でパスワードを変える)。
+            入れなくするには「利用者」のタブで台帳から外す。
+          </div>
+          <div class="admin_sessions" data-base="./api/admin/sessions" data-login="./login"></div>
+        </div>
+        <!-- ===================== 監査ログ(共通) ===================== -->
+        <input type="radio" name="admin_tab" id="tab_audit" class="tab_toggle" value="audit">
+        <label for="tab_audit" class="tab_label">監査ログ</label>
+        <div class="tab_panel">
+          <div class="panel_note">
+            全員ぶんの操作の記録(ログイン、文書とモックアップの書き込み、管理の操作、権限で断った呼び出し)。自分の分だけなら、文書一覧の右上の「操作履歴」でも確認可(全員が使用可)。
+            文書のダウンロードは、ここには残さない(サーバーの標準出力のログに残る)。
+          </div>
+          <div class="admin_audit" data-base="./api/admin/audit" data-login="./login"></div>
+        </div>
+        <!-- ===================== サーバー(共通) ===================== -->
+        <input type="radio" name="admin_tab" id="tab_server" class="tab_toggle" value="server">
+        <label for="tab_server" class="tab_label">サーバー</label>
+        <div class="tab_panel">
+          <div class="panel_note">
+            いま動いているサーバーの状態。<b>ビルド日時</b>はイメージを作った時刻、<b>起動日時</b>はこのコンテナが起動した時刻。
+            更新したはずなのにビルド日時が変わっていなければ、新しいイメージに入れ替わっていない。
+            部品の脆弱性が見つかったときは、「稼働中の部品の版」と「部品表」で、当てはまるかを確認(版は略さず表示)。
+            設定の変更は、すぐに反映し(複数台で動かしていれば、ほかの台にも 30 秒以内に効く)、監査ログに残る。
+          </div>
+          <div class="admin_server" data-base="./api/server-status" data-login="./login"></div>
+        </div>
+        <!-- ===================== データベース(Document Manager) ===================== -->
+        <input type="radio" name="admin_tab" id="tab_database" class="tab_toggle" value="database">
+        <label for="tab_database" class="tab_label custom_first">データベース</label>
+        <div class="tab_panel">
+          <div class="panel_note">
+            データベースが壊れていないかの確認と、データベースの記録と実際のファイルの照合。開いただけでは確認しない(前回の結果を出す)。
+          </div>
+          <div class="panel_section_title">整合性の確認</div>
+          <div class="admin_text">
+            破損は「書き込みは通るのに一部だけ読めない」形で進むことがあり、画面の上は正常に見える。
+            <b>簡易</b>は索引の整合の検査を省く。<b>厳密</b>は索引と表の整合まで検査するが、<b>検査中はサーバーのほかの処理が止まる</b>(データが多いほど長く掛かる)。
+          </div>
+          <div class="admin_actions">
+            <button type="button" id="dbIntegrityQuickButton" class="search_btn">簡易確認</button>
+            <button type="button" id="dbIntegrityFullButton" class="search_btn">厳密確認</button>
+          </div>
+          <div id="dbIntegrityResult"></div>
+          <div class="panel_section_title">DB と実ファイルの照合</div>
+          <div class="admin_text">
+            データベースの記録と、実際に保存されているファイルの食い違いを調べる(調べるだけで、何も変えない)。
+            アップロードが途中で失敗すると、ファイルだけが残ることがある。それらは<b>アーカイブ済みとして登録し直せる</b>。
+            逆に<b>ファイルが見つからない文書は、記録を消さない</b>(置き場が一時的に見えていないだけのことがあり、消すとタグ・メモ・版のつなぎという戻せない情報まで失うため)。
+          </div>
+          <div class="admin_actions">
+            <button type="button" id="reconcileScanButton" class="search_btn">照合する</button>
+          </div>
+          <div id="reconcileResult"></div>
+        </div>
+        <!-- ===================== 変換サービス(Document Manager) ===================== -->
+        <input type="radio" name="admin_tab" id="tab_convert" class="tab_toggle" value="convert">
+        <label for="tab_convert" class="tab_label">変換サービス</label>
+        <div class="tab_panel">
+          <div class="panel_note">
+            文書を PDF にする 2 つの変換サービス(別々のコンテナ)の状態。動いていなくても、文書の登録・検索・概要のプレビューには響かない。
+          </div>
+          <div class="panel_section_title">Office → PDF(体裁つき表示)<span class="panel_section_action"><a href="#" class="admin_link" id="convertHealthRefreshButton">再確認</a></span></div>
+          <div class="admin_text">
+            Excel・Word・PowerPoint を<b>レイアウトのついた PDF で表示する</b>ためのもの(LibreOffice の変換のため、細かい体裁は原本のダウンロードで確かめる前提)。
+          </div>
+          <div id="convertHealthResult"></div>
+          <div class="panel_section_title">変換に失敗した文書</div>
+          <div class="admin_text">変換サービスが止まっていた間に登録された文書は、ここに残る。やり直すと、その場で変換し直す。</div>
+          <div id="convertFailedWrap"></div>
+          <div class="panel_section_title">HTML・Markdown・MHTML・draw.io → PDF(PDF でダウンロード)</div>
+          <div class="admin_text">
+            プレビューの見た目のまま 1 枚の長い PDF にして持ち出すためのもの。動いていなくても、プレビューの上の「PDF でダウンロード」が使えなくなるだけ。
+          </div>
+          <div id="pdfHealthResult"></div>
+        </div>
+        <!-- ===================== Miro 連携(Document Manager) ===================== -->
+        <input type="radio" name="admin_tab" id="tab_miro" class="tab_toggle" value="miro">
+        <label for="tab_miro" class="tab_label">Miro 連携</label>
+        <div class="tab_panel">
+          <div class="panel_note">
+            Document Manager の資料を <b>Miro のボードへ並べる</b>ための連携。ここで管理者が 1 回連携した Miro のアカウントで、選んだボードに資料を出し入れする(利用者ひとりずつの連携は要らない)。
+            Miro に出すのは資料の写しで、正本は Document Manager のまま。
+          </div>
+          <div id="miroFlash" hidden></div>
+          <div id="miroConnectionResult"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- 先に admin-page.js が、管理者かを確かめる。管理者なら admin/admin.js を読み込む(共通の 4 つのタブを描く) -->
+<script src="./admin-page.js"></script>
+</body>
+</html>

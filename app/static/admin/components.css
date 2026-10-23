@@ -1,0 +1,809 @@
+/*
+  components.css  —  共通コンポーネント集
+  ------------------------------------------------------------------
+  もともと各画面(queue_base / webhook_events / cert_issue / exec_status …)
+  が <style> にインラインで重複定義していた部品を 1 ファイルに集約したもの。
+  flexbox.css → design.css → components.css の順で読み込む前提。
+
+  Author : d.idei@earce.net  (base design: EARCE.NET "Simple Wireframe")
+  Copyright (c) 2026 EARCE.NET (code & design)
+  License: MIT License - see LICENSE
+  Source: https://github.com/EARCE9000/DesignTemplate (published on GitHub)
+  ------------------------------------------------------------------
+  ■ 配色トークン(参考)
+    アクセント(ホバー)   #ee7800   ボタンホバー          #ffa500
+    登録/主ボタン(青)     #187FF5   ヘッダ地(黒)          #16160e
+    メニューバー/見出し   #2b2b2b   危険(赤)              #d22222
+    警告(紫)              #5a4498   罫線グレー            #e8e8e8 / #d0d0d0
+  ================================================================== */
+
+
+/* ===== ページ見出し ================================================ */
+.system_title {
+  font-size: 18pt;
+  font-weight: bold;
+  line-height: 30px;
+  letter-spacing: 0.05em;
+}
+
+
+/* ===== ヘッダ(左:システム名 / 右:ユーザー名 + アイコンボタン) ====== */
+/* <div class="header">
+     <div class="header_title">{{システム名}}</div>
+     <div class="header_actions">
+       <span class="header_user">{{ユーザー名}}</span>
+       <a href="#" class="header_icon_button" title="ログアウト" aria-label="ログアウト"><svg>…</svg></a>
+     </div>
+   </div>
+   管理・操作履歴・ログアウトなど、たまにしか使わない機能を右上に
+   アイコンで並べる。アイコンは 24x24 の線画SVG(stroke="currentColor")。
+   テンプレHTMLのアイコンは第三者の著作物: Feather Icons (MIT) の
+   settings / log-out、Lucide (ISC) の history。EARCE.NET の著作物ではない。
+   著作権表示とライセンス文はリポジトリ直下の THIRD_PARTY_NOTICES.md を参照。 */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 44px;
+}
+.header_title {
+  font-weight: bold;
+  font-size: 11pt;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.header_actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.header_user {
+  margin-right: 4px;
+  font-size: 10pt;
+  color: #cccccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.header_icon_button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  background: transparent;
+  color: #cccccc;
+  text-decoration: none;
+  cursor: pointer;
+}
+.header_icon_button:hover {
+  background: rgba(238, 120, 0, 0.18);
+  border-color: #ee7800;
+  color: #ee7800;
+}
+.header_icon_button svg { width: 18px; height: 18px; display: block; }
+
+
+/* ===== フッター(左:コピーライト / 右:バージョン) =================== */
+/* <div class="footer">
+     <span class="footer_copyright">&copy; {{年}} {{会社名}}</span>
+     <span class="footer_version">Ver. {{バージョン}}</span>
+   </div>
+   内容が短い画面でも画面下端に付くよう body を縦flexにしている。     */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 16px;
+  margin-top: auto;
+  padding: 0 10px;
+  line-height: 24px;
+  background: #16160e;   /* ヘッダと同じ黒帯 */
+  font-size: 8pt;
+  color: #cccccc;
+}
+
+
+/* ===== フォームレイアウト ========================================== */
+/* ラベル(固定幅) + 入力欄 を横並びにし、行を薄い罫線で区切る          */
+.form_row   { display: flex; flex-wrap: wrap; gap: 0; }
+
+.form_field {
+  display: flex;
+  align-items: flex-start;
+  border-bottom: 1px solid #eeeeee;
+  padding: 8px 10px;
+  flex: 1;
+  min-width: 280px;   /* 狭くなると自動で縦積み(2カラム→1カラム) */
+}
+.form_field:last-child { border-bottom: none; }
+
+.form_label {
+  width: 130px;
+  min-width: 130px;
+  font-size: 10pt;
+  font-weight: bold;
+  color: #555555;
+  padding-top: 6px;
+}
+.form_label.required::after { content: " *"; color: #d22222; }  /* 必須マーク */
+
+.form_value { flex: 1; }
+.form_value input[type="text"],
+.form_value select   { width: 100%; }
+.form_value textarea {
+  width: 100%;
+  height: 5em;
+  border-radius: 10px;
+  padding: 6px 10px;
+  border: 1px solid #d5d5d5;
+  font-size: 11pt;
+  resize: vertical;
+}
+
+.form_hint { font-size: 9pt; color: #8a8a8a; margin-top: 3px; }  /* 入力補足 */
+
+/* 単票フォーム内のセクション見出し(基本情報 / 詳細 など) */
+.form_section_title {
+  font-size: 11pt;
+  font-weight: bold;
+  color: #2b2b2b;
+  padding: 6px 10px;
+  margin-top: 6px;
+  border-left: 4px solid #ee7800;
+  background-color: #faf6f0;
+}
+
+/* 単票の確認表示(登録せず内容を見せる)用: 入力欄の代わりに値を表示 */
+.form_static {
+  font-size: 11pt;
+  color: #2b2b2b;
+  padding-top: 6px;
+  word-break: break-all;
+}
+
+/* チェックボックス / ラジオ(フォーム内)
+   <label><input type="checkbox"> ラベル</label> の形で使う。
+   design.css の全input共通枠(border/height)を打ち消し、少し大きめ+ブランド色。 */
+.form_value input[type="checkbox"],
+.form_value input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  accent-color: #ee7800;   /* チェック/ドットをアクセント色に */
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+/* input を内包する label: 縦中央そろえ + 適切な間隔でラベルと対比を改善 */
+.form_value label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11pt;
+  line-height: 1.2;
+  margin-right: 1.6em;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.form_value label:last-child { margin-right: 0; }
+
+/* 確認画面など: トグル/チェック/ラジオを「見た目そのまま・操作不可」で表示。
+   form_value に .readonly を付けるとその中の操作系がクリック/キー操作を受けない。
+   値は別途 <input type="hidden"> で送る前提。 */
+.form_value.readonly { pointer-events: none; }
+.form_value.readonly label { cursor: default; }
+
+/* トグルスイッチ (ON=緑/右, OFF=グレー/左)。右横にラベル。
+   <label class="toggle_switch">
+     <input type="checkbox" name="xxx" value="1" checked>
+     <span class="toggle_track"></span>
+     <span class="toggle_label">ラベル文言</span>
+   </label>                                                            */
+.toggle_switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  margin-right: 0;
+}
+.toggle_switch input {          /* 元のチェックボックスは隠す */
+  display: none;
+}
+.toggle_switch .toggle_track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 26px;
+  background-color: #c8ccd0;    /* OFF時の地色 */
+  border-radius: 999px;
+  transition: background-color 0.2s;
+}
+.toggle_switch .toggle_track::after {   /* 白いノブ */
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: left 0.2s;
+}
+.toggle_switch input:checked + .toggle_track {
+  background-color: #2fc36b;    /* ON時の緑 */
+}
+.toggle_switch input:checked + .toggle_track::after {
+  left: 23px;                   /* 46 - 20 - 3 */
+}
+.toggle_switch .toggle_label {
+  font-size: 11pt;
+  color: #2b2b2b;
+  line-height: 1.2;
+}
+
+/* 状態語の出し分け(JS不要): toggle_label 内に toggle_on / toggle_off を置くと
+   ON時は toggle_on、OFF時は toggle_off だけが表示される。
+   <span class="toggle_label"><span class="toggle_on">公開</span><span class="toggle_off">非公開</span></span> */
+.toggle_switch .toggle_on  { display: none; }
+.toggle_switch .toggle_off { display: inline; }
+.toggle_switch input:checked ~ .toggle_label .toggle_on  { display: inline; }
+.toggle_switch input:checked ~ .toggle_label .toggle_off { display: none; }
+
+
+/* ===== ファイル ドラッグ&ドロップ ================================= */
+/* <label class="dropzone"> でファイル入力を包み、隣に .dz_file_list を置く。
+   挙動は assets/dropzone.js が全 .dropzone を自動初期化する。          */
+.dropzone {
+  display: block;
+  border: 2px dashed #c0c6cc;
+  border-radius: 10px;
+  background-color: #fafbfc;
+  padding: 22px 16px;
+  text-align: center;
+  color: #6a7178;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+.dropzone:hover        { border-color: #ee7800; background-color: #fff7ef; }
+.dropzone.dragover     { border-color: #ee7800; background-color: #fff4e5; color: #ee7800; }
+.dropzone .dz_icon     { font-size: 26pt; line-height: 1; }
+.dropzone .dz_text     { font-size: 10.5pt; margin-top: 6px; }
+.dropzone .dz_hint     { font-size: 9pt; color: #9aa0a6; margin-top: 2px; }
+.dropzone .dz_browse   { color: #187FF5; text-decoration: underline; }
+
+/* 選択済みファイルの一覧 */
+.dz_file_list { margin-top: 8px; }
+.dz_file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10pt;
+  padding: 5px 10px;
+  border: 1px solid #e2e5e9;
+  border-radius: 6px;
+  background-color: #ffffff;
+  margin-top: 5px;
+}
+.dz_file .dz_name   { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dz_file .dz_size   { color: #9aa0a6; font-size: 9pt; white-space: nowrap; }
+.dz_file .dz_remove { color: #d22222; cursor: pointer; text-decoration: none; font-weight: bold; padding: 0 4px; }
+.dz_file .dz_remove:hover { color: #a11; }
+
+
+/* ===== ステータスバッジ ============================================ */
+/* <span class="status_badge completed">completed</span> のように使う      */
+.status_badge {
+  display: inline-block;
+  font-size: 8pt;
+  font-weight: bold;
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.status_badge.pending    { background-color: #ffe4c0; color: #b05000; }
+.status_badge.processing { background-color: #d0e8ff; color: #1558a0; }
+.status_badge.completed  { background-color: #d0f0d0; color: #1a6e1a; }
+.status_badge.failed     { background-color: #ffd0d0; color: #aa1111; }
+.status_badge.unknown    { background-color: #e8e8e8; color: #555555; }
+.status_badge.stale      { background-color: #fff3c4; color: #8a6d00; }
+.status_badge.intranet   { background-color: #cceceb; color: #0e6b66; }
+
+/* 属性の色分け(任意) */
+.status_badge.provider_exec    { background-color: #e0e5ff; color: #3945a5; }
+.status_badge.provider_rundeck { background-color: #ffe0dc; color: #a53a3a; }
+
+/* 経過時間バッジ(任意) */
+.status_badge.elapsed_15m     { background-color: #eaf3de; color: #27500a; }
+.status_badge.elapsed_1h      { background-color: #e6f1fb; color: #0c447c; }
+.status_badge.elapsed_6h      { background-color: #f1efe8; color: #444441; }
+.status_badge.elapsed_12h     { background-color: #faeeda; color: #633806; }
+.status_badge.elapsed_over12h { background-color: #fcebeb; color: #791f1f; }
+
+
+/* ===== 一覧テーブル ================================================ */
+.data_table_wrap { overflow-x: auto; }   /* 横スクロール(列が多い一覧用) */
+
+.data_table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+  background-color: #ffffff;
+}
+.data_table thead tr { background-color: #2b2b2b; color: #ffffff; }
+.data_table thead th {
+  padding: 7px 10px;
+  text-align: left;
+  white-space: nowrap;
+  font-weight: bold;
+  font-size: 9pt;
+}
+.data_table tbody tr  { border-bottom: 1px solid #e8e8e8; }
+.data_table tbody tr:hover { background-color: #fff4e5; }
+.data_table tbody td  { padding: 6px 10px; vertical-align: middle; }
+
+/* 行の状態強調(任意 / <tr class="row_failed"> などで付与) */
+.data_table tbody tr.row_completed        { background-color: #f0f0f0; color: #888; }
+.data_table tbody tr.row_completed:hover  { background-color: #e8e8e8; }
+.data_table tbody tr.row_failed           { background-color: #fff0f0; color: #aa1111; }
+.data_table tbody tr.row_failed:hover     { background-color: #ffe4e4; }
+.data_table tbody tr.row_processing       { background-color: #f0fff4; color: #1a6e1a; }
+.data_table tbody tr.row_processing:hover { background-color: #e0f5e8; }
+
+.null_val    { color: #b0b0b0; font-style: italic; font-size: 9pt; }  /* NULL/空値 */
+.fqdn_cell   { font-family: Consolas, "Courier New", monospace; }     /* 等幅セル */
+
+
+/* ===== 件数・条件表示(一覧ヘッダ行) =============================== */
+.result_count { font-size: 10pt; color: #666; margin-bottom: 8px; }
+
+.result_meta {
+  padding: 8px 14px;
+  font-size: 10pt;
+  color: #666;
+  border-bottom: 1px solid #eeeeee;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 参照先DB等の補助バッジ */
+.db_badge {
+  display: inline-block;
+  font-size: 8pt;
+  font-weight: bold;
+  background-color: #e8d8ff;
+  color: #6600cc;
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
+
+/* ===== フィルタパネル(絞り込み) =================================== */
+.filter_panel {
+  padding: 12px 14px;
+  border-bottom: 1px solid #e8e8e8;
+  background-color: #fafafa;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+.filter_group { display: flex; align-items: center; gap: 6px; }
+.filter_label { font-size: 9pt; font-weight: bold; color: #666; white-space: nowrap; }
+
+/* 期間などのトグルボタン(ピル型) */
+.range_btn {
+  display: inline-block;
+  font-size: 9pt;
+  font-weight: bold;
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid #d0d0d0;
+  background-color: #ffffff;
+  color: #444;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+.range_btn:hover  { background-color: #fff4e5; border-color: #ee7800; color: #ee7800; }
+.range_btn.active { background-color: #ee7800; border-color: #ee7800; color: #ffffff; }
+
+/* キーワード検索 */
+.search_form  { display: flex; align-items: center; gap: 6px; }
+.search_input {
+  font-size: 10pt;
+  padding: 4px 10px;
+  border: 1px solid #d5d5d5;
+  border-radius: 6px;
+  width: 220px;
+}
+.search_input:focus {
+  outline: none;
+  border-color: #ee7800;
+  box-shadow: 0 0 0 2px rgba(238,120,0,0.15);
+}
+.search_btn {
+  font-size: 9pt;
+  font-weight: bold;
+  padding: 4px 14px;
+  border-radius: 6px;
+  border: 1px solid #d0d0d0;
+  background-color: #fff;
+  color: #444;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.12s;
+}
+.search_btn:hover  { background-color: #fff4e5; border-color: #ee7800; color: #ee7800; }
+.search_clear      { font-size: 9pt; color: #888; text-decoration: none; padding: 4px 8px; }
+.search_clear:hover { color: #ee7800; }
+
+/* 現在の検索条件表示 */
+.active_search {
+  font-size: 9pt;
+  background-color: #fff3cd;
+  color: #7a5a00;
+  border: 1px solid #ffe08a;
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+/* クリック可能なフィルタバッジ(status_badge に併用) */
+.filter_badge { cursor: pointer; user-select: none; transition: filter 0.12s, box-shadow 0.12s; }
+.filter_badge:hover  { filter: brightness(0.93); }
+.filter_badge.active { box-shadow: inset 0 0 0 2px currentColor; }
+.filter_clear_btn    { font-size: 9pt; color: #888; cursor: pointer; text-decoration: none; padding: 2px 8px; }
+.filter_clear_btn:hover { color: #ee7800; }
+
+
+/* ===== メッセージ(結果通知) ====================================== */
+.msg_success {
+  font-size: 11pt;
+  font-weight: bold;
+  color: #1a6e1a;
+  border: 2px solid #5cb85c;
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin-bottom: 10px;
+  background-color: #f0fff0;
+}
+.msg_error {
+  font-size: 11pt;
+  font-weight: bold;
+  color: #d22222;
+  border: 2px solid #ec6d71;
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin-bottom: 10px;
+  background-color: #fff0f0;
+}
+
+
+/* ===== 行内アクション(ダウンロード等の小ボタン) ================= */
+.dl_button {
+  display: inline-block;
+  font-size: 8pt;
+  font-weight: bold;
+  border-radius: 4px;
+  padding: 2px 10px;
+  background-color: #187FF5;
+  color: #ffffff;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.dl_button:hover { background-color: #0f5fbb; }
+
+
+/* ===== メニュー(タイル) =========================================== */
+.menu_section       { padding: 20px 10px 10px 10px; }
+.menu_section_title {
+  font-size: 12pt;
+  color: #8a8a8a;
+  font-weight: bold;
+  padding: 0 4px 6px 4px;
+  border-bottom: 2px solid #e0e0e0;
+  margin-bottom: 12px;
+}
+.tile_container { display: flex; flex-wrap: wrap; gap: 12px; padding: 4px 0; }
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 160px;
+  height: 120px;
+  background-color: #ffffff;
+  border: 1px solid #d0d0d0;
+  border-radius: 10px;
+  text-decoration: none;
+  color: #2b2b2b;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+  padding: 10px;
+  text-align: center;
+}
+.tile:hover     { background-color: #fff4e5; border-color: #ee7800; color: #ee7800; }
+.tile_icon      { font-size: 32pt; margin-bottom: 8px; line-height: 1; }
+.tile_label     { font-size: 11pt; font-weight: bold; text-align: center; white-space: pre-line; }
+
+
+/* ===== レスポンシブ補強（スマホ幅対応） ============================ */
+/* design.css の .item_group{min-width:480px} 等が狭幅で横はみ出しを起こす
+   ため、700px 以下で上書きする。flexbox.css の縦積み切替と併用。         */
+@media screen and (max-width: 700px) {
+
+  /* カードの固定下限幅を解除（横スクロールの主因） */
+  .item_group,
+  .wizard { min-width: 0; }
+
+  /* フォーム: ラベルを上、入力を下に積む（横幅130px固定をやめる） */
+  .form_field { min-width: 0; }
+  .form_label { width: auto; min-width: 0; padding-top: 0; margin-bottom: 4px; }
+
+  /* ボタン行: flex_item を縦積み（flexbox.css の flex_container 縦化に追従） */
+  .item_action button,
+  .item_action input[type="button"] { width: 100% !important; }
+
+  /* 見出しの折り返しを許可（db_badge 等が右にはみ出さないよう） */
+  .item_title .title { white-space: normal; }
+  .data_table thead th,
+  .data_table tbody td { white-space: normal; }
+
+  /* 本文の左右パディングを詰める */
+  .flex_main { padding: 6px; }
+
+  /* フィルタ: 期間ボタン列・検索欄を折り返す */
+  .filter_group { flex-wrap: wrap; }
+  .search_form  { flex-wrap: wrap; }
+  .search_input { width: 100%; }
+}
+
+
+/* ===== モーダル(確認ダイアログ) — JS不要(チェックボックス方式) ======= */
+/* <input type="checkbox" id="m1" class="modal_toggle" hidden>
+   <label for="m1" class="caution_button ...">削除</label>
+   <div class="modal_overlay">
+     <label for="m1" class="modal_backdrop"></label>
+     <div class="modal_box"> ...本体... </div>
+   </div>
+   modal_actions は、左にキャンセル、右に実行(削除など)。2 つは左右の端に離れる。   */
+.modal_overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+.modal_toggle:checked ~ .modal_overlay { display: flex; }
+.modal_backdrop { position: absolute; inset: 0; cursor: default; }
+.modal_box {
+  position: relative;
+  background-color: #ffffff;
+  border-radius: 10px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.modal_title {
+  font-size: 13pt;
+  font-weight: bold;
+  color: #2b2b2b;
+  padding: 14px 18px;
+  border-bottom: 1px solid #eeeeee;
+}
+.modal_title.danger { color: #d22222; }
+.modal_body    { padding: 16px 18px; font-size: 11pt; color: #444; line-height: 1.6; }
+.modal_actions {
+  display: flex;
+  gap: 10px;
+  /* 壊す操作の確認では、キャンセル(左の端)と実行(右の端)を離す。隣り合わせにすると押し間違える */
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-top: 1px solid #eeeeee;
+  background-color: #fafafa;
+}
+.modal_actions form { margin: 0; }
+/* ボタンが 1 つだけ(「閉じる」)のときは、右の端に置く */
+.modal_actions > :only-child { margin-left: auto; }
+
+
+/* ===== 状態モニタ(カード一覧) ===================================== */
+.monitor_list { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.monitor_card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  border: 1px solid #dcdfe4;
+  border-left: 4px solid #9aa0a6;
+  border-radius: 8px;
+  padding: 10px 16px;
+  background-color: #ffffff;
+  box-shadow: 0 1px 2px rgba(30, 40, 60, 0.05);
+}
+.monitor_card.is_ok      { border-left-color: #2fae4e; }
+.monitor_card.is_failed  { border-left-color: #d94c4c; background-color: #fdecec; }
+.monitor_card.is_stale   { border-left-color: #d9a441; background-color: #fff8e8; }
+.monitor_card.is_running { border-left-color: #1558a0; background-color: #eef5ff; }
+.monitor_name    { font-weight: bold; font-size: 11pt; color: #2b3648; flex: 1 1 auto; min-width: 0; }
+.monitor_meta    { font-size: 9pt; color: #8a8a8a; white-space: nowrap; }
+
+
+/* ===== 空状態 / 状態画面 ========================================== */
+.empty_state {
+  text-align: center;
+  color: #8a8a8a;
+  padding: 48px 16px;
+}
+.empty_state .empty_icon { font-size: 40pt; line-height: 1; margin-bottom: 10px; }
+.empty_state .empty_text { font-size: 12pt; font-weight: bold; color: #6a7178; }
+.empty_state .empty_hint { font-size: 10pt; margin-top: 6px; }
+
+/* 完了/エラーなどの大きな結果表示 */
+.result_state {
+  text-align: center;
+  padding: 40px 16px;
+}
+.result_state .result_icon  { font-size: 44pt; line-height: 1; }
+.result_state .result_title { font-size: 16pt; font-weight: bold; margin-top: 10px; }
+.result_state.ok    .result_title { color: #1a6e1a; }
+.result_state.error .result_title { color: #d22222; }
+.result_state .result_desc  { font-size: 11pt; color: #555; margin-top: 8px; line-height: 1.6; }
+.result_state .result_actions { margin-top: 20px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+
+/* ===== アイコン(SVG の線画) ======================================== */
+/* 絵文字は使わない(環境によって形と色が変わるため)。押すアイコンにも、タイルや
+   結果表示の大きな絵にも、SVG の線画を使う。SVG は template_icons.html からコピーする。
+   出典とライセンスは THIRD_PARTY_NOTICES.md に書く。                         */
+
+/* 大きな絵(タイル / 空状態 / 結果表示 / ドロップ欄)。色は親の文字色に従う */
+.tile_icon svg                 { width: 42px; height: 42px; display: block; }
+.empty_state .empty_icon svg   { width: 54px; height: 54px; }
+.result_state .result_icon svg { width: 58px; height: 58px; }
+.result_state.ok    .result_icon { color: #1a6e1a; }
+.result_state.error .result_icon { color: #d22222; }
+.dropzone .dz_icon svg         { width: 34px; height: 34px; }
+
+/* 文字に添える小さなアイコン(「更新」の頭など)。文字の大きさに合わせる */
+.inline_icon { width: 1em; height: 1em; vertical-align: -0.12em; margin-right: 3px; }
+
+/* アイコンだけのボタン。場所が足りない所(一覧の行の右端、値のすぐ横)に限って使う。
+   必ず title と aria-label を付ける。それ以外の場所では、文字の付いたボタンにする。
+   <a href="#" class="icon_button" title="詳細" aria-label="詳細"><svg>…</svg></a>
+   <a href="#" class="icon_button danger" title="削除" aria-label="削除"><svg>…</svg></a>   */
+.icon_button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 26px;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  background-color: #ffffff;
+  color: #2b2b2b;
+  text-decoration: none;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.icon_button:hover        { border-color: #ee7800; color: #ee7800; background-color: #fff4e5; }
+/* 削除は、いつも警戒色(赤)で出す。マウスを乗せると、赤で塗りつぶす */
+.icon_button.danger       { border-color: #e9a9a9; color: #d22222; }
+.icon_button.danger:hover { border-color: #d22222; color: #ffffff; background-color: #d22222; }
+.icon_button svg          { width: 15px; height: 15px; display: block; }
+/* 行の右端に並べる。順は 詳細 → 編集 → 別画面 → ダウンロード → コピー → 削除。削除は右の端で、少し離す */
+.row_actions                      { white-space: nowrap; text-align: right; }
+.row_actions .icon_button         { margin-left: 4px; }
+.row_actions .icon_button.danger  { margin-left: 12px; }
+
+/* 状態を示す印(押す物ではない)。必ず文字を添える */
+.state_icon          { width: 1.1em; height: 1.1em; vertical-align: -0.18em; margin-right: 4px; }
+.state_icon.ok       { color: #1a6e1a; }
+.state_icon.warn     { color: #b05000; }
+.state_icon.error    { color: #d22222; }
+
+/* アイコン一覧(template_icons.html) */
+.icon_catalog       { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; }
+.icon_catalog_item  { display: flex; align-items: center; gap: 12px; width: 300px; border: 1px solid #e8e8e8; border-radius: 8px; padding: 8px 12px; }
+.icon_catalog_item > svg { width: 24px; height: 24px; flex-shrink: 0; color: #2b2b2b; }
+.icon_catalog_name  { font-size: 10.5pt; font-weight: bold; color: #2b2b2b; }
+.icon_catalog_note  { font-size: 9pt; color: #6a7178; }
+
+
+/* ===== タブ(JS不要) =============================================== */
+/* 管理機能の画面などで、1つのページの中を切り替える。ラジオボタン方式(モーダルと同じ考え方)。
+   <div class="tab_set">
+     <input type="radio" name="t" id="t1" class="tab_toggle" checked><label for="t1" class="tab_label">利用者</label>
+     <div class="tab_panel"> … </div>
+     <input type="radio" name="t" id="t2" class="tab_toggle"><label for="t2" class="tab_label">サーバー</label>
+     <div class="tab_panel"> … </div>
+   </div>
+   ラベルは上に横並び、選んだタブの中身だけが下に出る。サービスで URL に残したいときは、JS で ?tab= に切り替えてよい */
+.tab_set                { display: flex; flex-wrap: wrap; align-items: flex-end; min-width: 0; }
+.tab_toggle             { position: absolute; opacity: 0; pointer-events: none; }
+.tab_label              { order: 0; padding: 9px 18px 7px; font-size: 10.5pt; color: #555555; cursor: pointer;
+                          border-bottom: 3px solid transparent; user-select: none; white-space: nowrap; }
+.tab_label:hover        { color: #ee7800; }
+.tab_toggle:focus-visible + .tab_label { outline: 2px solid #187FF5; outline-offset: -2px; }
+.tab_toggle:checked + .tab_label { color: #2b2b2b; font-weight: bold; border-bottom-color: #ee7800; }
+.tab_panel              { order: 1; width: 100%; min-width: 0; display: none; border-top: 1px solid #e8e8e8; }   /* min-width:0 で、中の広い表を横スクロールに任せる */
+.tab_toggle:checked + .tab_label + .tab_panel { display: block; }
+/* サービスが足したタブ(共通のタブの後ろに並べる)。見た目は同じで、区切りの線だけ入れる */
+.tab_label.custom_first { margin-left: 10px; border-left: 1px solid #e8e8e8; }
+
+/* タブの中の、まとまりの見出し(「設定(管理者が変更可)」「確認(表示だけ)」など) */
+.panel_group            { display: flex; align-items: center; gap: 10px; margin: 18px 14px 0; padding: 6px 0 4px; border-bottom: 2px solid #ee7800;
+                          font-size: 9.5pt; font-weight: bold; color: #b05000; letter-spacing: 0.05em; }
+.panel_group:first-child { margin-top: 10px; }
+.panel_group .panel_section_action { margin-left: auto; font-weight: normal; letter-spacing: 0; }
+
+/* タブの中の説明文と、節の見出し */
+.panel_note             { padding: 10px 14px; font-size: 9.5pt; color: #555555; background-color: #fafafa; border-bottom: 1px solid #eeeeee; }
+.panel_note ul          { margin: 4px 0 0 1.2em; padding: 0; }
+.panel_section_title    { display: flex; align-items: center; gap: 10px; padding: 14px 14px 6px; font-size: 11pt; font-weight: bold; color: #2b2b2b; }
+.panel_section_title .panel_section_action { margin-left: auto; font-weight: normal; }
+
+/* 情報の並び(版・起動した日時など)。ラベルと値の組を、幅に応じて折り返す */
+.info_grid              { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px 18px; padding: 8px 14px 12px; }
+.info_label             { font-size: 8.5pt; color: #6a7178; }
+.info_value             { font-size: 10.5pt; color: #2b2b2b; word-break: break-all; }
+
+/* 利用者ごとのセッションのカード(管理の画面のセッションのタブ)。切断するかを判断できる情報量を出す */
+.session_list           { display: flex; flex-direction: column; gap: 10px; padding: 10px 14px 14px; }
+.session_card           { border: 1px solid #e8e8e8; border-radius: 8px; padding: 10px 14px; background-color: #ffffff; }
+.session_head           { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.session_user           { font-size: 12pt; font-weight: bold; color: #2b2b2b; word-break: break-all; }
+.session_meta           { font-size: 10pt; color: #555555; }
+.session_revoke         { margin-left: auto; width: auto; height: auto; line-height: 28px; padding: 2px 18px; font-size: 10pt; }
+.session_table          { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-top: 8px; }
+.session_table th       { text-align: left; font-weight: normal; color: #6a7178; padding: 4px 8px; border-bottom: 1px solid #eeeeee; white-space: nowrap; }
+.session_table td       { padding: 6px 8px; vertical-align: top; white-space: nowrap; border-bottom: 1px solid #f4f4f4; }
+.session_table td.session_ua { white-space: normal; min-width: 260px; color: #555555; word-break: break-word; }
+.session_keys           { font-size: 9.5pt; color: #555555; margin-top: 8px; }
+
+/* サーバーのタブの表。狭い幅では、列を詰めて折り返さず、表ごとの横スクロールにする */
+.admin_server .data_table           { min-width: 560px; }
+.admin_server .data_table td:first-child,
+.admin_server .data_table th        { white-space: nowrap; }
+/* 表の中の「保存」などは、行の高さに合わせて小さく出す(design.css の button の大きさを打ち消す) */
+.admin_server .search_btn,
+.admin_users .search_btn,
+.admin_sessions .search_btn,
+.admin_audit .search_btn            { width: auto; height: auto; line-height: 1.4; margin: 0; }
+
+/* 版の文字。略さず、選んでコピーできるように、等幅で出す */
+.version_text           { font-family: Consolas, "Courier New", monospace; font-size: 9.5pt; color: #2b2b2b; user-select: text; }
+.runtime_text           { font-size: 9pt; color: #555555; }
+.runtime_text .version_text { font-size: 9pt; }
+.runtime_sep            { color: #bbbbbb; margin: 0 6px; }
+@media (max-width: 700px) {
+  .tab_label             { padding: 8px 10px 6px; font-size: 10pt; }
+  .tab_label.custom_first { margin-left: 0; }
+  /* 入力が多い絞り込み(監査ログなど)も、幅に収める */
+  .filter_panel .search_form { width: 100%; min-width: 0; }
+  .filter_panel .search_input { min-width: 0 !important; }
+}

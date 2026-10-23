@@ -8,6 +8,7 @@
  *
  *   管理者の側 … 切るかどうかを判断できる材料が出ていること、押し間違えにくいこと、
  *                 切断ではできないこと(パスワードが漏れている場合)が書いてあること
+ *                 (管理の画面 admin.html の「セッション」のタブ。中身はデザインテンプレートの admin.js が描く)
  *   切られた側 … 画面を奪われず、黙って壊れもしないこと。「切られた」とは伝えないこと
  *
  * 切断は取り消せないので、対象は serve.js が用意した専用の利用者(e2eVictim)にしている。
@@ -23,12 +24,13 @@ const {e2eVictim} = keys.revokeTargets;
 
 const loginAs = (context, cookie) => context.addCookies([{name: keys.sessionCookieName, value: cookie, url: BASE_URL}]);
 const openSessionsTab = async (page) => {
-	await page.goto("./");
-	await page.click("#allowedUsersManageLink");
-	await page.click('.adminTab[data-tab="sessions"]');
-	await expect(page.locator("#sessionUserList .sessionUser").first()).toBeVisible();
+	await page.goto("./admin.html?tab=sessions");
+	await expect(page.locator(".admin_sessions .session_card").first()).toBeVisible();
 };
-const cardOf = (page, user) => page.locator(`.sessionUser[data-user="${user}"]`);
+// victim@… と e2e-victim@… のように、一部が重なる利用者を取り違えないよう、名前の全体で当てる
+const exactly = (text) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+const cardOf = (page, user) => page.locator(".admin_sessions .session_card").filter({has: page.locator(".session_user", {hasText: exactly(user)})});
+const panel = (page) => page.locator("#tab_sessions + .tab_label + .tab_panel");
 
 test.describe.serial("セッションの切断(実ブラウザ)", () => {
 	test.beforeEach(async ({context}) => {
@@ -39,8 +41,8 @@ test.describe.serial("セッションの切断(実ブラウザ)", () => {
 		await openSessionsTab(page);
 
 		const card = cardOf(page, e2eVictim.user);
-		await expect(card).toContainText("セッション 1件 / APIキー 1件");
-		await expect(card.locator(".sessionTable tbody tr")).toHaveCount(1);
+		await expect(card).toContainText("セッション 1 件 / APIキー 1 件");
+		await expect(card.locator(".session_table tbody tr")).toHaveCount(1);
 		await expect(card).toContainText("203.0.113.10");
 		await expect(card).toContainText("TestBrowser/1.0");
 		await expect(card).toContainText("key-of-e2e-victim");
@@ -52,33 +54,34 @@ test.describe.serial("セッションの切断(実ブラウザ)", () => {
 	test("自分のセッションと、操作中の画面が見分けられる", async ({page}) => {
 		await openSessionsTab(page);
 		const mine = cardOf(page, keys.owner);
-		await expect(mine.locator(".sessionUserHead .sessionBadge", {hasText: "自分"})).toBeVisible();
-		await expect(mine.locator(".sessionTable .sessionBadge", {hasText: "この画面"})).toHaveCount(1);
+		await expect(mine.locator(".session_head .status_badge", {hasText: "自分"})).toBeVisible();
+		await expect(mine.locator(".session_table .status_badge", {hasText: "この画面"})).toHaveCount(1);
 		// この機能を入れる前からのログインは手がかりが無い。空欄にせず「不明」と出す
-		await expect(mine.locator(".sessionTable td.sessionUnknown").first()).toHaveText("不明");
+		await expect(mine.locator(".session_table .null_val").first()).toHaveText("不明");
 	});
 
 	// 切断しても、IDとパスワードが漏れていればまた入られる。押す前に目に入る場所に書く
 	test("切断ではできないことが書いてある", async ({page}) => {
 		await openSessionsTab(page);
-		const caution = page.locator('.adminTabPanel[data-tab="sessions"] .sessionCaution');
+		const caution = panel(page).locator(".panel_note");
 		await expect(caution).toBeVisible();
 		await expect(caution).toContainText("パスワード");
-		await expect(caution).toContainText("認証基盤(IdP)");
-		await expect(caution).toContainText("アクセス許可ユーザー");
+		await expect(caution).toContainText("IdP");
+		await expect(caution).toContainText("台帳から外す");
 		// APIキーが戻せないことも、押す前に分かること
-		await expect(page.locator('.adminTabPanel[data-tab="sessions"] .adminSectionNote')).toContainText("元に戻せません");
+		await expect(caution).toContainText("元に戻せない");
 	});
 
 	test("確認を挟み、やめれば何も起きない", async ({page}) => {
 		await openSessionsTab(page);
-		await cardOf(page, e2eVictim.user).locator(".sessionRevokeButton").click();
-		await expect(page.locator("#confirmMessage")).toContainText(e2eVictim.user);
-		await expect(page.locator("#confirmMessage")).toContainText("セッション 1件・APIキー 1件");
-		await expect(page.locator("#confirmMessage")).toContainText("元に戻せません");
+		await cardOf(page, e2eVictim.user).locator("[data-revoke]").click();
+		const modal = page.locator(".modal_box");
+		await expect(modal).toContainText(e2eVictim.user);
+		await expect(modal).toContainText("セッション 1 件と、APIキー 1 件");
+		await expect(modal).toContainText("元に戻せない");
 
-		await page.click("#confirmNoButton");
-		await page.click("#sessionReloadButton");
+		await page.click("[data-ans=no]");
+		await page.locator(".admin_sessions [data-act=reload]").click();
 		await expect(cardOf(page, e2eVictim.user), "やめたのに切断されている").toBeVisible();
 	});
 
@@ -95,16 +98,15 @@ test.describe.serial("セッションの切断(実ブラウザ)", () => {
 			const victimUrl = victimPage.url();
 
 			await openSessionsTab(page);
-			await cardOf(page, e2eVictim.user).locator(".sessionRevokeButton").click();
-			await page.click("#confirmYesButton");
+			await cardOf(page, e2eVictim.user).locator("[data-revoke]").click();
+			await page.click("[data-ans=yes]");
 
 			// 管理者の側: 一覧から消え、履歴に残る
+			await expect(page.locator(".admin_sessions [data-part=msg]")).toContainText(`「${e2eVictim.user}」を切断`);
 			await expect(cardOf(page, e2eVictim.user)).toHaveCount(0);
-			const row = page.locator("#sessionHistoryList tbody tr", {hasText: e2eVictim.user}).first();
+			const row = page.locator(".admin_sessions [data-part=history] tbody tr", {hasText: e2eVictim.user}).first();
 			await expect(row).toContainText(keys.owner);
-			await expect(row).toContainText("1件");
-			// どこから入られていたかは、切った後では取り直せない。履歴で追えること
-			await expect(row).toContainText("203.0.113.10");
+			await expect(row).toContainText("セッション 1、APIキー 1");
 			// 操作した管理者自身は、そのまま使えている
 			await expect(page.locator("#sessionExpiredBar")).toBeHidden();
 

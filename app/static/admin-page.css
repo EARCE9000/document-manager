@@ -1,0 +1,36 @@
+/*!
+ * admin-page.css : 管理の画面(admin.html)で、Document Manager の独自のタブに足す見た目
+ * Copyright(c) 2026 EARCE.NET <d.idei@earce.net>
+ * MIT Licensed
+ *
+ * 部品はデザインテンプレートの components.css のものを使い、ここでは並べ方(余白)だけを足す。
+ * 共通のタブ(admin/admin.js が描く)には効かせない。
+ */
+
+/* 元の画面へ戻るリンク(見出しの右の端) */
+.admin_back { margin-left: auto; align-self: center; font-size: 10pt; line-height: 26px; height: auto; width: auto; padding: 2px 14px; text-decoration: none; }
+
+/* 節の説明・ボタンの並び・知らせ */
+.admin_text    { padding: 2px 14px 6px; font-size: 9.5pt; color: #555555; line-height: 1.6; }
+.admin_actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 14px 10px; }
+.admin_actions .search_btn,
+.admin_actions .entry_button { width: auto; height: auto; line-height: 1.4; margin: 0; }
+.admin_flash   { margin: 8px 14px; }
+.admin_link    { font-size: 9pt; color: #187FF5; text-decoration: none; }
+.admin_sub     { font-size: 10pt; }
+.admin_steps   { margin: 0 14px 8px 2.4em; padding: 0; font-size: 9.5pt; line-height: 1.7; }
+.admin_form    { padding: 0 14px 4px; max-width: 40em; }
+.admin_form .search_input { width: 100%; }
+.admin_button_link { display: inline-block; text-decoration: none; padding: 4px 14px; }
+
+/* 独自のタブの中の表・項目の並び(共通のタブと同じ左右の余白にそろえる) */
+.tab_panel > div > .data_table_wrap,
+#miroBoardList .data_table_wrap,
+#convertFailedWrap .data_table_wrap { margin: 0 14px 10px; }
+#dbIntegrityResult .data_table_wrap,
+#reconcileResult .data_table_wrap { margin: 0 14px 10px; }
+#dbIntegrityResult .result_meta,
+#reconcileResult .result_meta,
+#convertHealthResult .result_meta,
+#pdfHealthResult .result_meta,
+#miroConnectionResult .result_meta { gap: 10px; }

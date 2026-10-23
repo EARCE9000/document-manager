@@ -156,9 +156,7 @@ const {server} = require("../../app/server.js");
 		// 画面のテスト用
 		e2eVictim: await makeTarget("e2e-victim@example.com", "readwrite", 1),
 		// 台帳から外す試験用(admin-api.spec.js)。外すとセッションとAPIキーも止まる
-		removeTarget: await makeTarget("remove-me@example.com", "readonly", 1),
-		// 管理画面の試験用(admin-page.e2e.js)
-		e2eRemove: await makeTarget("e2e-remove@example.com", "readonly", 1)
+		removeTarget: await makeTarget("remove-me@example.com", "readonly", 1)
 	};
 
 	fs.writeFileSync(KEYS_FILE, JSON.stringify({

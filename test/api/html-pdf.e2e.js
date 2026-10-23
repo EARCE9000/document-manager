@@ -151,14 +151,13 @@ test.describe.serial("PDFでダウンロード(実ブラウザ)", () => {
 		await expect(page.locator("#helpPdfSection")).toContainText("1枚の長いページ");
 	});
 
-	test("管理画面の変換サービスタブに、PDF用の状態が出る", async ({page}) => {
-		await page.click("#allowedUsersManageLink");
-		await page.click('.adminTab[data-tab="convert"]');
+	test("管理の画面の変換サービスタブに、PDF用の状態が出る", async ({page}) => {
+		await page.goto("./admin.html?tab=convert");
 		const result = page.locator("#pdfHealthResult");
-		await expect(result.locator(".adminStatus")).toHaveText("正常");
+		await expect(result.locator(".status_badge")).toHaveText("Connected");
 		await expect(result).toContainText("Chromium");
 		await expect(page.locator("#pdfHealthDrawio")).toHaveText("対応");
 		// Office用の状態はこれまでどおり、別に出ている
-		await expect(page.locator("#convertHealthResult .adminStatus")).toBeVisible();
+		await expect(page.locator("#convertHealthResult .status_badge")).toBeVisible();
 	});
 });

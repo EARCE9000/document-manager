@@ -269,6 +269,17 @@ const main = async () => {
 		assert.equal(entry.sessionDetails[0].userAgent, "LoginTest-Member/1.0");
 		console.log("ok 5 切断の履歴に、切ったセッションの手がかりが残る");
 
+		// ---- 5b. 管理の画面: 最終ログインと、ログインの監査ログ(共通アーキテクチャ 構成 6.4) ----
+		const users = await asJson("api/admin/users", adminLogin.after);
+		const member = users.body.users.find((user) => user.email === MEMBER);
+		assert.ok(Date.now() - Date.parse(member.lastLoginAt) < 60 * 1000, `最終ログインが残っていない: ${member.lastLoginAt}`);
+		const logins = await asJson(`api/admin/audit?action=login&user=${encodeURIComponent(MEMBER)}&range=1d`, adminLogin.after);
+		assert.equal(logins.body.entries.length, 2, "ログインの回数ぶん、監査ログに残っていない");
+		assert.equal(logins.body.entries[0].result, "success");
+		assert.equal(logins.body.entries[0].via, "screen");
+		assert.match(logins.body.entries[0].ip, /127\.0\.0\.1|::1/);
+		console.log("ok 5b 最終ログインと、ログインの監査ログが残る");
+
 		// ---- 6. アクセスログにセッションIDそのものが出ない ----
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		for (const cookie of [adminLogin.after, first.after, second.after]) {
