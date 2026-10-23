@@ -102,6 +102,34 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		await expect(panelOf(page, "server")).toBeVisible();
 	});
 
+	// 認証を切って(AUTH_DISABLED)動いているときは、どの画面でも見て分かるようにする(共通アーキテクチャ 認証 2.6)。
+	// 本番で誤って有効になっていたときに、開いた人が最初に気づくための物でもある
+	test("開発モードのときは、ロゴの横のしるし・ヘッダーの色・タブの題名で分かる。ふだんは出ない", async ({page}) => {
+		// ふだん(認証あり。試験のサーバーは認証を有効にして動いている)
+		await page.goto("./");
+		await expect(page.locator("#uploadDropZone")).toBeVisible();
+		await expect(page.locator("#devModeBadge")).toBeHidden();
+		await expect(page).toHaveTitle("Document Manager");
+		await openAdmin(page);
+		await expect(page.locator("#devModeBadge")).toBeHidden();
+		await expect(page).toHaveTitle("管理 | Document Manager");
+
+		// 開発モード: サーバーが authDisabled: true を返す(画面はホスト名などから推測しない)
+		await page.route("**/api/check_access_token", async (route) => {
+			const res = await route.fetch();
+			await route.fulfill({response: res, json: {...(await res.json()), user_identifier: "dev-user", authDisabled: true}});
+		});
+		await page.goto("./");
+		await expect(page.locator("#devModeBadge")).toBeVisible();
+		await expect(page.locator("#devModeBadge")).toHaveText("開発モード");
+		await expect(page.locator("#topBar")).toHaveClass(/devMode/);
+		await expect(page).toHaveTitle("【開発モード】Document Manager");
+		await openAdmin(page);
+		await expect(page.locator("#devModeBadge")).toBeVisible();
+		await expect(page.locator("body")).toHaveClass(/dev_mode/);
+		await expect(page).toHaveTitle("【開発モード】管理 | Document Manager");
+	});
+
 	// 日付だけの表記だと、同じ日に何度も出したときにどれが動いているのか分からない
 	test("画面右下の版は YYYYMMDD.HHMM で出る", async ({page}) => {
 		await page.route("**/api/version", (route) => route.fulfill({

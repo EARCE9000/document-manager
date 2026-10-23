@@ -706,7 +706,8 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 		setHTTPHeaders(res);
 
 		if (AUTH_DISABLED) {
-			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled(), htmlPdfEnabled: HtmlPdf.isEnabled(), miroEnabled: await MiroConnection.isConfigured()});
+			// authDisabled: 画面はこれを見て、ヘッダーに「開発モード」を出す(共通アーキテクチャ 認証 2.6。画面の側でホスト名などから推測しない)
+			res.status(200).json({user_identifier: DEV_AUTH_DATA.user_identifier, isAdmin: true, role: DEV_AUTH_DATA.role, authDisabled: true, vectorSearchEnabled: VectorSearch.isEnabled(), mockupsEnabled: await mockupsEnabled(), htmlPdfEnabled: HtmlPdf.isEnabled(), miroEnabled: await MiroConnection.isConfigured()});
 			return;
 		}
 
@@ -718,6 +719,7 @@ app.all(BASE_URL_PATH + 'api/check_access_token', async (req, res) => {
 					user_identifier: sessionUser,
 					isAdmin: role === AllowedUsers.ROLES.ADMIN,
 					role,
+					authDisabled: false,
 					vectorSearchEnabled: VectorSearch.isEnabled(),
 					// 画面側はこれを見てモックアップの入口を出すか決める
 					mockupsEnabled: await mockupsEnabled(),

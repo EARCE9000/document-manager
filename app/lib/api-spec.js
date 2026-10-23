@@ -685,7 +685,8 @@ const OPERATIONS = [
 		params: [{name: "mode", in: "query", description: "quick(既定) / full"}],
 		aiGuide: false
 	},
-	{id: "checkAccessToken", method: "get", path: "/api/check_access_token", role: "readonly", tag: "その他", summary: "ログイン状態・ロールの確認(画面用)", aiGuide: false},
+	{id: "checkAccessToken", method: "get", path: "/api/check_access_token", role: "readonly", tag: "その他", summary: "ログイン状態・ロールの確認(画面用)", aiGuide: false,
+		description: "`authDisabled` が true なら開発モード(AUTH_DISABLED。認証なし)で動いている。画面はヘッダーに「開発モード」を出す"},
 	{id: "getHistory", method: "get", path: "/api/history", role: "readonly", tag: "その他", summary: "自分の操作履歴(直近30日)", aiGuide: false},
 	{id: "getSkillZip", method: "get", path: "/api/claude-skill.zip", role: "readonly", tag: "その他", summary: "AIエージェント用SkillのZIP取得", produces: "application/zip"},
 	{

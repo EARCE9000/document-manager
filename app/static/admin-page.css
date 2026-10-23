@@ -7,6 +7,14 @@
  * 共通のタブ(admin/admin.js が描く)には効かせない。
  */
 
+/* 開発モード(AUTH_DISABLED)。ロゴの横にしるしを出し、ヘッダーの色を変える(共通アーキテクチャ 認証 2.6。消す設定は置かない) */
+.dev_mode .header      { background: #4a1f6e; }
+.header_title          { display: flex; align-items: center; gap: 8px; }
+.dev_mode_badge        { display: inline-flex; align-items: center; gap: 4px; padding: 1px 10px; border-radius: 10px; background: #f5a623; color: #1a1a1a;
+                         font-size: 9pt; font-weight: bold; line-height: 1.6; white-space: nowrap; }
+.dev_mode_badge[hidden] { display: none; }
+.dev_mode_badge svg    { width: 12px; height: 12px; }
+
 /* 元の画面へ戻るリンク(見出しの右の端) */
 .admin_back { margin-left: auto; align-self: center; font-size: 10pt; line-height: 26px; height: auto; width: auto; padding: 2px 14px; text-decoration: none; }
 

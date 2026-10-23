@@ -479,6 +479,12 @@
 			return;
 		}
 		document.getElementById("adminUser").textContent = auth.user_identifier || "";
+		if (auth.authDisabled) {
+			// 開発モード(認証なし)。ロゴの横のしるし・ヘッダーの色・タブの題名で知らせる(共通アーキテクチャ 認証 2.6)
+			document.getElementById("devModeBadge").hidden = false;
+			document.body.classList.add("dev_mode");
+			document.title = `【開発モード】${document.title}`;
+		}
 		if (!auth.isAdmin) {
 			gate.hidden = false;
 			gate.innerHTML = "管理の画面は、管理者だけが使える。<a href=\"./\">文書一覧へ戻る</a>";

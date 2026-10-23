@@ -65,6 +65,13 @@
 	#topBar a { text-decoration: none; }
 	.topBarTitle { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.05em; letter-spacing: 0.02em; color: #fff; }
 	.topBarLogo { width: 22px; height: 22px; flex: none; }
+	/* 開発モード(AUTH_DISABLED。認証なしで誰でも入れる)。ロゴの横にしるしを出し、ヘッダーの色を変える(共通アーキテクチャ 認証 2.6)。
+	   本番で誤って有効になっていたときに、開いた人が最初に気づくための物でもある。消す設定は置かない */
+	#topBar.devMode { background: #4a1f6e; }
+	.topBarBrand { display: flex; align-items: center; gap: 10px; }
+	.devModeBadge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 10px; background: #f5a623; color: #1a1a1a; font-size: 0.8em; font-weight: 700; letter-spacing: 0; white-space: nowrap; }
+	.devModeBadge[hidden] { display: none; }
+	.devModeBadge svg { width: 13px; height: 13px; }
 	#topBarActions { display: flex; align-items: center; gap: 6px; }
 	#userIdentifier { margin-right: 4px; color: #cccccc; }
 	.topBarIconButton {
@@ -1541,7 +1548,7 @@
 
 <div id="appShell">
 	<header id="topBar">
-		<div class="topBarTitle"><img class="topBarLogo" src="./logo.svg" alt="">Document Manager</div>
+		<div class="topBarBrand"><div class="topBarTitle"><img class="topBarLogo" src="./logo.svg" alt="">Document Manager</div><span id="devModeBadge" class="devModeBadge" title="認証を切って動いています(AUTH_DISABLED)。誰でも管理者として入れます。本番では設定しないでください" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>開発モード</span></div>
 		<div id="topBarActions">
 			<span id="userIdentifier"></span>
 			<button type="button" id="activityNotifyToggle" class="topBarIconButton" title="他の人の操作をポップアップで通知: オン" aria-label="操作通知のオン/オフ" aria-pressed="true">
@@ -6822,6 +6829,11 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 		const authData = await res.json();
 		currentUserRole = authData.role;
 		currentUserIdentifier = authData.user_identifier;
+		if (authData.authDisabled) {
+			document.getElementById("devModeBadge").hidden = false;
+			document.getElementById("topBar").classList.add("devMode");
+			document.title = `【開発モード】${document.title}`;
+		}
 		userIdentifier.textContent = authData.user_identifier + (authData.isAdmin ? "" : ` (${ROLE_LABELS[authData.role] || authData.role})`);
 		if (!authData.isAdmin) {
 			document.getElementById("allowedUsersManageLink").style.display = "none";

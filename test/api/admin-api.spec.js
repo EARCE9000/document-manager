@@ -44,6 +44,11 @@ const audit = async (query) => {
 };
 
 test.describe("サーバー(共通の形)", () => {
+	test("check_access_token: 開発モードかを返す(画面はこれを見て「開発モード」を出す)", async () => {
+		const body = await (await (await as(admin)).get("api/check_access_token")).json();
+		expect(body.authDisabled).toBe(false);
+	});
+
 	test("server-status: 回数の上限・機能の On/Off・セキュリティ設定・足した項目を返す", async () => {
 		const res = await (await as(admin)).get("api/server-status");
 		expect(res.status()).toBe(200);
