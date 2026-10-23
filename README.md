@@ -194,6 +194,7 @@ LLMなどで作ったWebページのモックアップ(ビルド済みの一式)
 - **セッション**: 利用者ごとのログイン中のセッションと有効なAPIキーの一覧、利用者単位の切断、切断の履歴(上の「利用者の切断」参照)。切断ではできないこと(パスワードが漏れている場合はIdP側での変更が要る)を、一覧より先に表示する
 - **監査ログ**: **全員ぶん**の操作の記録を、期間(今日・7 日・30 日)・利用者・操作・対象で探す(新しい順に 100 件ずつ。続きも読める)。残すのは、ログイン(台帳に無くて断ったものも)、文書とモックアップの書き込み、管理の操作(利用者・切断・機能の切り替え・回数の上限・意味検索と Miro 連携の設定・DB の整合性の確認)、**権限で断った呼び出し**(同じ人の同じ口は 1 分に 1 回)。行ごとに、結果(成功・拒否・失敗)、経路(画面か APIキーか、キーの権限)、接続元の IP を出す。文書のダウンロードは標準出力のログだけに残す(数が多いため)。自分の分だけなら、全員が文書一覧の右上の「操作履歴」で見られる(こちらは今までどおり、文書とプロジェクトの操作だけ)
 - **サーバー**: 上に**設定**、下に**確認**を並べる
+  - **Markdown で書き出す**: タブのいちばん上の「Markdown でコピー」「Markdown でダウンロード」で、この画面の中身(このサーバー・設定・接続の確認・セキュリティ設定・部品の版・直接使っているライブラリ。チェックを入れると部品表の全部も)を Markdown にする。LLM に渡して「この脆弱性の知らせに当てはまる部品はあるか」「設定に抜けはないか」を点検させたり、報告資料にしたりするためのもの。管理の WebAPI は APIキーでは呼べないので、LLM が自分で取りに行くのではなく、管理者が画面から書き出して渡す(版の情報は弱点を探す手がかりにもなるので、渡す先に注意)。書き出しは共通のスクリプト(admin.js)の機能で、どのサービスでも同じ形になる
   - 設定: **API の回数の上限**(ログインした人・ログインしていない呼び出し。値の出どころも出す)と**機能の On/Off**(モックアップ管理はその場で切り替え。意味検索・変換サービス・Miro 連携は構成で決まるので表示だけ)。どちらも DB に保存するため再起動不要・全インスタンスに効き、監査ログに残る
   - **接続の確認**: データベース・ファイルの置き場・IdP・変換サービス(Office・PDF)・Weaviate へ、届くか・掛かった時間・最後に届いた時刻。使っていない相手は Not set(異常ではない)と出す
   - **セキュリティ設定**: 認証の方式(開発用の AUTH_DISABLED でないこと)・回数の上限を切っていないか(RATE_LIMIT_DISABLED)・セッションの寿命・APIキーの最長の期限・期限を超えるキーの数など。危ない設定の行は赤くなる
@@ -749,4 +750,4 @@ docker run -d \
 | ファイル | 出典 | ライセンス |
 |---|---|---|
 | [app/static/vendor/drawio/viewer-static.min.js](app/static/vendor/drawio/viewer-static.min.js) と [stencils/](app/static/vendor/drawio/stencils) | [jgraph/drawio](https://github.com/jgraph/drawio) v31.4.6 | Apache-2.0([全文](app/static/vendor/drawio/LICENSE)) |
-| [app/static/admin/](app/static/admin)(admin.js・dev_mode.js・components.css・design.css・flexbox.css) | [EARCE9000/DesignTemplate](https://github.com/EARCE9000/DesignTemplate) Template01(ブランチ template01-admin、f24c099) | MIT |
+| [app/static/admin/](app/static/admin)(admin.js・ui.js・dev_mode.js・components.css・design.css・flexbox.css) | [EARCE9000/DesignTemplate](https://github.com/EARCE9000/DesignTemplate) Template01(ブランチ template01-server-markdown、16d55c2) | MIT |

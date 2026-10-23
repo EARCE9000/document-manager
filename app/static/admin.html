@@ -9,8 +9,8 @@
   共通の WebAPI(api/admin/users・api/admin/sessions・api/admin/audit・api/server-status)の応答から描く。
   Document Manager の独自のタブ(データベース・変換サービス・Miro 連携)は、区切りの後ろに並べ、admin-page.js が描く。
 
-  admin/ の中(admin.js・dev_mode.js・components.css・design.css・flexbox.css)はデザインテンプレートのものを、手を入れずに写している
-  (写した元: EARCE9000/DesignTemplate のブランチ template01-admin、コミット f24c099)。直すときは、テンプレートの側を直して写し直す。
+  admin/ の中(admin.js・ui.js・dev_mode.js・components.css・design.css・flexbox.css)はデザインテンプレートのものを、手を入れずに写している
+  (写した元: EARCE9000/DesignTemplate のブランチ template01-server-markdown、コミット 16d55c2)。直すときは、テンプレートの側を直して写し直す。
   このページのスクリプトは全部外のファイルにしている(サーバーが script-src 'self' の CSP を付けるため)。
 -->
 <html lang="ja">
@@ -104,7 +104,8 @@
             部品の脆弱性が見つかったときは、「稼働中の部品の版」と「部品表」で、当てはまるかを確認(版は略さず表示)。
             設定の変更は、すぐに反映し(複数台で動かしていれば、ほかの台にも 30 秒以内に効く)、監査ログに残る。
           </div>
-          <div class="admin_server" data-base="./api/server-status" data-login="./login"></div>
+          <!-- data-service: Markdown で書き出すときの、サービスの名前(見出しとファイル名に使う) -->
+          <div class="admin_server" data-base="./api/server-status" data-login="./login" data-service="Document Manager"></div>
         </div>
         <!-- ===================== データベース(Document Manager) ===================== -->
         <input type="radio" name="admin_tab" id="tab_database" class="tab_toggle" value="database">
@@ -172,6 +173,8 @@
 </div>
 <!-- 先に admin-page.js が、管理者かを確かめる。管理者なら admin/admin.js を読み込む(共通の 4 つのタブを描く) -->
 <script src="./admin/dev_mode.js"></script>
+<!-- どの画面でも使う部品(確認とエラーのモーダル、コピーのボタン)。admin.js と admin-page.js の確認のモーダルも、これを使う -->
+<script src="./admin/ui.js"></script>
 <script src="./admin-page.js"></script>
 </body>
 </html>

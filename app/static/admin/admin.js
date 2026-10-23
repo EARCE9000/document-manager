@@ -34,6 +34,8 @@
  *         1. API の回数の上限(共通。PUT {base}/rate-limit {authenticated | anonymous: 回数}、既定に戻すのは DELETE {base}/rate-limit/{kind})
  *         2. 機能の On/Off(editable の機能は、その場で切り替え。PUT {base}/features/{key} {enabled})
  *         3. サービスが足した設定の節(class="admin_server_extra" を付けて、この要素の中に書いた物)
+ *   書き出し: いちばん上の欄から、画面の中身を Markdown でコピー / ダウンロード(「部品表の全部も入れる」で、部品表の全部も)。
+ *           サービスの名前は data-service(無ければ status.service、無ければ題名)
  *   確認(表示だけ)
  *         4. このサーバー(版・ビルド・リビジョン・ビルド日時・起動日時・稼働時間・DB の種類と、DB のファイル)
  *         5. 接続の確認(接続先ごとに、状態・応答時間・最終成功・補足)
@@ -210,6 +212,10 @@
 		}
 		// 上に、管理者が変更できる設定(機能の On/Off、サービスの設定の節)。下に、確認するだけの表示
 		this.root.innerHTML =
+			"<div class=\"export_bar\"><span class=\"runtime_text\">この画面の中身を Markdown で書き出す(LLM での点検や、報告に使う)</span>" +
+			"<label class=\"runtime_text\"><input type=\"checkbox\" data-part=\"mdall\"> 部品表の全部も入れる</label>" +
+			"<button type=\"button\" class=\"search_btn\" data-act=\"mdcopy\">Markdown でコピー</button>" +
+			"<button type=\"button\" class=\"search_btn\" data-act=\"mddownload\">Markdown でダウンロード</button></div>" +
 			"<div class=\"panel_group\">設定(管理者が変更可)<span class=\"panel_section_action\"><a href=\"#\" data-act=\"reload\" style=\"font-size:9pt;color:#187FF5;text-decoration:none;\">" + REF + "再確認</a></span></div>" +
 			"<div class=\"panel_section_title\">API の回数の上限<span class=\"panel_section_action runtime_text\" data-part=\"rlwindow\"></span></div>" +
 			"<div data-part=\"ratelimit\"></div>" +
@@ -232,6 +238,8 @@
 		extras.forEach(function (node) { slot.appendChild(node); });
 		var self = this;
 		this.root.querySelector("[data-act=reload]").addEventListener("click", function (e) { e.preventDefault(); self.load(); });
+		this.root.querySelector("[data-act=mdcopy]").addEventListener("click", function (e) { self.exportMarkdown("copy", e.target); });
+		this.root.querySelector("[data-act=mddownload]").addEventListener("click", function (e) { self.exportMarkdown("download", e.target); });
 		this.root.querySelector("[data-part=q]").addEventListener("input", function (e) {
 			clearTimeout(self.searchTimer);
 			var q = e.target.value.trim();
@@ -255,6 +263,7 @@
 	};
 
 	AdminServer.prototype.showStatus = function (s) {
+		this.lastStatus = s;
 		var items = [
 			["版", ver(s.version)], ["ビルド", s.build ? ver(s.build) : "―"], ["リビジョン", s.revision ? ver(s.revision) : "―"],
 			["ビルド日時", esc(when(s.builtAt))], ["起動日時", esc(when(s.startedAt))], ["稼働時間", esc(uptime(s.uptimeSeconds))],
@@ -292,6 +301,143 @@
 		for (var b = 0; b < boxes.length; b += 1) {
 			boxes[b].addEventListener("change", function (e) { self.setFeature(features[Number(e.target.getAttribute("data-feature"))], e.target); });
 		}
+	};
+
+	// ---------------------------------------------------------------- Markdown で書き出す
+	// 画面に出している物だけを、節ごとの見出しと表にする。版は略さない。出さない物(接続文字列・キー・パス)は、もともと WebAPI が返さない。
+	// 管理の WebAPI は APIキーでは呼べない(版の情報は弱点を探す手がかりになる)ので、LLM には、この書き出しを人が渡す
+	function mdCell(value) {
+		if (value == null || value === "") return "―";
+		return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+	}
+	function mdTable(head, rows) {
+		if (!rows.length) return "(なし)\n";
+		return "| " + head.join(" | ") + " |\n| " + head.map(function () { return "---"; }).join(" | ") + " |\n" +
+			rows.map(function (r) { return "| " + r.map(mdCell).join(" | ") + " |"; }).join("\n") + "\n";
+	}
+	function mdRuntime(rt) {
+		if (rt === null) return "(この相手は返さない)";
+		if (!rt) return "";
+		var parts = [];
+		[["node", "Node.js"], ["python", "Python"], ["php", "PHP"], ["java", "Java"], ["v8", "V8"], ["uv", "libuv"], ["openssl", "OpenSSL"],
+			["os", "OS"], ["kernel", "カーネル"], ["arch", "CPU の種類"], ["cpus", "CPU の数"]].forEach(function (k) {
+			if (rt[k[0]] != null) parts.push(k[1] + " " + rt[k[0]]);
+		});
+		if (rt.memory) parts.push("メモリ 使用 " + bytes(rt.memory.rssBytes) + (rt.memory.totalBytes ? " / 全体 " + bytes(rt.memory.totalBytes) : ""));
+		return parts.join(" / ");
+	}
+	var STATE_TEXT = {running: "Running", reachable: "Connected", unreachable: "Error", unconfigured: "Not set", checking: "Checking"};
+	var LEVEL_TEXT = {ok: "OK", warn: "Warning", bad: "Critical"};
+
+	AdminServer.prototype.markdown = function (packages) {
+		var s = this.lastStatus || {}, c = this.lastComponents || {components: []};
+		var service = this.root.getAttribute("data-service") || s.service || document.title.replace(/^【開発モード】/, "").split("|")[0].trim();
+		var out = [];
+		out.push("# " + service + " サーバーの状態");
+		out.push("");
+		out.push("- 書き出した日時: " + when(new Date().toISOString()));
+		out.push("- 部品を調べた日時(checkedAt): " + when(c.checkedAt));
+		out.push("- 版: " + (s.version || "不明") + (s.build ? "(ビルド " + s.build + ")" : "") + (s.revision ? "(リビジョン " + s.revision + ")" : ""));
+		out.push("- 形: 共通アーキテクチャの管理の画面(server-status / components / packages)。版は略さず、そのままの文字");
+		out.push("- 取り扱い: 管理者だけが見られる情報。部品の版は弱点を探す手がかりになるので、渡す先に注意");
+		out.push("");
+		out.push("## このサーバー");
+		out.push("");
+		var info = [["版", s.version], ["ビルド", s.build], ["リビジョン", s.revision], ["ビルド日時", s.builtAt ? when(s.builtAt) : null],
+			["起動日時", s.startedAt ? when(s.startedAt) : null], ["稼働時間", s.uptimeSeconds != null ? uptime(s.uptimeSeconds) : null],
+			["データベース", s.database && s.database.backend]];
+		(s.extra || []).forEach(function (e) { info.push([e.label, e.value]); });
+		out.push(mdTable(["項目", "値"], info));
+		var files = s.database && s.database.files;
+		if (files && files.length) {
+			out.push("### DB のファイル");
+			out.push("");
+			out.push(mdTable(["ファイル", "大きさ", "使い方"], files.map(function (f) { return [f.name, bytes(f.sizeBytes), f.current ? "使用中" : "旧版(切り戻し用)"]; })));
+		}
+		out.push("## 設定");
+		out.push("");
+		var rl = s.rateLimit;
+		out.push("### API の回数の上限" + (rl && rl.windowMinutes ? "(" + rl.windowMinutes + " 分あたり)" : ""));
+		out.push("");
+		if (rl) {
+			if (rl.disabled) out.push("**いまは回数の上限を切っている(RATE_LIMIT_DISABLED)。**\n");
+			var src = function (item) {
+				if (item.source === "setting") return "画面で変更(" + (item.updatedBy || "不明") + "・" + when(item.updatedAt) + ")";
+				if (item.source === "env") return "環境変数 " + (item.env || "");
+				return "既定の値";
+			};
+			out.push(mdTable(["対象", "上限", "範囲", "出どころ"], RATE_KINDS.filter(function (k) { return rl[k[0]]; }).map(function (k) {
+				var item = rl[k[0]];
+				return [k[1], item.limit + " 回", item.min != null ? item.min + " 〜 " + item.max : null, src(item)];
+			})));
+		} else {
+			out.push("(返却なし)\n");
+		}
+		out.push("### 機能の On/Off");
+		out.push("");
+		out.push(mdTable(["機能", "状態", "画面で変更", "補足"], (s.features || []).map(function (f) {
+			return [f.name, f.enabled ? "On" : "Off", f.editable ? "可" : "不可(構成で決まる)", f.note];
+		})));
+		out.push("## 接続の確認");
+		out.push("");
+		out.push(mdTable(["接続先", "状態", "応答時間", "最終成功", "理由"], (c.components || []).filter(function (x) { return x.key !== "app"; }).map(function (x) {
+			var st = stateOf(x);
+			return [x.name, STATE_TEXT[st], st === "unconfigured" ? null : (x.latencyMs != null ? x.latencyMs + " ms" : null), x.lastSuccessAt ? when(x.lastSuccessAt) : null,
+				st === "unconfigured" ? "この機能は未使用" : x.error];
+		})));
+		out.push("## セキュリティ設定");
+		out.push("");
+		out.push(mdTable(["項目", "現在の値", "状態", "補足"], (s.security || []).map(function (r) {
+			return [r.label, r.value, LEVEL_TEXT[r.state] || null, r.note];
+		})));
+		out.push("## 稼働中の部品の版");
+		out.push("");
+		out.push(mdTable(["部品", "状態", "製品", "版", "API の版", "土台", "補足"], (c.components || []).map(function (x) {
+			var details = (x.modules || []).map(function (m) { return "モジュール " + m.name + (m.model ? "(" + m.model + ")" : "") + (m.version ? " " + m.version : ""); })
+				.concat((x.details || []).map(function (d) { return d.label + ": " + d.value; }));
+			return [x.name, STATE_TEXT[stateOf(x)], x.product, x.configured === false ? null : (x.version == null ? "不明" : x.version), x.apiVersion,
+				mdRuntime(x.runtime), details.join(" / ")];
+		})));
+		out.push("## 直接使っているライブラリ");
+		out.push("");
+		out.push((c.packageCount != null ? "入っている部品は全部で " + c.packageCount + " 個(" + (c.packageSource || "") + ")。\n\n" : "") +
+			mdTable(["部品", "版"], (c.dependencies || []).map(function (d) { return [d.name, d.version]; })));
+		if (packages) {
+			out.push("## 部品表(全部 " + packages.packages.length + " 個。" + (packages.source || "") + ")");
+			out.push("");
+			out.push(mdTable(["部品", "版", "直接", "場所"], packages.packages.map(function (p) { return [p.name, p.version, p.direct ? "直接" : "", p.path]; })));
+		}
+		return {text: out.join("\n"), service: service};
+	};
+
+	AdminServer.prototype.exportMarkdown = function (how, button) {
+		var self = this;
+		if (!this.lastStatus || !this.lastComponents) {
+			(window.UI ? UI.error({body: "まだ読み込み中。読み終えてから、もう一度。"}) : null);
+			return;
+		}
+		var all = this.part("mdall").checked;
+		var packages = all ? this.get("/packages?q=") : Promise.resolve(null);
+		packages.then(function (p) {
+			var md = self.markdown(p);
+			if (how === "copy") {
+				if (window.UI) { UI.copy(button, md.text); return; }
+				navigator.clipboard.writeText(md.text);
+				return;
+			}
+			var d = new Date(), pad = function (n) { return (n < 10 ? "0" : "") + n; };
+			var name = md.service.replace(/[\\/:*?"<>|\s]+/g, "_") + "-server-status-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + "-" + pad(d.getHours()) + pad(d.getMinutes()) + ".md";
+			var url = URL.createObjectURL(new Blob([md.text], {type: "text/markdown;charset=utf-8"}));
+			var a = document.createElement("a");
+			a.href = url;
+			a.download = name;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+		}, function (err) {
+			if (window.UI) UI.error({body: "部品表を読めなかった。", detail: err.message});
+		});
 	};
 
 	// API の回数の上限(このサーバー全体の設定)。値ごとに、いまの上限・出どころ・変える欄
@@ -391,6 +537,7 @@
 	};
 
 	AdminServer.prototype.showComponents = function (data) {
+		if (data) this.lastComponents = data;
 		var list = data ? data.components : [{key: "app", name: "本体"}];
 		this.part("checked").textContent = data ? "確認日時 " + when(data.checkedAt) : "Checking…";
 		this.part("connections").innerHTML = table(["接続先", "状態", "応答時間", "最終成功", "補足"],
@@ -494,6 +641,7 @@
 
 	// 確認のモーダル。左にキャンセル、右に実行。押すまで待つ(true / false)
 	function confirmModal(opts) {
+		if (window.UI && window.UI.confirm) return window.UI.confirm(opts);   // ui.js があれば、そちら(Esc で閉じる、キーボードの移動を中に閉じる)
 		return new Promise(function (resolve) {
 			var wrap = document.createElement("div");
 			wrap.innerHTML = "<input type=\"checkbox\" class=\"modal_toggle\" hidden checked>" +

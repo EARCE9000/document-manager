@@ -253,6 +253,33 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		expect(calls.filter((c) => c.startsWith("server-status") || c === "admin/users")).toEqual([]);
 	});
 
+	// サーバーのタブの中身を LLM に渡して点検させたり、報告にしたりするための書き出し(共通のスクリプトの機能)
+	test("サーバー: 中身を Markdown でダウンロード・コピーできる。部品表の全部は選んだときだけ入る", async ({page, context}) => {
+		await context.grantPermissions(["clipboard-read", "clipboard-write"], {origin: BASE_URL});
+		await openAdmin(page, "server");
+		const server = page.locator(".admin_server");
+		// 読み込みが終わってから書き出す
+		await expect(server.locator("[data-part=connections]")).toContainText("Connected");
+
+		const [download] = await Promise.all([page.waitForEvent("download"), server.locator("[data-act=mddownload]").click()]);
+		expect(download.suggestedFilename()).toMatch(/^Document_Manager-server-status-\d{8}-\d{4}\.md$/);
+		const text = require("node:fs").readFileSync(await download.path(), "utf8");
+		expect(text).toMatch(/^# Document Manager サーバーの状態/);
+		for (const heading of ["## このサーバー", "## セキュリティ設定", "## 稼働中の部品の版"]) expect(text).toContain(heading);
+		// 「このサーバー」に足した、取り扱っている物の数も入る
+		expect(text).toMatch(/現役 \d+ 件・アーカイブ \d+ 件\(合計 \d+ 件\)/);
+		expect(text).toContain("express");
+		expect(text).not.toContain("## 部品表(全部");
+
+		// 部品表の全部を選ぶと、入れ子の部品まで入る。コピーでも同じ物が取れる
+		await server.locator("[data-part=mdall]").check();
+		await server.locator("[data-act=mdcopy]").click();
+		await expect(server.locator("[data-act=mdcopy]")).toContainText("コピーしました");
+		const copied = await page.evaluate(() => navigator.clipboard.readText());
+		expect(copied).toContain("## 部品表(全部");
+		expect(copied).toContain("node_modules/");
+	});
+
 	// 機能の On/Off は、文書一覧のメニューにすぐ効かないと「効いたのか」が分からない
 	test("サーバー: モックアップの機能を切り替えると、文書一覧のメニューに効く", async ({page}) => {
 		await page.goto("./");

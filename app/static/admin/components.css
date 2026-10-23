@@ -587,8 +587,9 @@ body {
   .data_table thead th,
   .data_table tbody td { white-space: normal; }
 
-  /* 本文の左右パディングを詰める */
-  .flex_main { padding: 6px; }
+  /* 本文の左右パディングを詰める。中の広い物(表、題名の帯)に引っぱられて、ページ全体が横に広がらないようにする */
+  .flex_main { padding: 6px; min-width: 0; max-width: 100%; }
+  .item_title .title { white-space: normal; flex-wrap: wrap; }
 
   /* フィルタ: 期間ボタン列・検索欄を折り返す */
   .filter_group { flex-wrap: wrap; }
@@ -734,6 +735,8 @@ body {
 .icon_button.danger       { border-color: #e9a9a9; color: #d22222; }
 .icon_button.danger:hover { border-color: #d22222; color: #ffffff; background-color: #d22222; }
 .icon_button svg          { width: 15px; height: 15px; display: block; }
+/* <button> で作ったときも、同じ大きさにする(design.css の button の幅と余白を打ち消す) */
+button.icon_button        { width: 28px; height: 26px; padding: 0; margin: 0; font-size: inherit; }
 /* 行の右端に並べる。順は 詳細 → 編集 → 別画面 → ダウンロード → コピー → 削除。削除は右の端で、少し離す */
 .row_actions                      { white-space: nowrap; text-align: right; }
 .row_actions .icon_button         { margin-left: 4px; }
@@ -826,3 +829,54 @@ body {
   .filter_panel .search_form { width: 100%; min-width: 0; }
   .filter_panel .search_input { min-width: 0 !important; }
 }
+
+
+/* ===== モーダルの部品(assets/ui.js) ================================== */
+.modal_title           { display: flex; align-items: center; gap: 8px; }
+.modal_title > span    { flex: 1; display: flex; align-items: center; }
+.modal_close           { width: 28px !important; height: 28px !important; padding: 0 !important; margin: 0; border: 0; background: transparent;
+                         color: #6a7178; cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
+.modal_close:hover     { background-color: #f0f0f0; color: #2b2b2b; }
+.modal_close svg       { width: 16px; height: 16px; }
+.modal_box.modal_wide  { width: min(920px, calc(100vw - 24px)); max-width: none; }
+.modal_box .modal_body { max-height: calc(100vh - 180px); overflow: auto; }
+.modal_detail          { margin: 10px 0 0; padding: 8px 10px; background: #fafafa; border: 1px solid #eeeeee; border-radius: 6px;
+                         font-family: Consolas, "Courier New", monospace; font-size: 9pt; white-space: pre-wrap; word-break: break-all; color: #444; }
+.modal_actions button  { width: auto; }
+/* モーダルや管理の画面の中の小さなボタン(design.css の button の大きさを打ち消す) */
+.modal_box .search_btn { width: auto; height: auto; line-height: 1.4; margin: 0; }
+.search_btn.primary    { background-color: #187FF5; border-color: #187FF5; color: #ffffff; }
+.search_btn.primary:hover { background-color: #0f6ad8; color: #ffffff; }
+
+/* ===== 右下のポップアップ(assets/ui.js の UI.toast) ===================== */
+.toast_stack  { position: fixed; right: 16px; bottom: 16px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; width: min(340px, calc(100vw - 32px)); }
+.toast        { display: block; padding: 10px 14px; border-radius: 8px; background-color: #2b2b2b; color: #ffffff; text-decoration: none;
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); font-size: 10pt; border-left: 4px solid #ee7800; }
+.toast:hover  { background-color: #3a3a3a; }
+.toast.via_api_key { border-left-color: #5a4498; }
+.toast_head   { font-size: 9pt; color: #cfcfcf; margin-bottom: 2px; word-break: break-all; }
+.toast_body   { word-break: break-all; }
+
+/* ヘッダーのベル(通知の On/Off)。Off のときは薄く、斜線を引く */
+.header_icon_button.is_off { opacity: 0.45; position: relative; }
+.header_icon_button.is_off::after { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; border-top: 2px solid currentColor; transform: rotate(-35deg); }
+
+/* ===== APIキーの管理(assets/account.js) ============================== */
+.key_form        { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.key_form label  { display: flex; flex-direction: column; gap: 3px; font-size: 9pt; color: #555555; }
+.key_form .search_input { width: auto; min-width: 9em; }
+.key_form_memo   { flex: 1; min-width: 12em; }
+.key_form_memo .search_input { width: 100%; }
+.key_issue       { width: auto !important; height: auto !important; padding: 6px 22px !important; font-size: 10pt !important; }
+.key_form_hint   { margin: 6px 0 12px; font-size: 9pt; color: #555555; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.key_warn        { color: #b05000; }
+.key_issued      { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #f5c88a; background-color: #fff8ec; border-radius: 8px; }
+.key_value       { margin: 6px 0; padding: 6px 8px; background: #ffffff; border: 1px solid #e8e8e8; border-radius: 4px; word-break: break-all; user-select: all; }
+.key_issued_actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+tr.row_expired td { color: #9a9a9a; }
+
+/* サーバーのタブの書き出しの欄(admin.js) */
+.export_bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 10px 14px 0; padding: 8px 12px; border: 1px dashed #d0d0d0; border-radius: 8px; background-color: #fcfcfc; }
+.export_bar > span:first-child { flex: 1; min-width: 14em; }
+.export_bar label { display: inline-flex; align-items: center; gap: 4px; }
+
