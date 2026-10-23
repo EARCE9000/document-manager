@@ -4378,13 +4378,15 @@ const openLinkedProject = async (projectId) => {
 		alert("リンク先のプロジェクトが見つかりません。削除されたか、URLが途中で切れている可能性があります。");
 		return;
 	}
-	setView("projects");
+	// 一覧の種類と選ぶプロジェクトを先に決めてから画面を切り替える
+	// (setView も一覧を読むので、決める前に読ませると、そちらが通常の一覧で先頭のプロジェクトを選んでしまう)
 	if (isArchived) {
 		projectsArchiveMode = true;
 		appShell.classList.add("projectsArchiveMode");
 		projectArchiveToggleButton.textContent = "戻る";
 	}
 	currentProjectId = projectId;
+	setView("projects");
 	await loadProjects();
 	// 読み込みの間に利用者が別のプロジェクトへ移っていたら、おしながきは出さない
 	if (currentProjectId === projectId) await showManifest(null);
@@ -4393,10 +4395,17 @@ const openLinkedProject = async (projectId) => {
 // ==== プロジェクト機能 ====
 // プロジェクト一覧を取得し、スイッチャー(ピルタブ)を描画したうえで、
 // 選択中プロジェクト(未選択なら先頭)のツリーを読み込む
+// 読み込みは重なることがある(画面の切り替え・リンク・ほかの人の変更の通知)。応答の届く順は
+// 頼んだ順と限らないので、いちばん新しい読み込みの応答だけを使う。古い応答を使うと、
+// アーカイブ済みの一覧を出したあとに通常の一覧で上書きされ、別のプロジェクトが選ばれてしまう
+let projectsLoadSeq = 0;
 const loadProjects = async () => {
+	const seq = ++projectsLoadSeq;
 	const res = await fetch(projectsArchiveMode ? "./api/projects/archived" : "./api/projects");
-	if (res.status !== 200) return;
-	currentProjects = await res.json();
+	if (res.status !== 200 || seq !== projectsLoadSeq) return;
+	const projects = await res.json();
+	if (seq !== projectsLoadSeq) return;
+	currentProjects = projects;
 	if (currentProjectId == null || !currentProjects.some((p) => p.id === currentProjectId)) {
 		currentProjectId = currentProjects.length > 0 ? currentProjects[0].id : null;
 	}

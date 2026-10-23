@@ -102,6 +102,25 @@ test.describe.serial("プロジェクトを開くリンク(実ブラウザ)", ()
 		await expect(page.locator("#manifestPane")).toBeVisible();
 	});
 
+	// 一覧の読み込みは重なる。通常の一覧の応答があとから届いても、アーカイブ済みの一覧を上書きしない
+	// (上書きすると、そこに無いリンク先の代わりに先頭のプロジェクトが選ばれる。DB の応答の速さで起きたり起きなかったりする)
+	test("通常の一覧の応答が遅れて届いても、アーカイブ済みのリンク先のまま", async ({page}) => {
+		let pending = 0;
+		await page.route(/\/api\/projects$/, async (route) => {
+			pending++;
+			await new Promise((resolve) => setTimeout(resolve, 800));
+			await route.continue();
+			pending--;
+		});
+		await page.goto(`./?project=${encodeURIComponent(archivedId)}`);
+		await expect(page.locator("#projectTreeTitle")).toHaveText(ARCHIVED);
+		// 遅らせた応答がすべて届いて、画面が受け取り終えてからも同じ
+		await expect.poll(() => pending).toBe(0);
+		await page.waitForTimeout(300);
+		await expect(page.locator("#projectTreeTitle")).toHaveText(ARCHIVED);
+		await expect(page.locator(".projectTab.active")).toHaveText(ARCHIVED);
+	});
+
 	test("閲覧だけの権限でも、リンクのコピーと、リンクからの表示ができる", async ({page}) => {
 		await page.route("**/api/check_access_token", async (route) => {
 			const res = await route.fetch();
