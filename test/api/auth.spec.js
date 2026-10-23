@@ -212,6 +212,48 @@ test.describe("利用ガイドの場所の案内", () => {
 // 手元のクライアントや貼り付けた利用ガイドは、サーバーが新しくなっても古いままになる。
 // そこでサーバー側が「変わったこと」をAPIキーごとに覚えていて、1回だけ知らせる。
 // 合図はビルドであって起動ではない(再起動では知らせない)
+test.describe.serial("APIキーで使える権限は、キーの権限と発行者のいまの権限の低いほう", () => {
+	const session = {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(keys.sessionCookie)}`};
+	const target = keys.revokeTargets.roleTarget;
+	const setRole = async (request, role) => {
+		const res = await request.put(`api/admin/users/${encodeURIComponent(target.user)}`, {headers: session, data: {role}});
+		expect(res.status()).toBe(200);
+	};
+	// 書き込みの権限を通るかどうか(存在しない文書なので、通れば 404、断られれば 403)
+	const writeStatus = async (request, key) => (await request.put("api/documents/nonexistent-id/tags", {headers: bearer(key), data: {tags: ["x"]}})).status();
+
+	test("権限を下げると、編集可のキーもすぐ書き込めなくなる", async ({request}) => {
+		expect(await writeStatus(request, target.apiKey)).toBe(404);
+		await setRole(request, "readonly");
+		expect(await writeStatus(request, target.apiKey)).toBe(403);
+		// 読むことはできる
+		expect((await request.get("api/documents", {headers: bearer(target.apiKey)})).status()).toBe(200);
+	});
+
+	test("権限を戻すと、キーも発行したときの権限まで戻る", async ({request}) => {
+		await setRole(request, "readwrite");
+		expect(await writeStatus(request, target.apiKey)).toBe(404);
+	});
+
+	test("権限を上げても、キーは発行したときの権限より上にならない", async ({request}) => {
+		await setRole(request, "admin");
+		expect(await writeStatus(request, target.readonlyApiKey)).toBe(403);
+		expect((await request.get("api/admin/users", {headers: bearer(target.apiKey)})).status()).toBe(403);
+		await setRole(request, "readwrite");
+	});
+
+	test("旧い口(api/allowed_users)で外しても、キーとセッションが止まり、入れ直しても戻らない", async ({request}) => {
+		const legacy = keys.revokeTargets.legacyRemoveTarget;
+		const key = bearer(legacy.apiKey);
+		const legacySession = {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(legacy.cookies[0])}`};
+		expect((await request.get("api/documents", {headers: key})).status()).toBe(200);
+		expect((await request.delete(`api/allowed_users/${encodeURIComponent(legacy.user)}`, {headers: session})).status()).toBe(204);
+		expect((await request.post("api/allowed_users", {headers: session, data: {email: legacy.user, role: "readwrite"}})).status()).toBeLessThan(300);
+		expect((await request.get("api/documents", {headers: key})).status()).toBe(401);
+		expect((await request.get("api/check_access_token", {headers: legacySession})).status()).toBe(401);
+	});
+});
+
 test.describe("サーバー更新のお知らせ", () => {
 	const session = {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(keys.sessionCookie)}`};
 	const BUILD = "20260925_000000"; // test/api/serve.js が設定している値

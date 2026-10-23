@@ -234,6 +234,18 @@ if (AUTH_DISABLED) {
 }
 const DEV_AUTH_DATA = {user_identifier: "dev-user", role: AllowedUsers.ROLES.ADMIN};
 
+// 権限の高さ。APIキーの発行(自分より上は発行できない)と、キーで使える権限の決定に使う
+const API_KEY_ROLE_RANK = {
+	[AllowedUsers.ROLES.READONLY]: 1,
+	[AllowedUsers.ROLES.READWRITE]: 2,
+	[AllowedUsers.ROLES.ADMIN]: 3
+};
+// 2 つの権限の低いほう(どちらかが知らない値なら readonly)
+const lowerApiKeyRole = (keyRole, ownerRole) => {
+	if (API_KEY_ROLE_RANK[keyRole] == null || API_KEY_ROLE_RANK[ownerRole] == null) return AllowedUsers.ROLES.READONLY;
+	return API_KEY_ROLE_RANK[keyRole] <= API_KEY_ROLE_RANK[ownerRole] ? keyRole : ownerRole;
+};
+
 // resolveAuthは、requireAuthと同じ手順(Bearer APIキー→セッションの順)で認証情報を
 // 解決するが、失敗しても401を返さずreq.authDataを未設定のまま次へ進める(このモジュールの
 // 唯一の役割は、後段のレート制限で「認証済みかどうか」を判定できるようにすること)。
@@ -258,12 +270,16 @@ const resolveAuth = async (req, res, next) => {
 				next();
 				return;
 			}
-			if (verifyResult.status === "ok" && await AllowedUsers.isAllowed(verifyResult.row.created_by)) {
+			// キーで使える権限は、キーに記録した権限と、発行者のいまの権限の低いほう。
+			// 権限を下げられた人のキーは、すぐ下がる(戻しても、発行したときの権限より上にはならない)。
+			// 発行者が台帳から外れていれば、キーは通さない
+			const ownerRole = verifyResult.status === "ok" ? await AllowedUsers.getRole(verifyResult.row.created_by) : null;
+			if (ownerRole != null) {
 				const apiKeyRow = verifyResult.row;
 				req.authData = {
 					user_identifier: apiKeyRow.created_by,
 					viaApiKey: apiKeyRow.label,
-					role: apiKeyRow.role,
+					role: lowerApiKeyRole(apiKeyRow.role, ownerRole),
 					// 「サーバーが更新された」を1回だけ知らせるための情報(下記のミドルウェアで使う)。
 					// 認証時の照会に相乗りしているため、この取得でクエリは増えていない
 					apiKeyId: apiKeyRow.id,
@@ -3926,12 +3942,7 @@ app.get(BASE_URL_PATH + 'api/apikeys', requireAuth, requireSession, async (req, 
 });
 
 // キーに設定できるロールは「発行者の現在のロール以下」に限る(adminロールのユーザーも、
-// キー自体はreadwriteまでしか発行できない。ROLESにadminが含まれないのはこのため)
-const API_KEY_ROLE_RANK = {
-	[AllowedUsers.ROLES.READONLY]: 1,
-	[AllowedUsers.ROLES.READWRITE]: 2,
-	[AllowedUsers.ROLES.ADMIN]: 3
-};
+// キー自体はreadwriteまでしか発行できない。API_KEY_ROLE_RANK は上の resolveAuth の前で定義)
 
 /**
  * APIキー発行 (平文キーはこのレスポンスでのみ取得可能)
@@ -4222,7 +4233,15 @@ app.delete(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin
 			res.status(409).json({error: LAST_ADMIN_MESSAGE});
 			return;
 		}
-		await auditAdmin(req, "user_remove", {targetUser: AllowedUsers.normalizeEmail(req.params.email), detail: {role: removed.previousRole}});
+		// 新しい口(api/admin/users)と同じく、セッションと APIキーも止める。
+		// 止めないと、後で台帳に入れ直したときに、前のキーがまた通ってしまう
+		const email = AllowedUsers.normalizeEmail(req.params.email);
+		const {result, apiKeys} = await revokeUserAccess(req, email);
+		await auditAdmin(req, "user_remove", {targetUser: email, detail: {role: removed.previousRole, sessions: result.sessions.length, apiKeys}});
+		if (result.sessions.length > 0 || apiKeys > 0) {
+			await AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: AuditLog.ACTION_SESSION_REVOKE, targetUser: email,
+				detail: {sessions: result.sessions.length, apiKeys, sessionDetails: result.sessions, reason: "user_remove"}});
+		}
 		res.status(204).end();
 	} catch (err) {
 		logger.error(err, "::api/allowed_users/:email:remove");

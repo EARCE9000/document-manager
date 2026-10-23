@@ -1287,7 +1287,7 @@ const INTRO = `このサービスは Office文書(Excel/Word/PowerPoint) / PDF /
 const CONNECTION_NOTES = [
 	"- 認証: HTTPヘッダー `Authorization: Bearer <APIキー>`",
 	"  - APIキーは画面右上の「APIキー管理」からユーザー自身が発行する(このAIに渡す用に1つ発行してもらってください)",
-	"  - APIキーは発行者本人のロール(admin/readwrite/readonly)をそのまま引き継ぐ。readonlyのキーでは書き込み系APIは403になる",
+	"  - APIキーの権限は、発行時に選んだロール(readonly/readwrite。adminキーは発行不可)と、発行者本人のいまのロールの低いほう。readonlyで動いているキーでは書き込み系APIは403になる(発行者が閲覧のみに下げられた場合も含む)",
 	"  - APIキーの発行・一覧・失効は画面(ログイン)からのみ行える。APIキーで `api/apikeys` を呼ぶと403になるため、期限が切れたらユーザーに発行し直してもらう",
 	"- **コマンドを実行できる環境なら、同梱クライアント(Skill)を使うほうが確実**。よく使う操作がコマンドになっており、multipartの組み立てや版の前後関係も扱える。下記「同梱クライアント(Skill)の取得」を参照",
 	"  - 実行できない環境(貼り付けた指示だけで動く場合)は、このガイドのとおりAPIを直接呼べばよい"

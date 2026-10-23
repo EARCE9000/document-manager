@@ -447,7 +447,7 @@
 	.featureState.off { background: #eee; color: #666; }
 
 	/* モックアップ。プレビュー画像を見せたいので表ではなくカード並べにする。
-	   ペインの出し方は上の #vectorIndexPane / #adminPane と同じ */
+	   ペインの出し方は上の #vectorIndexPane と同じ */
 	#mockupPane { display: none; flex: 1; flex-direction: column; min-width: 0; background: #fff; }
 	#appShell.mockupsMode #mockupPane { display: flex; }
 	#appShell.mockupsMode #sideBar,
@@ -3712,8 +3712,8 @@ const setView = (view) => {
 	clearPreview();
 	// モックアップは「モックアップ」メニューと、アーカイブのモックアップタブの2か所から開く
 	const showsMockups = view === "mockups" || (view === "archive" && archiveTab === "mockups");
-	// 管理ペインとモックアップは文書を扱わないため、文書一覧の取得は行わない
-	if (view !== "admin" && view !== "tools" && view !== "miro" && !showsMockups) loadDocuments();
+	// ツール・Miro・モックアップは文書を扱わないため、文書一覧の取得は行わない
+	if (view !== "tools" && view !== "miro" && !showsMockups) loadDocuments();
 	if (view === "tools") loadToolVersions();
 	if (view === "miro") openMiroPane();
 	else clearTimeout(miroPaneTimer);

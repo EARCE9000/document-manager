@@ -156,8 +156,13 @@ const {server} = require("../../app/server.js");
 		// 画面のテスト用
 		e2eVictim: await makeTarget("e2e-victim@example.com", "readwrite", 1),
 		// 台帳から外す試験用(admin-api.spec.js)。外すとセッションとAPIキーも止まる
-		removeTarget: await makeTarget("remove-me@example.com", "readonly", 1)
+		removeTarget: await makeTarget("remove-me@example.com", "readonly", 1),
+		// 権限を変えたときのAPIキーの権限の試験用(auth.spec.js)。readwrite のキーに加え、readonly のキーも持つ
+		roleTarget: await makeTarget("role-change@example.com", "readwrite", 0),
+		// 旧い口(api/allowed_users)で外す試験用(auth.spec.js)
+		legacyRemoveTarget: await makeTarget("legacy-remove@example.com", "readwrite", 1)
 	};
+	revokeTargets.roleTarget.readonlyApiKey = (await ApiKeys.createApiKey("ro-of-role-change", "readonly", "30d", revokeTargets.roleTarget.user)).apiKey;
 
 	fs.writeFileSync(KEYS_FILE, JSON.stringify({
 		owner,
