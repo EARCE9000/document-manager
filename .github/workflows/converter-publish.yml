@@ -91,7 +91,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       # ロックファイルはコミットしていない(マルチアーキテクチャのビルドで依存を選び直すため。
       # app/.gitignore 参照)。したがって npm ci は使えず、npm install を使う

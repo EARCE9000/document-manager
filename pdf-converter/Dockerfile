@@ -12,7 +12,7 @@
 #
 # ベースはアプリと同じNode。描画はChromium、HTTPの受け口は標準モジュールだけで書く
 # (このサービスのために依存パッケージを増やさない)。
-FROM node:22-trixie-slim
+FROM node:24-trixie-slim
 
 # chromium-headless-shell: 画面を持たない描画専用のChromium(通常の chromium より小さい)
 # fonts-morisawa-bizud-gothic / -mincho: 日本語の既定のフォント(BIZ UDゴシック・明朝)。

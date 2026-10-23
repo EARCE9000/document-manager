@@ -19,14 +19,14 @@
 # better-sqlite3 bundles prebuilds for every platform, protobufjs' postinstall
 # is plain JS, and platform-specific optional packages (@napi-rs/canvas-*) are
 # selected for the target via npm's --os/--cpu/--libc.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS deps
+FROM --platform=$BUILDPLATFORM node:24-alpine AS deps
 ARG TARGETARCH
 WORKDIR /app
 COPY app/package.json ./
 # npm uses Node's arch names (x64/arm64); Docker's TARGETARCH uses amd64/arm64
 RUN NPM_CPU="$([ "$TARGETARCH" = "amd64" ] && echo x64 || echo "$TARGETARCH")" 	&& npm install --omit=dev --no-audit --no-fund --os=linux --cpu="$NPM_CPU" --libc=musl 	&& npm cache clean --force
 
-FROM node:22-alpine
+FROM node:24-alpine
 
 RUN apk add --no-cache tzdata
 ENV TZ=Asia/Tokyo

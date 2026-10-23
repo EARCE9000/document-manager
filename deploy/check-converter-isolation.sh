@@ -72,7 +72,7 @@ for net in ${networks}; do
 done
 
 # ---- 3. 実際に外へ出られないか(設定値だけを信じない) ----
-# converter は node:22 ベースなので、追加の道具を入れずに node で試せる
+# converter は node:24 ベースなので、追加の道具を入れずに node で試せる
 probe() {
 	local url="$1"
 	"${CLI}" exec "${CONVERTER}" node -e "

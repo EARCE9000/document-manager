@@ -95,7 +95,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       # 実際のHTMLをPDFにして、1枚に収まること・日本語が文字として入ること・スクリプトが動かないこと・
       # 外部や内部へ読みに行かないこと・変換後にプロセスが残らないことを確かめる
