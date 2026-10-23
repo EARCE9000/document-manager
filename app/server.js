@@ -125,6 +125,16 @@ app.use(session({
 	}
 }));
 
+/**
+ * セッションに書いた値を、保存し終えるまで待つ。リダイレクトの直前に使う。
+ * express-session は保存を待たずに応答のヘッダー(302 の行き先)を先に送るので、保存が非同期の
+ * PostgreSQL では、ブラウザが次の URL を開いた時点でまだ保存されていないことがある
+ * (ログインや Miro 連携の戻りで、覚えたはずの値が無い・ログインしていない扱いになる)
+ */
+const saveSession = (req) => new Promise((resolve, reject) => {
+	req.session.save((err) => (err ? reject(err) : resolve()));
+});
+
 // アクセスログ(標準出力)。1リクエスト1行で method/url/status/所要時間/接続元IP/
 // ログイン済みユーザー識別子 を記録する。疎通確認と監査の両方を兼ねる。
 // (session ミドルウェアの後に置くことで req.session.user を参照できる)
@@ -676,6 +686,8 @@ app.all(BASE_URL_PATH + 'login', async (req, res) => {
 				// 管理画面の利用者の一覧(最終ログイン)と、監査ログに出す
 				AllowedUsers.recordLogin(user_identifier, req.session.loginAt);
 				AuditLog.record({userIdentifier: user_identifier, action: "login", via: "screen", ip: req.ip || null});
+				// 戻った先の画面がすぐにログイン状態を確かめるので、保存し終えてから移す
+				await saveSession(req);
 				// セッションに入っているのは正規化済みの値だが、ここでも再検査する
 				// (検査を1箇所の記憶だけに頼らない)
 				res.redirect(safeNextPath(transaction?.next) || APP_ROOT_URI);
@@ -712,6 +724,8 @@ app.all(BASE_URL_PATH + 'login', async (req, res) => {
 			state,
 			nonce
 		});
+		// IdP がすぐに戻してくる(ログイン済みなど)と、保存の前に戻り先が開かれる
+		await saveSession(req);
 		res.redirect(url.href);
 	} catch (err) {
 		logger.error(err, "::login");
@@ -2097,7 +2111,10 @@ app.get(BASE_URL_PATH + 'api/miro/connect', requireAuth, requireAdmin, requireMi
 		const {state, nonce} = MiroConnection.issueState(user);
 		req.session.miroOAuthNonce = nonce;
 		const redirectUri = MiroConnection.redirectUri(publicBaseUrl(req));
-		res.redirect(await MiroConnection.authorizeUrl({redirectUri, state}));
+		const url = await MiroConnection.authorizeUrl({redirectUri, state});
+		// 許可済みなら Miro はすぐに戻してくる。乱数を保存し終えてから移す
+		await saveSession(req);
+		res.redirect(url);
 	} catch (err) {
 		sendMiroError(res, err, "::api/miro/connect");
 	}
