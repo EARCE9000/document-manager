@@ -400,10 +400,12 @@
 			+ info([
 				["チーム", esc(status.team?.name || status.team?.id || "―")],
 				["Miro のアカウント", esc(status.miroUser?.name || "―")],
-				["連携した人", `${esc(status.connectedBy || "―")}(${esc(when(status.connectedAt))})`],
+				// 途中で折り返さないよう、2 行に分ける(1 行目に人、2 行目に日時)
+				["連携した人", `${esc(status.connectedBy || "―")}<div class="runtime_text admin_nowrap">${esc(when(status.connectedAt))}</div>`],
 				["権限", esc((status.scopes || []).join(", ") || "―")],
 				["貼り先のボード", `<span id="miroBoardName">${board
-					? esc(board.name || board.id) + (board.url ? ` <a href="${esc(board.url)}" target="_blank" rel="noopener noreferrer">Miro で開く</a>` : "")
+					// 1 行目にボードの名前、2 行目に Miro で開くリンク
+					? esc(board.name || board.id) + (board.url ? `<div class="admin_nowrap"><a href="${esc(board.url)}" target="_blank" rel="noopener noreferrer">Miro で開く</a></div>` : "")
 					: badge("failed", "未選択") + "(下から選ぶ)"}</span>`]
 			])
 			+ "<div class=\"panel_section_title\">貼り先のボード</div>"

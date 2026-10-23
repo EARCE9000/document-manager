@@ -16,6 +16,12 @@
 .admin_actions .search_btn,
 .admin_actions .entry_button { width: auto; height: auto; line-height: 1.4; margin: 0; }
 .admin_flash   { margin: 8px 14px; }
+.admin_nowrap  { white-space: nowrap; }
+
+/* 独自のタブの中のボタン(表の行の「このボードにする」「やり直す」、絞り込みの「ボードを探す」など)。
+   design.css が素の button に幅(8em)・高さ(40px)・左右の余白(30px)を付けるため、文字が枠からはみ出す。
+   共通のタブ(.admin_server など)と同じく、文字に合わせた大きさに戻す */
+.tab_panel .search_btn { width: auto; height: auto; line-height: 1.4; margin: 0; }
 .admin_link    { font-size: 9pt; color: #187FF5; text-decoration: none; }
 .admin_sub     { font-size: 10pt; }
 .admin_steps   { margin: 0 14px 8px 2.4em; padding: 0; font-size: 9.5pt; line-height: 1.7; }
