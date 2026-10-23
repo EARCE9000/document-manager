@@ -11,7 +11,7 @@
 		"test:reconcile": "node test/integration-reconcile.js",
 		"test:discard": "node test/integration-upload-discard.js",
 		"test:login": "node test/integration-login.js",
-		"test:discard:container": "docker build -q -t dm-app:discard-test . && docker run --rm -e APP_DIR=/app -e DISCARD_PORT=8081 -v \"%cd%/test/integration-upload-discard.js:/tmp/t.js:ro\" dm-app:discard-test node /tmp/t.js",
+		"test:discard:container": "docker build -q -t dm-app:discard-test . && docker run --rm --entrypoint node -e APP_DIR=/app -e DISCARD_PORT=8081 -v \"%cd%/test/integration-upload-discard.js:/tmp/t.js:ro\" dm-app:discard-test /tmp/t.js",
 		"test:api": "playwright test --project=api",
 		"test:e2e": "playwright test --project=e2e",
 		"screenshots": "node docs/screenshots/capture.js"
