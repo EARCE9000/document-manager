@@ -6,11 +6,12 @@
 
   共通アーキテクチャ(画面 8 章・構成 6.2〜6.4)の「管理機能の画面」。デザインテンプレートの Template01/template_admin.html を写して作った。
   共通のタブ(利用者 → セッション → 監査ログ → サーバー)は、どのサービスでも同じ順・同じ中身にする。中身は admin/admin.js が
-  共通の WebAPI(api/admin/users・api/admin/sessions・api/admin/audit・api/server-status)の応答から描く。
+  WebAPI(api/admin/users・api/admin/sessions・api/admin/audit・api/server-status)の応答から描く。
   Document Manager の独自のタブ(データベース・変換サービス・Miro 連携)は、区切りの後ろに並べ、admin-page.js が描く。
 
-  admin/ の中(admin.js・ui.js・dev_mode.js・components.css・design.css・flexbox.css)はデザインテンプレートのものを、手を入れずに写している
-  (写した元: EARCE9000/DesignTemplate のブランチ template01-server-markdown、コミット 16d55c2)。直すときは、テンプレートの側を直して写し直す。
+  admin/ の中の見た目(components.css・design.css・flexbox.css)は、デザインテンプレート(EARCE9000/DesignTemplate、Template01)の物。
+  admin.js・ui.js・dev_mode.js は、元はテンプレートの見本(16d55c2)から写した物で、いまは Document Manager の実装として持つ
+  (デザインテンプレートは見た目のテンプレートで、実装は各サービスが持つ。直すときは、ここで直す)。
   このページのスクリプトは全部外のファイルにしている(サーバーが script-src 'self' の CSP を付けるため)。
 -->
 <html lang="ja">

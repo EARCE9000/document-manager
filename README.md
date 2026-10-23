@@ -186,7 +186,7 @@ LLMなどで作ったWebページのモックアップ(ビルド済みの一式)
 運用者が**SSHせずに「異常の有無」と「次に何をすべきか」を判断できる**ことを目的にしている。
 
 共通アーキテクチャで決めた「管理機能の画面」の形にそろえてある。**利用者 → セッション → 監査ログ → サーバー**の 4 つのタブは、どのサービスでも同じ順・同じ中身で、
-同じ形の WebAPI(`api/admin/users`・`api/admin/sessions`・`api/admin/audit`・`api/server-status`)の応答から、デザインテンプレートの共通のスクリプト(`app/static/admin/admin.js`。手を入れずに写したもの)が描く。
+同じ形の WebAPI(`api/admin/users`・`api/admin/sessions`・`api/admin/audit`・`api/server-status`)の応答から、`app/static/admin/admin.js` が描く(元はデザインテンプレートの見本から写した物で、いまは Document Manager の実装として持つ)。
 その後ろに区切りを入れて、Document Manager の独自のタブ(**データベース・変換サービス・Miro 連携**)を並べる。タブは `?tab=` で開け、切り替えると URL に残る。
 ページはスクリプトを自分のファイルだけに絞る CSP(`script-src 'self'`)で配る。ログインしていなければ戻り先つきでログインの画面へ移り、管理者でなければ中身を出さない(WebAPI も 403)。
 
@@ -301,7 +301,7 @@ document-manager/
 │   └── static/
 │       ├── index.html        # フロントエンド(単一HTML)
 │       ├── admin.html        # 管理の画面(admin のみ)。admin-page.js・admin-page.css が独自のタブを描く
-│       ├── admin/            # デザインテンプレートの admin.js と CSS(共通の 4 つのタブを描く。手を入れずに写したもの)
+│       ├── admin/            # 共通の 4 つのタブを描く admin.js など(元はデザインテンプレートの見本)と、デザインテンプレートの CSS
 │       ├── drawio-viewer.*   # .drawio をブラウザ上で描画するページ(html/js/css)
 │       └── vendor/drawio/    # draw.io公式のビューア(viewer-static.min.js)と拡張図形(stencils/。約42MB)。Apache-2.0
 ├── deploy/                  # 運用サーバ(podman + リバースプロキシ)向けのcompose構成
@@ -750,4 +750,4 @@ docker run -d \
 | ファイル | 出典 | ライセンス |
 |---|---|---|
 | [app/static/vendor/drawio/viewer-static.min.js](app/static/vendor/drawio/viewer-static.min.js) と [stencils/](app/static/vendor/drawio/stencils) | [jgraph/drawio](https://github.com/jgraph/drawio) v31.4.6 | Apache-2.0([全文](app/static/vendor/drawio/LICENSE)) |
-| [app/static/admin/](app/static/admin)(admin.js・ui.js・dev_mode.js・components.css・design.css・flexbox.css) | [EARCE9000/DesignTemplate](https://github.com/EARCE9000/DesignTemplate) Template01(ブランチ template01-server-markdown、16d55c2) | MIT |
+| [app/static/admin/](app/static/admin)(admin.js・ui.js・dev_mode.js・components.css・design.css・flexbox.css) | [EARCE9000/DesignTemplate](https://github.com/EARCE9000/DesignTemplate) Template01(16d55c2 から写した。スクリプトはその後 Document Manager の実装として持つ) | MIT |
