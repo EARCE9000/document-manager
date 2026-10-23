@@ -111,7 +111,9 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		await expect(page.locator("#devModeBadge")).toBeHidden();
 		await expect(page).toHaveTitle("Document Manager");
 		await openAdmin(page);
-		await expect(page.locator("#devModeBadge")).toBeHidden();
+		// 管理の画面は、デザインテンプレートの部品(.dev_mode_badge・.header.dev_mode・dev_mode.js)
+		await expect(page.locator(".dev_mode_badge")).toBeHidden();
+		await expect(page.locator(".header")).not.toHaveClass(/dev_mode/);
 		await expect(page).toHaveTitle("管理 | Document Manager");
 
 		// 開発モード: サーバーが authDisabled: true を返す(画面はホスト名などから推測しない)
@@ -125,8 +127,11 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		await expect(page.locator("#topBar")).toHaveClass(/devMode/);
 		await expect(page).toHaveTitle("【開発モード】Document Manager");
 		await openAdmin(page);
-		await expect(page.locator("#devModeBadge")).toBeVisible();
-		await expect(page.locator("body")).toHaveClass(/dev_mode/);
+		await expect(page.locator(".dev_mode_badge")).toBeVisible();
+		await expect(page.locator(".dev_mode_badge")).toHaveText("開発モード");
+		await expect(page.locator(".header")).toHaveClass(/dev_mode/);
+		// しるしは題字の外(題字の文字に混ざらない)
+		await expect(page.locator(".header_title")).toHaveText("Document Manager");
 		await expect(page).toHaveTitle("【開発モード】管理 | Document Manager");
 	});
 

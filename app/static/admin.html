@@ -9,8 +9,8 @@
   共通の WebAPI(api/admin/users・api/admin/sessions・api/admin/audit・api/server-status)の応答から描く。
   Document Manager の独自のタブ(データベース・変換サービス・Miro 連携)は、区切りの後ろに並べ、admin-page.js が描く。
 
-  admin/ の中(admin.js・components.css・design.css・flexbox.css)はデザインテンプレートのものを、手を入れずに写している
-  (写した元: EARCE9000/DesignTemplate のブランチ template01-admin、コミット e57addf)。直すときは、テンプレートの側を直して写し直す。
+  admin/ の中(admin.js・dev_mode.js・components.css・design.css・flexbox.css)はデザインテンプレートのものを、手を入れずに写している
+  (写した元: EARCE9000/DesignTemplate のブランチ template01-admin、コミット f24c099)。直すときは、テンプレートの側を直して写し直す。
   このページのスクリプトは全部外のファイルにしている(サーバーが script-src 'self' の CSP を付けるため)。
 -->
 <html lang="ja">
@@ -26,7 +26,9 @@
 </head>
 <body>
 <div class="header">
-  <div class="header_title">Document Manager<span id="devModeBadge" class="dev_mode_badge" title="認証を切って動いている(AUTH_DISABLED)。誰でも管理者として入れる。本番では設定しない" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>開発モード</span></div>
+  <div class="header_title">Document Manager</div>
+  <!-- 開発モードのしるし。authDisabled が true のときだけ出す(admin/dev_mode.js。テンプレートの部品)。題字の要素の外に置く -->
+  <span class="dev_mode_badge" hidden title="認証を切って動いている(AUTH_DISABLED)。誰でも管理者として入れる。本番では設定しない"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>開発モード</span>
   <!-- アイコン出典: Feather Icons (MIT) settings / log-out -->
   <div class="header_actions">
     <span class="header_user" id="adminUser"></span>
@@ -169,6 +171,7 @@
   </div>
 </div>
 <!-- 先に admin-page.js が、管理者かを確かめる。管理者なら admin/admin.js を読み込む(共通の 4 つのタブを描く) -->
+<script src="./admin/dev_mode.js"></script>
 <script src="./admin-page.js"></script>
 </body>
 </html>

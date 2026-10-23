@@ -749,4 +749,4 @@ docker run -d \
 | ファイル | 出典 | ライセンス |
 |---|---|---|
 | [app/static/vendor/drawio/viewer-static.min.js](app/static/vendor/drawio/viewer-static.min.js) と [stencils/](app/static/vendor/drawio/stencils) | [jgraph/drawio](https://github.com/jgraph/drawio) v31.4.6 | Apache-2.0([全文](app/static/vendor/drawio/LICENSE)) |
-| [app/static/admin/](app/static/admin)(admin.js・components.css・design.css・flexbox.css) | [EARCE9000/DesignTemplate](https://github.com/EARCE9000/DesignTemplate) Template01(ブランチ template01-admin、e57addf) | MIT |
+| [app/static/admin/](app/static/admin)(admin.js・dev_mode.js・components.css・design.css・flexbox.css) | [EARCE9000/DesignTemplate](https://github.com/EARCE9000/DesignTemplate) Template01(ブランチ template01-admin、f24c099) | MIT |

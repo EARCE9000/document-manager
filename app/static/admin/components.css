@@ -53,6 +53,25 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+
+/* 開発モード(認証なしで入る)のしるしとヘッダーの色。assets/dev_mode.js が付け外しする。消す設定は置かない */
+.header.dev_mode { background-color: #4a1f6e; }
+.dev_mode_badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;            /* 題字のすぐ後ろに寄せる(右のアイコンは右の端のまま) */
+  padding: 2px 10px;
+  border-radius: 10px;
+  background-color: #f5a623;
+  color: #1a1a1a;
+  font-size: 9pt;
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: help;
+}
+.dev_mode_badge[hidden] { display: none; }
+.dev_mode_badge svg { width: 13px; height: 13px; flex-shrink: 0; }
 .header_actions {
   display: flex;
   align-items: center;

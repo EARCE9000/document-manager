@@ -423,7 +423,7 @@
 		if (q === "") {
 			// 探す言葉が無ければ、直接使っているライブラリを出す
 			box.innerHTML = "<div class=\"result_meta\" style=\"border:0\">直接使用のライブラリ " + this.deps.length + " 個。名前の入力で、部品表の全体から検索(入れ子に入った別の版も表示)。</div>" +
-				table(["部品", "版"], this.deps.map(function (d) { return "<tr><td class=\"version_text\">" + esc(d.name) + "</td><td>" + ver(d.version) + "</td></tr>"; }));
+				"<div style=\"max-width:560px\">" + table(["部品", "版"], this.deps.map(function (d) { return "<tr><td class=\"version_text\">" + esc(d.name) + "</td><td>" + ver(d.version) + "</td></tr>"; })) + "</div>";
 			return;
 		}
 		this.get("/packages?q=" + encodeURIComponent(q)).then(function (r) {
