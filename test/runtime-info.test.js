@@ -69,3 +69,49 @@ test("DB の版: SQLite は sqlite_version()、PostgreSQL は server_version。�
 	assert.equal(await RuntimeInfo.databaseVersion(fake("postgres", {server_version: "16.4"})), "16.4");
 	assert.equal(await RuntimeInfo.databaseVersion(fake("sqlite", new Error("x"))), null);
 });
+
+test("IdP: 設定の文書(.well-known/openid-configuration)に届くか。接続先はホストの名前まで", async () => {
+	const server = http.createServer((req, res) => {
+		if (req.url !== "/realms/dm/.well-known/openid-configuration") {
+			res.writeHead(404).end();
+			return;
+		}
+		res.writeHead(200, {"Content-Type": "application/json"});
+		res.end("{}");
+	});
+	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const origin = `http://127.0.0.1:${server.address().port}`;
+	try {
+		assert.deepEqual(await RuntimeInfo.idpInfo(`${origin}/realms/dm`), {reachable: true});
+		assert.deepEqual(await RuntimeInfo.idpInfo(`${origin}/realms/other`), {reachable: false, error: "HTTP 404"});
+	} finally {
+		await new Promise((resolve) => server.close(resolve));
+	}
+	assert.equal(await RuntimeInfo.idpInfo(""), null);
+	assert.equal(RuntimeInfo.hostOf("https://user:secret@login.example.com:8443/realms/dm?x=1"), "login.example.com:8443");
+	assert.equal(RuntimeInfo.hostOf("not a url"), null);
+});
+
+test("つながりの確認: 掛かった時間と、最後に成功した時刻(失敗しても、前の成功の時刻は残る)", async () => {
+	let clock = Date.parse("2026-10-24T00:00:00.000Z");
+	const tracker = RuntimeInfo.createConnectionTracker({now: () => clock});
+	const ok = await tracker.measure("db", async () => {
+		clock += 12;
+		return {version: "1"};
+	});
+	assert.deepEqual(ok, {value: {version: "1"}, latencyMs: 12, reachable: true, error: null, lastSuccessAt: "2026-10-24T00:00:00.012Z"});
+
+	clock += 1000;
+	const down = await tracker.measure("db", async () => ({reachable: false, error: "HTTP 503"}));
+	assert.equal(down.reachable, false);
+	assert.equal(down.error, "HTTP 503");
+	assert.equal(down.lastSuccessAt, "2026-10-24T00:00:00.012Z");
+
+	const thrown = await tracker.measure("other", async () => {
+		throw new Error("ECONNREFUSED");
+	});
+	assert.deepEqual({reachable: thrown.reachable, error: thrown.error, lastSuccessAt: thrown.lastSuccessAt}, {reachable: false, error: "ECONNREFUSED", lastSuccessAt: null});
+
+	const slow = await RuntimeInfo.createConnectionTracker().measure("slow", () => new Promise(() => {}), {timeoutMs: 50});
+	assert.deepEqual({reachable: slow.reachable, error: slow.error}, {reachable: false, error: "応答がありません"});
+});

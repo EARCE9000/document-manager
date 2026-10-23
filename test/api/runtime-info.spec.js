@@ -15,16 +15,18 @@ const admin = {Cookie: `${keys.sessionCookieName}=${keys.sessionCookie}`};
 const rw = {Authorization: `Bearer ${keys.readwrite}`};
 
 test.describe("動いている部品の版", () => {
-	test("本体・DB・変換サービス・Weaviate を 1 行ずつ返す(使っていないものは configured: false)", async ({request}) => {
+	test("本体・DB・ファイルの置き場・IdP・変換サービス・Weaviate を 1 行ずつ返す(使っていないものは configured: false)", async ({request}) => {
 		const res = await request.get("api/server-status/components", {headers: admin});
 		expect(res.status()).toBe(200);
 		const body = await res.json();
 		const byKey = Object.fromEntries(body.components.map((c) => [c.key, c]));
-		expect(Object.keys(byKey)).toEqual(["app", "database", "office", "pdf", "weaviate"]);
+		expect(Object.keys(byKey)).toEqual(["app", "database", "storage", "idp", "office", "pdf", "weaviate"]);
 		expect(byKey.app).toMatchObject({configured: true, reachable: true, product: "Document Manager"});
 		expect(byKey.app.runtime).toMatchObject({node: expect.stringMatching(/^\d+\.\d+\.\d+$/), openssl: expect.any(String), arch: expect.any(String)});
 		expect(byKey.database).toMatchObject({configured: true, reachable: true, product: "SQLite(本体に同梱)", version: expect.stringMatching(/^3\./)});
 		expect(byKey.weaviate).toEqual({key: "weaviate", name: "意味検索(Weaviate)", configured: false});
+		// 試験では OIDC を使わない(serve.js)
+		expect(byKey.idp).toEqual({key: "idp", name: "IdP(ログイン)", configured: false});
 		// 変換サービスは、使っていれば問い合わせた結果(届く・届かない)が入る
 		for (const key of ["office", "pdf"]) expect(typeof byKey[key].configured).toBe("boolean");
 		expect(body.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({name: "express", version: expect.any(String)})]));

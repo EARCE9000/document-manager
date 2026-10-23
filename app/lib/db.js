@@ -452,6 +452,8 @@ const createSchema = (targetDb) => {
 		);
 	`);
 	addMissingColumns(targetDb);
+	// 管理画面の監査ログ(全員ぶん)は、日時だけで新しい順に読む
+	targetDb.exec("CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log (created_at)");
 };
 
 // v21 のうちに足した列。v21 を出したあとで足したため、先に v21 で作られたデータベースには無い。
@@ -460,7 +462,12 @@ const ADDED_COLUMNS = Object.freeze({
 	miro_projects: {layout: "TEXT", layout_plan: "TEXT", layout_undo: "TEXT", last_checked_at: "TEXT", last_export_id: "TEXT"},
 	miro_items: {placed_x: "REAL", placed_y: "REAL", frame_id: "TEXT"},
 	miro_exports: {decorations: "TEXT", lock_owner: "TEXT", lock_until: "TEXT"},
-	projects: {description: "TEXT"}
+	projects: {description: "TEXT"},
+	// 管理画面の利用者の一覧に出す、最後にログインした時刻
+	allowed_users: {last_login_at: "TEXT"},
+	// 管理画面の監査ログ(共通アーキテクチャ 構成 6.4)。対象の名前(文書・利用者でない物)、結果(success / denied / failed)、
+	// 経路(screen / apikey)、APIキーの権限、接続元の IP
+	audit_log: {target: "TEXT", result: "TEXT", via: "TEXT", key_role: "TEXT", ip: "TEXT"}
 });
 const addMissingColumns = (targetDb) => {
 	for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {

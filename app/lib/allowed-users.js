@@ -41,7 +41,22 @@ const SQL_INSERT_ALLOWED_USER = `
 `;
 const SQL_DELETE_ALLOWED_USER = `DELETE FROM allowed_users WHERE email = ?`;
 const SQL_UPDATE_ROLE = `UPDATE allowed_users SET role = ? WHERE email = ?`;
-const SQL_SELECT_ALLOWED_USERS = `SELECT email, role, added_by, added_at FROM allowed_users ORDER BY added_at DESC`;
+const SQL_SELECT_ALLOWED_USERS = `SELECT email, role, added_by, added_at, last_login_at FROM allowed_users ORDER BY added_at DESC`;
+// 新しく足す(もう居れば何もしない。管理画面の「追加」は、居る人の権限を黙って書き換えない)
+const SQL_INSERT_NEW_ALLOWED_USER = `
+	INSERT INTO allowed_users (email, role, added_by, added_at) VALUES (@email, @role, @added_by, @added_at)
+	ON CONFLICT(email) DO NOTHING
+`;
+// 最後の管理者を下げない・外さない。数えるのと変えるのを 1 つの文にする(間に別の変更が入らないように)
+const SQL_UPDATE_ROLE_KEEP_ADMIN = `
+	UPDATE allowed_users SET role = ? WHERE email = ?
+	AND (role <> '${ROLES.ADMIN}' OR ? = '${ROLES.ADMIN}' OR (SELECT COUNT(*) FROM allowed_users WHERE role = '${ROLES.ADMIN}') > 1)
+`;
+const SQL_DELETE_KEEP_ADMIN = `
+	DELETE FROM allowed_users WHERE email = ?
+	AND (role <> '${ROLES.ADMIN}' OR (SELECT COUNT(*) FROM allowed_users WHERE role = '${ROLES.ADMIN}') > 1)
+`;
+const SQL_UPDATE_LAST_LOGIN = `UPDATE allowed_users SET last_login_at = ? WHERE email = ?`;
 const SQL_SELECT_ALLOWED_USER_BY_EMAIL = `SELECT email, role FROM allowed_users WHERE email = ?`;
 const SQL_COUNT_ADMINS = `SELECT COUNT(*) AS count FROM allowed_users WHERE role = '${ROLES.ADMIN}'`;
 
@@ -142,3 +157,54 @@ module.exports.removeAllowedUser = async (email) => {
 };
 
 module.exports.listAllowedUsers = async () => ds.all(SQL_SELECT_ALLOWED_USERS);
+
+/** 台帳の 1 行(無ければ null) */
+module.exports.find = async (email) => (await ds.get(SQL_SELECT_ALLOWED_USER_BY_EMAIL, [normalizeEmail(email)])) ?? null;
+
+module.exports.normalizeEmail = normalizeEmail;
+
+/**
+ * 新しく台帳に足す(管理画面の「追加」)。
+ * @returns {Promise<"added"|"exists">}
+ */
+module.exports.addNew = async (email, role, addedBy) => {
+	if (!isValidRole(role)) throw new Error(`invalid role: ${role}`);
+	const result = await ds.run(SQL_INSERT_NEW_ALLOWED_USER, {email: normalizeEmail(email), role, added_by: addedBy, added_at: new Date().toISOString()});
+	return result.changes > 0 ? "added" : "exists";
+};
+
+/**
+ * 権限を変える。最後の管理者は下げない。
+ * @returns {Promise<{status: "changed"|"not_found"|"last_admin", previousRole?: string}>}
+ */
+module.exports.changeRole = async (email, role) => {
+	if (!isValidRole(role)) throw new Error(`invalid role: ${role}`);
+	const normalized = normalizeEmail(email);
+	const before = await ds.get(SQL_SELECT_ALLOWED_USER_BY_EMAIL, [normalized]);
+	if (before == null) return {status: "not_found"};
+	const result = await ds.run(SQL_UPDATE_ROLE_KEEP_ADMIN, [role, normalized, role]);
+	if (result.changes > 0) return {status: "changed", previousRole: before.role};
+	return (await ds.get(SQL_SELECT_ALLOWED_USER_BY_EMAIL, [normalized])) == null ? {status: "not_found"} : {status: "last_admin"};
+};
+
+/**
+ * 台帳から外す。最後の管理者は外さない。
+ * @returns {Promise<{status: "removed"|"not_found"|"last_admin", previousRole?: string}>}
+ */
+module.exports.remove = async (email) => {
+	const normalized = normalizeEmail(email);
+	const before = await ds.get(SQL_SELECT_ALLOWED_USER_BY_EMAIL, [normalized]);
+	if (before == null) return {status: "not_found"};
+	const result = await ds.run(SQL_DELETE_KEEP_ADMIN, [normalized]);
+	if (result.changes > 0) return {status: "removed", previousRole: before.role};
+	return (await ds.get(SQL_SELECT_ALLOWED_USER_BY_EMAIL, [normalized])) == null ? {status: "not_found"} : {status: "last_admin"};
+};
+
+/** ログインした時刻を残す(管理画面の利用者の一覧に出す)。失敗してもログインは止めない */
+module.exports.recordLogin = async (email, at = new Date().toISOString()) => {
+	try {
+		await ds.run(SQL_UPDATE_LAST_LOGIN, [at, normalizeEmail(email)]);
+	} catch (err) {
+		logger.error(err, "::recordLogin");
+	}
+};

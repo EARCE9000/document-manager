@@ -29,17 +29,19 @@ const registeredRoutes = () => {
 	const routes = new Set();
 	for (const layer of app._router.stack) {
 		if (layer.route == null) continue;
-		const routePath = layer.route.path;
-		if (!routePath.startsWith("/api/")) continue;
-		// app.all() で登録したルートは全メソッドが有効になる(Express 4.22)。
-		// 仕様上はGETとして扱う(実装が app.all なのは歴史的な経緯で、実際にはGETで呼ばれる)
-		const enabled = HTTP_METHODS.filter((method) => layer.route.methods[method]);
-		if (enabled.length === HTTP_METHODS.length) {
-			routes.add(`GET ${routePath}`);
-			continue;
-		}
-		for (const method of enabled) {
-			routes.add(`${method.toUpperCase()} ${routePath}`);
+		// 1 つの処理を、旧い道と新しい道の両方に出しているもの(app.get([旧, 新], …))は、道ごとに数える
+		for (const routePath of [layer.route.path].flat()) {
+			if (!routePath.startsWith("/api/")) continue;
+			// app.all() で登録したルートは全メソッドが有効になる(Express 4.22)。
+			// 仕様上はGETとして扱う(実装が app.all なのは歴史的な経緯で、実際にはGETで呼ばれる)
+			const enabled = HTTP_METHODS.filter((method) => layer.route.methods[method]);
+			if (enabled.length === HTTP_METHODS.length) {
+				routes.add(`GET ${routePath}`);
+				continue;
+			}
+			for (const method of enabled) {
+				routes.add(`${method.toUpperCase()} ${routePath}`);
+			}
 		}
 	}
 	return routes;

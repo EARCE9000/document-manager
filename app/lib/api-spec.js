@@ -634,14 +634,33 @@ const OPERATIONS = [
 	},
 	{
 		id: "getServerStatus", method: "get", path: "/api/server-status", role: "admin", tag: "その他",
-		summary: "サーバーの状態(版・起動時刻・DB)",
-		description: "版・リビジョン・ビルド時刻・起動時刻・稼働秒・同梱クライアントの版・DBファイルの一覧とサイズ・最後に確認したDBの整合性を返す。公開の`/api/version`には起動時刻を含めない",
+		summary: "サーバーの状態(版・起動時刻・DB・設定)",
+		description: "版・リビジョン・ビルド時刻・起動時刻・稼働秒・同梱クライアントの版・DBファイルの一覧とサイズ・最後に確認したDBの整合性を返す。公開の`/api/version`には起動時刻を含めない。"
+			+ "管理の画面の共通の形(共通アーキテクチャ 構成 6.3)の項目も返す: `rateLimit`(`{windowMinutes, disabled, authenticated: {limit, source, env, min, max, updatedBy, updatedAt}, anonymous: {…}}`)、"
+			+ "`features`(`[{key, name, enabled, editable, note}]`)、`security`(`[{label, value, state, note}]`。`state` は ok / warn / bad)、`extra`(`[{label, value}]`)",
+		aiGuide: false
+	},
+	{
+		id: "updateServerRateLimit", method: "put", path: "/api/server-status/rate-limit", role: "admin", tag: "その他",
+		summary: "APIの回数の上限を変える(管理の画面の共通の形)",
+		description: "`PUT /api/rate-limit` と同じ。応答は新しい `rateLimit`(`GET /api/server-status` の `rateLimit` と同じ形)。範囲の外は 400。監査ログに残る",
+		body: {schema: {type: "object", properties: {authenticated: {type: "integer", minimum: 100, maximum: 1000000}, anonymous: {type: "integer", minimum: 10, maximum: 100000}}},
+			example: {authenticated: 10000}},
+		responses: {400: "範囲外・どちらも無い"},
+		aiGuide: false
+	},
+	{
+		id: "updateServerFeature", method: "put", path: "/api/server-status/features/:key", role: "admin", tag: "その他",
+		summary: "機能を切り替える(管理の画面の共通の形)",
+		description: "`key` は `GET /api/server-status` の `features[].key`。`editable` の機能(いまは `mockups`)だけ切り替えられる。応答はその機能の新しい状態。監査ログに残る",
+		body: {schema: {type: "object", required: ["enabled"], properties: {enabled: {type: "boolean"}}}, example: {enabled: true}},
+		responses: {400: "enabled が真偽値でない・構成(環境変数)で決まる機能", 404: "その機能が無い"},
 		aiGuide: false
 	},
 	{
 		id: "getServerComponents", method: "get", path: "/api/server-status/components", role: "admin", tag: "その他",
 		summary: "動いている部品の版(本体・DB・変換サービス・Weaviate)",
-		description: "`components[]`: `key`(app / database / office / pdf / weaviate)・`configured`(使っているか)・`reachable`・`product` と `version`・`runtime`(土台の Node.js・OpenSSL・OS)。"
+		description: "`components[]`: `key`(app / database / storage / idp / office / pdf / weaviate)・`configured`(使っているか)・`reachable`・`latencyMs`(掛かった時間)・`lastSuccessAt`(最後に届いた時刻)・`error`・`product` と `version`・`runtime`(土台の Node.js・OpenSSL・OS)・`details`。"
 			+ "本体の `runtime` には V8・カーネル・CPU・メモリも入る。Weaviate はモジュール(埋め込みモデル)も。`dependencies`: 直接使っているライブラリと版。"
 			+ "土台の部品に脆弱性が出たとき、当てはまるかを確かめるのに使う。変換サービスと Weaviate に問い合わせるので数秒かかることがある",
 		aiGuide: false
@@ -718,6 +737,46 @@ const OPERATIONS = [
 	{
 		id: "revokeUserSessions", method: "post", path: "/api/sessions/revoke", role: "admin", tag: "利用者管理", summary: "利用者を切断する(セッション・APIキー・モックアップ引換券の一式)", aiGuide: false, sessionOnly: true,
 		body: {schema: {type: "object", required: ["user"], properties: {user: {type: "string"}}}}
+	},
+	// 管理の画面の共通の形(共通アーキテクチャ 構成 6.4)。画面はデザインテンプレートの admin.js が描く。旧い口(上)も残している
+	{
+		id: "listAdminUsers", method: "get", path: "/api/admin/users", role: "admin", tag: "利用者管理", summary: "利用者の台帳(管理の画面の共通の形)", aiGuide: false,
+		description: "`{users: [{email, role, addedBy, addedAt, lastLoginAt}], roles: [{value, label}], self}`。`self` は呼んだ管理者"
+	},
+	{
+		id: "addAdminUser", method: "post", path: "/api/admin/users", role: "admin", tag: "利用者管理", summary: "利用者を台帳に足す(管理の画面の共通の形)", aiGuide: false,
+		description: "もう居る人の権限は書き換えない(409)。監査ログに残る",
+		body: {schema: {type: "object", required: ["email", "role"], properties: {email: {type: "string"}, role: {enum: ["admin", "readwrite", "readonly"]}}}},
+		responses: {400: "メールアドレスの形が違う・知らない権限", 409: "もう台帳にある"}
+	},
+	{
+		id: "updateAdminUser", method: "put", path: "/api/admin/users/:email", role: "admin", tag: "利用者管理", summary: "利用者の権限を変える(管理の画面の共通の形)", aiGuide: false,
+		body: {schema: {type: "object", required: ["role"], properties: {role: {enum: ["admin", "readwrite", "readonly"]}}}},
+		responses: {404: "台帳に無い", 409: "最後の管理者を下げようとした"}
+	},
+	{
+		id: "deleteAdminUser", method: "delete", path: "/api/admin/users/:email", role: "admin", tag: "利用者管理", summary: "利用者を台帳から外す(管理の画面の共通の形)", aiGuide: false,
+		description: "その人のセッションと APIキーも止める(`{email, sessions, apiKeys}` を返す)。台帳に入れ直しても、止めたキーは戻らない",
+		responses: {404: "台帳に無い", 409: "最後の管理者を外そうとした"}
+	},
+	{id: "listAdminSessions", method: "get", path: "/api/admin/sessions", role: "admin", tag: "利用者管理", summary: "利用者ごとのセッションと APIキー(`/api/sessions` と同じ)", aiGuide: false, sessionOnly: true},
+	{id: "listAdminSessionRevokes", method: "get", path: "/api/admin/sessions/history", role: "admin", tag: "利用者管理", summary: "切断の履歴(`/api/sessions/history` と同じ)", aiGuide: false, sessionOnly: true},
+	{
+		id: "revokeAdminUserSessions", method: "post", path: "/api/admin/sessions/revoke", role: "admin", tag: "利用者管理", summary: "利用者を切断する(`/api/sessions/revoke` と同じ)", aiGuide: false, sessionOnly: true,
+		body: {schema: {type: "object", required: ["user"], properties: {user: {type: "string"}}}}
+	},
+	{
+		id: "listAdminAudit", method: "get", path: "/api/admin/audit", role: "admin", tag: "利用者管理", summary: "監査ログ(全員ぶん。新しい順)", aiGuide: false,
+		description: "`{entries: [{id, at, user, action, target, result, via, keyRole, ip}], actions: [{value, label}], limit, nextBefore}`。"
+			+ "`result` は success / denied(権限で断った)/ failed、`via` は screen / apikey。`nextBefore` があれば `before` に入れて続きを読む",
+		params: [
+			{name: "range", in: "query", description: "1d / 7d(既定)/ 30d"},
+			{name: "user", in: "query", description: "利用者(メールアドレスの部分一致)"},
+			{name: "action", in: "query", description: "操作(`actions[].value`)"},
+			{name: "target", in: "query", description: "対象(名前・ID の部分一致)"},
+			{name: "before", in: "query", description: "前の応答の `nextBefore`"}
+		],
+		responses: {400: "期間・絞り込みの形が違う"}
 	},
 	{id: "getVectorSettings", method: "get", path: "/api/vector-index/settings", role: "readwrite", tag: "ベクトル索引", summary: "チャンク分割設定の取得", aiGuide: false},
 	{

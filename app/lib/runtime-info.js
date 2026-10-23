@@ -118,3 +118,70 @@ module.exports.weaviateInfo = async (url, {timeoutMs = 5000} = {}) => {
 		clearTimeout(timer);
 	}
 };
+
+/**
+ * IdP(OpenID Connect)に届くか。ログインのときに読む設定の文書(.well-known/openid-configuration)を取りに行く。
+ * 外のサービスなので版は取れない。届くかと、掛かった時間だけを返す
+ * @returns {Promise<{reachable: boolean, error?: string}|null>} issuer が無ければ null
+ */
+module.exports.idpInfo = async (issuer, {timeoutMs = 5000} = {}) => {
+	if (!issuer) return null;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const base = issuer.endsWith("/") ? issuer : `${issuer}/`;
+		const res = await fetch(new URL(".well-known/openid-configuration", base), {signal: controller.signal});
+		if (!res.ok) return {reachable: false, error: `HTTP ${res.status}`};
+		return {reachable: true};
+	} catch (err) {
+		return {reachable: false, error: err.name === "AbortError" ? "応答がありません" : err.message};
+	} finally {
+		clearTimeout(timer);
+	}
+};
+
+/** 接続先は、ホストの名前までにする(パスや問い合わせの文字列、利用者の名前は出さない) */
+module.exports.hostOf = (url) => {
+	try {
+		return new URL(url).host || null;
+	} catch {
+		return null;
+	}
+};
+
+/**
+ * つながりの確認(共通アーキテクチャ 構成 6.2)に使う、掛かった時間と、最後に成功した時刻の記録。
+ * 最後に成功した時刻は、このプロセスが覚えている間だけ(再起動すると、次に成功するまで不明)
+ */
+module.exports.createConnectionTracker = ({now = Date.now} = {}) => {
+	const lastSuccess = new Map();
+	return {
+		/**
+		 * 確かめて、時間を計る。check は {reachable: false, error} か、それ以外(届いた)を返す。投げた例外は届かなかったとする
+		 * @returns {Promise<{value: any, latencyMs: number, reachable: boolean, error: string|null, lastSuccessAt: string|null}>}
+		 */
+		async measure(key, check, {timeoutMs = 5000} = {}) {
+			const startedAt = now();
+			let value = null;
+			let error = null;
+			let timer = null;
+			try {
+				value = await Promise.race([
+					check(),
+					new Promise((resolve, reject) => {
+						timer = setTimeout(() => reject(Object.assign(new Error("応答がありません"), {timeout: true})), timeoutMs);
+					})
+				]);
+			} catch (err) {
+				error = err.message || String(err);
+				value = {reachable: false, error};
+			} finally {
+				clearTimeout(timer);
+			}
+			const latencyMs = Math.max(0, Math.round(now() - startedAt));
+			const reachable = value != null && value.reachable !== false;
+			if (reachable) lastSuccess.set(key, new Date(now()).toISOString());
+			return {value, latencyMs, reachable, error: reachable ? null : (value?.error ?? error), lastSuccessAt: lastSuccess.get(key) ?? null};
+		}
+	};
+};

@@ -316,7 +316,8 @@ const RATE_LIMIT_MESSAGE = {error: "リクエストが多すぎます。しば�
 const rateLimitSettings = RateLimit.createLimitSettings({appSettings: require("./lib/app-settings.js")});
 // 管理者が上限を見る・変える API は数えない(上限を下げすぎて自分も 429 になっても、管理画面から戻せるように)
 const apiLimiters = RateLimit.createApiLimiters({limitOf: rateLimitSettings.limitOf, logger, disabled: RATE_LIMIT_DISABLED,
-	exempt: (req) => req.authData?.role === AllowedUsers.ROLES.ADMIN && (req.path === "/rate-limit" || req.path.startsWith("/rate-limit/"))});
+	exempt: (req) => req.authData?.role === AllowedUsers.ROLES.ADMIN
+		&& ["/rate-limit", "/server-status/rate-limit"].some((p) => req.path === p || req.path.startsWith(p + "/"))});
 const apiRateLimiterAnonymous = apiLimiters.anonymous;
 const apiRateLimiterAuthenticated = apiLimiters.authenticated;
 const loginRateLimiter = rateLimiter({
@@ -617,6 +618,7 @@ app.all(BASE_URL_PATH + 'login', async (req, res) => {
 
 				if (accessInfo.role == null) {
 					logger.warn({user_identifier}, "::login:not allowed");
+					AuditLog.record({userIdentifier: user_identifier, action: "login", result: AuditLog.RESULTS.DENIED, via: "screen", ip: req.ip || null});
 					renderMessagePage(res, {
 						statusCode: 403,
 						icon: "denied",
@@ -638,6 +640,9 @@ app.all(BASE_URL_PATH + 'login', async (req, res) => {
 				req.session.user = {identifier: user_identifier};
 				// 管理者が「切るべきか」を判断するための手がかり(いつ・どこから・何で)
 				Object.assign(req.session, Sessions.describeLogin(req));
+				// 管理画面の利用者の一覧(最終ログイン)と、監査ログに出す
+				AllowedUsers.recordLogin(user_identifier, req.session.loginAt);
+				AuditLog.record({userIdentifier: user_identifier, action: "login", via: "screen", ip: req.ip || null});
 				// セッションに入っているのは正規化済みの値だが、ここでも再検査する
 				// (検査を1箇所の記憶だけに頼らない)
 				res.redirect(safeNextPath(transaction?.next) || APP_ROOT_URI);
@@ -814,6 +819,7 @@ const requireAdmin = (req, res, next) => {
 		next();
 		return;
 	}
+	recordDenied(req);
 	res.status(403).json({error: "forbidden"});
 };
 
@@ -827,6 +833,7 @@ const requireSession = (req, res, next) => {
 		next();
 		return;
 	}
+	recordDenied(req);
 	res.status(403).json({error: "APIキーの管理は画面(ログイン)からのみ行えます"});
 };
 
@@ -839,7 +846,55 @@ const requireWrite = (req, res, next) => {
 		next();
 		return;
 	}
+	recordDenied(req);
 	res.status(403).json({error: "forbidden"});
+};
+
+/**
+ * 監査ログ(DB)に残す、呼び出しの経路と接続元。管理画面の監査ログに出す(共通アーキテクチャ 構成 6.4)。
+ * via は screen(画面のログイン)/ apikey、keyRole は APIキーの権限
+ */
+const auditVia = (req) => {
+	const viaApiKey = req?.authData?.viaApiKey != null;
+	return {via: viaApiKey ? "apikey" : "screen", keyRole: viaApiKey ? req.authData.role : null, ip: req?.ip || null};
+};
+
+/**
+ * 管理の操作を、監査ログ(標準出力とDB)に残す。target は画面の「対象」に出す名前(人・設定の名前など)
+ * @param {object} req
+ * @param {string} action AuditLog.ACTION_LABELS の名前
+ * @param {{target?: string|null, targetUser?: string|null, result?: string, detail?: object|null}} fields
+ * @returns {Promise<void>} DBへの記録(失敗しても reject しない。応答の前に待つと、直後に読む監査ログに出る)
+ */
+const auditAdmin = (req, action, {target = null, targetUser = null, result = AuditLog.RESULTS.SUCCESS, detail = null} = {}) => {
+	const user = req.authData?.user_identifier ?? null;
+	logger.info({audit: action, user, target: target ?? targetUser, result, ...(detail ?? {})}, "audit");
+	return AuditLog.record({...auditVia(req), userIdentifier: user, action, target, targetUser, result, detail});
+};
+
+// 権限で断った呼び出し(403)。同じ人が同じ口を何度も叩いても、1 分に 1 回だけ残す(DB を溢れさせない)
+const DENIED_RECORD_INTERVAL_MS = 60 * 1000;
+const DENIED_RECORD_MAX_KEYS = 1000;
+const deniedRecordedAt = new Map();
+const recordDenied = (req) => {
+	try {
+		const user = req.authData?.user_identifier;
+		if (user == null) return;
+		const urlPath = req.originalUrl.split("?")[0];
+		const target = `${req.method} ${urlPath.startsWith(BASE_URL_PATH) ? urlPath.slice(BASE_URL_PATH.length) : urlPath}`.slice(0, 300);
+		const key = `${user} ${target}`;
+		const now = Date.now();
+		if (now - (deniedRecordedAt.get(key) ?? -Infinity) < DENIED_RECORD_INTERVAL_MS) return;
+		if (deniedRecordedAt.size >= DENIED_RECORD_MAX_KEYS) {
+			for (const [k, at] of deniedRecordedAt) if (now - at >= DENIED_RECORD_INTERVAL_MS) deniedRecordedAt.delete(k);
+			if (deniedRecordedAt.size >= DENIED_RECORD_MAX_KEYS) deniedRecordedAt.clear();
+		}
+		deniedRecordedAt.set(key, now);
+		logger.warn({audit: "access_denied", user, target, role: req.authData.role, viaApiKey: req.authData.viaApiKey ?? null}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: user, action: "access_denied", target, result: AuditLog.RESULTS.DENIED});
+	} catch (err) {
+		logger.error(err, "::recordDenied");
+	}
 };
 
 
@@ -2038,9 +2093,11 @@ app.get(BASE_URL_PATH + 'api/miro/callback', requireAuth, requireAdmin, requireM
 			return;
 		}
 		await MiroConnection.connect({code: req.query.code, redirectUri: MiroConnection.redirectUri(publicBaseUrl(req)), user, publicBaseUrl: publicBaseUrl(req)});
+		await auditAdmin(req, "miro_settings", {target: "連携する"});
 		back({miro: "connected"});
 	} catch (err) {
 		logger.warn({error: err.message, status: err.status}, "::api/miro/callback: 連携できませんでした");
+		await auditAdmin(req, "miro_settings", {target: "連携する", result: AuditLog.RESULTS.FAILED});
 		back({miro: "error", reason: "exchange"});
 	}
 });
@@ -2055,6 +2112,7 @@ app.put(BASE_URL_PATH + 'api/miro/credentials', requireAuth, requireAdmin, async
 		const clientId = String(req.body?.clientId ?? "").trim();
 		const clientSecret = String(req.body?.clientSecret ?? "").trim();
 		await MiroConnection.saveCredentials({clientId, clientSecret}, req.authData.user_identifier);
+		await auditAdmin(req, "miro_settings", {target: "アプリの値を保存"});
 		res.status(200).json({...(await MiroConnection.status()), redirectUri: MiroConnection.redirectUri(publicBaseUrl(req))});
 	} catch (err) {
 		if (err.name === "MiroError" && (err.status === 400 || err.status === 409)) {
@@ -2069,6 +2127,7 @@ app.put(BASE_URL_PATH + 'api/miro/credentials', requireAuth, requireAdmin, async
 app.delete(BASE_URL_PATH + 'api/miro/credentials', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		await MiroConnection.clearCredentials(req.authData.user_identifier);
+		await auditAdmin(req, "miro_settings", {target: "アプリの値を消す"});
 		res.status(204).end();
 	} catch (err) {
 		if (err.name === "MiroError" && err.status === 409) {
@@ -2099,7 +2158,9 @@ app.put(BASE_URL_PATH + 'api/miro/settings', requireAuth, requireAdmin, requireM
 			res.status(400).json({error: "boardId を指定してください"});
 			return;
 		}
-		res.status(200).json(await MiroConnection.setBoard(boardId, req.authData.user_identifier));
+		const board = await MiroConnection.setBoard(boardId, req.authData.user_identifier);
+		await auditAdmin(req, "miro_settings", {target: `貼り先のボード: ${boardId}`});
+		res.status(200).json(board);
 	} catch (err) {
 		sendMiroError(res, err, "::api/miro/settings");
 	}
@@ -2109,6 +2170,7 @@ app.put(BASE_URL_PATH + 'api/miro/settings', requireAuth, requireAdmin, requireM
 app.delete(BASE_URL_PATH + 'api/miro/connection', requireAuth, requireAdmin, requireMiroConfigured, async (req, res) => {
 	try {
 		await MiroConnection.disconnect(req.authData.user_identifier);
+		await auditAdmin(req, "miro_settings", {target: "連携を解除"});
 		res.status(204).end();
 	} catch (err) {
 		sendMiroError(res, err, "::api/miro/connection");
@@ -2145,6 +2207,100 @@ app.get(BASE_URL_PATH + 'api/html-pdf/health', requireAuth, requireAdmin, async 
 	}
 });
 
+/* ---- 管理画面「サーバー」の共通の形(共通アーキテクチャ 構成 6.2・6.3)。画面はデザインテンプレートの admin.js が描く ---- */
+
+const RATE_LIMIT_ENV = Object.freeze({authenticated: "RATE_LIMIT_AUTHENTICATED", anonymous: "RATE_LIMIT_ANONYMOUS"});
+const RATE_LIMIT_KIND_LABELS = Object.freeze({authenticated: "ログインした人・APIキー", anonymous: "ログインしていない呼び出し"});
+const RATE_LIMIT_SOURCE_LABELS = Object.freeze({setting: "管理画面で変更", env: "環境変数", default: "既定"});
+
+/** API の回数の上限(共通の形)。source は setting(管理画面で変更)/ env(環境変数)/ default(既定) */
+const commonRateLimitView = async () => {
+	const current = await rateLimitSettings.current();
+	return {
+		windowMinutes: RateLimit.WINDOW_MS / 60000,
+		disabled: RATE_LIMIT_DISABLED,
+		...Object.fromEntries(RateLimit.KINDS.map((kind) => [kind, {
+			limit: current[kind].limit,
+			source: current[kind].source,
+			env: RATE_LIMIT_ENV[kind],
+			min: RateLimit.RANGES[kind].min,
+			max: RateLimit.RANGES[kind].max,
+			updatedBy: current[kind].updatedBy ?? null,
+			updatedAt: current[kind].updatedAt ?? null
+		}]))
+	};
+};
+
+/**
+ * 機能の On/Off(共通の形)。editable の機能は管理画面で切り替えられる(PUT api/server-status/features/{key})。
+ * 構成(環境変数)で決まる機能は、On / Off の表示だけ
+ */
+const featureList = async () => {
+	const mockups = await mockupsSetting();
+	return [
+		{key: "mockups", name: "モックアップ", enabled: mockups.enabled, editable: mockups.storageSupported,
+			note: mockups.storageSupported
+				? (mockups.fromSetting ? `管理画面で変更(${mockups.updatedBy ?? "不明"})` : `環境変数 MOCKUPS_ENABLED の値(${mockups.envDefault ? "On" : "Off"})`)
+				: "置き場所が local でない構成では使えない(STORAGE_BACKEND)"},
+		{key: "vector_search", name: "意味検索(Weaviate)", enabled: VectorSearch.isEnabled(), editable: false, note: "環境変数 WEAVIATE_URL"},
+		{key: "office_render", name: "体裁つき表示(Office → PDF)", enabled: OfficeRender.isEnabled(), editable: false, note: "環境変数 OFFICE_RENDER_URL"},
+		{key: "html_pdf", name: "PDF でダウンロード(HTML・Markdown・draw.io)", enabled: HtmlPdf.isEnabled(), editable: false, note: "環境変数 HTML_PDF_URL"},
+		{key: "miro", name: "Miro 連携", enabled: await MiroConnection.isConfigured().catch(() => false), editable: false,
+			note: "アプリの値は「Miro 連携」のタブか環境変数で設定"}
+	];
+};
+
+/** 期限が最長を超えている有効な APIキー(期限なしと同じ扱い。作りの上は出来ないはずの物) */
+const SQL_COUNT_OVERLONG_API_KEYS = `SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL AND expires_at > ?`;
+const SQL_COUNT_ACTIVE_API_KEYS = `SELECT COUNT(*) AS count FROM api_keys WHERE revoked_at IS NULL AND expires_at > ?`;
+
+/** セキュリティ設定(共通の形)。state は ok / warn / bad。危ない設定の抜けを、この表で見つけられるようにする */
+const securityRows = async (rateLimit) => {
+	const nowIso = new Date().toISOString();
+	const overlongAt = new Date(Date.now() + (ApiKeys.MAX_EXPIRY_DAYS + 1) * 24 * 60 * 60 * 1000).toISOString();
+	const [overlong, active] = await Promise.all([
+		ds.get(SQL_COUNT_OVERLONG_API_KEYS, [overlongAt]),
+		ds.get(SQL_COUNT_ACTIVE_API_KEYS, [nowIso])
+	]);
+	const sessionHours = SESSION_MAX_AGE_MS / (60 * 60 * 1000);
+	const rows = [
+		AUTH_DISABLED
+			? {label: "認証の方式", value: "認証を切っている(AUTH_DISABLED)", state: "bad", note: "開発用。誰でも管理者として入れる。本番では設定しない"}
+			: {label: "認証の方式", value: `OpenID Connect(${RuntimeInfo.hostOf(process.env.OIDC_ISSUER) ?? "未設定"})`, state: "ok", note: "開発モードではない(AUTH_DISABLED は未設定)"},
+		{label: "ログインできる人", value: "台帳に登録したメールアドレスだけ", state: "ok", note: "台帳は「利用者」のタブ"},
+		rateLimit.disabled
+			? {label: "API の回数の上限", value: "切っている(RATE_LIMIT_DISABLED)", state: "bad", note: "テスト用。本番では設定しない"}
+			: {label: "API の回数の上限", value: "有効", state: "ok", note: "RATE_LIMIT_DISABLED は未設定"},
+		...RateLimit.KINDS.map((kind) => ({
+			label: `回数の上限(${RATE_LIMIT_KIND_LABELS[kind]})`,
+			value: `${rateLimit[kind].limit} 回 / ${rateLimit.windowMinutes} 分`,
+			state: rateLimit.disabled ? "warn" : "ok",
+			note: `出どころ: ${RATE_LIMIT_SOURCE_LABELS[rateLimit[kind].source] ?? rateLimit[kind].source}${rateLimit[kind].source === "env" ? `(${RATE_LIMIT_ENV[kind]})` : ""}`
+		})),
+		{label: "セッションの寿命", value: `${sessionHours} 時間`, state: sessionHours > 24 ? "warn" : "ok",
+			note: process.env.SESSION_MAX_AGE_HOURS ? "環境変数 SESSION_MAX_AGE_HOURS" : "既定(SESSION_MAX_AGE_HOURS で変更可)"},
+		{label: "APIキーの最長の期限", value: `${ApiKeys.MAX_EXPIRY_DAYS} 日`, state: "ok", note: "これより長いキーは発行できない"},
+		{label: "無期限の APIキー", value: `${Number(overlong?.count ?? 0)} 件`, state: Number(overlong?.count ?? 0) === 0 ? "ok" : "warn",
+			note: "期限のないキー、最長の期限を超えるキーの数"},
+		{label: "有効な APIキー", value: `${Number(active?.count ?? 0)} 件`, note: "持ち主は「セッション」のタブ"},
+		{label: "管理者の踏み台(ADMIN_EMAIL)", value: process.env.ADMIN_EMAIL ? "設定あり" : "設定なし",
+			note: "管理者が 0 人のときだけ、このメールアドレスを管理者にする"}
+	];
+	return rows;
+};
+
+/** 「このサーバー」に足す項目(共通の形の extra) */
+const statusExtras = () => {
+	const integrity = DbIntegrity.getLastResult();
+	const integrityText = integrity == null ? "未確認"
+		: !integrity.supported ? `このデータベース(${integrity.backend})では確かめない`
+			: `${integrity.healthy ? "問題なし" : `問題あり(${integrity.problemCount} 件)`}・${integrity.modeLabel ?? integrity.mode}・${integrity.checkedAt}`;
+	return [
+		{label: "同梱クライアントの版", value: bundledSkillClientVersion() ?? "不明"},
+		{label: "DB の整合性(最後の確認)", value: integrityText}
+	];
+};
+
 /**
  * サーバーの状態(要 admin ロール)。
  *
@@ -2158,6 +2314,7 @@ app.get(BASE_URL_PATH + 'api/server-status', requireAuth, requireAdmin, async (r
 	try {
 		setHTTPHeaders(res);
 		const build = versionInfo != null ? String(versionInfo.VERSION || "") : "";
+		const rateLimit = await commonRateLimitView();
 		// sqliteのときだけ、DBファイルの一覧とサイズを返す。旧バージョンのファイルは移行時に
 		// 残す設計のため、ここに並ぶことで「切り戻せる状態か」も分かる
 		let database = {backend: ds.backend};
@@ -2187,7 +2344,12 @@ app.get(BASE_URL_PATH + 'api/server-status', requireAuth, requireAdmin, async (r
 			skillClientVersion: bundledSkillClientVersion(),
 			database,
 			// 起動時に確認した結果。画面を開いただけで検査を走らせないため、前回の結果を見せる
-			integrity: DbIntegrity.getLastResult()
+			integrity: DbIntegrity.getLastResult(),
+			// ここから下は、共通の形(共通アーキテクチャ 構成 6.3)。画面はデザインテンプレートの admin.js が描く
+			rateLimit,
+			features: await featureList(),
+			security: await securityRows(rateLimit),
+			extra: statusExtras()
 		});
 	} catch (err) {
 		logger.error(err, "::api/server-status");
@@ -2204,14 +2366,28 @@ app.get(BASE_URL_PATH + 'api/server-status/components', requireAuth, requireAdmi
 	try {
 		setHTTPHeaders(res);
 		const build = versionInfo != null ? String(versionInfo.VERSION || "") : "";
+		// 相手ごとに、使っているか・届くか・掛かった時間・最後に成功した時刻(共通アーキテクチャ 構成 6.2)
 		const serviceOf = async (key, name, enabled, check, describe) => {
 			if (!enabled) return {key, name, configured: false};
-			const health = await check();
-			if (health == null || health.reachable === false) return {key, name, configured: true, reachable: false, error: health?.error ?? null};
-			return {key, name, configured: true, reachable: true, ...describe(health)};
+			const m = await connectionTracker.measure(key, check);
+			const common = {key, name, configured: true, reachable: m.reachable, latencyMs: m.latencyMs, lastSuccessAt: m.lastSuccessAt};
+			if (!m.reachable) return {...common, error: m.error ?? "応答がありません"};
+			return {...common, ...describe(m.value)};
 		};
-		const [databaseVersion, office, pdf, weaviate] = await Promise.all([
-			RuntimeInfo.databaseVersion(ds),
+		const storageProducts = {local: "ローカルのディスク", s3: "Amazon S3(互換)", gcs: "Google Cloud Storage"};
+		const [database, storageRow, idp, office, pdf, weaviate] = await Promise.all([
+			serviceOf("database", "データベース", true, async () => {
+				const version = await RuntimeInfo.databaseVersion(ds);
+				return version == null ? {reachable: false, error: "問い合わせに答えません"} : {version};
+			}, (h) => ({product: ds.backend === "sqlite" ? "SQLite(本体に同梱)" : "PostgreSQL", version: h.version})),
+			serviceOf("storage", "ファイルの置き場", true, async () => {
+				// 無い名前を確かめるだけ(届かない・権限が無いときは例外になる)
+				await storage.exists("__dm_connection_check__", "probe");
+				return {};
+			}, () => ({product: storageProducts[Storage.STORAGE_BACKEND] ?? Storage.STORAGE_BACKEND, version: null,
+				details: [{label: "種類", value: Storage.STORAGE_BACKEND}]})),
+			serviceOf("idp", "IdP(ログイン)", !AUTH_DISABLED && Boolean(process.env.OIDC_ISSUER), () => RuntimeInfo.idpInfo(process.env.OIDC_ISSUER),
+				() => ({product: "OpenID Connect", version: null, details: [{label: "接続先", value: RuntimeInfo.hostOf(process.env.OIDC_ISSUER) ?? "不明"}]})),
 			serviceOf("office", "変換サービス(Office → PDF)", OfficeRender.isEnabled(), () => OfficeRender.checkHealth(),
 				(h) => ({version: h.libreOffice ?? null, product: "LibreOffice", runtime: h.runtime ?? null, apiVersion: h.apiVersion ?? null})),
 			serviceOf("pdf", "変換サービス(HTML・draw.io → PDF)", HtmlPdf.isEnabled(), () => HtmlPdf.checkHealth(),
@@ -2219,15 +2395,15 @@ app.get(BASE_URL_PATH + 'api/server-status/components', requireAuth, requireAdmi
 			serviceOf("weaviate", "意味検索(Weaviate)", VectorSearch.isEnabled(), () => RuntimeInfo.weaviateInfo(process.env.WEAVIATE_URL),
 				(h) => ({version: h.version, product: "Weaviate", modules: h.modules}))
 		]);
+		// データベースの行は、届かなくても製品の名前は出す(何につながっていないのかが分かるように)
+		if (database.reachable === false) database.product = ds.backend === "sqlite" ? "SQLite(本体に同梱)" : "PostgreSQL";
 		const installed = RuntimeInfo.packages();
 		res.status(200).json({
 			checkedAt: new Date().toISOString(),
 			components: [
 				{key: "app", name: "Document Manager", configured: true, reachable: true, product: "Document Manager", version: displayVersion(build) || null,
 					runtime: RuntimeInfo.appRuntime()},
-				{key: "database", name: "データベース", configured: true, reachable: databaseVersion != null,
-					product: ds.backend === "sqlite" ? "SQLite(本体に同梱)" : "PostgreSQL", version: databaseVersion},
-				office, pdf, weaviate
+				database, storageRow, idp, office, pdf, weaviate
 			],
 			// 直接使っているライブラリ(全部は api/server-status/packages)
 			dependencies: installed.packages.filter((pkg) => pkg.direct).map(({name, version}) => ({name, version})),
@@ -2236,6 +2412,54 @@ app.get(BASE_URL_PATH + 'api/server-status/components', requireAuth, requireAdmi
 		});
 	} catch (err) {
 		logger.error(err, "::api/server-status/components");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** つながりの確認の、最後に成功した時刻(このプロセスが覚えている間) */
+const connectionTracker = RuntimeInfo.createConnectionTracker();
+
+/**
+ * API の回数の上限を変える(共通の形。要 admin ロール)。{authenticated | anonymous: 回数} → 新しい rateLimit。
+ * 範囲の外は 400。保存した台はすぐ、ほかの台は 30 秒以内に効く。監査ログに残す
+ */
+app.put(BASE_URL_PATH + 'api/server-status/rate-limit', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const changed = await updateRateLimits(req, res);
+		if (changed) res.status(200).json(await commonRateLimitView());
+	} catch (err) {
+		logger.error(err, "::api/server-status/rate-limit");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 機能を切り替える(共通の形。要 admin ロール)。{enabled} → その機能の新しい状態。
+ * 構成で決まる機能(editable でない)は 400、知らない機能は 404。監査ログに残す
+ */
+app.put(BASE_URL_PATH + 'api/server-status/features/:key', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const feature = (await featureList()).find((item) => item.key === req.params.key);
+		if (feature == null) {
+			res.status(404).json({error: "その機能はありません"});
+			return;
+		}
+		if (typeof req.body?.enabled !== "boolean") {
+			res.status(400).json({error: "enabled は true か false で指定してください"});
+			return;
+		}
+		if (!feature.editable) {
+			res.status(400).json({error: "この機能は構成(環境変数)で決まるため、ここでは切り替えられません"});
+			return;
+		}
+		// いま切り替えられるのはモックアップだけ
+		await AppSettings.setBoolean(AppSettings.KEYS.MOCKUPS_ENABLED, req.body.enabled, req.authData.user_identifier);
+		await auditAdmin(req, "feature_toggle", {target: feature.name, detail: {key: feature.key, enabled: req.body.enabled}});
+		res.status(200).json((await featureList()).find((item) => item.key === req.params.key));
+	} catch (err) {
+		logger.error(err, "::api/server-status/features");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
@@ -2272,6 +2496,10 @@ app.get(BASE_URL_PATH + 'api/db-integrity', requireAuth, requireAdmin, async (re
 		setHTTPHeaders(res);
 		const mode = DbIntegrity.MODES.includes(String(req.query.mode)) ? String(req.query.mode) : "quick";
 		const result = await DbIntegrity.check(mode);
+		// 重い確認(厳密)を実行したことは、監査ログに残す(共通アーキテクチャ 構成 6.2)
+		await auditAdmin(req, "db_integrity", {target: result.modeLabel ?? mode,
+			result: result.supported && !result.healthy ? AuditLog.RESULTS.FAILED : AuditLog.RESULTS.SUCCESS,
+			detail: {mode, healthy: result.healthy ?? null, problemCount: result.problemCount ?? null}});
 		if (result.supported && !result.healthy) {
 			logger.error({problems: result.problems, problemCount: result.problemCount, user: req.authData.user_identifier}, "DBの整合性に問題が見つかりました");
 		}
@@ -2292,6 +2520,7 @@ app.put(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmin, 
 		const chunkSize = Number(req.body.chunkSize);
 		const chunkOverlap = Number(req.body.chunkOverlap);
 		const settings = await VectorSearch.updateChunkSettings({chunkSize, chunkOverlap}, req.authData.user_identifier);
+		await auditAdmin(req, "vector_settings", {target: "分割の設定", detail: {chunkSize, chunkOverlap}});
 		res.status(200).json(settings);
 	} catch (err) {
 		if (err instanceof Error && /chunkSize|chunkOverlap/.test(err.message)) {
@@ -2313,7 +2542,9 @@ app.delete(BASE_URL_PATH + 'api/vector-index/settings', requireAuth, requireAdmi
 			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
 			return;
 		}
-		res.status(200).json(await VectorSearch.resetChunkSettings());
+		const reset = await VectorSearch.resetChunkSettings();
+		await auditAdmin(req, "vector_settings", {target: "分割の設定(既定に戻す)"});
+		res.status(200).json(reset);
 	} catch (err) {
 		logger.error(err, "::api/vector-index/settings:delete");
 		res.status(500).json({error: "Internal Error"});
@@ -2347,6 +2578,7 @@ app.put(BASE_URL_PATH + 'api/vector-index/vectorizer', requireAuth, requireAdmin
 			return;
 		}
 		const settings = await VectorSearch.updateVectorizerSetting(String(req.body.vectorizer || ""), req.authData.user_identifier);
+		await auditAdmin(req, "vector_settings", {target: `ベクトライザー: ${String(req.body.vectorizer || "")}`});
 		res.status(200).json(settings);
 	} catch (err) {
 		if (err instanceof Error && /vectorizer|環境変数/.test(err.message)) {
@@ -2368,7 +2600,9 @@ app.delete(BASE_URL_PATH + 'api/vector-index/vectorizer', requireAuth, requireAd
 			res.status(503).json({error: "ベクトル検索は設定されていません(WEAVIATE_URL未設定)"});
 			return;
 		}
-		res.status(200).json(await VectorSearch.resetVectorizerSetting());
+		const resetVectorizer = await VectorSearch.resetVectorizerSetting();
+		await auditAdmin(req, "vector_settings", {target: "ベクトライザー(既定に戻す)"});
+		res.status(200).json(resetVectorizer);
 	} catch (err) {
 		logger.error(err, "::api/vector-index/vectorizer:delete");
 		res.status(500).json({error: "Internal Error"});
@@ -2545,7 +2779,7 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 			documentId: id,
 			entryFile: originalName
 		}, "audit");
-		AuditLog.record({userIdentifier: req.authData.user_identifier, action: "upload", documentId: id, entryFile: originalName});
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "upload", documentId: id, entryFile: originalName});
 		if (archivedPrevious) {
 			VectorSearch.removeDocument(previousId).catch((err) => logger.error({err, documentId: previousId}, "::api/documents:upload:removePreviousDocument"));
 			logger.info({
@@ -2555,7 +2789,7 @@ app.post(BASE_URL_PATH + 'api/documents', requireAuth, requireWrite, fileUpload(
 				nextId: id,
 				projectIds: transferredProjectIds
 			}, "audit");
-			AuditLog.record({userIdentifier: req.authData.user_identifier, action: "supersede", documentId: previousId, entryFile: previousDocument.entry_file});
+			AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "supersede", documentId: previousId, entryFile: previousDocument.entry_file});
 		}
 		broadcastDocumentsChanged();
 		if (transferredProjectIds.length > 0) {
@@ -2828,6 +3062,7 @@ app.put(BASE_URL_PATH + 'api/documents/alias/:alias', requireAuth, requireWrite,
 			return;
 		}
 		logger.info({audit: "alias_move", user: req.authData.user_identifier, alias: req.params.alias, documentId}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "alias_move", documentId, target: `${req.params.alias} → ${documentId}`});
 		res.status(200).json(await DocumentAliases.get(req.params.alias));
 	} catch (err) {
 		logger.error(err, "::api/documents/alias/:alias:put");
@@ -2988,7 +3223,7 @@ app.delete(BASE_URL_PATH + 'api/documents/:id', requireAuth, requireWrite, async
 			documentId: req.params.id
 		}, "audit");
 		const archivedEntryFile = (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]))?.entry_file ?? null;
-		AuditLog.record({
+		AuditLog.record({...auditVia(req), 
 			userIdentifier: req.authData.user_identifier,
 			action: "delete",
 			documentId: req.params.id,
@@ -3102,6 +3337,8 @@ app.put(BASE_URL_PATH + 'api/documents/:id/links/:relatedId', requireAuth, requi
 		}
 		await DocumentLinks.link(id, relatedId, req.authData.user_identifier);
 		logger.info({audit: "link_documents", user: req.authData.user_identifier, documentId: id, relatedId}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "link_documents", documentId: id, entryFile: document.entry_file,
+			target: `${document.entry_file} ↔ ${related.entry_file}`});
 		broadcastDocumentsChanged();
 		broadcastActivity(req, {action: "link_documents", documentId: id, entryFile: document.entry_file, relatedEntryFile: related.entry_file});
 		res.status(200).json(await DocumentLinks.listLinks(id));
@@ -3123,6 +3360,7 @@ app.delete(BASE_URL_PATH + 'api/documents/:id/links/:relatedId', requireAuth, re
 			return;
 		}
 		logger.info({audit: "unlink_documents", user: req.authData.user_identifier, documentId: id, relatedId}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "unlink_documents", documentId: id, target: `${id} ↔ ${relatedId}`});
 		broadcastDocumentsChanged();
 		res.status(200).json(await DocumentLinks.listLinks(id));
 	} catch (err) {
@@ -3211,7 +3449,7 @@ app.put(BASE_URL_PATH + 'api/documents/:id/previous', requireAuth, requireWrite,
 
 		if (archivedPrevious) {
 			VectorSearch.removeDocument(previousId).catch((err) => logger.error({err, documentId: previousId}, "::api/documents/:id/previous:removePreviousDocument"));
-			AuditLog.record({userIdentifier: req.authData.user_identifier, action: "supersede", documentId: previousId, entryFile: previousDocument.entry_file});
+			AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "supersede", documentId: previousId, entryFile: previousDocument.entry_file});
 		}
 		logger.info({
 			audit: "link_version",
@@ -3221,6 +3459,7 @@ app.put(BASE_URL_PATH + 'api/documents/:id/previous', requireAuth, requireWrite,
 			archivedPrevious,
 			projectIds: transferredProjectIds
 		}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "link_version", documentId: document.id, entryFile: document.entry_file});
 		broadcastDocumentsChanged();
 		if (transferredProjectIds.length > 0) {
 			broadcastProjectsChanged();
@@ -3251,6 +3490,7 @@ app.delete(BASE_URL_PATH + 'api/documents/:id/previous', requireAuth, requireWri
 		}
 		await ds.run(SQL_UPDATE_DOCUMENT_PREVIOUS_ID, [null, document.id]);
 		logger.info({audit: "unlink_version", user: req.authData.user_identifier, documentId: document.id, previousId: document.previous_id}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "unlink_version", documentId: document.id, entryFile: document.entry_file});
 		broadcastDocumentsChanged();
 		res.status(200).json(await toSingleDocumentResponse(await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [document.id])));
 	} catch (err) {
@@ -3323,7 +3563,7 @@ app.post(BASE_URL_PATH + 'api/documents/:id/restore', requireAuth, requireWrite,
 			documentId: req.params.id
 		}, "audit");
 		const restoredEntryFile = (await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]))?.entry_file ?? null;
-		AuditLog.record({
+		AuditLog.record({...auditVia(req), 
 			userIdentifier: req.authData.user_identifier,
 			action: "restore",
 			documentId: req.params.id,
@@ -3717,7 +3957,7 @@ const SESSION_TARGET_MAX_LENGTH = 320;
 /**
  * 利用者ごとの、ログイン中のセッションと有効なAPIキー
  */
-app.get(BASE_URL_PATH + 'api/sessions', requireAuth, requireAdmin, requireSession, async (req, res) => {
+app.get([BASE_URL_PATH + 'api/sessions', BASE_URL_PATH + 'api/admin/sessions'], requireAuth, requireAdmin, requireSession, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		const sessionsByUser = await Sessions.listByUser(req.sessionID);
@@ -3753,7 +3993,7 @@ app.get(BASE_URL_PATH + 'api/sessions', requireAuth, requireAdmin, requireSessio
 /**
  * 切断の履歴(新しい順)
  */
-app.get(BASE_URL_PATH + 'api/sessions/history', requireAuth, requireAdmin, requireSession, async (req, res) => {
+app.get([BASE_URL_PATH + 'api/sessions/history', BASE_URL_PATH + 'api/admin/sessions/history'], requireAuth, requireAdmin, requireSession, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		res.status(200).json(await AuditLog.listSessionRevokes());
@@ -3764,9 +4004,24 @@ app.get(BASE_URL_PATH + 'api/sessions/history', requireAuth, requireAdmin, requi
 });
 
 /**
+ * 利用者の一式(セッション・APIキー・引換券・開いているSSE)を止める。切断と、台帳からの削除で使う。
+ * 自分自身を切るときは、いま操作しているセッションだけ残す(押した直後に自分の画面が落ちると、結果を確かめられない)
+ */
+const revokeUserAccess = async (req, target) => {
+	const isSelf = !AUTH_DISABLED && target === req.authData.user_identifier;
+	const result = await Sessions.revokeUser(target, {revokedBy: req.authData.user_identifier, exceptSid: isSelf ? req.sessionID : null});
+	if (isSelf) req.session.survivedRevocationAt = result.revokedAt;
+	const apiKeys = await ApiKeys.revokeAllByOwner(target);
+	// 開いたままのSSEを閉じる(複数台構成では、全台へ伝える)
+	ds.notify("sessions_revoked", JSON.stringify({user: target, keep: isSelf ? Sessions.handleOf(req.sessionID) : null}))
+		.catch((err) => logger.error({err}, "::notify:sessions_revoked"));
+	return {isSelf, result, apiKeys};
+};
+
+/**
  * 利用者を切断する(セッション・APIキー・引換券・SSEの一式)
  */
-app.post(BASE_URL_PATH + 'api/sessions/revoke', requireAuth, requireAdmin, requireSession, async (req, res) => {
+app.post([BASE_URL_PATH + 'api/sessions/revoke', BASE_URL_PATH + 'api/admin/sessions/revoke'], requireAuth, requireAdmin, requireSession, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
 		const target = typeof req.body?.user === "string" ? req.body.user.trim() : "";
@@ -3783,17 +4038,8 @@ app.post(BASE_URL_PATH + 'api/sessions/revoke', requireAuth, requireAdmin, requi
 			return;
 		}
 
-		// 自分自身を切るときは、いま操作しているセッションだけ残す
-		// (押した直後に自分の画面が落ちると、結果を確かめられない)
-		const isSelf = !AUTH_DISABLED && target === req.authData.user_identifier;
 		const actor = req.authData.user_identifier;
-		const result = await Sessions.revokeUser(target, {revokedBy: actor, exceptSid: isSelf ? req.sessionID : null});
-		if (isSelf) req.session.survivedRevocationAt = result.revokedAt;
-		const apiKeys = await ApiKeys.revokeAllByOwner(target);
-
-		// 開いたままのSSEを閉じる(複数台構成では、全台へ伝える)
-		ds.notify("sessions_revoked", JSON.stringify({user: target, keep: isSelf ? Sessions.handleOf(req.sessionID) : null}))
-			.catch((err) => logger.error({err}, "::notify:sessions_revoked"));
+		const {isSelf, result, apiKeys} = await revokeUserAccess(req, target);
 
 		logger.info({
 			audit: "session_revoke",
@@ -3804,7 +4050,7 @@ app.post(BASE_URL_PATH + 'api/sessions/revoke', requireAuth, requireAdmin, requi
 		}, "audit");
 		// 切ったセッションのIP等も残す。セッションと一緒に消えてしまうと、
 		// 後から「どこから入られていたか」を追えなくなる
-		await AuditLog.record({
+		await AuditLog.record({...auditVia(req), 
 			userIdentifier: actor,
 			action: AuditLog.ACTION_SESSION_REVOKE,
 			targetUser: target,
@@ -3874,6 +4120,7 @@ app.post(BASE_URL_PATH + 'api/allowed_users', requireAuth, requireAdmin, async (
 			return;
 		}
 		await AllowedUsers.addAllowedUser(email, role, req.authData.user_identifier);
+		await auditAdmin(req, "user_add", {targetUser: AllowedUsers.normalizeEmail(email), detail: {role}});
 		res.status(200).json({email, role});
 	} catch (err) {
 		logger.error(err, "::api/allowed_users:add");
@@ -3892,11 +4139,16 @@ app.put(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin, a
 			res.status(400).json({error: "role must be one of admin/readwrite/readonly"});
 			return;
 		}
-		const updated = await AllowedUsers.updateAllowedUserRole(req.params.email, role);
-		if (!updated) {
+		const changed = await AllowedUsers.changeRole(req.params.email, role);
+		if (changed.status === "not_found") {
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		if (changed.status === "last_admin") {
+			res.status(409).json({error: LAST_ADMIN_MESSAGE});
+			return;
+		}
+		await auditAdmin(req, "user_role", {targetUser: AllowedUsers.normalizeEmail(req.params.email), detail: {from: changed.previousRole, to: role}});
 		res.status(200).json({email: req.params.email, role});
 	} catch (err) {
 		logger.error(err, "::api/allowed_users/:email:update_role");
@@ -3910,14 +4162,165 @@ app.put(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin, a
 app.delete(BASE_URL_PATH + 'api/allowed_users/:email', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const removed = await AllowedUsers.removeAllowedUser(req.params.email);
-		if (!removed) {
+		const removed = await AllowedUsers.remove(req.params.email);
+		if (removed.status === "not_found") {
 			res.status(404).json({error: "not found"});
 			return;
 		}
+		if (removed.status === "last_admin") {
+			res.status(409).json({error: LAST_ADMIN_MESSAGE});
+			return;
+		}
+		await auditAdmin(req, "user_remove", {targetUser: AllowedUsers.normalizeEmail(req.params.email), detail: {role: removed.previousRole}});
 		res.status(204).end();
 	} catch (err) {
 		logger.error(err, "::api/allowed_users/:email:remove");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+/*
+	管理の WebAPI(共通アーキテクチャ 構成 6.4)。利用者・監査ログ(セッションは上の api/admin/sessions)。
+	どのサービスでも同じ形で返し、画面はデザインテンプレートの admin.js が描く。管理者だけ(APIキーは admin になれないので 403)。
+	追加・権限の変更・削除は、監査ログ(標準出力とDB)に残す。
+	旧い口(api/allowed_users)は、Skill や結合テストが使うので残す(最後の管理者を守る決まりは同じ)
+*/
+/* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+
+const ADMIN_ROLE_OPTIONS = Object.freeze([
+	{value: AllowedUsers.ROLES.ADMIN, label: "管理者"},
+	{value: AllowedUsers.ROLES.READWRITE, label: "編集可"},
+	{value: AllowedUsers.ROLES.READONLY, label: "閲覧のみ"}
+]);
+const ADMIN_EMAIL_MAX_LENGTH = 254;
+const ADMIN_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const LAST_ADMIN_MESSAGE = "最後の管理者は、下げることも外すこともできません(先にほかの人を管理者にしてください)";
+
+/** 利用者の一覧。{users: [{email, role, addedBy, addedAt, lastLoginAt}], roles: [{value, label}], self} */
+app.get(BASE_URL_PATH + 'api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const users = (await AllowedUsers.listAllowedUsers()).map((row) => ({
+			email: row.email,
+			role: row.role,
+			addedBy: row.added_by ?? null,
+			addedAt: row.added_at ?? null,
+			lastLoginAt: row.last_login_at ?? null
+		}));
+		res.status(200).json({users, roles: ADMIN_ROLE_OPTIONS, self: req.authData.user_identifier});
+	} catch (err) {
+		logger.error(err, "::api/admin/users:list");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 台帳に足す。{email, role}。形の違うメールアドレス・知らない権限は 400、もう居れば 409 */
+app.post(BASE_URL_PATH + 'api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const email = AllowedUsers.normalizeEmail(typeof req.body?.email === "string" ? req.body.email : "");
+		const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
+		if (email.length > ADMIN_EMAIL_MAX_LENGTH || !ADMIN_EMAIL_PATTERN.test(email)) {
+			res.status(400).json({error: "メールアドレスの形が正しくありません"});
+			return;
+		}
+		if (!AllowedUsers.isValidRole(role)) {
+			res.status(400).json({error: `権限は ${ADMIN_ROLE_OPTIONS.map((option) => option.value).join(" / ")} のどれかです`});
+			return;
+		}
+		if (await AllowedUsers.addNew(email, role, req.authData.user_identifier) === "exists") {
+			res.status(409).json({error: "そのメールアドレスは、もう台帳にあります(権限を変えるときは編集してください)"});
+			return;
+		}
+		await auditAdmin(req, "user_add", {targetUser: email, detail: {role}});
+		res.status(201).json({email, role});
+	} catch (err) {
+		logger.error(err, "::api/admin/users:add");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 権限を変える。{role}。知らない利用者は 404、最後の管理者を下げるのは 409 */
+app.put(BASE_URL_PATH + 'api/admin/users/:email', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
+		if (!AllowedUsers.isValidRole(role)) {
+			res.status(400).json({error: `権限は ${ADMIN_ROLE_OPTIONS.map((option) => option.value).join(" / ")} のどれかです`});
+			return;
+		}
+		const email = AllowedUsers.normalizeEmail(req.params.email);
+		const changed = await AllowedUsers.changeRole(email, role);
+		if (changed.status === "not_found") {
+			res.status(404).json({error: "その利用者は台帳にありません"});
+			return;
+		}
+		if (changed.status === "last_admin") {
+			res.status(409).json({error: LAST_ADMIN_MESSAGE});
+			return;
+		}
+		await auditAdmin(req, "user_role", {targetUser: email, detail: {from: changed.previousRole, to: role}});
+		res.status(200).json({email, role});
+	} catch (err) {
+		logger.error(err, "::api/admin/users/:email:update");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 台帳から外す。その利用者のセッションと APIキーも止める。知らない利用者は 404、最後の管理者を外すのは 409 */
+app.delete(BASE_URL_PATH + 'api/admin/users/:email', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const email = AllowedUsers.normalizeEmail(req.params.email);
+		const removed = await AllowedUsers.remove(email);
+		if (removed.status === "not_found") {
+			res.status(404).json({error: "その利用者は台帳にありません"});
+			return;
+		}
+		if (removed.status === "last_admin") {
+			res.status(409).json({error: LAST_ADMIN_MESSAGE});
+			return;
+		}
+		// 台帳から外すだけでは、残ったセッションは次の照会まで、APIキーは入れ直したときに、また通ってしまう
+		const {result, apiKeys} = await revokeUserAccess(req, email);
+		await auditAdmin(req, "user_remove", {targetUser: email, detail: {role: removed.previousRole, sessions: result.sessions.length, apiKeys}});
+		if (result.sessions.length > 0 || apiKeys > 0) {
+			// 切断の履歴(セッションのタブ)にも出す
+			await AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: AuditLog.ACTION_SESSION_REVOKE, targetUser: email,
+				detail: {sessions: result.sessions.length, apiKeys, sessionDetails: result.sessions, reason: "user_remove"}});
+		}
+		res.status(200).json({email, sessions: result.sessions.length, apiKeys});
+	} catch (err) {
+		logger.error(err, "::api/admin/users/:email:remove");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * 監査ログ(全員ぶん。新しい順)。?range=1d|7d|30d&user=&action=&target=&before=
+ * → {entries: [{id, at, user, action, target, result, via, keyRole, ip}], actions: [{value, label}], limit, nextBefore}
+ */
+app.get(BASE_URL_PATH + 'api/admin/audit', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const pick = (name, fallback = "") => (req.query[name] == null ? fallback : req.query[name]);
+		const found = await AuditLog.listAll({
+			range: pick("range", "7d"), user: pick("user"), action: pick("action"), target: pick("target"), before: pick("before")
+		});
+		res.status(200).json({
+			entries: found.entries,
+			actions: Object.entries(AuditLog.ACTION_LABELS).map(([value, label]) => ({value, label})),
+			limit: AuditLog.AUDIT_PAGE_SIZE,
+			nextBefore: found.nextBefore,
+			range: found.range
+		});
+	} catch (err) {
+		if (err.status === 400) {
+			res.status(400).json({error: err.message});
+			return;
+		}
+		logger.error(err, "::api/admin/audit");
 		res.status(500).json({error: "Internal Error"});
 	}
 });
@@ -4658,7 +5061,7 @@ app.put(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth, r
 			return;
 		}
 		const placement = await Projects.placeDocument(req.params.id, req.params.documentId, req.body.folderId || null, req.authData.user_identifier);
-		AuditLog.record({
+		AuditLog.record({...auditVia(req), 
 			userIdentifier: req.authData.user_identifier,
 			action: "project_assign",
 			documentId: req.params.documentId,
@@ -4699,7 +5102,7 @@ app.delete(BASE_URL_PATH + 'api/projects/:id/documents/:documentId', requireAuth
 			res.status(404).json({error: "not found"});
 			return;
 		}
-		AuditLog.record({
+		AuditLog.record({...auditVia(req), 
 			userIdentifier: req.authData.user_identifier,
 			action: "project_unassign",
 			documentId: req.params.documentId,
@@ -4872,6 +5275,7 @@ app.put(BASE_URL_PATH + 'api/features/mockups', requireAuth, requireAdmin, async
 			return;
 		}
 		await AppSettings.setBoolean(AppSettings.KEYS.MOCKUPS_ENABLED, req.body.enabled, req.authData.user_identifier);
+		await auditAdmin(req, "feature_toggle", {target: "モックアップ", detail: {key: "mockups", enabled: req.body.enabled}});
 		const mockups = await mockupsSetting();
 		res.status(200).json({enabled: mockups.enabled, updatedBy: mockups.updatedBy, updatedAt: mockups.updatedAt});
 	} catch (err) {
@@ -4901,26 +5305,39 @@ app.get(BASE_URL_PATH + 'api/rate-limit', requireAuth, requireAdmin, async (req,
 	}
 });
 
+/**
+ * 上限を変える(api/rate-limit と api/server-status/rate-limit で共有)。{authenticated?, anonymous?}(5 分あたりの回数)。
+ * 正しくなければ 400 を返して false。変えたら監査ログに残して true
+ */
+const updateRateLimits = async (req, res) => {
+	const body = req.body ?? {};
+	const kinds = RateLimit.KINDS.filter((kind) => body[kind] != null);
+	if (kinds.length === 0) {
+		res.status(400).json({error: "authenticated か anonymous(5 分あたりの回数)を指定してください"});
+		return false;
+	}
+	// 全部を確かめてから保存する(片方だけ変わらないように)
+	for (const kind of kinds) {
+		const n = Number(body[kind]);
+		const range = RateLimit.RANGES[kind];
+		if (!Number.isInteger(n) || n < range.min || n > range.max) {
+			res.status(400).json({error: `${kind} は ${range.min} 〜 ${range.max} の整数です(5 分あたりの回数)`});
+			return false;
+		}
+	}
+	const before = await rateLimitSettings.current();
+	for (const kind of kinds) {
+		await rateLimitSettings.set(kind, Number(body[kind]), req.authData.user_identifier);
+		await auditAdmin(req, "rate_limit", {target: RATE_LIMIT_KIND_LABELS[kind], detail: {kind, from: before[kind]?.limit ?? null, to: Number(body[kind])}});
+	}
+	return true;
+};
+
 /** 上限を変える。{authenticated?, anonymous?}(5 分あたりの回数)。保存した台はすぐ、ほかの台は 30 秒以内に効く */
 app.put(BASE_URL_PATH + 'api/rate-limit', requireAuth, requireAdmin, async (req, res) => {
 	try {
 		setHTTPHeaders(res);
-		const body = req.body ?? {};
-		const kinds = RateLimit.KINDS.filter((kind) => body[kind] != null);
-		if (kinds.length === 0) {
-			res.status(400).json({error: "authenticated か anonymous(5 分あたりの回数)を指定してください"});
-			return;
-		}
-		// 全部を確かめてから保存する(片方だけ変わらないように)
-		for (const kind of kinds) {
-			const n = Number(body[kind]);
-			const range = RateLimit.RANGES[kind];
-			if (!Number.isInteger(n) || n < range.min || n > range.max) {
-				res.status(400).json({error: `${kind} は ${range.min} 〜 ${range.max} の整数です(5 分あたりの回数)`});
-				return;
-			}
-		}
-		for (const kind of kinds) await rateLimitSettings.set(kind, Number(body[kind]), req.authData.user_identifier);
+		if (!await updateRateLimits(req, res)) return;
 		res.status(200).json(await rateLimitView());
 	} catch (err) {
 		logger.error(err, "::api/rate-limit");
@@ -4937,6 +5354,7 @@ app.delete(BASE_URL_PATH + 'api/rate-limit/:kind', requireAuth, requireAdmin, as
 			return;
 		}
 		await rateLimitSettings.clear(req.params.kind, req.authData.user_identifier);
+		await auditAdmin(req, "rate_limit", {target: `${RATE_LIMIT_KIND_LABELS[req.params.kind]}(既定に戻す)`, detail: {kind: req.params.kind, reset: true}});
 		res.status(200).json(await rateLimitView());
 	} catch (err) {
 		logger.error(err, "::api/rate-limit");
@@ -5075,6 +5493,7 @@ app.post(BASE_URL_PATH + 'api/mockups', requireAuth, requireWrite, requireMockup
 		registered = true;
 
 		logger.info({audit: "mockup_upload", user: req.authData.user_identifier, mockupId, files: extracted.files.length}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "mockup_upload", target: mockup?.name ? `${mockup.name}(${mockupId})` : mockupId});
 		broadcastMockupsChanged();
 		res.status(200).json({...mockup, archivedPrevious});
 	} catch (err) {
@@ -5323,6 +5742,7 @@ app.delete(BASE_URL_PATH + 'api/mockups/:id', requireAuth, requireWrite, require
 			return;
 		}
 		logger.info({audit: "mockup_archive", user: req.authData.user_identifier, mockupId: req.params.id}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "mockup_archive", target: req.params.id});
 		broadcastMockupsChanged();
 		res.status(204).end();
 	} catch (err) {
@@ -5339,6 +5759,7 @@ app.post(BASE_URL_PATH + 'api/mockups/:id/restore', requireAuth, requireWrite, r
 			return;
 		}
 		logger.info({audit: "mockup_restore", user: req.authData.user_identifier, mockupId: req.params.id}, "audit");
+		AuditLog.record({...auditVia(req), userIdentifier: req.authData.user_identifier, action: "mockup_restore", target: req.params.id});
 		broadcastMockupsChanged();
 		res.status(200).json(await Mockups.getMockup(req.params.id));
 	} catch (err) {

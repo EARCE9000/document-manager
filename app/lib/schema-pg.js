@@ -450,6 +450,16 @@ const MIGRATIONS = [
 			updated_at TEXT,
 			PRIMARY KEY (export_id, alias)
 		);
+	`},
+	// 管理画面の利用者の最終ログインと、監査ログ(全員ぶん)の結果・経路・IP(SQLite の v21 に後から足した列)
+	{version: 19, sql: `
+		ALTER TABLE allowed_users ADD COLUMN IF NOT EXISTS last_login_at TEXT;
+		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS target TEXT;
+		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS result TEXT;
+		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS via TEXT;
+		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS key_role TEXT;
+		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip TEXT;
+		CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log (created_at);
 	`}
 ];
 
