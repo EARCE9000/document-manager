@@ -460,6 +460,10 @@ const MIGRATIONS = [
 		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS key_role TEXT;
 		ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip TEXT;
 		CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log (created_at);
+	`},
+	// APIキーを最後に使ったクライアント(User-Agent。SQLite の v21 に後から足した列)
+	{version: 20, sql: `
+		ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS last_client TEXT;
 	`}
 ];
 

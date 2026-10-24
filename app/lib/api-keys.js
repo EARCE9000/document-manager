@@ -84,7 +84,7 @@ const SQL_INSERT_API_KEY = `
 `;
 
 const SQL_SELECT_ACTIVE_API_KEYS_BY_OWNER = `
-	SELECT id, label, role, created_by, created_at, expires_at, last_used_at
+	SELECT id, label, role, created_by, created_at, expires_at, last_used_at, last_client
 	FROM api_keys
 	WHERE revoked_at IS NULL AND created_by = ?
 	ORDER BY created_at DESC
@@ -94,7 +94,16 @@ const SQL_SELECT_ACTIVE_API_KEY_BY_HASH = `
 	SELECT id, label, role, created_by, expires_at, notified_build FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL
 `;
 
-const SQL_TOUCH_LAST_USED = `UPDATE api_keys SET last_used_at = ? WHERE id = ?`;
+// 最後に使った時刻と、そのときのクライアント(User-Agent)。管理画面で「だれが古い Skill のままか」を見るため
+const SQL_TOUCH_LAST_USED = `UPDATE api_keys SET last_used_at = ?, last_client = ? WHERE id = ?`;
+
+// User-Agent は呼んだ側が自由に名乗れる値。制御文字を除き、長さを切ってから残す(画面では文字として出す)
+const CLIENT_MAX_LENGTH = 200;
+const clientLabelOf = (userAgent) => {
+	// eslint-disable-next-line no-control-regex
+	const cleaned = String(userAgent ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, CLIENT_MAX_LENGTH);
+	return cleaned === "" ? null : cleaned;
+};
 
 // 「サーバーが更新された」と知らせたことを記録する。現在のビルドと違うときだけ知らせるため、
 // これを書いた後は同じビルドの間は二度と知らせない。
@@ -114,7 +123,7 @@ const SQL_REVOKE_API_KEY = `
 // 管理者が利用者を切断するときに使う(lib/sessions.js 参照)。
 // ふだんの一覧・失効は発行者本人に限っており、他人のキーに触れるのはこの経路だけ
 const SQL_SELECT_ALL_ACTIVE_API_KEYS = `
-	SELECT id, label, role, created_by, created_at, expires_at, last_used_at
+	SELECT id, label, role, created_by, created_at, expires_at, last_used_at, last_client
 	FROM api_keys
 	WHERE revoked_at IS NULL AND expires_at > ?
 	ORDER BY created_at DESC
@@ -223,8 +232,9 @@ module.exports.markNotifiedBuild = async (id, build) => {
  * "expired"と"invalid"を区別できるようにしているのは、利用者側のデバッグを助けるため
  * (キー自体が間違っているのか、期限切れなのかで対応が変わる)。
  * 失効チェックはlast_used_atの更新より前に行う(失効キーの最終使用時刻は更新しない)。
+ * userAgent は、最後に使ったクライアントとして残す(管理画面で版を見る)。
  */
-module.exports.verifyApiKey = async (apiKey) => {
+module.exports.verifyApiKey = async (apiKey, {userAgent} = {}) => {
 	try {
 		if (!apiKey || !apiKey.startsWith(API_KEY_PREFIX)) {
 			return {status: "invalid"};
@@ -236,7 +246,7 @@ module.exports.verifyApiKey = async (apiKey) => {
 		if (row.expires_at <= new Date().toISOString()) {
 			return {status: "expired"};
 		}
-		await ds.run(SQL_TOUCH_LAST_USED, [new Date().toISOString(), row.id]);
+		await ds.run(SQL_TOUCH_LAST_USED, [new Date().toISOString(), clientLabelOf(userAgent), row.id]);
 		return {status: "ok", row};
 	} catch (err) {
 		logger.error(err, "::verifyApiKey");

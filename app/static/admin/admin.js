@@ -779,7 +779,8 @@
 	// ======================================================================
 	// セッション(利用者ごとのカード)
 	//   GET  {base}          → {users: [{user, role, isSelf, sessions: [{id, loginAt, lastSeenAt, ip, userAgent, expiresAt, current}],
-	//                                    apiKeys: [{label, role, createdAt, expiresAt, lastUsedAt}]}]}
+	//                                    apiKeys: [{label, role, createdAt, expiresAt, lastUsedAt, lastClient, clientVersion, clientOutdated}]}],
+	//                          skillClientVersion}(lastClient 以降と skillClientVersion は Document Manager が足した物。無ければ出さない)
 	//   GET  {base}/history  → [{id, at, by, targetUser, sessions, apiKeys, sessionDetails: [{loginAt, lastSeenAt, ip, userAgent}](任意)}]
 	//   POST {base}/revoke   ← {user}  → {user, sessions, apiKeys, revokedAt, keptCurrentSession}
 	// ======================================================================
@@ -814,7 +815,21 @@
 			var last = function (u) { return u.sessions.reduce(function (m, s) { return s.lastSeenAt > m ? s.lastSeenAt : m; }, "") || ""; };
 			return last(b) < last(a) ? -1 : last(b) > last(a) ? 1 : 0;
 		});
-		this.part("count").textContent = "セッションか APIキーを持つ利用者 " + users.length + " 人(最終アクセスの新しい順)";
+		this.part("count").textContent = "セッションか APIキーを持つ利用者 " + users.length + " 人(最終アクセスの新しい順)" +
+			(d.skillClientVersion ? "。配っている Skill の版 " + d.skillClientVersion : "");
+		// 最後に使ったクライアント。同梱の Skill なら版を出し、配っている版より古ければ印を付ける
+		var clientOf = function (k) {
+			if (k.clientVersion) {
+				return "・Skill " + esc(k.clientVersion) + (k.clientOutdated
+					? " <span class=\"status_badge stale\" title=\"配っている版は " + esc(d.skillClientVersion || "") + "。利用者に Skill の入れ替えを頼む\">古い</span>"
+					: "");
+			}
+			if (k.lastClient) {
+				var shortName = k.lastClient.length > 40 ? k.lastClient.slice(0, 40) + "…" : k.lastClient;
+				return "・<span title=\"" + esc(k.lastClient) + "\">" + esc(shortName) + "</span>";
+			}
+			return "";
+		};
 		this.part("list").innerHTML = users.map(function (u, i) {
 			var sessions = u.sessions.length ? "<div class=\"data_table_wrap\"><table class=\"session_table\"><thead><tr><th></th><th>ログイン</th><th>最終アクセス</th><th>接続元 IP</th><th>ブラウザ等</th><th>期限</th></tr></thead><tbody>" +
 				u.sessions.map(function (s) {
@@ -824,7 +839,7 @@
 				}).join("") + "</tbody></table></div>"
 				: "<div class=\"session_keys\">ログイン中のセッションなし(APIキーだけで使用)。</div>";
 			var keys = u.apiKeys.length ? u.apiKeys.map(function (k) {
-				return esc(k.label) + "(" + esc(roleLabel(DEFAULT_ROLES, k.role)) + "・最終利用 " + (k.lastUsedAt ? esc(when(k.lastUsedAt)) : "なし") + ")";
+				return esc(k.label) + "(" + esc(roleLabel(DEFAULT_ROLES, k.role)) + "・最終利用 " + (k.lastUsedAt ? esc(when(k.lastUsedAt)) : "なし") + clientOf(k) + ")";
 			}).join("、") : "なし";
 			return "<div class=\"session_card\"><div class=\"session_head\"><span class=\"session_user\">" + esc(u.user) + "</span>" +
 				(u.isSelf ? " <span class=\"status_badge processing\">自分</span>" : "") +

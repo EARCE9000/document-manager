@@ -467,7 +467,9 @@ const ADDED_COLUMNS = Object.freeze({
 	allowed_users: {last_login_at: "TEXT"},
 	// 管理画面の監査ログ(共通アーキテクチャ 構成 6.4)。対象の名前(文書・利用者でない物)、結果(success / denied / failed)、
 	// 経路(screen / apikey)、APIキーの権限、接続元の IP
-	audit_log: {target: "TEXT", result: "TEXT", via: "TEXT", key_role: "TEXT", ip: "TEXT"}
+	audit_log: {target: "TEXT", result: "TEXT", via: "TEXT", key_role: "TEXT", ip: "TEXT"},
+	// APIキーを最後に使ったクライアント(User-Agent)。管理画面で、だれが古い Skill のままかを見る
+	api_keys: {last_client: "TEXT"}
 });
 const addMissingColumns = (targetDb) => {
 	for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {

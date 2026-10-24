@@ -1518,6 +1518,18 @@
 	#apiKeyList .apiKeyExpiry.warnSoon { color: #d9480f; font-weight: 600; }
 	#apiKeyList li.apiKeyExpired { background: #f4f5f7; border-color: #e2e2e2; opacity: 0.75; }
 	#apiKeyList li.apiKeyExpired .apiKeyLabel { color: #888; }
+	/* 最後に使ったクライアントの Skill が、配っている版より古い */
+	#apiKeyList .apiKeyOutdatedBadge {
+		display: inline-block;
+		font-size: 0.75em;
+		font-weight: 600;
+		padding: 1px 8px;
+		border-radius: 999px;
+		background: #fff3c4;
+		color: #8a6d00;
+		margin-left: 4px;
+	}
+	#apiKeyList .apiKeyClient { max-width: 24em; overflow: hidden; text-overflow: ellipsis; }
 	#apiKeyList .apiKeyExpiredBadge {
 		display: inline-block;
 		font-size: 0.75em;
@@ -2088,7 +2100,7 @@
 <div id="apiKeyOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="apiKeyModalBox">
 		<p>APIキー管理</p>
-		<div class="docMeta">Claude Desktop等の自動化クライアントから、ブラウザログインなしでapiを呼び出すためのキーです。<code>Authorization: Bearer &lt;キー&gt;</code> ヘッダーで送信してください。有効期限は当日限り/30日/90日/1年から選べます(最長1年です。期限が切れたら新しいキーを発行してください。漏れた場合はすぐ失効させてください)。権限は発行時に選んだロールに固定されます(後から自分のロールが変わっても既存キーには影響しません)。</div>
+		<div class="docMeta">Claude Desktop等の自動化クライアントから、ブラウザログインなしでapiを呼び出すためのキーです。<code>Authorization: Bearer &lt;キー&gt;</code> ヘッダーで送信してください。有効期限は当日限り/30日/90日/1年から選べます(最長1年です。期限が切れたら新しいキーを発行してください。漏れた場合はすぐ失効させてください)。権限は発行時に選んだロールまでです(後から自分のロールが下がると、キーもその権限まで下がります)。</div>
 		<div id="apiKeyNewBox" style="display:none;"></div>
 		<div class="toolbarRow apiKeyCreateRow" style="margin: 10px 0 0;">
 			<button type="button" id="apiKeyExpirySummaryButton" class="apiKeyExpirySummaryButton"></button>
@@ -5305,6 +5317,19 @@ const loadApiKeys = async () => {
 	if (res.status !== 200) return;
 	const keys = await res.json();
 	const now = Date.now();
+	// 最後に使ったクライアント。同梱の Skill なら版を出し、配っている版より古ければ入れ替えを促す
+	const apiKeyClientHtml = (row) => {
+		if (row.clientVersion) {
+			const outdated = row.clientOutdated
+				? `<span class="apiKeyOutdatedBadge" title="このキーで最後に使った Skill は古い版です。「ツール」から新しい Skill を取得して入れ替えてください">古い</span>`
+				: "";
+			return `<span class="apiKeyMeta">Skill ${escapeHtml(row.clientVersion)}${outdated}</span>`;
+		}
+		if (row.lastClient) {
+			return `<span class="apiKeyMeta apiKeyClient" title="${escapeHtml(row.lastClient)}">クライアント: ${escapeHtml(row.lastClient)}</span>`;
+		}
+		return "";
+	};
 	// 有効なキーを上、失効済みを下に。同じ状態内では発行日時が新しい順
 	const sorted = [...keys].sort((a, b) => {
 		const aExpired = new Date(a.expiresAt).getTime() <= now;
@@ -5332,6 +5357,7 @@ const loadApiKeys = async () => {
 						<span class="apiKeyLabel">発行: ${formatDateTime(row.createdAt)} <span class="apiKeyRoleBadge ${row.role}">${row.role}</span></span>
 						${noteHtml}
 						<span class="apiKeyMeta">${row.lastUsedAt ? `最終使用: ${formatDateTime(row.lastUsedAt)}` : "未使用"}</span>
+						${apiKeyClientHtml(row)}
 						${expiryHtml}
 					</div>
 					<button type="button" class="iconButton apiKeyRevokeButton" data-id="${row.id}" data-label="${escapeHtml(row.label || formatDateTime(row.createdAt))}" title="失効" aria-label="失効">

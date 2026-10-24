@@ -264,7 +264,7 @@ const resolveAuth = async (req, res, next) => {
 		const authorizationHeader = req.headers.authorization || "";
 		if (authorizationHeader.startsWith("Bearer ")) {
 			const apiKey = authorizationHeader.slice("Bearer ".length).trim();
-			const verifyResult = await ApiKeys.verifyApiKey(apiKey);
+			const verifyResult = await ApiKeys.verifyApiKey(apiKey, {userAgent: req.headers["user-agent"]});
 			if (verifyResult.status === "expired") {
 				req.authError = {status: 401, body: {error: "APIキーの有効期限が切れています。新しいキーを発行してください。"}};
 				next();
@@ -374,6 +374,19 @@ const bundledSkillClientVersion = () => {
 		bundledSkillClientVersionCache = ClaudeSkill.getBundledClientVersion();
 	}
 	return bundledSkillClientVersionCache;
+};
+
+// APIキーを最後に使ったクライアント。同梱の Skill なら版を取り出し、配っている版より古いかを添える
+// (管理画面の「セッション」と、本人の「APIキー管理」で、だれが古い Skill のままかを見る)
+const apiKeyClientView = (lastClient) => {
+	const match = SKILL_USER_AGENT.exec(String(lastClient || ""));
+	const clientVersion = match == null ? null : match[0].split("/")[1];
+	const bundled = bundledSkillClientVersion();
+	return {
+		lastClient: lastClient ?? null,
+		clientVersion,
+		clientOutdated: clientVersion != null && bundled != null && isOlder(clientVersion, bundled)
+	};
 };
 
 app.use(BASE_URL_PATH + 'api/', (req, res, next) => {
@@ -3932,7 +3945,8 @@ app.get(BASE_URL_PATH + 'api/apikeys', requireAuth, requireSession, async (req, 
 			createdBy: row.created_by,
 			createdAt: row.created_at,
 			expiresAt: row.expires_at,
-			lastUsedAt: row.last_used_at
+			lastUsedAt: row.last_used_at,
+			...apiKeyClientView(row.last_client)
 		}));
 		res.status(200).json(keys);
 	} catch (err) {
@@ -4031,7 +4045,8 @@ app.get([BASE_URL_PATH + 'api/sessions', BASE_URL_PATH + 'api/admin/sessions'], 
 				role: row.role,
 				createdAt: row.created_at,
 				expiresAt: row.expires_at,
-				lastUsedAt: row.last_used_at
+				lastUsedAt: row.last_used_at,
+				...apiKeyClientView(row.last_client)
 			});
 		}
 		const roles = new Map((await AllowedUsers.listAllowedUsers()).map((row) => [row.email, row.role]));
@@ -4045,7 +4060,8 @@ app.get([BASE_URL_PATH + 'api/sessions', BASE_URL_PATH + 'api/admin/sessions'], 
 			sessions: sessionsByUser.get(user) ?? [],
 			apiKeys: keysByUser.get(user) ?? []
 		}));
-		res.status(200).json({users, mockupTokenMinutes: MockupToken.TTL_MINUTES});
+		// skillClientVersion は配っている Skill の版(キーの行の「古い」の比べる先)
+		res.status(200).json({users, mockupTokenMinutes: MockupToken.TTL_MINUTES, skillClientVersion: bundledSkillClientVersion()});
 	} catch (err) {
 		logger.error(err, "::api/sessions:list");
 		res.status(500).json({error: "Internal Error"});

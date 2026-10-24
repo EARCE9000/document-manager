@@ -717,7 +717,7 @@ const OPERATIONS = [
 	{id: "getUsageMarkdown", method: "get", path: "/api/usage.md", role: "readonly", tag: "その他", summary: "AI向け利用ガイド(Markdown)", produces: "text/markdown", aiGuide: false},
 	// APIキー管理は画面(ログイン)からのみ。APIキーでAPIキーを発行できると、期限が切れる前に
 	// キー自身が新しいキーを作り直せてしまい、有効期限の上限(最長1年)が意味を持たなくなる
-	{id: "listApiKeys", method: "get", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの一覧", aiGuide: false, sessionOnly: true},
+	{id: "listApiKeys", method: "get", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの一覧", description: "各キーに、最後に使ったクライアント(`lastClient`。User-Agent)、それが同梱の Skill ならその版(`clientVersion`)と、配っている版より古いか(`clientOutdated`)を含む", aiGuide: false, sessionOnly: true},
 	{
 		id: "createApiKey", method: "post", path: "/api/apikeys", role: "readonly", tag: "APIキー", summary: "APIキーの発行", aiGuide: false, sessionOnly: true,
 		description: "画面(ログイン)からのみ実行できる。APIキーでの呼び出しは403。ロールは発行者自身のロール以下(readonly/readwriteのみ。adminキーは発行不可)。有効期限は today/30d/90d/365d(無期限キーは発行できない。最長1年)",
@@ -740,7 +740,7 @@ const OPERATIONS = [
 	},
 	{id: "deleteAllowedUser", method: "delete", path: "/api/allowed_users/:email", role: "admin", tag: "利用者管理", summary: "アクセス許可ユーザーの削除", aiGuide: false},
 	// 不正アクセスが疑われるときの切断。画面のログインからのみ(APIキーで他人を切れるようにはしない)
-	{id: "listSessions", method: "get", path: "/api/sessions", role: "admin", tag: "利用者管理", summary: "利用者ごとの、ログイン中のセッションと有効なAPIキー", aiGuide: false, sessionOnly: true},
+	{id: "listSessions", method: "get", path: "/api/sessions", role: "admin", tag: "利用者管理", summary: "利用者ごとの、ログイン中のセッションと有効なAPIキー", description: "各キーに、最後に使ったクライアント(`lastClient`。User-Agent)、それが同梱の Skill ならその版(`clientVersion`)と、配っている版より古いか(`clientOutdated`)を含む。`skillClientVersion` は配っている Skill の版", aiGuide: false, sessionOnly: true},
 	{id: "listSessionRevokes", method: "get", path: "/api/sessions/history", role: "admin", tag: "利用者管理", summary: "切断の履歴", aiGuide: false, sessionOnly: true},
 	{
 		id: "revokeUserSessions", method: "post", path: "/api/sessions/revoke", role: "admin", tag: "利用者管理", summary: "利用者を切断する(セッション・APIキー・モックアップ引換券の一式)", aiGuide: false, sessionOnly: true,

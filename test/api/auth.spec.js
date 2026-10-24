@@ -254,6 +254,43 @@ test.describe.serial("APIキーで使える権限は、キーの権限と発行�
 	});
 });
 
+test.describe("APIキーを最後に使ったクライアントと版", () => {
+	const session = {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(keys.sessionCookie)}`};
+	const useWith = async (request, apiKey, userAgent) => {
+		expect((await request.get("api/tag_order", {headers: {...bearer(apiKey), "User-Agent": userAgent}})).status()).toBe(200);
+	};
+	const rowOf = async (request, id) => (await (await request.get("api/apikeys", {headers: session})).json()).find((row) => row.id === id);
+
+	test("同梱の Skill なら版を残し、配っている版より古ければ印が付く。ほかのクライアントは名乗りのまま残す", async ({request}) => {
+		// 配っている版(テストのサーバーは SKILL_CLIENT_VERSION で決めている)
+		const bundled = (await (await request.get("api/admin/sessions", {headers: session})).json()).skillClientVersion;
+		expect(bundled).toMatch(/^\d+\.\d+\.\d+$/);
+		const created = await (await request.post("api/apikeys", {headers: session, data: {label: "client-version-test", role: "readonly", expiryOption: "30d"}})).json();
+		expect(await rowOf(request, created.id)).toMatchObject({lastClient: null, clientVersion: null, clientOutdated: false});
+
+		await useWith(request, created.apiKey, "document-manager-skill/1.0.0 (python 3.12)");
+		expect(await rowOf(request, created.id)).toMatchObject({lastClient: "document-manager-skill/1.0.0 (python 3.12)", clientVersion: "1.0.0", clientOutdated: true});
+
+		await useWith(request, created.apiKey, `document-manager-skill/${bundled} (node 24.0.0)`);
+		expect(await rowOf(request, created.id)).toMatchObject({clientVersion: bundled, clientOutdated: false});
+
+		// 制御文字は除き、長すぎる名乗りは切る
+		await useWith(request, created.apiKey, `curl/8.0 ${"x".repeat(300)}`);
+		const other = await rowOf(request, created.id);
+		expect(other).toMatchObject({clientVersion: null, clientOutdated: false});
+		expect(other.lastClient.startsWith("curl/8.0 ")).toBe(true);
+		expect(other.lastClient.length).toBe(200);
+
+		// 管理の画面(セッション)にも同じものが出て、配っている版も添える
+		const admin = await (await request.get("api/admin/sessions", {headers: session})).json();
+		expect(admin.skillClientVersion).toBe(bundled);
+		const mine = admin.users.find((user) => user.user === keys.owner);
+		expect(mine.apiKeys.find((key) => key.label === "client-version-test")).toMatchObject({clientVersion: null, lastClient: other.lastClient});
+
+		await request.delete(`api/apikeys/${created.id}`, {headers: session});
+	});
+});
+
 test.describe("サーバー更新のお知らせ", () => {
 	const session = {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(keys.sessionCookie)}`};
 	const BUILD = "20260925_000000"; // test/api/serve.js が設定している値
