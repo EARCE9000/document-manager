@@ -168,7 +168,9 @@ const main = async () => {
 		env: {
 			...process.env,
 			DATA_DIR: path.join(WORK_DIR, "data"),
-			DATABASE_BACKEND: "sqlite",
+			// 既定は SQLite。DATABASE_BACKEND=postgres と DATABASE_URL を渡せば PostgreSQL で流す
+			// (ログインの戻りでセッションの保存が間に合うかは、保存が非同期の PostgreSQL で効く)
+			DATABASE_BACKEND: process.env.DATABASE_BACKEND || "sqlite",
 			STORAGE_BACKEND: "local",
 			LISTEN_PORT: String(appPort),
 			BASE_PATH: "",

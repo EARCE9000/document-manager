@@ -55,6 +55,39 @@ const listDocumentDirs = () => {
 	}
 };
 
+// 登録のトランザクションを、わざと失敗させる/戻す。DATABASE_BACKEND で SQLite と PostgreSQL を切り替える
+//   SQLite    : 全文検索用のテーブルを別の接続から落とす
+//   PostgreSQL: 「消えるべき」で始まる名前の文書を断る決まり(CHECK)を足す(DATABASE_URL の DB を使う)
+const POSTGRES = process.env.DATABASE_BACKEND === "postgres";
+const registration = POSTGRES
+	? (() => {
+		const {Client} = require(path.join(APP_DIR, "node_modules", "pg"));
+		const run = async (sql) => {
+			const client = new Client({connectionString: process.env.DATABASE_URL});
+			await client.connect();
+			try { await client.query(sql); } finally { await client.end(); }
+		};
+		return {
+			break: () => run("ALTER TABLE documents ADD CONSTRAINT discard_test_fail CHECK (entry_file NOT LIKE '消えるべき%')"),
+			repair: () => run("ALTER TABLE documents DROP CONSTRAINT IF EXISTS discard_test_fail")
+		};
+	})()
+	: (() => {
+		const Database = require(path.join(APP_DIR, "node_modules", "better-sqlite3"));
+		const dbFile = () => {
+			const dbDir = path.join(dataDir, "db");
+			return path.join(dbDir, fs.readdirSync(dbDir).filter((name) => name.endsWith(".sqlite")).sort().pop());
+		};
+		const run = (sql) => {
+			const side = new Database(dbFile());
+			try { side.exec(sql); } finally { side.close(); }
+		};
+		return {
+			break: async () => run("DROP TABLE IF EXISTS documents_fts"),
+			repair: async () => run("CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(id UNINDEXED, entry_file, content_text, tokenize = 'trigram')")
+		};
+	})();
+
 const main = async () => {
 	const server = spawn(process.execPath, ["server.js"], {
 		cwd: APP_DIR,
@@ -88,13 +121,7 @@ const main = async () => {
 
 		console.log("\n■ 登録に失敗したアップロード(書いたものを捨てる)");
 		const before = listDocumentDirs().length;
-		// 全文検索用のテーブルを別の接続から落とし、登録のトランザクションを失敗させる
-		const Database = require(path.join(APP_DIR, "node_modules", "better-sqlite3"));
-		const dbDir = path.join(dataDir, "db");
-		const dbFile = fs.readdirSync(dbDir).filter((name) => name.endsWith(".sqlite")).sort().pop();
-		const side = new Database(path.join(dbDir, dbFile));
-		side.exec("DROP TABLE IF EXISTS documents_fts");
-		side.close();
+		await registration.break();
 
 		const failed = await upload("消えるべき文書.html", "<html><body>失敗する本文</body></html>");
 		check(failed.status === 500, "登録に失敗する", `status=${failed.status}`);
@@ -123,10 +150,8 @@ const main = async () => {
 		check(reconcile.missingFiles.length === 0, "欠損も無い", JSON.stringify(reconcile.missingFiles));
 
 		console.log("\n■ 後始末のあとも通常のアップロードができる");
-		// 落としたテーブルを戻して、後始末がDBやストレージに悪い影響を残していないことを見る
-		const restore = new Database(path.join(dbDir, dbFile));
-		restore.exec("CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(id UNINDEXED, entry_file, content_text, tokenize = 'trigram')");
-		restore.close();
+		// 壊したところを戻して、後始末がDBやストレージに悪い影響を残していないことを見る
+		await registration.repair();
 		const ok3 = await upload("あとから登録.md", "# あとから\n\n本文");
 		check(ok3.status === 200, "登録できる", `status=${ok3.status}`);
 		const ok3Files = ok3.body?.id ? fs.readdirSync(path.join(documentsDir, ok3.body.id)) : [];
