@@ -23,6 +23,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
 const {loadKeys, TEST_DATA_DIR} = require("./config.js");
+// 原本の置き場所(local / S3)を直にのぞく。EC2 と ECS の両方の形で流すため
+const probe = require("./storage-probe.js");
 
 const keys = loadKeys();
 const rw = {Authorization: `Bearer ${keys.readwrite}`};
@@ -103,10 +105,20 @@ test.describe.serial("モックアップの原本と控え", () => {
 
 	// 既に動いている環境がある。入れ替えた瞬間に見えなくなることがあってはいけない
 	test("local構成の並びは従来どおり(<DATA_DIR>/mockups/<ID>/ に原本と site/)", async () => {
+		test.skip(probe.backend !== "local", "local の構成だけの確認");
 		expect(fs.existsSync(path.join(mockupDir(id), "source.zip")), "原本の置き場所が変わっている").toBe(true);
 		expect(fs.existsSync(path.join(mockupDir(id), "preview.png")), "プレビュー画像の置き場所が変わっている").toBe(true);
 		expect(fs.existsSync(path.join(siteDir(id), "index.html")), "展開先が変わっている").toBe(true);
 		expect(fs.existsSync(path.join(siteDir(id), "assets", "style.css"))).toBe(true);
+	});
+
+	// ECS などでは、原本は S3 に置き、展開したものだけを手元(コンテナのディスク)に置く
+	test("S3 の構成では、原本は S3 に、展開したものだけが手元にある", async () => {
+		test.skip(probe.backend !== "s3", "S3 の構成だけの確認");
+		expect(await probe.exists("mockups", id, "source.zip"), "原本が S3 に無い").toBe(true);
+		expect(await probe.exists("mockups", id, "preview.png"), "プレビュー画像が S3 に無い").toBe(true);
+		expect(fs.existsSync(path.join(mockupDir(id), "source.zip")), "原本が手元にも置かれている").toBe(false);
+		expect(fs.existsSync(path.join(siteDir(id), "index.html")), "展開先が変わっている").toBe(true);
 	});
 
 	test("ふつうに配信できる", async ({request}) => {
@@ -160,16 +172,16 @@ test.describe.serial("モックアップの原本と控え", () => {
 
 	// 原本まで失われていたら作り直しようがない。黙って空を返さず、失敗として扱う
 	test("原本が無ければ、配信は失敗として扱う", async ({request}) => {
-		const zipPath = path.join(mockupDir(id), "source.zip");
-		const backup = fs.readFileSync(zipPath);
+		test.skip(!probe.supported, `STORAGE_BACKEND=${probe.backend} は置き場所をのぞけない`);
+		const backup = await probe.read("mockups", id, "source.zip");
 		fs.rmSync(siteDir(id), {recursive: true, force: true});
-		fs.rmSync(zipPath, {force: true});
+		await probe.remove("mockups", id, "source.zip");
 		try {
 			const base = await viewBase(request, id);
 			const res = await request.get(`${base}/index.html`, {headers: ro});
 			expect([404, 500], "原本が無いのに200を返している").toContain(res.status());
 		} finally {
-			fs.writeFileSync(zipPath, backup);
+			await probe.write("mockups", id, "source.zip", backup);
 		}
 	});
 

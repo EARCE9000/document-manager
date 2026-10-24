@@ -118,7 +118,9 @@ test.describe("サーバー(共通の形)", () => {
 			expect(typeof byKey[key].latencyMs).toBe("number");
 			expect(Date.parse(byKey[key].lastSuccessAt)).not.toBeNaN();
 		}
-		expect(byKey.storage.product).toBe("ローカルのディスク");
+		// 試験は local でも S3(MinIO)でも流せる(STORAGE_BACKEND)
+		const storageProducts = {local: "ローカルのディスク", s3: "Amazon S3(互換)", gcs: "Google Cloud Storage"};
+		expect(byKey.storage.product).toBe(storageProducts[process.env.STORAGE_BACKEND || "local"]);
 		// 試験では IdP(OIDC_ISSUER)と Weaviate を使っていない
 		expect(byKey.idp.configured).toBe(false);
 		expect(byKey.weaviate.configured).toBe(false);

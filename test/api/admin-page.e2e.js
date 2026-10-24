@@ -334,6 +334,12 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		await page.click("#reconcileScanButton");
 		const result = page.locator("#reconcileResult");
 		await expect(result.locator(".status_badge").first()).toBeVisible();
+		// 照合はローカルの置き場だけ。S3 などでは「対象外」と、使えない理由を出す
+		if ((process.env.STORAGE_BACKEND || "local") !== "local") {
+			await expect(result.locator(".status_badge").first()).toHaveText("対象外");
+			await expect(result).toContainText("ローカルの置き場だけ");
+			return;
+		}
 		await expect(result).toContainText("実ファイルだけある");
 		await expect(result).toContainText("DB にあるのにファイルが無い");
 		await expect(result).toContainText("記録は残したままにする");

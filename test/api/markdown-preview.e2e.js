@@ -16,9 +16,9 @@
  */
 
 const {test, expect} = require("@playwright/test");
-const fs = require("node:fs");
-const path = require("node:path");
-const {loadKeys, BASE_URL, TEST_DATA_DIR} = require("./config.js");
+const {loadKeys, BASE_URL} = require("./config.js");
+// 原本の置き場所(local / S3)を直にのぞく。EC2 と ECS の両方の形で流すため
+const probe = require("./storage-probe.js");
 
 const keys = loadKeys();
 const rw = {Authorization: `Bearer ${keys.readwrite}`};
@@ -103,26 +103,27 @@ test.describe.serial("Markdownプレビューの表(実ブラウザ)", () => {
 	test("古い版で作られたプレビューは、配信時に作り直される", async ({page, request}) => {
 		const target = await upload(request, `作り直し-${Date.now()}.md`,
 			"| A | B |\n|---|---|\n| 1 | 2 |");
-		const previewPath = path.join(TEST_DATA_DIR, "documents", target, "preview.html");
+		test.skip(!probe.supported, `STORAGE_BACKEND=${probe.backend} は置き場所をのぞけない`);
 
 		// 直す前の見た目(版の印も枠も無い)へ差し替えて、古い文書を作る
-		fs.writeFileSync(previewPath, [
+		await probe.write("documents", target, "preview.html", Buffer.from([
 			"<!DOCTYPE html><html><head><meta charset=\"utf-8\">",
 			"<style>table { border-collapse: collapse; }</style>",
 			"</head><body><table><tr><td>むかしの見た目</td></tr></table></body></html>"
-		].join("\n"), "utf-8");
+		].join("\n"), "utf-8"));
 
 		await page.goto(`api/documents/${target}/file`);
 		// 元ファイルから作り直されている(差し替えた中身ではなく、元のMarkdownが出る)
 		await expect(page.locator("td").first()).toHaveText("1");
 		await expect(page.locator(".tableWrap")).toHaveCount(1);
-		expect(fs.readFileSync(previewPath, "utf-8"), "保存側が古いままだと毎回作り直すことになる")
+		expect((await probe.read("documents", target, "preview.html")).toString("utf-8"), "保存側が古いままだと毎回作り直すことになる")
 			.toContain("dm-preview-version");
 
-		// 2回目は作り直さない(印が付いているため)
-		const writtenAt = fs.statSync(previewPath).mtimeMs;
+		// 2回目は作り直さない(印が付いているため)。S3 の更新時刻は秒の単位なので、間をあけてから比べる
+		const writtenAt = await probe.modifiedAt("documents", target, "preview.html");
+		if (probe.timeResolutionMs > 0) await page.waitForTimeout(probe.timeResolutionMs + 100);
 		await page.goto(`api/documents/${target}/file`);
-		expect(fs.statSync(previewPath).mtimeMs, "配信のたびに書き込んでいる").toBe(writtenAt);
+		expect(await probe.modifiedAt("documents", target, "preview.html"), "配信のたびに書き込んでいる").toBe(writtenAt);
 	});
 
 	// 作り直せないものまで触ると、直らないうえに毎回書き込みが走る
@@ -131,10 +132,12 @@ test.describe.serial("Markdownプレビューの表(実ブラウザ)", () => {
 			headers: rw, multipart: {uploadfile: {name: `そのまま-${Date.now()}.html`,
 				mimeType: "text/html", buffer: Buffer.from("<p>元のまま</p>")}}
 		})).json();
-		const before = fs.statSync(path.join(TEST_DATA_DIR, "documents", doc.id, doc.entryFile)).mtimeMs;
+		test.skip(!probe.supported, `STORAGE_BACKEND=${probe.backend} は置き場所をのぞけない`);
+		const before = await probe.modifiedAt("documents", doc.id, doc.entryFile);
+		if (probe.timeResolutionMs > 0) await page.waitForTimeout(probe.timeResolutionMs + 100);
 		await page.goto(`api/documents/${doc.id}/file`);
 		await expect(page.locator("p")).toHaveText("元のまま");
-		expect(fs.statSync(path.join(TEST_DATA_DIR, "documents", doc.id, doc.entryFile)).mtimeMs,
+		expect(await probe.modifiedAt("documents", doc.id, doc.entryFile),
 			"作り直せない形式の実体に書き込んでいる").toBe(before);
 	});
 });
