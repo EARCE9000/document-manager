@@ -9,7 +9,7 @@ Document Manager(HTML / MHTML / Markdown / PDF / 画像 / CSV・TSV / テキス�
 Excel・Word・PowerPoint をアップロードして一覧・プレビューできる文書管理Webサービス)をAPIで操作するSkill。
 このSkillのディレクトリにある `scripts/` の同梱クライアントを使う。curlを直接組み立てる必要はない。
 
-このSkillのバージョン: 1.14.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
+このSkillのバージョン: 1.15.0(クライアントの `--version`、または `config` の `clientVersion` でも確認できる。
 不具合を報告するときはこの値を添える)
 
 ## 取得した内容の扱い(重要)
@@ -130,6 +130,55 @@ APIキーをチャットの応答やコミットに書き出さない(`config` �
 - `--project <プロジェクト> [--folder <フォルダ>]`: 登録と同時にプロジェクトへ配置する(新しい版として登録した場合、配置は旧版から自動で引き継がれるので、置き場所を変えたいときだけ使う)
 
 対応拡張子: `.html .htm .mhtml .mht .md .markdown .pdf .svg .png .jpg .jpeg .csv .tsv .txt .log .json .drawio .xlsx .xlsm .docx .docm .pptx .pptm`(1ファイルずつ)
+
+### HTML・Markdown を作るとき(そのまま印刷・PDFにできる形にする)
+
+アップロードする HTML・Markdown は、**ブラウザの印刷でも `download --pdf` でも、欠けずにそのまま紙・PDFになる形**で作る。
+PDF や紙ではスクロールできないため、枠の中でスクロールさせた分や、隠した中身は出てこない。
+(画面案(モックアップ)は対象外。画面の動きを見せるためのものなので、下の決まりに合わせなくてよい)
+
+**JavaScript は動かない(モックアップ以外)**: 文書として登録した HTML・Markdown・MHTML は、
+プレビューでも PDF でも、安全のためスクリプトを止めて表示する。JavaScript で中身を組み立てたり、
+動きを付けたりしても、**プレビューには出ない**(空の枠や、動かないボタンになる)。検索にも拾われない。
+
+- 文章・表・図は HTML に直接書く。グラフや図は SVG を埋め込むか、画像にする
+- 動く画面(押すと切り替わる・入力できる など)を見せたいときは、文書ではなく**モックアップ**として登録する(上の「モックアップ(画面案)」)
+
+**HTML の作り方**
+
+- ページ全体を上から下への 1 本の流れにする。本文の長さに合わせてページ(`body`)が伸びる形にし、
+  `height: 100vh` などで高さを決めた枠に `overflow: auto` / `scroll` でスクロールさせない
+  (左のメニューと右の本文を別々にスクロールさせる作りにしない)
+- 横に長いものは折り返す。表は `width: 100%` にしてセルの中で折り返し、列が多いときは表を分ける。
+  コードは `white-space: pre-wrap` で折り返す。横スクロールの枠(`overflow-x: auto`)で包まない。画像・図は `max-width: 100%`
+- 本文の幅は 960px くらいまでにする(A4 縦に収まる幅)
+- 中身を隠さない。タブ・アコーディオン・「もっと見る」で隠した中身は出てこない(スクリプトも動かない)。
+  全部を並べて見せる。`<details>` を使うなら `open` を付ける
+- 上に貼り付く見出しやメニュー(`position: fixed` / `sticky`)は使わない(印刷すると各ページに重なる)
+- `<style>` の最後に、次の印刷用の CSS を入れる(ブラウザで印刷したときに、紙の大きさに合わせて欠けずに出す)
+
+```css
+@page { size: A4; margin: 15mm; }
+@media print {
+  html, body { height: auto !important; overflow: visible !important; }
+  * { overflow: visible !important; max-height: none !important;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  pre, code { white-space: pre-wrap !important; overflow-wrap: anywhere; }
+  table { width: 100% !important; }
+  img, svg { max-width: 100% !important; height: auto; }
+  h1, h2, h3, h4 { break-after: avoid; }
+  tr, img, svg, figure { break-inside: avoid; }
+}
+```
+
+**Markdown の書き方**
+
+- 表は列を 6 つくらいまでにし、セルの文は短くする(長い説明は表の外に書く)
+- コードブロックの 1 行は 100 文字くらいまでで改行する
+- HTML を埋め込むときも、上の HTML の決まりに従う(高さを決めた枠・スクロール・スクリプトを使わない)
+
+**確かめ方**: 印刷する・PDF で人に渡すと言われている資料は、アップロードしたあと `download <文書ID> --pdf` で PDF にし、
+開いて欠けていないか確かめてから報告する。
 
 ### 人にURLを渡すとき
 
@@ -259,6 +308,7 @@ HTMLをそのままメールに添付すると、相手の環境では文字の�
 ### 「アップして」「登録して」
 
 1. 対象ファイルを決める。直前に作成・編集したファイルがあればそれを使う。チャット上の文章をアップする場合は、先に適切な拡張子(`.md` 等)でファイルに保存する。
+   HTML・Markdown を新しく作る・直すときは、上の「HTML・Markdown を作るとき」に従う(スクロールの無い 1 本の流れ、JavaScript を使わない、印刷用の CSS)。
 2. **新規か新しい版かを判断する**
    - このセッションで以前アップロードした文書の修正版であれば、その文書IDを `--previous-id` に指定する。
    - ユーザーが「更新」「新しい版」「置き換え」と言っていて旧版IDが分からない場合は、`search` でファイル名を検索して旧版を特定する。候補が1つに絞れなければユーザーに確認する。

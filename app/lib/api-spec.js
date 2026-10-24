@@ -1197,6 +1197,20 @@ draw.ioの図(\`.drawio\`)は、そのファイルだけをアップロードし
 (readonlyロールのキーの場合はアップロードできないので、その旨をユーザーに伝えてください)。`
 	},
 	{
+		when: "HTML・Markdownの文書を作るとき(アップロードする資料を作る・直すとき)",
+		// モックアップが無効な環境では、モックアップに触れない(呼べない機能へ誘わない)
+		do: ({mockupsEnabled}) => `**ブラウザの印刷でもPDFでも、欠けずにそのまま出る形**で作ってください
+(PDFや紙ではスクロールできないため、枠の中でスクロールさせた分や、隠した中身は出てきません${mockupsEnabled ? "。モックアップ(画面案)は対象外" : ""})。
+- **JavaScriptは動きません${mockupsEnabled ? "(モックアップ以外)" : ""}**。文書のHTML・Markdown・MHTMLは、プレビューでもPDFでもスクリプトを止めて表示するため、
+  JavaScriptで組み立てた中身や動きは**プレビューに出ません**(検索にも拾われません)。文章・表・図はHTMLに直接書き、図はSVGか画像にしてください${mockupsEnabled ? "。\n  動く画面を見せたいときは、文書ではなくモックアップとして登録してください" : ""}
+- ページ全体を上から下への1本の流れにする(\`height: 100vh\`などで高さを決めた枠に\`overflow: auto/scroll\`でスクロールさせない)
+- 横に長いものは折り返す(表は\`width: 100%\`でセル内折り返し・列が多ければ分ける、コードは\`white-space: pre-wrap\`、\`overflow-x: auto\`の枠で包まない、画像は\`max-width: 100%\`)。本文の幅は960pxくらいまで
+- タブ・アコーディオン・「もっと見る」で中身を隠さない(\`<details>\`には\`open\`を付ける)。\`position: fixed/sticky\`は使わない
+- \`<style>\`の最後に印刷用のCSSを入れる: \`@page { size: A4; margin: 15mm; } @media print { html, body { height: auto !important; overflow: visible !important; } * { overflow: visible !important; max-height: none !important; print-color-adjust: exact; } pre, code { white-space: pre-wrap !important; overflow-wrap: anywhere; } table { width: 100% !important; } img, svg { max-width: 100% !important; height: auto; } h1, h2, h3, h4 { break-after: avoid; } tr, img, svg, figure { break-inside: avoid; } }\`
+- Markdownの表は列を6つくらいまで、コードブロックの1行は100文字くらいまでにする
+- 印刷する・PDFで人に渡すと言われている資料は、アップロードしたあと「PDFにして渡す」のAPIでPDFにし、欠けていないか確かめてから報告する`
+	},
+	{
 		when: "「この資料の体裁を見たい」「PDFでほしい」「図表を確認したい」(Excel/Word/PowerPointの場合)",
 		do: `このDocument Managerは、Office文書の**中身のテキスト**を検索・取得できるようにしています。
 「どんな内容か」を答えるだけなら、検索APIや文書取得APIで得られるテキストで足ります。
@@ -1346,7 +1360,8 @@ module.exports.buildUsageMarkdown = ({baseUrl, vectorSearchEnabled, mockupsEnabl
 
 	const curl = CURL_EXAMPLES(base).filter(include).map(({title, command}) => `# ${title}\n${command}`).join("\n\n");
 
-	const instructions = AI_INSTRUCTIONS.filter(include).map(({when, do: what}) => `### ${when}\n${what}`).join("\n\n");
+	const instructions = AI_INSTRUCTIONS.filter(include)
+		.map(({when, do: what}) => `### ${when}\n${typeof what === "function" ? what({vectorSearchEnabled, mockupsEnabled, miroEnabled}) : what}`).join("\n\n");
 
 	// このガイドはチャットへの貼り付け・カスタム指示への保存を想定しているため、コピーした時点で
 	// 内容が固定される。一方サーバー側は対応形式やAPIが増えていくため、貼り付けたものは静かに
@@ -1460,7 +1475,7 @@ module.exports.buildOpenApi = ({baseUrl, vectorSearchEnabled, mockupsEnabled, mi
 
 	const instructions = AI_INSTRUCTIONS
 		.filter((item) => (!item.vectorOnly || vectorSearchEnabled) && (!item.miroOnly || miroEnabled))
-		.map(({when, do: what}) => ({when, do: what}));
+		.map(({when, do: what}) => ({when, do: typeof what === "function" ? what({vectorSearchEnabled, mockupsEnabled, miroEnabled}) : what}));
 
 	return {
 		openapi: "3.1.0",
