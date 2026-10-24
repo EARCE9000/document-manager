@@ -63,7 +63,7 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
 <li>Markdown・PDF・draw.io・Excel/Word/PowerPoint など、よく使う形式をブラウザでそのまま閲覧</li>
 <li>版の管理、タグとプロジェクトでの整理、全文検索と意味検索</li>
 <li>Claude Code・Codex などの AI エージェントから「この資料アップして」で登録・検索</li>
-<li>Miro のボードへ、資料を並べて書き出し(任意)</li>
+<li>Miro のボードへ、資料の書き出しやフロー図・付箋の作図(任意)</li>
 </ul>
 <!-- /wp:list -->
 
@@ -175,6 +175,7 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
 <li>向きは右・左・上・下・斜めの 8 方向と十字。十字ではタグで 4 つに分けて、目印の斜め 4 か所に出します</li>
 <li>PDF・画像はそのまま、HTML・Markdown・draw.io は PDF に、Office は体裁つきの PDF にして出し、各資料に「Document Manager で開く」リンクを付けます</li>
 <li>AI エージェントに「この資料を Miro に書き出して」と頼むか、文書のプレビューのアイコンから 1 件ずつ書き出します。画面の上の「Miro」で目印を置き、書き出しの履歴を見られます</li>
+<li>資料の代わりに、AI エージェントが箱と線の一覧からフロー図(担当ごとのレーン・分かれ道・ループ)を描いたり、付箋を島ごとにまとめて並べたり(親和図・ふりかえり)もできます。位置は Document Manager が決めるので、打ち合わせではそのまま Miro の上で直せます</li>
 </ul>
 <!-- /wp:list -->
 
@@ -189,10 +190,11 @@ www.earce.biz(WordPress / Twenty Seventeen)に載せる Document Manager の紹�
 <!-- wp:list -->
 <ul class="wp-block-list">
 <li><strong>外部へ出ない</strong>: draw.io・Mermaid の描画ライブラリは同梱しており、CDN を使いません。どの資料がいつ見られたかが第三者に伝わりません</li>
-<li><strong>ログインは OpenID Connect</strong>: Entra ID・Cognito・Google などを設定で差し替えられます。使えるのは許可リストの人だけで、権限は管理者・読み書き・閲覧のみの3種類です</li>
+<li><strong>ログインは OpenID Connect</strong>: Entra ID・Cognito・Google などを設定で差し替えられます。使えるのは許可リストの人だけで、権限は管理者・読み書き・閲覧のみの3種類です。AI エージェント用の API キーは、発行した人のいまの権限を超えて使えません</li>
 <li><strong>危ないものは置かせない</strong>: 鍵や証明書(.env・.pem など)は、検索に載って全員に読まれないよう、あえて受け付けません</li>
 <li><strong>変換は閉じ込めて行う</strong>: Office や HTML の変換サービスは、インターネットにも他のサービスにも出られない専用ネットワークで動かします</li>
-<li><strong>操作は記録に残る</strong>: 誰が何をしたかは操作履歴で確認でき、不審なときは利用者のセッションをまとめて切断できます</li>
+<li><strong>操作は記録に残る</strong>: ログイン・文書の書き込み・管理の操作は監査ログに残り、管理者が全員ぶんを探せます。不審なときは利用者のセッションと API キーをまとめて切断できます</li>
+<li><strong>サーバーに入らずに点検できる</strong>: 管理の画面で、つながる先(DB・ファイルの置き場・認証基盤など)の確認、危ない設定の警告、動いている部品の版と部品表を見られます</li>
 </ul>
 <!-- /wp:list -->
 
