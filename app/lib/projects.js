@@ -39,6 +39,7 @@ const SQL_RESTORE_PROJECT = `UPDATE projects SET archived_by = NULL, archived_at
 const SQL_UPDATE_PROJECT_LOCKED = `UPDATE projects SET locked = ? WHERE id = ?`;
 const SQL_DELETE_PROJECT = `DELETE FROM projects WHERE id = ?`;
 const SQL_DELETE_FOLDERS_BY_PROJECT = `DELETE FROM project_folders WHERE project_id = ?`;
+const SQL_DELETE_WORK_GUIDE = `DELETE FROM work_guides WHERE scope = ?`;
 const SQL_DELETE_DOCUMENTS_BY_PROJECT = `DELETE FROM project_documents WHERE project_id = ?`;
 const SQL_MAX_PROJECT_SORT_ORDER = `SELECT MAX(sort_order) AS "maxOrder" FROM projects`;
 
@@ -213,6 +214,8 @@ module.exports.deleteProject = async (id) => {
 		return await ds.transaction(async (tx) => {
 			await tx.run(SQL_DELETE_DOCUMENTS_BY_PROJECT, [id]);
 			await tx.run(SQL_DELETE_FOLDERS_BY_PROJECT, [id]);
+			// そのプロジェクトの作業の手引き(lib/work-guides.js)も消す。残すと、同じIDが二度と使われないので誰にも読まれない
+			await tx.run(SQL_DELETE_WORK_GUIDE, [id]);
 			const result = await tx.run(SQL_DELETE_PROJECT, [id]);
 			return result.changes > 0;
 		});

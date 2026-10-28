@@ -464,6 +464,15 @@ const MIGRATIONS = [
 	// APIキーを最後に使ったクライアント(User-Agent。SQLite の v21 に後から足した列)
 	{version: 20, sql: `
 		ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS last_client TEXT;
+	`},
+	// 作業の手引き(AI が作業を始める前に読む、資料の目次。lib/work-guides.js)。scope は "global" かプロジェクトのID
+	{version: 21, sql: `
+		CREATE TABLE IF NOT EXISTS work_guides (
+			scope TEXT PRIMARY KEY,
+			markdown TEXT NOT NULL,
+			updated_by TEXT,
+			updated_at TEXT NOT NULL
+		);
 	`}
 ];
 

@@ -75,7 +75,7 @@ const {server} = require("../../app/server.js");
 		const tables = [
 			"document_tags", "project_documents", "project_folders", "projects",
 			"audit_log", "api_keys", "allowed_users", "tag_order", "vector_search_settings",
-			"documents", "sessions", "session_revocations"
+			"documents", "sessions", "session_revocations", "work_guides"
 		];
 		for (const table of tables) {
 			await ds.run(`DELETE FROM ${table}`);

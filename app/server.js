@@ -4400,6 +4400,142 @@ app.delete(BASE_URL_PATH + 'api/admin/users/:email', requireAuth, requireAdmin, 
 	}
 });
 
+/* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+/*
+	作業の手引き(lib/work-guides.js)。AI が作業を始める前に読む、資料の目次。
+	読むのは誰でも(閲覧のみの APIキーでも)。書くのは管理者だけ(AI が従う指示になるため)。
+	全体共通("global")と、プロジェクトごと(プロジェクトのID)の 2 段
+*/
+/* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
+const WorkGuides = require("./lib/work-guides.js");
+
+// 手引きに、中のリンクがいまどの文書を指しているかを添える(AI が文書IDでそのまま読みに行けるように)
+const workGuideView = async (guide) => guide == null ? null : {...guide, links: await WorkGuides.resolveLinks(guide.markdown)};
+
+// scope("global" かプロジェクトのID)を確かめ、表示名を添える。知らないものは null
+const workGuideScopeOf = async (scope) => {
+	if (scope === WorkGuides.GLOBAL_SCOPE) return {scope, name: "全体共通", project: null};
+	if (typeof scope !== "string" || scope === "" || scope.length > 100) return null;
+	const project = await Projects.getProject(scope);
+	return project == null ? null : {scope, name: project.name, project};
+};
+
+/**
+ * 作業の手引き(全体共通 + 指定したプロジェクト)。AI がセッションの始めに読む
+ * ?project=<プロジェクトのID>
+ */
+app.get(BASE_URL_PATH + 'api/work-guides', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const projectId = typeof req.query.project === "string" && req.query.project !== "" ? req.query.project : null;
+		let project = null;
+		if (projectId != null) {
+			project = await Projects.getProject(projectId);
+			if (project == null) {
+				res.status(404).json({error: "プロジェクトが見つかりません"});
+				return;
+			}
+		}
+		res.status(200).json({
+			global: await workGuideView(await WorkGuides.get(WorkGuides.GLOBAL_SCOPE)),
+			project: project == null ? null : {
+				id: project.id,
+				name: project.name,
+				guide: await workGuideView(await WorkGuides.get(project.id))
+			}
+		});
+	} catch (err) {
+		logger.error(err, "::api/work-guides");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 管理の画面: 手引きの一覧(全体共通と、プロジェクトごとに書いてあるかどうか) */
+app.get(BASE_URL_PATH + 'api/admin/work-guides', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const written = new Map((await WorkGuides.listAll()).map((guide) => [guide.scope, guide]));
+		const summary = (guide) => guide == null ? null : {updatedAt: guide.updatedAt, updatedBy: guide.updatedBy, length: guide.markdown.length};
+		const projects = [...await Projects.listProjects(), ...await Projects.listArchivedProjects()];
+		res.status(200).json({
+			maxLength: WorkGuides.MAX_LENGTH,
+			global: summary(written.get(WorkGuides.GLOBAL_SCOPE)),
+			projects: projects.map((project) => ({
+				id: project.id,
+				name: project.name,
+				archived: project.archivedAt != null,
+				guide: summary(written.get(project.id))
+			}))
+		});
+	} catch (err) {
+		logger.error(err, "::api/admin/work-guides:list");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 管理の画面: 手引きのリンクを確かめる(保存の前に。AI が作った下書きに、ありもしない URL が混じることがある) */
+app.post(BASE_URL_PATH + 'api/admin/work-guides/check', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const markdown = typeof req.body?.markdown === "string" ? req.body.markdown : "";
+		if (markdown.length > WorkGuides.MAX_LENGTH) {
+			res.status(413).json({error: `手引きは ${WorkGuides.MAX_LENGTH} 文字までです`});
+			return;
+		}
+		res.status(200).json({links: await WorkGuides.resolveLinks(markdown)});
+	} catch (err) {
+		logger.error(err, "::api/admin/work-guides/check");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 管理の画面: 手引き 1 つ(scope は "global" かプロジェクトのID) */
+app.get(BASE_URL_PATH + 'api/admin/work-guides/:scope', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const scope = await workGuideScopeOf(req.params.scope);
+		if (scope == null) {
+			res.status(404).json({error: "その手引きの置き場所はありません"});
+			return;
+		}
+		const guide = await WorkGuides.get(scope.scope);
+		res.status(200).json({scope: scope.scope, name: scope.name, guide: await workGuideView(guide)});
+	} catch (err) {
+		logger.error(err, "::api/admin/work-guides/:scope:get");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/** 管理の画面: 手引きを保存する。空にすると消える。監査ログに残す */
+app.put(BASE_URL_PATH + 'api/admin/work-guides/:scope', requireAuth, requireAdmin, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const scope = await workGuideScopeOf(req.params.scope);
+		if (scope == null) {
+			res.status(404).json({error: "その手引きの置き場所はありません"});
+			return;
+		}
+		if (typeof req.body?.markdown !== "string") {
+			res.status(400).json({error: "markdown を指定してください(消すときは空の文字列)"});
+			return;
+		}
+		const saved = await WorkGuides.save(scope.scope, req.body.markdown, req.authData.user_identifier);
+		if (saved.status === "too_long") {
+			res.status(413).json({error: `手引きは ${WorkGuides.MAX_LENGTH} 文字までです`});
+			return;
+		}
+		const guide = await WorkGuides.get(scope.scope);
+		await auditAdmin(req, "work_guide", {target: scope.name, detail: {
+			scope: scope.scope, status: saved.status,
+			length: guide?.markdown.length ?? 0, previousLength: saved.previous?.markdown.length ?? 0
+		}});
+		res.status(200).json({scope: scope.scope, name: scope.name, status: saved.status, guide: await workGuideView(guide)});
+	} catch (err) {
+		logger.error(err, "::api/admin/work-guides/:scope:put");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 /**
  * 監査ログ(全員ぶん。新しい順)。?range=1d|7d|30d&user=&action=&target=&before=
  * → {entries: [{id, at, user, action, target, result, via, keyRole, ip}], actions: [{value, label}], limit, nextBefore}

@@ -59,6 +59,7 @@ const ACTION_LABELS = Object.freeze({
 	db_integrity: "DB の整合性の確認",
 	vector_settings: "意味検索の設定",
 	miro_settings: "Miro 連携の設定",
+	work_guide: "作業の手引きの変更",
 	access_denied: "権限のない操作"
 });
 

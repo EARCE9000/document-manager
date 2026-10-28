@@ -786,6 +786,30 @@ const OPERATIONS = [
 		],
 		responses: {400: "期間・絞り込みの形が違う"}
 	},
+	{
+		id: "getWorkGuides", method: "get", path: "/api/work-guides", role: "readonly", tag: "作業の手引き",
+		summary: "作業の手引き(作業ごとに、読むべき資料の場所を示す目次)",
+		description: "`{global: {markdown, updatedAt, updatedBy, links} | null, project: {id, name, guide} | null}`。"
+			+ "管理者が Markdown で書いた手引きを、全体共通と、指定したプロジェクトの分で返す。"
+			+ "`links` は本文の中の資料へのリンクが、いまどの文書を指しているか(`documentId` `entryFile`。`problem` が null 以外なら、見つからない・アーカイブ済み・版を固定している)",
+		params: [{name: "project", in: "query", description: "プロジェクトのID(省略すると全体共通だけ)"}],
+		responses: {404: "プロジェクトが無い"}
+	},
+	{id: "listAdminWorkGuides", method: "get", path: "/api/admin/work-guides", role: "admin", tag: "作業の手引き", summary: "手引きの一覧(全体共通と、プロジェクトごとに書いてあるか)", aiGuide: false},
+	{
+		id: "checkAdminWorkGuide", method: "post", path: "/api/admin/work-guides/check", role: "admin", tag: "作業の手引き", summary: "手引きの中のリンクを確かめる(保存はしない)", aiGuide: false,
+		body: {schema: {type: "object", required: ["markdown"], properties: {markdown: {type: "string"}}}},
+		responses: {413: "長すぎる"}
+	},
+	{
+		id: "getAdminWorkGuide", method: "get", path: "/api/admin/work-guides/:scope", role: "admin", tag: "作業の手引き", summary: "手引き 1 つ(scope は global かプロジェクトのID)", aiGuide: false,
+		responses: {404: "その置き場所が無い"}
+	},
+	{
+		id: "putAdminWorkGuide", method: "put", path: "/api/admin/work-guides/:scope", role: "admin", tag: "作業の手引き", summary: "手引きを保存する(空にすると消える。監査ログに残る)", aiGuide: false,
+		body: {schema: {type: "object", required: ["markdown"], properties: {markdown: {type: "string"}}}},
+		responses: {404: "その置き場所が無い", 413: "長すぎる"}
+	},
 	{id: "getVectorSettings", method: "get", path: "/api/vector-index/settings", role: "readwrite", tag: "ベクトル索引", summary: "チャンク分割設定の取得", aiGuide: false},
 	{
 		id: "updateVectorSettings", method: "put", path: "/api/vector-index/settings", role: "admin", tag: "ベクトル索引", summary: "チャンク分割設定の上書き", aiGuide: false,
@@ -813,6 +837,15 @@ const operation = (id) => {
  * (載せるのはAIがAPIキーから使える範囲。adminロール限定の操作等は載せない)
  */
 const GUIDE_SECTIONS = [
+	{
+		title: "作業の手引き(作業を始める前に読む)",
+		entries: [{id: "getWorkGuides", suffix: "?project=<プロジェクトID>"}],
+		notes: [
+			"作業ごとに、従うべき決まりや参考にする資料の場所を示した目次。管理者が書く",
+			"**資料を作る・開発する・テストを書くなど、作業を始める前に読み、これからやる作業に当てはまる資料だけを読んでから進める**(全部を読む必要はない)",
+			"資料は `links[].documentId` で `GET api/documents/:id/file?download=1` から読める。`problem` が付いたリンクは、その旨をユーザーに伝える"
+		]
+	},
 	{
 		title: "文書一覧・検索",
 		entries: [{id: "listDocuments", suffix: "?q=<検索語>"}],
@@ -1173,6 +1206,25 @@ const CURL_EXAMPLES = (baseUrl) => [
  * x-ai-instructions と、利用ガイドの「AIへの指示」章で共用する
  */
 const AI_INSTRUCTIONS = [
+	{
+		when: "作業を始めるとき(資料を作る・開発する・テストを書く・調べ物をまとめる など、作業の種類を問わず)",
+		do: `作業を始める前に、上記の「作業の手引き」APIで手引きを取ってください(プロジェクトの作業なら \`?project=\` を付ける)。
+手引きは、作業ごとに従うべき決まりや参考にする資料の場所を示した目次です。
+
+- これからやる作業に当てはまる項目があれば、その資料を読んでから作業してください。当てはまらない資料は読まなくてかまいません
+- 資料の決まりと、ユーザーの指示が食い違うときは、勝手にどちらかを選ばず、ユーザーに確かめてください
+- 手引きが空なら、そのまま作業してかまいません`
+	},
+	{
+		when: "「作業の手引きを作って」「手引きの下書きを作って」",
+		do: `作業の手引きの下書き(Markdown)を作ってください。**保存は管理者が画面で行う**ので、あなたは下書きを渡すところまでです。
+
+1. 一覧・検索APIで、決まりや標準・参考になる資料を探し、どの作業でどれを読むべきかをユーザーと確かめる
+2. 作業の種類ごとに見出し(\`## サービスフローを作るとき\` など)を立て、その下に「何の資料か: [ファイル名](共有のURL)」を箇条書きにする
+3. 資料へのリンクは、必ず「共有のURL」(文書のAlias。\`api/documents/alias/<Alias>/viewer\`)にする。版をまたいで変わらず、新しい版を自動で指すため。
+   **URLを推測で作らない**(実在する文書のAliasだけを使う)
+4. できた下書きをユーザーに渡し、管理の画面「作業の手引き」に貼って、リンクの確認をしてから保存するよう伝える`
+	},
 	{
 		when: "「Miro に出して」「〇〇の目印に書き出して」",
 		miroOnly: true,

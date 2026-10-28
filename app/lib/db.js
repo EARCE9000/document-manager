@@ -297,6 +297,18 @@ const createSchema = (targetDb) => {
 		)
 	`);
 
+	// 作業の手引き(AI が作業を始める前に読む、資料の目次。lib/work-guides.js)。
+	// scope は "global"(全体共通)かプロジェクトのID。v21 のうちに足した表(CREATE TABLE IF NOT EXISTS なので、
+	// 先に v21 で作られたデータベースにも、起動したときに足される)
+	targetDb.exec(`
+		CREATE TABLE IF NOT EXISTS work_guides (
+			scope TEXT PRIMARY KEY,
+			markdown TEXT NOT NULL,
+			updated_by TEXT,
+			updated_at TEXT NOT NULL
+		)
+	`);
+
 	targetDb.exec(`
 		CREATE TABLE IF NOT EXISTS vector_search_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
