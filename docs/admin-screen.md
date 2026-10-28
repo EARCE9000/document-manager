@@ -45,6 +45,7 @@
 | データベース | 整合性確認(簡易・厳密)と最終結果、**DBと実ファイルの照合** | 独自(admin-page.js) |
 | 変換サービス | 2 つの変換サービスの到達性・版・上限、変換に失敗した文書の一覧と再実行 | 独自(admin-page.js) |
 | Miro 連携 | Miro のアプリの値(環境変数か画面で入力)/ 連携・連携し直し・解除 / 書き出すボードの選択([miro.md](miro.md))。アプリの値を画面で入れられるので、管理者には常に出す | 独自(admin-page.js) |
+| 作業の手引き | AI が作業を始める前に読む資料の目次(全体共通とプロジェクトごとの Markdown)。見本・保存の前のリンクの確認・AI に下書きを作らせる依頼文。保存は管理者だけで、監査ログに残る(`work_guide`) | 独自(admin-page.js) |
 
 ### 監査ログ
 
@@ -93,7 +94,7 @@
 
 ## 独自のタブの API
 
-いずれも `requireAdmin`。
+いずれも `requireAdmin`。作業の手引きを**読む** `GET api/work-guides` だけは、閲覧のみの APIキーでも使える(AI が作業の前に読むため)。
 
 | API | 用途 |
 |---|---|
@@ -102,6 +103,10 @@
 | `GET api/html-pdf/health` | PDFでダウンロード用の変換サービス(pdf-converter)の到達性。Office用とは別のコンテナなので、同じタブに別々に出す |
 | `GET api/storage-reconcile` | DBと実ファイルの照合(下記) |
 | `POST api/storage-reconcile/restore` | 実ファイルだけある文書をDBへ登録し直す |
+| `GET api/admin/work-guides` | 作業の手引きの一覧(全体共通と、プロジェクトごとに書いてあるか) |
+| `GET api/admin/work-guides/:scope` | 手引き 1 つ(scope は `global` かプロジェクトのID)。中のリンクがいまどの文書を指すかを添える |
+| `PUT api/admin/work-guides/:scope` | 手引きを保存する(`{markdown}`。空で消える。20000 文字まで) |
+| `POST api/admin/work-guides/check` | 保存の前に、中のリンクを確かめる(見つからない・アーカイブ済み・版を固定) |
 
 `GET api/documents?renderStatus=failed` も足す。いまは絞り込みが無く、変換に失敗した文書を
 探す手段が無い。これは readonly 権限のままにする(AIからも「変換に失敗した資料ある?」に
