@@ -348,12 +348,13 @@
 	.toolCardIntro { margin: 6px 0 8px; line-height: 1.6; }
 	.toolCard .claudeSkillActions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
 	.toolCard .claudeSkillActions .modalButton { font-size: 0.95em; padding: 5px 12px; text-decoration: none; }
-	.toolSteps { margin-top: 8px; }
+	/* toolGuideSteps は「作業の前に手引きを読ませる」。登録の手順(toolSteps)と同じ見た目で、別の物として扱う */
+	.toolSteps, .toolGuideSteps { margin-top: 8px; }
 	/* ふだんの手順(依頼文を貼るだけ)と、手動のやり方の境目。読み飛ばしてよい部分だと一目で分かるように線で区切る */
 	.toolManualRule { border: none; border-top: 1px solid #9aa4b2; margin: 14px 0 10px; }
 	.toolManualLead { line-height: 1.6; }
 	.toolDownloadLink { display: inline-block; margin: 4px 0 8px; color: #1a56db; }
-	.toolSteps summary { cursor: pointer; font-weight: 600; }
+	.toolSteps summary, .toolGuideSteps summary { cursor: pointer; font-weight: 600; }
 	.toolCard ol { margin: 8px 0 4px; padding-left: 1.4em; line-height: 1.7; }
 	.toolCard code { background: #fff; border: 1px solid #ddd; border-radius: 3px; padding: 0 4px; word-break: break-all; }
 	.toolCard pre { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 8px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; font-size: 0.95em; }
@@ -1849,12 +1850,22 @@
 					<div class="claudeSkillActions">
 						<button type="button" id="claudeSkillCopyPromptButton" class="modalButton save">登録依頼文をコピー</button>
 						<button type="button" id="toolsOpenApiKeyButton" class="modalButton">APIキーを発行</button>
+						<button type="button" id="claudeSkillGuideCopyButton" class="modalButton">手引きを読ませる設定をコピー</button>
 					</div>
+					<!-- カードは 4 段(見出し・説明・ボタン・手順)の格子にそろえているので、手順の 2 つは 1 段にまとめる -->
+					<div class="toolStepsGroup">
 					<details class="toolSteps">
 						<summary>登録の手順</summary>
 						<ol id="claudeSkillSteps"></ol>
 						<div id="claudeSkillManual"></div>
 					</details>
+					<!-- 作業の手引き(管理の画面で管理者が書く)を、AI が作業の前に必ず読むようにする -->
+					<details class="toolGuideSteps" id="claudeSkillGuideDetails">
+						<summary>作業の前に手引きを読ませる</summary>
+						<ol id="claudeSkillGuideSteps"></ol>
+						<div id="claudeSkillGuideManual"></div>
+					</details>
+					</div>
 				</section>
 				<section class="toolCard" id="toolCardBacklog" data-skill="backlog">
 					<div class="toolCardHeader"><h3>Backlog</h3><span class="toolVersion"></span></div>
@@ -5443,6 +5454,61 @@ const buildClaudeSkillInstallPrompt = (link) => {
 - 私が「保存した」と伝えたら、config コマンドと search コマンドで接続を確認し、結果を教えてください。`;
 };
 
+// 作業の手引き(管理者が書いた、作業ごとに読むべき資料の目次)を、AI が作業の前に必ず読むようにする設定。
+// Claude Code はセッションの開始時のフック、Codex・Antigravity は全体の指示に 1 行を足す。
+// 設定ファイルはエージェントに足してもらう(書き換える前に、変更の内容を見せて確認を取らせる)
+const guideCommandOf = (agent) => `python ${agent.dir}/document-manager/scripts/dm_client.py guide`;
+const GUIDE_RULE_TEXT = (command) => `## 作業を始める前に(Document Manager の作業の手引き)
+作業(資料を作る・開発する・テストを書く など)を始める前に、\`${command}\` を実行し、出てきた「作業の手引き」のうち、これからやる作業に当てはまる資料を読んでから進めること(当てはまらない資料は読まなくてよい)。`;
+const GUIDE_HOOK_JSON = (command) => JSON.stringify({hooks: {SessionStart: [{hooks: [{type: "command", command: `${command} --hook`}]}]}}, null, 2);
+
+const buildGuideSetupPrompt = () => {
+	const agent = SKILL_AGENTS[selectedSkillAgent];
+	const command = guideCommandOf(agent);
+	const lead = `Document Manager の「作業の手引き」を、作業を始める前に必ず読むように設定してください。手引きは、作業ごとに読むべき資料の場所を示した目次で、document-manager の Skill の guide コマンドで取れます(Skill は登録済みの前提です)。`;
+	const python = "この PC で python が無く python3 なら python3 に、Python が無く Node.js があれば node と dm_client.mjs に置き換えてください。";
+	const project = "案件のフォルダで作業するときに、その案件の手引きも読ませたいときは、そのフォルダの直下に .document-manager-project を置き、中にプロジェクトの名前を 1 行書きます(私が頼んだときだけ作ってください)。";
+	if (selectedSkillAgent === "claude") {
+		return `${lead}
+
+- ~/.claude/settings.json(Windows では %USERPROFILE%\\.claude\\settings.json)の hooks に、次の SessionStart のフックを足してください。既にある設定は消さず、足すだけにしてください。**書き換える前に、変更の内容を私に見せて確認を取ってください。**
+
+${GUIDE_HOOK_JSON(command)}
+
+- ${python}
+- ${project}
+- 足したら、${command} を実行して手引きが取れることを確かめ、結果を教えてください。次に新しいセッションを始めたときから、手引きが読み込まれます。`;
+	}
+	const target = selectedSkillAgent === "codex"
+		? "あなた(Codex)の全体の指示ファイル ~/.codex/AGENTS.md(無ければ作る)"
+		: "あなた(Antigravity)の全体のルール(グローバルな Rules)";
+	return `${lead}
+
+- ${target}に、次の内容を足してください。既にある内容は消さず、足すだけにしてください。**書き換える前に、変更の内容を私に見せて確認を取ってください。**
+
+${GUIDE_RULE_TEXT(command)}
+
+- ${python}
+- ${project}
+- 足したら、${command} を実行して手引きが取れることを確かめ、結果を教えてください。`;
+};
+
+const renderGuideSetup = () => {
+	const agent = SKILL_AGENTS[selectedSkillAgent];
+	const command = guideCommandOf(agent);
+	const how = selectedSkillAgent === "claude"
+		? `<strong>セッションを始めるたびに</strong>手引きが読み込まれます(セッションの開始時のフック。Claude Code の設定 <code>~/.claude/settings.json</code> に足します)。`
+		: `${escapeHtml(agent.label)} の全体の指示に「作業の前に手引きを読む」を 1 つ足します(${selectedSkillAgent === "codex" ? "<code>~/.codex/AGENTS.md</code>" : "グローバルな Rules"})。`;
+	document.getElementById("claudeSkillGuideSteps").innerHTML = `
+		<li>管理者が、管理の画面の「作業の手引き」に、作業ごとに読むべき資料の場所を書いておきます(書いていなければ、AI には何も渡りません)。</li>
+		<li>「手引きを読ませる設定をコピー」を押し、${escapeHtml(agent.label)} のチャットに貼り付けて送ります。${how}エージェントが変更の内容を見せるので、確かめてから許可します。</li>
+		<li>案件のフォルダで作業するときに、その案件の手引きも読ませたいときは、フォルダの直下に <code>.document-manager-project</code> を置き、中にプロジェクトの名前を 1 行書きます(下の階層のフォルダでも効きます)。</li>
+	`;
+	document.getElementById("claudeSkillGuideManual").innerHTML = selectedSkillAgent === "claude"
+		? `<div>手で設定する場合は、<code>~/.claude/settings.json</code> の <code>hooks</code> に次を足します(既にある設定と合わせる)。</div><pre>${escapeHtml(GUIDE_HOOK_JSON(command))}</pre>`
+		: `<div>手で設定する場合は、${selectedSkillAgent === "codex" ? "<code>~/.codex/AGENTS.md</code>" : "グローバルな Rules"} に次を足します。</div><pre>${escapeHtml(GUIDE_RULE_TEXT(command))}</pre>`;
+};
+
 const renderSkillAgentGuide = () => {
 	const agent = SKILL_AGENTS[selectedSkillAgent];
 	document.querySelectorAll("#toolsPane .skillAgentTab").forEach((tab) => {
@@ -5466,6 +5532,7 @@ const renderSkillAgentGuide = () => {
 		<div>APIキーの登録だけを自分で行う場合は、端末で次を実行し、入力欄にキーを貼り付けます(キーは <code>*</code> で表示され、接続を確かめてから保存されます)。メモ帳で書き込みたい場合は、末尾に <code>--edit</code> を付けると設定ファイルが開きます。</div>
 		<pre>python ${escapeHtml(agent.dir)}/document-manager/scripts/dm_client.py setup --base-url ${escapeHtml(claudeSkillBaseUrl)}</pre>
 	`;
+	renderGuideSetup();
 	renderRelatedSkillGuide();
 	renderJiraToolGuide();
 	renderGitHubToolGuide();
@@ -5702,6 +5769,9 @@ const copySkillPrompt = async (button, skill, buildPrompt, stepsBox) => {
 };
 document.getElementById("claudeSkillCopyPromptButton").addEventListener("click", (ev) => {
 	copySkillPrompt(ev.currentTarget, "document-manager", buildClaudeSkillInstallPrompt, document.querySelector("#toolCardDocumentManager .toolSteps"));
+});
+document.getElementById("claudeSkillGuideCopyButton").addEventListener("click", (ev) => {
+	copyTextWithFeedback(buildGuideSetupPrompt(), ev.currentTarget);
 });
 document.getElementById("githubToolCopyPromptButton").addEventListener("click", (ev) => {
 	copyTextWithFeedback(buildGitHubToolInstallPrompt(), ev.currentTarget);

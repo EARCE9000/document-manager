@@ -1146,6 +1146,30 @@ const GUIDE_PROBLEMS = {
 	fixed_version: "版を固定したリンク(最新の版ではないかもしれない)"
 };
 const GUIDE_TITLE = "# 作業の手引き(Document Manager)";
+// 作業しているフォルダ(か、その上)にこのファイルを置くと、そのプロジェクトの手引きも出す。
+// 中身はプロジェクトの名前かID(最初の空でない行。# で始まる行は飛ばす)。フックの設定を 1 つにしたまま、
+// フォルダごとに案件を切り替えられる
+const PROJECT_FILE = ".document-manager-project";
+
+// 作業しているフォルダから上へ PROJECT_FILE を探す。戻り値: {project, foundAt}
+const findProjectFile = (start = process.cwd()) => {
+	let current = path.resolve(start);
+	for (;;) {
+		const candidate = path.join(current, PROJECT_FILE);
+		if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+			try {
+				const lines = fs.readFileSync(candidate, "utf8").replace(/^\uFEFF/, "").split(/\r?\n/);
+				const value = lines.map((line) => line.trim()).find((line) => line !== "" && !line.startsWith("#"));
+				return {project: value ?? null, foundAt: candidate};
+			} catch {
+				return {project: null, foundAt: candidate};
+			}
+		}
+		const parent = path.dirname(current);
+		if (parent === current) return {project: null, foundAt: null};
+		current = parent;
+	}
+};
 
 // 手引きの見出しを 1 段下げる(「## 全体共通」の下に入れるため)。コードブロックの中は触らない
 const demoteHeadings = (markdown) => {
@@ -1194,15 +1218,21 @@ const formatGuide = (body, notes = []) => {
 
 const guide = async (opts) => {
 	const notes = [];
+	let project = opts.project;
+	if (!project) {
+		const found = findProjectFile();
+		project = found.project;
+		if (project) notes.push(`プロジェクトは ${found.foundAt} で指定されている`);
+	}
 	let body;
 	try {
 		let query = {};
-		if (opts.project) {
+		if (project) {
 			try {
-				query = {project: (await resolveProject(opts.project)).id};
+				query = {project: (await resolveProject(project)).id};
 			} catch (err) {
 				if (!opts.hook) throw err;
-				notes.push(`プロジェクト「${opts.project}」の手引きは取れなかった(${err.message})。全体共通だけを出す`);
+				notes.push(`プロジェクト「${project}」の手引きは取れなかった(${err.message})。全体共通だけを出す`);
 			}
 		}
 		body = await request("GET", "api/work-guides", {query});

@@ -1014,6 +1014,31 @@ GUIDE_PROBLEMS = {
     "fixed_version": "版を固定したリンク(最新の版ではないかもしれない)",
 }
 GUIDE_TITLE = "# 作業の手引き(Document Manager)"
+# 作業しているフォルダ(か、その上)にこのファイルを置くと、そのプロジェクトの手引きも出す。
+# 中身はプロジェクトの名前かID(最初の空でない行。# で始まる行は飛ばす)。フックの設定を 1 つにしたまま、
+# フォルダごとに案件を切り替えられる
+PROJECT_FILE = ".document-manager-project"
+
+
+def find_project_file(start=None):
+    """作業しているフォルダから上へ PROJECT_FILE を探す。戻り値: (プロジェクトの名前かID, ファイルの場所)"""
+    current = os.path.abspath(start or os.getcwd())
+    while True:
+        candidate = os.path.join(current, PROJECT_FILE)
+        if os.path.isfile(candidate):
+            try:
+                with open(candidate, encoding="utf-8-sig") as f:
+                    for line in f:
+                        value = line.strip()
+                        if value and not value.startswith("#"):
+                            return value, candidate
+            except OSError:
+                pass
+            return None, candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None, None
+        current = parent
 
 
 def demote_headings(markdown):
@@ -1068,15 +1093,20 @@ def format_guide(body, notes=()):
 
 def cmd_guide(args):
     notes = []
+    project = args.project
+    if not project:
+        project, found_at = find_project_file()
+        if project:
+            notes.append(f"プロジェクトは {found_at} で指定されている")
     try:
         query = None
-        if args.project:
+        if project:
             try:
-                query = {"project": resolve_project(args.project)["id"]}
+                query = {"project": resolve_project(project)["id"]}
             except DmError as err:
                 if not args.hook:
                     raise
-                notes.append(f"プロジェクト「{args.project}」の手引きは取れなかった({err})。全体共通だけを出す")
+                notes.append(f"プロジェクト「{project}」の手引きは取れなかった({err})。全体共通だけを出す")
         body = request("GET", "api/work-guides", query=query)
     except Exception as err:  # noqa: BLE001  フックでは、どんな失敗でもセッションの開始を止めない
         if not args.hook:
@@ -1645,7 +1675,7 @@ def main():
     p.set_defaults(func=cmd_miro_layout_report)
 
     p = sub.add_parser("guide", help="作業の手引き(作業ごとに読むべき資料の場所。作業を始める前に読む)")
-    p.add_argument("--project", help="プロジェクトIDまたは名前(その案件の手引きも合わせて出す)")
+    p.add_argument("--project", help="プロジェクトIDまたは名前(その案件の手引きも合わせて出す。省くと、作業しているフォルダから上の .document-manager-project を見る)")
     p.add_argument("--json", action="store_true", help="WebAPI の応答をそのまま JSON で出す")
     p.add_argument("--hook", action="store_true", help="フック(セッションの開始時)用。取れなくても失敗にせず、理由を 1 行出す")
     p.set_defaults(func=cmd_guide, streaming_unless="json")

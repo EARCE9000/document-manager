@@ -295,4 +295,28 @@ test.describe("ツールのページ: Skillの登録手順と配布(実ブラウ
 		await page.locator("#menuToolsLink").click();
 		await expect(page.locator("#toolsPane")).toBeVisible();
 	});
+
+	// 作業の手引き(管理者が書く資料の目次)を、AI が作業の前に必ず読むようにする設定
+	test("手引きを読ませる設定は、エージェントごとの入れ方で、書き換える前に確認を取らせる", async ({page}) => {
+		await page.locator('#toolsPane .skillAgentTab[data-agent="claude"]').click();
+		const claude = await copiedPrompt(page, "#claudeSkillGuideCopyButton", "作業の手引き");
+		expect(claude).toContain("SessionStart");
+		expect(claude).toContain("python ~/.claude/skills/document-manager/scripts/dm_client.py guide --hook");
+		expect(claude).toContain("書き換える前に、変更の内容を私に見せて確認を取ってください");
+		expect(claude).toContain(".document-manager-project");
+		// 貼られた JSON は、そのまま設定に使える形
+		expect(JSON.parse(claude.slice(claude.indexOf("{"), claude.lastIndexOf("}") + 1)).hooks.SessionStart[0].hooks[0].type).toBe("command");
+
+		await page.locator('#toolsPane .skillAgentTab[data-agent="codex"]').click();
+		const codex = await copiedPrompt(page, "#claudeSkillGuideCopyButton", "作業の手引き");
+		expect(codex).toContain("~/.codex/AGENTS.md");
+		expect(codex).toContain("python ~/.agents/skills/document-manager/scripts/dm_client.py guide");
+		expect(codex).not.toContain("SessionStart");
+
+		await page.locator('#toolsPane .skillAgentTab[data-agent="antigravity"]').click();
+		await page.locator("#claudeSkillGuideDetails summary").click();
+		await expect(page.locator("#claudeSkillGuideSteps")).toContainText("管理の画面の「作業の手引き」");
+		await expect(page.locator("#claudeSkillGuideManual")).toContainText("~/.gemini/config/skills/document-manager/scripts/dm_client.py guide");
+		await page.locator('#toolsPane .skillAgentTab[data-agent="claude"]').click();
+	});
 });

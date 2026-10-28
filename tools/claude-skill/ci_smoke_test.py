@@ -44,9 +44,9 @@ def check(cond, message):
         failures.append(message)
 
 
-def run_client(kind, args, env, expect_ok=True):
+def run_client(kind, args, env, expect_ok=True, cwd=None):
     cmd = [sys.executable, PY_CLIENT] if kind == "python" else ["node", NODE_CLIENT]
-    proc = subprocess.run(cmd + args, env=env, capture_output=True, text=True, encoding="utf-8")
+    proc = subprocess.run(cmd + args, env=env, capture_output=True, text=True, encoding="utf-8", cwd=cwd)
     if expect_ok and proc.returncode != 0:
         raise AssertionError(f"{kind} {' '.join(args)} failed ({proc.returncode}): {proc.stderr.strip()}")
     return proc
@@ -628,6 +628,17 @@ def smoke_guide(kind, env, doc_id):
 
         scoped = run_client(kind, ["guide", "--project", project_name], env).stdout
         check(f"## プロジェクト「{project_name}」" in scoped and "受注 = オーダー" in scoped, f"guide --project({kind}): その案件の手引きも出す(名前で指定できる)")
+
+        # 作業しているフォルダ(の上)の .document-manager-project で、案件を決められる(フックの設定を 1 つにしたまま)
+        folder = tempfile.mkdtemp(prefix="dm-guide-")
+        with open(os.path.join(folder, ".document-manager-project"), "w", encoding="utf-8") as f:
+            f.write(f"# このフォルダの案件\n{project_name}\n")
+        nested = os.path.join(folder, "src", "app")
+        os.makedirs(nested)
+        by_file = run_client(kind, ["guide", "--hook"], env, cwd=nested).stdout
+        check(f"## プロジェクト「{project_name}」" in by_file and ".document-manager-project" in by_file,
+              f"guide({kind}): 上のフォルダの .document-manager-project で、その案件の手引きも出す")
+        shutil.rmtree(folder, ignore_errors=True)
 
         body = json.loads(run_client(kind, ["guide", "--json"], env).stdout)
         check(body["global"]["links"][0]["documentId"] == doc_id, f"guide --json({kind}): WebAPI の応答をそのまま出す")
