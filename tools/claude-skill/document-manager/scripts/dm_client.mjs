@@ -68,7 +68,7 @@ const CONFIG_PATH = process.env.DM_CONFIG || path.join(os.homedir(), ".document-
 
 // このクライアント(Skill)のバージョン。dm_client.py と必ず揃える(結合テストで検証している)。
 // 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-const CLIENT_VERSION = "1.15.0";
+const CLIENT_VERSION = "1.16.0";
 const USER_AGENT = `document-manager-skill/${CLIENT_VERSION} (node ${process.versions.node})`;
 
 class DmError extends Error {}
@@ -1137,6 +1137,89 @@ function requireArg(value, label) {
 	return value;
 }
 
+// ---- 作業の手引き ----
+// 管理者が書いた「作業ごとに、読むべき資料の場所」の目次。作業を始める前に読む(フックから毎回読ませることもできる)。
+// 本文を丸ごと渡すのではなく目次だけを渡し、当てはまる作業の資料だけを、その場で download して読ませる
+const GUIDE_PROBLEMS = {
+	not_found: "見つからない(管理者に手引きの直しを頼む)",
+	archived: "アーカイブ済み(管理者に手引きの直しを頼む)",
+	fixed_version: "版を固定したリンク(最新の版ではないかもしれない)"
+};
+const GUIDE_TITLE = "# 作業の手引き(Document Manager)";
+
+// 手引きの見出しを 1 段下げる(「## 全体共通」の下に入れるため)。コードブロックの中は触らない
+const demoteHeadings = (markdown) => {
+	let fenced = false;
+	return String(markdown).split(/\r?\n/).map((line) => {
+		if (line.trimStart().startsWith("```")) fenced = !fenced;
+		return !fenced && /^#{1,5} /.test(line) ? `#${line}` : line;
+	}).join("\n");
+};
+
+const formatGuide = (body, notes = []) => {
+	const project = body.project;
+	const sections = [];
+	if (body.global) sections.push(["全体共通", body.global]);
+	if (project?.guide) sections.push([`プロジェクト「${project.name}」`, project.guide]);
+	const lines = [GUIDE_TITLE, "", ...notes.map((note) => `※${note}`)];
+	if (sections.length === 0) {
+		const scope = project ? `全体共通とプロジェクト「${project.name}」` : "全体共通";
+		lines.push(`${scope}の作業の手引きは、まだ書かれていない。そのまま作業してよい。`);
+		return `${lines.join("\n")}\n`;
+	}
+	lines.push(
+		"作業ごとに、従うべき決まりや参考にする資料の場所を示した目次(管理者が書いたもの)。",
+		"**作業を始める前に、これからやる作業に当てはまる項目を探し、その資料を `download <文書ID>` で取って読んでから進めること。**",
+		"当てはまらない資料は読まなくてよい。資料の決まりとユーザーの指示が食い違うときは、勝手に選ばずユーザーに確かめること。",
+		""
+	);
+	const links = [];
+	for (const [title, guide] of sections) {
+		lines.push(`## ${title}`, "", demoteHeadings(guide.markdown || "").trimEnd(), "");
+		links.push(...(guide.links || []));
+	}
+	if (links.length > 0) {
+		lines.push("## 資料の一覧(手引きの中のリンクが、いま指している文書)", "");
+		for (const link of links) {
+			const label = link.label || link.url;
+			let text = link.documentId && link.problem !== "not_found"
+				? `- ${label}: ${link.entryFile}(文書ID: ${link.documentId})`
+				: `- ${label}`;
+			if (link.problem) text += ` ※${GUIDE_PROBLEMS[link.problem] || link.problem}`;
+			lines.push(text);
+		}
+	}
+	return `${lines.join("\n")}\n`;
+};
+
+const guide = async (opts) => {
+	const notes = [];
+	let body;
+	try {
+		let query = {};
+		if (opts.project) {
+			try {
+				query = {project: (await resolveProject(opts.project)).id};
+			} catch (err) {
+				if (!opts.hook) throw err;
+				notes.push(`プロジェクト「${opts.project}」の手引きは取れなかった(${err.message})。全体共通だけを出す`);
+			}
+		}
+		body = await request("GET", "api/work-guides", {query});
+	} catch (err) {
+		// フックでは、どんな失敗でもセッションの開始を止めない
+		if (!opts.hook) throw err;
+		process.stdout.write(`${GUIDE_TITLE}\n\n手引きを取れなかった(${err.message})。`
+			+ "作業の決まりを確かめられないので、必要ならユーザーに Document Manager の接続を確かめてもらう。\n");
+		return;
+	}
+	if (opts.json) {
+		console.log(JSON.stringify(body, null, 2));
+		return;
+	}
+	process.stdout.write(formatGuide(body, notes));
+};
+
 const main = async () => {
 	const {values, positionals} = parseArgs({
 		allowPositionals: true,
@@ -1186,7 +1269,9 @@ const main = async () => {
 			groups: {type: "string"},
 			note: {type: "string"},
 			export: {type: "string"},
-			description: {type: "string"}
+			description: {type: "string"},
+			json: {type: "boolean"},
+			hook: {type: "boolean"}
 		}
 	});
 	const [command, ...rest] = positionals;
@@ -1213,6 +1298,16 @@ const main = async () => {
 		}
 		return;
 	}
+	if (command === "guide") {
+		// 手引きはMarkdownをそのまま流す(--json のときだけJSON)
+		try {
+			await guide(values);
+		} catch (err) {
+			if (!(err instanceof DmError)) throw err;
+			fail(err.message);
+		}
+		return;
+	}
 	if (command === "watch") {
 		// watchは自分で1行ずつ出力するため、最後のJSON一括出力はしない
 		try {
@@ -1224,7 +1319,7 @@ const main = async () => {
 		return;
 	}
 	if (!commands[command]) {
-		fail(`使い方: node dm_client.mjs <${[...Object.keys(commands), "watch", "spec"].join("|")}> ...`, 2);
+		fail(`使い方: node dm_client.mjs <${[...Object.keys(commands), "guide", "watch", "spec"].join("|")}> ...`, 2);
 		return;
 	}
 	try {

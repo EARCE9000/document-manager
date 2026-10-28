@@ -139,6 +139,7 @@ python scripts/dm_client.py tree 顧客管理                            # フ�
 python scripts/dm_client.py place 顧客管理 <文書ID> --folder 設計      # プロジェクトへ登録・移動
 python scripts/dm_client.py watch                                    # 操作の通知を待ち受け(Ctrl+Cで終了)
 python scripts/dm_client.py watch --count 1 --timeout 300 --action upload,revise  # 次のアップロードを1件待つ
+python scripts/dm_client.py guide --project 案件A                    # 作業の手引き(作業ごとに読むべき資料の場所。作業を始める前に読む)
 python scripts/dm_client.py spec                                     # APIの仕様(AI向けMarkdown。--openapi でOpenAPI)
 
 node scripts/dm_client.mjs search 設計書                             # Node.js版も同じ

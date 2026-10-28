@@ -86,7 +86,7 @@ CONFIG_PATH = os.environ.get("DM_CONFIG") or os.path.join(os.path.expanduser("~"
 
 # このクライアント(Skill)のバージョン。dm_client.mjs と必ず揃える(結合テストで検証している)。
 # 変更したらタグ skill-v<この値> を打つと、CIがGitHub Releaseを作る
-CLIENT_VERSION = "1.15.0"
+CLIENT_VERSION = "1.16.0"
 USER_AGENT = f"document-manager-skill/{CLIENT_VERSION} (python {sys.version_info.major}.{sys.version_info.minor})"
 
 
@@ -1005,6 +1005,91 @@ def cmd_manifest(args):
     return request("GET", f"api/projects/{quote_id(project_id)}/manifest", query=query)
 
 
+# ---- 作業の手引き ----
+# 管理者が書いた「作業ごとに、読むべき資料の場所」の目次。作業を始める前に読む(フックから毎回読ませることもできる)。
+# 本文を丸ごと渡すのではなく目次だけを渡し、当てはまる作業の資料だけを、その場で download して読ませる
+GUIDE_PROBLEMS = {
+    "not_found": "見つからない(管理者に手引きの直しを頼む)",
+    "archived": "アーカイブ済み(管理者に手引きの直しを頼む)",
+    "fixed_version": "版を固定したリンク(最新の版ではないかもしれない)",
+}
+GUIDE_TITLE = "# 作業の手引き(Document Manager)"
+
+
+def demote_headings(markdown):
+    """手引きの見出しを 1 段下げる(「## 全体共通」の下に入れるため)。コードブロックの中は触らない"""
+    lines = []
+    fenced = False
+    for line in markdown.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        if not fenced and re.match(r"#{1,5} ", line):
+            line = "#" + line
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def format_guide(body, notes=()):
+    project = body.get("project")
+    sections = []
+    if body.get("global"):
+        sections.append(("全体共通", body["global"]))
+    if project and project.get("guide"):
+        sections.append((f"プロジェクト「{project.get('name')}」", project["guide"]))
+    lines = [GUIDE_TITLE, ""]
+    lines += [f"※{note}" for note in notes]
+    if not sections:
+        scope = f"全体共通とプロジェクト「{project.get('name')}」" if project else "全体共通"
+        lines.append(f"{scope}の作業の手引きは、まだ書かれていない。そのまま作業してよい。")
+        return "\n".join(lines) + "\n"
+    lines += [
+        "作業ごとに、従うべき決まりや参考にする資料の場所を示した目次(管理者が書いたもの)。",
+        "**作業を始める前に、これからやる作業に当てはまる項目を探し、その資料を `download <文書ID>` で取って読んでから進めること。**",
+        "当てはまらない資料は読まなくてよい。資料の決まりとユーザーの指示が食い違うときは、勝手に選ばずユーザーに確かめること。",
+        "",
+    ]
+    links = []
+    for title, guide in sections:
+        lines += [f"## {title}", "", demote_headings(guide.get("markdown", "")).rstrip(), ""]
+        links += guide.get("links") or []
+    if links:
+        lines += ["## 資料の一覧(手引きの中のリンクが、いま指している文書)", ""]
+        for link in links:
+            label = link.get("label") or link.get("url")
+            if link.get("documentId") and link.get("problem") != "not_found":
+                text = f"- {label}: {link.get('entryFile')}(文書ID: {link['documentId']})"
+            else:
+                text = f"- {label}"
+            if link.get("problem"):
+                text += f" ※{GUIDE_PROBLEMS.get(link['problem'], link['problem'])}"
+            lines.append(text)
+    return "\n".join(lines) + "\n"
+
+
+def cmd_guide(args):
+    notes = []
+    try:
+        query = None
+        if args.project:
+            try:
+                query = {"project": resolve_project(args.project)["id"]}
+            except DmError as err:
+                if not args.hook:
+                    raise
+                notes.append(f"プロジェクト「{args.project}」の手引きは取れなかった({err})。全体共通だけを出す")
+        body = request("GET", "api/work-guides", query=query)
+    except Exception as err:  # noqa: BLE001  フックでは、どんな失敗でもセッションの開始を止めない
+        if not args.hook:
+            raise
+        sys.stdout.write(f"{GUIDE_TITLE}\n\n手引きを取れなかった({err})。"
+                         "作業の決まりを確かめられないので、必要ならユーザーに Document Manager の接続を確かめてもらう。\n")
+        return None
+    if args.json:
+        return body
+    sys.stdout.write(format_guide(body, notes))
+    return None
+
+
 # ---- Miro に資料を書き出す ----
 # 連携とボードの設定は管理者が画面で行う。書き出しは頼まれたときだけ(自動では書き出さない)。
 # 書き出すたびに、ボードの目印(付箋の [DM]名前)の向きに新しいフレームを作る。前に書き出したフレームには触らない
@@ -1559,6 +1644,12 @@ def main():
     p.add_argument("--project", help="プロジェクトIDまたは名前(文書IDを省くとその資料を全部)")
     p.set_defaults(func=cmd_miro_layout_report)
 
+    p = sub.add_parser("guide", help="作業の手引き(作業ごとに読むべき資料の場所。作業を始める前に読む)")
+    p.add_argument("--project", help="プロジェクトIDまたは名前(その案件の手引きも合わせて出す)")
+    p.add_argument("--json", action="store_true", help="WebAPI の応答をそのまま JSON で出す")
+    p.add_argument("--hook", action="store_true", help="フック(セッションの開始時)用。取れなくても失敗にせず、理由を 1 行出す")
+    p.set_defaults(func=cmd_guide, streaming_unless="json")
+
     p = sub.add_parser("spec", help="APIの仕様を出力する(同梱コマンドに無い操作を呼ぶとき)")
     p.add_argument("--openapi", action="store_true", help="OpenAPI 3.1のJSONを出力する(既定はAI向けMarkdown)")
     p.set_defaults(func=cmd_spec, streaming=True)
@@ -1584,6 +1675,10 @@ def main():
     # streaming_if は「この引数が指定されたときだけ生出力」(manifest --markdown など)
     streaming_if = getattr(args, "streaming_if", None)
     if getattr(args, "streaming", False) or (streaming_if and getattr(args, streaming_if, False)):
+        return
+    # streaming_unless は「この引数が指定されていなければ生出力」(guide は --json のときだけ JSON)
+    streaming_unless = getattr(args, "streaming_unless", None)
+    if streaming_unless and not getattr(args, streaming_unless, False):
         return
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

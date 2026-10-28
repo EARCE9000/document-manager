@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -232,6 +233,7 @@ def smoke_clients(env, workdir):
         smoke_pdf(kind, env, workdir)
         smoke_miro(kind, env, workdir)
         smoke_spec(kind, env)
+        smoke_guide(kind, env, v2["id"])
         smoke_watch(kind, env, workdir)
 
     check(len(client_versions) == 1, f"Python版とNode.js版のバージョンが一致する ({sorted(client_versions)})")
@@ -598,6 +600,52 @@ def smoke_spec(kind, env):
     check(openapi.get("openapi", "").startswith("3.1"), "spec --openapi: OpenAPI 3.1のJSONを取得できる")
     create_key = openapi["paths"]["/api/apikeys"]["post"]
     check(create_key.get("x-api-key-usable") is False, "spec --openapi: APIキーの発行はAPIキーからは実行不可と示される")
+
+
+def admin_put_guide(scope, markdown):
+    """作業の手引きを管理者として保存する(本番では管理者が画面で行うこと)"""
+    keys = json.load(open(KEYS_FILE, encoding="utf-8"))
+    req = urllib.request.Request(BASE_URL + "api/admin/work-guides/" + urllib.parse.quote(scope, safe=""), method="PUT",
+                                 data=json.dumps({"markdown": markdown}).encode("utf-8"),
+                                 headers={"Cookie": f"{keys['sessionCookieName']}={keys['sessionCookie']}", "Content-Type": "application/json"})
+    urllib.request.urlopen(req).read()
+
+
+def smoke_guide(kind, env, doc_id):
+    """作業の手引き: 作業を始める前に読む目次。フック用(--hook)は、取れなくても失敗にしない"""
+    alias = json.loads(run_client(kind, ["alias", doc_id], env).stdout)["alias"]
+    project_name = f"手引きの試験-{kind}-{int(time.time() * 1000)}"
+    project = json.loads(run_client(kind, ["project-create", project_name], env).stdout)
+    try:
+        admin_put_guide("global", f"## 開発するとき\n- 標準化のルール: [規約]({BASE_URL}api/documents/alias/{alias}/viewer)\n")
+        admin_put_guide(project["id"], "## この案件の用語\n- 受注 = オーダー\n")
+
+        text = run_client(kind, ["guide"], env).stdout
+        check(text.startswith("# 作業の手引き"), f"guide({kind}): 手引きを Markdown で出す")
+        check("## 全体共通" in text and "### 開発するとき" in text, f"guide({kind}): 手引きの見出しを 1 段下げて、全体共通の下に入れる")
+        check(f"文書ID: {doc_id}" in text, f"guide({kind}): リンクが指す文書の ID を添える(そのまま download できる)")
+        check("この案件の用語" not in text, f"guide({kind}): プロジェクトを指定しなければ、全体共通だけ")
+
+        scoped = run_client(kind, ["guide", "--project", project_name], env).stdout
+        check(f"## プロジェクト「{project_name}」" in scoped and "受注 = オーダー" in scoped, f"guide --project({kind}): その案件の手引きも出す(名前で指定できる)")
+
+        body = json.loads(run_client(kind, ["guide", "--json"], env).stdout)
+        check(body["global"]["links"][0]["documentId"] == doc_id, f"guide --json({kind}): WebAPI の応答をそのまま出す")
+
+        missing = run_client(kind, ["guide", "--hook", "--project", "存在しない案件"], env)
+        check(missing.returncode == 0 and "取れなかった" in missing.stdout and "## 全体共通" in missing.stdout,
+              f"guide --hook({kind}): 案件が無くても止めず、全体共通だけを出す")
+        broken = {**env, "DM_API_KEY": "dm_" + "x" * 43}
+        hooked = run_client(kind, ["guide", "--hook"], broken, expect_ok=False)
+        check(hooked.returncode == 0 and "手引きを取れなかった" in hooked.stdout, f"guide --hook({kind}): 取れなくてもセッションの開始を止めない")
+        check(run_client(kind, ["guide"], broken, expect_ok=False).returncode != 0, f"guide({kind}): フックでなければ、失敗は失敗として返す")
+
+        admin_put_guide("global", "")
+        admin_put_guide(project["id"], "")
+        empty = run_client(kind, ["guide"], env).stdout
+        check("まだ書かれていない" in empty, f"guide({kind}): 手引きが無ければ、そのまま作業してよいと伝える")
+    finally:
+        admin_put_guide("global", "")
 
 
 def start_watch(kind, args, env):
