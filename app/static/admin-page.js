@@ -5,7 +5,7 @@
  *
  * - 開いたときに、ログインしているか・管理者かを確かめる。管理者なら admin/admin.js(共通の 4 つのタブ)を読み込む
  * - タブの切り替えを ?tab= に残す(再読み込み・リンクで同じタブを開ける)
- * - 独自のタブ(データベース・変換サービス・Miro 連携)を描く。開いたときに初めて読む(開いていないタブのために問い合わせない)
+ * - 独自のタブ(データベース・変換サービス・Miro 連携・作業の手引き)を描く。開いたときに初めて読む(開いていないタブのために問い合わせない)
  * - Miro の許可の画面から戻ってきたとき(?miro=connected / ?miro=error&reason=…)、Miro 連携のタブで結果を知らせる
  *
  * 部品(ボタン・表・バッジ・モーダル)はデザインテンプレートの components.css のものを使う。
@@ -443,11 +443,234 @@
 		}
 	};
 
+
+	// 開いたことのある独自のタブ(開いたときに初めて読む。下のタブ・入口を参照)
+	const loaded = new Set();
+
+	// ---------------------------------------------------------------- 作業の手引き
+
+	const guideScopeSelect = document.getElementById("guideScopeSelect");
+	const guideEditor = document.getElementById("guideEditor");
+	const guideMeta = document.getElementById("guideMeta");
+	const guideCount = document.getElementById("guideCount");
+	const guideLinkResult = document.getElementById("guideLinkResult");
+	const guideFlash = document.getElementById("guideFlash");
+	const guidePrompt = document.getElementById("guidePrompt");
+	let guideMaxLength = 20000;
+	let guideSaved = "";
+	let guideScope = "global";
+	let guideProjects = [];
+
+	const showGuideFlash = (ok, message) => {
+		guideFlash.hidden = false;
+		guideFlash.className = ok ? "msg_success admin_flash" : "msg_error admin_flash";
+		guideFlash.textContent = message;
+	};
+
+	// 見本。AI に作らせるときも、この形を目指させる
+	const guideSample = () => {
+		const base = `${window.location.origin}${window.location.pathname.replace(/admin\.html$/, "")}api/documents/alias`;
+		return [
+			"## サービスフローを作るとき",
+			`- 書き方と記号の決まり: [業務フローの書き方.md](${base}/xxxxxxxxxxxx/viewer)`,
+			`- 参考にする例: [受注業務フロー.drawio](${base}/xxxxxxxxxxxx/viewer)`,
+			"",
+			"## 開発するとき",
+			`- 標準化のルール: [コーディング規約.md](${base}/xxxxxxxxxxxx/viewer)`,
+			`- 画面の作りの決まり: [画面設計標準.md](${base}/xxxxxxxxxxxx/viewer)`,
+			"",
+			"## テストコードを作るとき",
+			`- 工程と作るもの: [テスト方針.md](${base}/xxxxxxxxxxxx/viewer)`,
+			`- テストの書き方: [単体テストの書き方.md](${base}/xxxxxxxxxxxx/viewer)`,
+			""
+		].join("\n");
+	};
+
+	const scopeName = (scope) => scope === "global" ? "全体共通" : `プロジェクト「${guideProjects.find((p) => p.id === scope)?.name || scope}」`;
+
+	const renderGuidePrompt = () => {
+		guidePrompt.textContent = [
+			`Document Manager の「作業の手引き」(${scopeName(guideScope)})の下書きを Markdown で作ってください。`,
+			"手引きは、AI が作業を始める前に読む資料の目次です。作業の種類ごとに、従うべき決まりや参考にする資料の場所を示します。",
+			"",
+			"1. Document Manager の資料を探し、決まり・標準・手順・参考例になる資料を挙げる(document-manager の Skill の search / mockups / manifest を使う)",
+			"2. どの作業で、どの資料を読むべきかを、私に確かめる",
+			"3. 次の形で書く",
+			"   - 作業の種類ごとに「## 〇〇するとき」の見出し",
+			"   - その下に「- 何の資料か: [ファイル名](共有のURL)」の箇条書き",
+			"   - 共有のURLは、Skill の share-url で取ったものだけを使う(推測で作らない)",
+			`4. 資料の中身の要約は書かず、場所だけを示す(全体で ${guideMaxLength} 文字まで)`,
+			"",
+			"形の見本:",
+			guideSample().replace(/\n+$/, "")
+		].join("\n");
+	};
+
+	const updateGuideCount = () => {
+		const length = guideEditor.value.length;
+		const changed = guideEditor.value !== guideSaved;
+		guideCount.textContent = `${length} / ${guideMaxLength} 文字${changed ? "(保存していない変更がある)" : ""}`;
+	};
+	guideEditor.addEventListener("input", updateGuideCount);
+
+	const PROBLEM_TEXT = {
+		not_found: ["failed", "見つからない"],
+		archived: ["failed", "アーカイブ済み"],
+		fixed_version: ["stale", "版を固定している(新しい版を追いかけない。共有の URL にする)"]
+	};
+	const renderGuideLinks = (links) => {
+		if (links.length === 0) {
+			guideLinkResult.innerHTML = note("Document Manager の資料へのリンクは無い。");
+			return;
+		}
+		const problems = links.filter((link) => link.problem != null).length;
+		guideLinkResult.innerHTML = `<div class="result_meta">${problems === 0 ? badge("completed", "すべて見つかった") : badge("failed", `確かめる物 ${problems} 件`)}</div>`
+			+ table(["リンクの文字", "指している文書", "状態"], links.map((link) => {
+				const [kind, text] = PROBLEM_TEXT[link.problem] || ["completed", "OK"];
+				return `<tr${link.problem != null && link.problem !== "fixed_version" ? " class=\"row_failed\"" : ""}>`
+					+ `<td title="${esc(link.url)}">${esc(link.label || link.url)}</td>`
+					+ `<td>${link.entryFile ? esc(link.entryFile) : "―"}</td><td>${badge(kind, text)}</td></tr>`;
+			}));
+	};
+	const checkGuideLinks = async () => {
+		guideLinkResult.innerHTML = loading("確かめている…");
+		try {
+			const result = await api("./api/admin/work-guides/check", {method: "POST", body: {markdown: guideEditor.value}});
+			renderGuideLinks(result.links || []);
+			return result.links || [];
+		} catch (err) {
+			guideLinkResult.innerHTML = `<div class="msg_error admin_flash">確かめられなかった: ${esc(err.message)}</div>`;
+			return null;
+		}
+	};
+
+	const loadGuide = async (scope) => {
+		guideScope = scope;
+		guideEditor.value = "";
+		guideEditor.disabled = true;
+		guideLinkResult.innerHTML = "";
+		guideMeta.textContent = "読み込み中…";
+		try {
+			const body = await api(`./api/admin/work-guides/${encodeURIComponent(scope)}`);
+			guideSaved = body.guide?.markdown || "";
+			guideEditor.value = guideSaved;
+			guideEditor.placeholder = `まだ書いていない。上の「見本を入れる」で形を入れて書き換えるか、下の依頼文で AI に下書きを作らせる。\n\n${guideSample()}`;
+			guideMeta.textContent = body.guide
+				? `${scopeName(scope)}。最後に直した人: ${body.guide.updatedBy || "―"}(${when(body.guide.updatedAt)})`
+				: `${scopeName(scope)}。まだ書いていない(AI には何も渡らない)`;
+			if (body.guide) renderGuideLinks(body.guide.links || []);
+		} catch (err) {
+			guideMeta.textContent = "";
+			showGuideFlash(false, `読み込めなかった: ${err.message}`);
+		}
+		guideEditor.disabled = false;
+		updateGuideCount();
+		renderGuidePrompt();
+	};
+
+	const renderGuideScopes = (list) => {
+		guideProjects = list.projects || [];
+		const written = (guide) => (guide ? "(書いてある)" : "");
+		const options = [`<option value="global">全体共通${written(list.global)}</option>`]
+			.concat(guideProjects.filter((p) => !p.archived).map((p) => `<option value="${esc(p.id)}">プロジェクト: ${esc(p.name)}${written(p.guide)}</option>`))
+			.concat(guideProjects.filter((p) => p.archived).map((p) => `<option value="${esc(p.id)}">プロジェクト: ${esc(p.name)}(アーカイブ済み)${written(p.guide)}</option>`));
+		guideScopeSelect.innerHTML = options.join("");
+		guideScopeSelect.value = guideProjects.some((p) => p.id === guideScope) ? guideScope : "global";
+	};
+
+	const loadGuidesTab = async () => {
+		guideMeta.textContent = "読み込み中…";
+		try {
+			const list = await api("./api/admin/work-guides");
+			guideMaxLength = list.maxLength || guideMaxLength;
+			renderGuideScopes(list);
+			await loadGuide(guideScopeSelect.value);
+		} catch (err) {
+			guideMeta.textContent = "";
+			showGuideFlash(false, `読み込めなかった: ${err.message}`);
+		}
+	};
+
+	guideScopeSelect.addEventListener("change", async () => {
+		const next = guideScopeSelect.value;
+		if (guideEditor.value !== guideSaved) {
+			const yes = await confirmModal({title: "保存していない変更", ok: "捨てて切り替える", danger: true,
+				body: `${esc(scopeName(guideScope))}の手引きに、保存していない変更がある。捨てて切り替える?`});
+			if (!yes) {
+				guideScopeSelect.value = guideScope;
+				return;
+			}
+		}
+		guideFlash.hidden = true;
+		loadGuide(next);
+	});
+
+	document.getElementById("guideSampleLink").addEventListener("click", async (ev) => {
+		ev.preventDefault();
+		if (guideEditor.value.trim() !== "") {
+			const yes = await confirmModal({title: "見本を入れる", ok: "置き換える", danger: true, body: "いま書いてある内容を、見本で置き換える。"});
+			if (!yes) return;
+		}
+		guideEditor.value = guideSample();
+		updateGuideCount();
+		guideEditor.focus();
+	});
+
+	document.getElementById("guideCheckButton").addEventListener("click", () => checkGuideLinks());
+
+	document.getElementById("guideSaveButton").addEventListener("click", async () => {
+		const markdown = guideEditor.value;
+		if (markdown.length > guideMaxLength) {
+			showGuideFlash(false, `手引きは ${guideMaxLength} 文字までです(いま ${markdown.length} 文字)`);
+			return;
+		}
+		if (markdown.trim() === "") {
+			if (guideSaved === "") return;
+			const yes = await confirmModal({title: "手引きを消す", ok: "消す", danger: true,
+				body: `${esc(scopeName(guideScope))}の手引きを消す。AI には何も渡らなくなる。`});
+			if (!yes) return;
+		} else {
+			// 保存の前に、リンクを確かめる。見つからない物があれば、そのまま保存してよいか聞く
+			const links = await checkGuideLinks();
+			if (links == null) return;
+			const broken = links.filter((link) => link.problem === "not_found" || link.problem === "archived");
+			if (broken.length > 0) {
+				const yes = await confirmModal({title: "見つからないリンクがある", ok: "このまま保存", danger: true,
+					body: `見つからない・アーカイブ済みのリンクが ${broken.length} 件ある(下の一覧)。AI はその資料を読めない。このまま保存する?`});
+				if (!yes) return;
+			}
+		}
+		const button = document.getElementById("guideSaveButton");
+		button.disabled = true;
+		try {
+			const saved = await api(`./api/admin/work-guides/${encodeURIComponent(guideScope)}`, {method: "PUT", body: {markdown}});
+			showGuideFlash(true, saved.status === "deleted" ? `${scopeName(guideScope)}の手引きを消した。` : `${scopeName(guideScope)}の手引きを保存した。次に AI が作業を始めるときから使われる。`);
+			const list = await api("./api/admin/work-guides");
+			renderGuideScopes(list);
+			await loadGuide(guideScope);
+		} catch (err) {
+			showGuideFlash(false, `保存できなかった: ${err.message}`);
+		}
+		button.disabled = false;
+	});
+
+	document.getElementById("guidePromptCopyButton").addEventListener("click", async (ev) => {
+		await adminUiReady;
+		window.UI.copy(ev.currentTarget, guidePrompt.textContent);
+	});
+
+	// 保存していない変更があるまま、画面を離れようとしたら止める
+	window.addEventListener("beforeunload", (ev) => {
+		if (loaded.has("guides") && guideEditor.value !== guideSaved) {
+			ev.preventDefault();
+			ev.returnValue = "";
+		}
+	});
+
 	// ---------------------------------------------------------------- タブ・入口
 
 	// 独自のタブは、開いたときに初めて読む(データベースの照合のような重い物は、ボタンで始める)
-	const TAB_LOADERS = {database: loadDatabaseTab, convert: loadConvertTab, miro: loadMiroTab};
-	const loaded = new Set();
+	const TAB_LOADERS = {database: loadDatabaseTab, convert: loadConvertTab, miro: loadMiroTab, guides: loadGuidesTab};
 	const openTab = (key) => {
 		if (TAB_LOADERS[key] && !loaded.has(key)) {
 			loaded.add(key);

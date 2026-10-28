@@ -15,6 +15,8 @@
 .admin_actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 14px 10px; }
 .admin_actions .search_btn,
 .admin_actions .entry_button { width: auto; height: auto; line-height: 1.4; margin: 0; }
+/* 主の操作(保存など)も、並びのボタンと同じ大きさにする(色だけで主だと分かるように) */
+.admin_actions .entry_button { font-size: 10pt; padding: 4px 22px; }
 .admin_flash   { margin: 8px 14px; }
 .admin_nowrap  { white-space: nowrap; }
 
@@ -28,6 +30,14 @@
 .admin_form    { padding: 0 14px 4px; max-width: 40em; }
 .admin_form .search_input { width: 100%; }
 .admin_button_link { display: inline-block; text-decoration: none; padding: 4px 14px; }
+
+/* 作業の手引き: Markdown を書く欄と、AI への依頼文 */
+.guide_scope   { min-width: 18em; max-width: 100%; }
+.guide_form    { max-width: none; }
+.guide_editor  { width: 100%; min-height: 22em; height: auto; border-radius: 6px; padding: 8px 10px; resize: vertical;
+                 font-family: Consolas, "Courier New", monospace; font-size: 10pt; line-height: 1.6; box-sizing: border-box; }
+.guide_prompt  { margin: 0 14px 8px; padding: 10px 12px; background: #f6f7f9; border: 1px solid #e3e5e8; border-radius: 6px;
+                 font-family: Consolas, "Courier New", monospace; font-size: 9.5pt; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* 独自のタブの中の表・項目の並び(共通のタブと同じ左右の余白にそろえる) */
 .tab_panel > div > .data_table_wrap,

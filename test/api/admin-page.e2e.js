@@ -88,7 +88,7 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 
 	test("タブは共通の 4 つ(利用者 → セッション → 監査ログ → サーバー)、区切りの後ろに独自の 3 つ。?tab= で開ける", async ({page}) => {
 		await openAdmin(page);
-		await expect(page.locator(".tab_label")).toHaveText(["利用者", "セッション", "監査ログ", "サーバー", "データベース", "変換サービス", "Miro 連携"]);
+		await expect(page.locator(".tab_label")).toHaveText(["利用者", "セッション", "監査ログ", "サーバー", "データベース", "変換サービス", "Miro 連携", "作業の手引き"]);
 		await expect(page.locator(".tab_label.custom_first")).toHaveText("データベース");
 		await expect(page.locator("#tab_users")).toBeChecked();
 		await expect(panelOf(page, "users")).toBeVisible();

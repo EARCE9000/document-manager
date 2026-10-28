@@ -32,7 +32,9 @@ const SQL_SELECT_DOCUMENT = `SELECT id, entry_file, deleted_at FROM documents WH
 const SQL_SELECT_ALIAS = `SELECT document_id FROM document_aliases WHERE alias = ?`;
 
 // 共有の URL(…/api/documents/alias/<12桁>/…)と、版を固定した URL(…/api/documents/<文書ID>/…)
-const ALIAS_IN_URL = /api\/documents\/alias\/([0-9a-f]{12})(?![0-9a-f])/i;
+// Alias の位置にあるものは、形が違っても拾う(見本の xxxxxxxxxxxx や、AI が作った偽の値を「見つからない」として出すため)
+const ALIAS_IN_URL = /api\/documents\/alias\/([^/?#\s)\]>"']+)/i;
+const ALIAS_FORMAT = /^[0-9a-f]{12}$/;
 const DOCUMENT_IN_URL = /api\/documents\/([0-9]{6}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f])/i;
 
 const toResponse = (row) => row == null ? null : {
@@ -104,7 +106,7 @@ module.exports.resolveLinks = async (markdown) => {
 	for (const link of links) {
 		try {
 			const documentId = link.alias != null
-				? (await ds.get(SQL_SELECT_ALIAS, [link.alias]))?.document_id ?? null
+				? (ALIAS_FORMAT.test(link.alias) ? (await ds.get(SQL_SELECT_ALIAS, [link.alias]))?.document_id ?? null : null)
 				: link.documentId;
 			const document = documentId == null ? null : await ds.get(SQL_SELECT_DOCUMENT, [documentId]);
 			let problem = null;

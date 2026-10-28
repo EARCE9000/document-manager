@@ -168,6 +168,41 @@
           <div id="miroFlash" hidden></div>
           <div id="miroConnectionResult"></div>
         </div>
+        <!-- ===================== 作業の手引き(Document Manager) ===================== -->
+        <input type="radio" name="admin_tab" id="tab_guides" class="tab_toggle" value="guides">
+        <label for="tab_guides" class="tab_label">作業の手引き</label>
+        <div class="tab_panel">
+          <div class="panel_note">
+            AI が<b>作業を始める前に読む、資料の目次</b>。「サービスフローを作るなら、決まりはこの資料」のように、作業ごとに読むべき資料の場所を書く。
+            AI はこの目次だけを受け取り、これからやる作業に当てはまる資料だけを読みに行く。<b>全体共通</b>と<b>プロジェクトごと</b>に書け、AI は両方を続けて受け取る。
+          </div>
+          <div id="guideFlash" hidden></div>
+          <div class="filter_panel"><div class="search_form">
+            <span class="filter_label">書く場所</span>
+            <select id="guideScopeSelect" class="search_input guide_scope"></select>
+          </div></div>
+          <div id="guideMeta" class="admin_text"></div>
+          <div class="panel_section_title">手引き(Markdown)<span class="panel_section_action"><a href="#" class="admin_link" id="guideSampleLink">見本を入れる</a></span></div>
+          <div class="admin_text">
+            作業の種類ごとに見出し(<code>## サービスフローを作るとき</code> など)を立て、その下に資料へのリンクを並べる。
+            リンクには、文書の<b>共有リンク</b>(文書一覧でプレビューの上の鎖のアイコン「共有リンクをコピー」で取れる。<code>…/api/documents/alias/…/viewer</code>)を使う。版をまたいで変わらず、資料を新しい版で上げ直しても、手引きを直さなくてよい。
+            空にして保存すると、その手引きは消える。
+          </div>
+          <div class="admin_form guide_form"><textarea id="guideEditor" class="search_input guide_editor" rows="18" spellcheck="false"></textarea></div>
+          <div class="admin_text runtime_text" id="guideCount"></div>
+          <div class="admin_actions">
+            <button type="button" id="guideCheckButton" class="search_btn">リンクを確かめる</button>
+            <button type="button" id="guideSaveButton" class="entry_button">保存</button>
+          </div>
+          <div id="guideLinkResult"></div>
+          <div class="panel_section_title">AI に下書きを作らせる</div>
+          <div class="admin_text">
+            Document Manager の Skill を入れた AI(Claude Code など)に、次の依頼文を渡す。AI が資料を探し、共有リンクを取って、この形の下書きを作る。
+            できた下書きを上に貼り、<b>リンクを確かめてから</b>保存する(AI はありもしない URL を作ることがある)。
+          </div>
+          <pre id="guidePrompt" class="guide_prompt"></pre>
+          <div class="admin_actions"><button type="button" id="guidePromptCopyButton" class="search_btn">依頼文をコピー</button></div>
+        </div>
       </div>
     </div>
   </div>
