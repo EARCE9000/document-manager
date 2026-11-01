@@ -1488,6 +1488,12 @@
 	/* キーが増えるとモーダルの縦があふれるため、3件分で頭打ちにして中をスクロールさせる
 	   (1行 = 高さ46px + 下の余白6px。行を1行表示にしたので3件でも十分に見分けられる) */
 	#apiKeyList { list-style: none; margin: 10px 0; padding: 0; max-height: 156px; overflow-y: auto; }
+	/* 期限切れのキーをまとめて消す。一覧の右上に置き、0 本のときは出さない */
+	.apiKeyExpiredBar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 10px; font-size: 0.8em; color: #666; }
+	.apiKeyExpiredBar[hidden] { display: none; }
+	.apiKeyExpiredBar + #apiKeyList { margin-top: 6px; }
+	.iconButton.danger { color: #d22222; border-color: #f0b4b4; background: #fff; }
+	.iconButton.danger:hover { background: #fdecec; }
 	#apiKeyList li {
 		border: 1px solid #e2e2e2;
 		border-radius: 6px;
@@ -2121,6 +2127,13 @@
 		<div id="apiKeyExpiryOptions" class="apiKeyExpiryOptionsRow" style="display:none;"></div>
 		<div class="toolbarRow" style="margin: 8px 0 10px;">
 			<input type="text" id="apiKeyLabelInput" placeholder="用途メモ(任意)" style="width:100%;">
+		</div>
+		<!-- 期限の切れたキーをまとめて消す(1 本以上あるときだけ出す) -->
+		<div class="apiKeyExpiredBar" id="apiKeyExpiredBar" hidden>
+			<span id="apiKeyExpiredText"></span>
+			<button type="button" class="iconButton danger" id="apiKeyDeleteExpiredButton" title="期限切れのキーをまとめて消す" aria-label="期限切れのキーをまとめて消す">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+			</button>
 		</div>
 		<ul id="apiKeyList"></ul>
 		<div id="apiKeyToolsNote">
@@ -5332,6 +5345,24 @@ const formatRemainingTime = (expiresAtIso) => {
 	return `あと ${Math.floor(diffHours / 24)}日`;
 };
 
+// 期限切れのキー(loadApiKeys が入れ直す)。まとめて消すときの確認に名前を並べる
+let expiredApiKeys = [];
+document.getElementById("apiKeyDeleteExpiredButton").addEventListener("click", async (ev) => {
+	// currentTarget は await の後では null になるので、先に取っておく
+	const button = ev.currentTarget;
+	if (expiredApiKeys.length === 0) return;
+	const names = expiredApiKeys.map((row) => `・${row.label || `発行: ${formatDateTime(row.createdAt)}`}`).join("\n");
+	if (!(await showConfirmDialog(`期限切れのAPIキー ${expiredApiKeys.length} 本を一覧から消します。\n${names}\n\n期限内のキーは残ります。`))) return;
+	button.disabled = true;
+	try {
+		const res = await fetch("./api/apikeys/expired", {method: "DELETE"});
+		if (!res.ok) alert("期限切れのキーを消せませんでした。");
+	} finally {
+		button.disabled = false;
+		loadApiKeys();
+	}
+});
+
 const loadApiKeys = async () => {
 	const res = await fetch("./api/apikeys");
 	if (res.status !== 200) return;
@@ -5350,7 +5381,11 @@ const loadApiKeys = async () => {
 		}
 		return "";
 	};
-	// 有効なキーを上、失効済みを下に。同じ状態内では発行日時が新しい順
+	// 期限切れのキーが 1 本以上あれば、一覧の右上に、まとめて消すボタンを出す
+	expiredApiKeys = keys.filter((row) => new Date(row.expiresAt).getTime() <= now);
+	document.getElementById("apiKeyExpiredText").textContent = `期限切れのキー: ${expiredApiKeys.length} 本`;
+	document.getElementById("apiKeyExpiredBar").hidden = expiredApiKeys.length === 0;
+	// 有効なキーを上、期限切れを下に。同じ状態内では発行日時が新しい順
 	const sorted = [...keys].sort((a, b) => {
 		const aExpired = new Date(a.expiresAt).getTime() <= now;
 		const bExpired = new Date(b.expiresAt).getTime() <= now;
@@ -5364,7 +5399,7 @@ const loadApiKeys = async () => {
 			const isExpired = expiresAtMs <= now;
 			const warnSoon = !isExpired && (expiresAtMs - now) < 60 * 60 * 1000;
 			const expiryHtml = isExpired
-				? `<span class="apiKeyExpiredBadge">失効済み</span>`
+				? `<span class="apiKeyExpiredBadge">期限切れ</span>`
 				: `<span class="apiKeyExpiry ${warnSoon ? "warnSoon" : ""}">有効期限: ${formatDateTime(row.expiresAt)}(${formatRemainingTime(row.expiresAt)})</span>`;
 			// 発行日時を主見出しにし、用途(label)は入力されていれば横に添える
 			const noteHtml = row.label

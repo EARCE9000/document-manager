@@ -4006,6 +4006,21 @@ app.post(BASE_URL_PATH + 'api/apikeys', requireAuth, requireSession, async (req,
 });
 
 /**
+ * 期限の切れたAPIキーをまとめて失効させる(自分が発行したものだけ。期限内のキーには触れない)。
+ * 下の api/apikeys/:id より先に置く(後ろだと "expired" がキーのIDとして扱われる)
+ */
+app.delete(BASE_URL_PATH + 'api/apikeys/expired', requireAuth, requireSession, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const revoked = await ApiKeys.revokeExpiredByOwner(req.authData.user_identifier);
+		res.status(200).json({revoked});
+	} catch (err) {
+		logger.error(err, "::api/apikeys/expired:revoke");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
  * APIキー失効 (自分が発行したものだけ失効可能)
  */
 app.delete(BASE_URL_PATH + 'api/apikeys/:id', requireAuth, requireSession, async (req, res) => {

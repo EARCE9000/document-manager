@@ -723,6 +723,7 @@ const OPERATIONS = [
 		description: "画面(ログイン)からのみ実行できる。APIキーでの呼び出しは403。ロールは発行者自身のロール以下(readonly/readwriteのみ。adminキーは発行不可)。有効期限は today/30d/90d/365d(無期限キーは発行できない。最長1年)",
 		body: {schema: {type: "object", required: ["role", "expiryOption"], properties: {label: {type: "string"}, role: {enum: ["readonly", "readwrite"]}, expiryOption: {enum: ["today", "30d", "90d", "365d"]}}}}
 	},
+	{id: "revokeExpiredApiKeys", method: "delete", path: "/api/apikeys/expired", role: "readonly", tag: "APIキー", summary: "期限の切れた自分のAPIキーをまとめて失効", description: "自分が発行したキーのうち、期限の切れたものだけを失効させ、一覧から消す(期限内のキーには触れない)。失効させた数を `revoked` で返す", aiGuide: false, sessionOnly: true},
 	{id: "revokeApiKey", method: "delete", path: "/api/apikeys/:id", role: "readonly", tag: "APIキー", summary: "自分が発行したAPIキーの失効", aiGuide: false, sessionOnly: true},
 	{id: "listTagOrder", method: "get", path: "/api/tag_order", role: "readonly", tag: "タグ体系", summary: "タグ体系(表示するタグと並び順)の取得", aiGuide: false},
 	{

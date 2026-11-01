@@ -99,7 +99,8 @@ test.describe("APIキー管理はセッション限定", () => {
 	const apiKeyRoutes = [
 		{name: "一覧", call: (request, headers) => request.get("api/apikeys", {headers})},
 		{name: "発行", call: (request, headers) => request.post("api/apikeys", {headers, data: {role: "readonly", expiryOption: "30d"}})},
-		{name: "失効", call: (request, headers) => request.delete("api/apikeys/00000000-0000-0000-0000-000000000000", {headers})}
+		{name: "失効", call: (request, headers) => request.delete("api/apikeys/00000000-0000-0000-0000-000000000000", {headers})},
+		{name: "期限切れのまとめての失効", call: (request, headers) => request.delete("api/apikeys/expired", {headers})}
 	];
 	for (const route of apiKeyRoutes) {
 		for (const role of ["readonly", "readwrite"]) {
@@ -251,6 +252,31 @@ test.describe.serial("APIキーで使える権限は、キーの権限と発行�
 		expect((await request.post("api/allowed_users", {headers: session, data: {email: legacy.user, role: "readwrite"}})).status()).toBeLessThan(300);
 		expect((await request.get("api/documents", {headers: key})).status()).toBe(401);
 		expect((await request.get("api/check_access_token", {headers: legacySession})).status()).toBe(401);
+	});
+});
+
+test.describe("期限切れのAPIキーをまとめて消す", () => {
+	const {expiredCleanup} = keys.revokeTargets;
+	const session = {Cookie: `${keys.sessionCookieName}=${encodeURIComponent(expiredCleanup.cookies[0])}`};
+	const listOf = async (request) => (await (await request.get("api/apikeys", {headers: session})).json()).map((row) => row.label).sort();
+
+	test("自分の期限切れのキーだけが一覧から消え、期限内のキーとほかの人のキーは残る", async ({request}) => {
+		expect(await listOf(request)).toEqual(["expired-a-of-expiredCleanup", "expired-b-of-expiredCleanup", "key-of-expiredcleanup"]);
+
+		const res = await request.delete("api/apikeys/expired", {headers: session});
+		expect(res.status()).toBe(200);
+		expect(await res.json()).toEqual({revoked: 2});
+
+		expect(await listOf(request)).toEqual(["key-of-expiredcleanup"]);
+		// 期限内のキーはそのまま使える
+		expect((await request.get("api/tag_order", {headers: bearer(expiredCleanup.apiKey)})).status()).toBe(200);
+		// ほかの人の期限切れのキーは失効していない(失効していれば「有効期限」ではなく、不正なキーとして断られる)
+		const other = await request.get("api/documents", {headers: bearer(keys.expired)});
+		expect(other.status()).toBe(401);
+		expect((await other.json()).error).toContain("有効期限");
+
+		// 2 回目は消す物が無い
+		expect(await (await request.delete("api/apikeys/expired", {headers: session})).json()).toEqual({revoked: 0});
 	});
 });
 

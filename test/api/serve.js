@@ -162,7 +162,18 @@ const {server} = require("../../app/server.js");
 		// 旧い口(api/allowed_users)で外す試験用(auth.spec.js)
 		legacyRemoveTarget: await makeTarget("legacy-remove@example.com", "readwrite", 1)
 	};
-	revokeTargets.roleTarget.readonlyApiKey = (await ApiKeys.createApiKey("ro-of-role-change", "readonly", "30d", revokeTargets.roleTarget.user)).apiKey;
+	// 期限切れのキーをまとめて消す試験用(auth.spec.js と api-key-expired.e2e.js)。
+	// 上の owner の期限切れのキー(keys.expired)は他の試験で使うので、消してよい利用者を別に用意する。
+	// 期限内のキー 1 本(makeTarget が作る)に、期限切れのキーを 2 本足す
+	for (const name of ["expiredCleanup", "expiredCleanupUi"]) {
+		const target = await makeTarget(`${name.toLowerCase()}@example.com`, "readwrite", 1);
+		for (const label of ["expired-a", "expired-b"]) {
+			const key = await ApiKeys.createApiKey(`${label}-of-${name}`, "readonly", "30d", target.user);
+			await ds.run("UPDATE api_keys SET expires_at = ? WHERE id = ?", ["2000-01-01T00:00:00.000Z", key.id]);
+		}
+		revokeTargets[name] = target;
+	}
+	revokeTargets.roleTarget.readonlyApiKey =(await ApiKeys.createApiKey("ro-of-role-change", "readonly", "30d", revokeTargets.roleTarget.user)).apiKey;
 
 	fs.writeFileSync(KEYS_FILE, JSON.stringify({
 		owner,

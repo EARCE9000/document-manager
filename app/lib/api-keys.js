@@ -128,6 +128,12 @@ const SQL_SELECT_ALL_ACTIVE_API_KEYS = `
 	WHERE revoked_at IS NULL AND expires_at > ?
 	ORDER BY created_at DESC
 `;
+// 期限の切れた自分のキーを、まとめて失効させる(画面の「期限切れのキー: N 本」のゴミ箱)。
+// 行は消さず、失効した時刻を入れる(1 本ずつ消すときと同じ。一覧には出なくなる)
+const SQL_REVOKE_EXPIRED_API_KEYS_BY_OWNER = `
+	UPDATE api_keys SET revoked_at = @revoked_at
+	WHERE created_by = @created_by AND revoked_at IS NULL AND expires_at <= @now
+`;
 const SQL_REVOKE_API_KEYS_BY_OWNER = `
 	UPDATE api_keys SET revoked_at = @revoked_at
 	WHERE created_by = @created_by AND revoked_at IS NULL
@@ -204,7 +210,17 @@ module.exports.revokeAllByOwner = async (ownerUserIdentifier) => {
 	return result.changes;
 };
 
-module.exports.revokeApiKeyById = async (id, ownerUserIdentifier) => {
+/**
+ * その利用者が発行したキーのうち、期限の切れたものだけを失効させる。期限内のキーには触れない。
+ * @returns {Promise<number>} 失効させた数
+ */
+module.exports.revokeExpiredByOwner = async (ownerUserIdentifier) => {
+	const now = new Date().toISOString();
+	const result = await ds.run(SQL_REVOKE_EXPIRED_API_KEYS_BY_OWNER, {created_by: ownerUserIdentifier, revoked_at: now, now});
+	return result.changes;
+};
+
+module.exports.revokeApiKeyById =async (id, ownerUserIdentifier) => {
 	const result = await ds.run(SQL_REVOKE_API_KEY, {id, created_by: ownerUserIdentifier, revoked_at: new Date().toISOString()});
 	return result.changes > 0;
 };
