@@ -207,6 +207,11 @@
     </div>
   </div>
 </div>
+<!-- フッター(左に著作権、右に版)。版はサーバーが返した値を admin-page.js が入れる。取れなければ「Ver. -」のまま -->
+<div class="footer">
+  <span class="footer_copyright">&copy; <span id="footerYear"></span> EARCE.NET</span>
+  <span class="footer_version" id="footerVersion">Ver. -</span>
+</div>
 <!-- 先に admin-page.js が、管理者かを確かめる。管理者なら admin/admin.js を読み込む(共通の 4 つのタブを描く) -->
 <script src="./admin/dev_mode.js"></script>
 <!-- どの画面でも使う部品(確認とエラーのモーダル、コピーのボタン)。admin.js と admin-page.js の確認のモーダルも、これを使う -->

@@ -508,42 +508,14 @@ const setHTTPHeaders = (res) => {
 	res.setHeader("X-Content-Type-Options", "nosniff");
 };
 
-// ログイン失敗時等に表示する簡易メッセージページ(フロントのカードUIと見た目を揃える)
-const MESSAGE_PAGE_ICONS = {
-	denied: '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
-	error: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'
-};
-
-const renderMessagePage = (res, {statusCode, icon, iconColor, title, message, retryHref, retryLabel}) => {
+// ログイン失敗時等に表示する簡易メッセージページ(フロントのカードUIと見た目を揃える。
+// ほかの画面と同じく、いちばん下にフッターと版を出す。lib/message-page.js 参照)
+const {messagePageHtml} = require("./lib/message-page.js");
+const renderMessagePage = (res, {statusCode, ...page}) => {
 	res.status(statusCode);
 	res.setHeader("Content-Type", "text/html; charset=utf-8");
-	res.end(`<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<title>${title} - Document Manager</title>
-<link rel="icon" type="image/svg+xml" href="./logo.svg">
-<style>
-	* { box-sizing: border-box; }
-	html, body { height: 100%; margin: 0; font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; background: #f4f5f7; color: #24292f; }
-	body { display: flex; align-items: center; justify-content: center; }
-	.messageCard { background: #fff; border-radius: 10px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1); padding: 40px 36px; max-width: 380px; width: 90%; text-align: center; }
-	.messageIcon { width: 40px; height: 40px; margin: 0 auto 16px; color: ${iconColor}; display: block; }
-	h1 { font-size: 1.05em; margin: 0 0 10px; }
-	p { font-size: 0.9em; color: #555; line-height: 1.6; margin: 0; }
-	a.button { display: inline-block; background: #1a56db; color: #fff; text-decoration: none; padding: 8px 22px; border-radius: 6px; font-size: 0.9em; margin-top: 20px; }
-	a.button:hover { background: #1544ad; }
-</style>
-</head>
-<body>
-	<div class="messageCard">
-		<svg class="messageIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${MESSAGE_PAGE_ICONS[icon]}</svg>
-		<h1>${title}</h1>
-		<p>${message}</p>
-		${retryHref ? `<a class="button" href="${retryHref}">${retryLabel}</a>` : ""}
-	</div>
-</body>
-</html>`);
+	const build = versionInfo != null ? String(versionInfo.VERSION || "") : "";
+	res.end(messagePageHtml({...page, version: displayVersion(build)}));
 };
 
 

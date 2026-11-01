@@ -22,8 +22,11 @@
 		color: #24292f;
 	}
 
-	#loginArea { display: none; height: 100%; align-items: center; justify-content: center; }
-	#appShell { display: none; height: 100%; flex-direction: column; }
+	/* 縦に「中身(ログインへ移る画面か、本体)」と「フッター」を並べる。フッターはどちらの画面でも、
+	   いちばん下に出す(UI の標準 webservice-ui.html 1.1。ログインの前の画面にも置く) */
+	body { display: flex; flex-direction: column; }
+	#loginArea { display: none; flex: 1; min-height: 0; align-items: center; justify-content: center; }
+	#appShell { display: none; flex: 1; min-height: 0; flex-direction: column; }
 	#appShell.visible { display: flex; }
 	#loginArea.visible { display: flex; }
 	.messageCard {
@@ -2027,11 +2030,12 @@
 			</div>
 		</main>
 	</div>
-	<footer id="appFooter">
-		<span>© <span id="footerYear"></span> EARCE.NET</span>
-		<span id="footerVersion"></span>
-	</footer>
 </div>
+<!-- フッター(左に著作権、右に版)。本体の外に置き、ログインへ移る画面でも出す。版が取れなければ「Ver. -」のまま -->
+<footer id="appFooter">
+	<span class="footer_copyright">© <span id="footerYear"></span> EARCE.NET</span>
+	<span class="footer_version" id="footerVersion">Ver. -</span>
+</footer>
 
 <div id="confirmOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox">
@@ -6948,12 +6952,13 @@ const showActivityToast = (activity) => {
 };
 
 // 画面右下に小さく表示するバージョン(認証不要のエンドポイントなので、ログイン状態を待たずに取得する)。
+// 取れないとき(ビルドせずに動かしている・通信に失敗した)は、初めから書いてある「Ver. -」のまま。
 // 表示は YYYYMMDD.HHMM(ビルドした日時。Dockerイメージのタグと同じ)。日付だけだと、
 // 同じ日に何度も出したときにどれが動いているのか分からない。コミットはツールチップに出す
 fetch("./api/version").then((res) => res.json()).then(({version, build, revision, builtAt}) => {
 	if (!version) return;
 	const footer = document.getElementById("footerVersion");
-	footer.textContent = `Ver.${version}`;
+	footer.textContent = `Ver. ${version}`;
 	footer.title = [
 		`ビルド: ${build || version}`,
 		builtAt ? `ビルド日時: ${formatDateTime(builtAt)}` : "",

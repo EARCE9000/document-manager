@@ -13,6 +13,13 @@
 (function () {
 	"use strict";
 
+	// ---------------------------------------------------------------- フッター
+	// 年と版(サーバーが返した値)を入れる。管理者でなくても出す。版が取れなければ「Ver. -」のまま
+	document.getElementById("footerYear").textContent = new Date().getFullYear();
+	fetch("./api/version").then((res) => res.json()).then(({version}) => {
+		if (version) document.getElementById("footerVersion").textContent = `Ver. ${version}`;
+	}).catch(() => {});
+
 	// ---------------------------------------------------------------- 道具
 
 	const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"}[c]));

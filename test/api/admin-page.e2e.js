@@ -135,14 +135,43 @@ test.describe.serial("管理の画面(実ブラウザ)", () => {
 		await expect(page).toHaveTitle("【開発モード】管理 | Document Manager");
 	});
 
-	// 日付だけの表記だと、同じ日に何度も出したときにどれが動いているのか分からない
-	test("画面右下の版は YYYYMMDD.HHMM で出る", async ({page}) => {
+	// 日付だけの表記だと、同じ日に何度も出したときにどれが動いているのか分からない。
+	// フッターは本体の画面にも管理の画面にも出す(UI の標準 webservice-ui.html 1.1)
+	test("画面右下の版は Ver. YYYYMMDD.HHMM で出る(本体の画面・管理の画面)", async ({page}) => {
 		await page.route("**/api/version", (route) => route.fulfill({
 			status: 200, contentType: "application/json",
 			body: JSON.stringify({version: "20261013.0930", build: "20261013.0930", revision: "0123456789abcdef", builtAt: "2026-10-13T00:30:00Z"})
 		}));
+		const year = String(new Date().getFullYear());
 		await page.goto("./");
-		await expect(page.locator("#footerVersion")).toHaveText("Ver.20261013.0930");
+		await expect(page.locator("#appFooter")).toBeVisible();
+		await expect(page.locator("#footerVersion")).toHaveText("Ver. 20261013.0930");
+		await expect(page.locator("#appFooter .footer_copyright")).toHaveText(`© ${year} EARCE.NET`);
+		await openAdmin(page);
+		await expect(page.locator(".footer")).toBeVisible();
+		await expect(page.locator(".footer .footer_version")).toHaveText("Ver. 20261013.0930");
+		await expect(page.locator(".footer .footer_copyright")).toHaveText(`© ${year} EARCE.NET`);
+	});
+
+	// ビルドせずに動かしているときは版が無い。空にせず「Ver. -」と出す
+	test("版が取れないときは Ver. - と出る(本体の画面・管理の画面)", async ({page}) => {
+		await page.route("**/api/version", (route) => route.fulfill({
+			status: 200, contentType: "application/json",
+			body: JSON.stringify({version: null, build: null, revision: null, builtAt: null})
+		}));
+		await page.goto("./");
+		await expect(page.locator("#appShell")).toBeVisible();
+		await expect(page.locator("#footerVersion")).toHaveText("Ver. -");
+		await openAdmin(page);
+		await expect(page.locator(".footer .footer_version")).toHaveText("Ver. -");
+	});
+
+	// 一覧が長くても、フッターは画面のいちばん下に出たまま(中身は枠の中で送る)
+	test("本体の画面のフッターは、画面のいちばん下にある", async ({page}) => {
+		await page.goto("./");
+		await expect(page.locator("#appShell")).toBeVisible();
+		const {bottom, height} = await page.evaluate(() => ({bottom: document.getElementById("appFooter").getBoundingClientRect().bottom, height: window.innerHeight}));
+		expect(Math.abs(bottom - height)).toBeLessThan(1);
 	});
 
 	test("利用者: 追加・権限の変更・削除ができ、監査ログに残る", async ({page}) => {
