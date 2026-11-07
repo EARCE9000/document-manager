@@ -299,6 +299,8 @@ Resources:
       VPCSecurityGroups: [!Ref DbSecurityGroup]
       PubliclyAccessible: false
       BackupRetentionPeriod: 7
+      # うっかり消さないよう、削除保護を付ける。スタックや DB を消すときは、先にこれを外す(ガイドの「片付ける」)
+      DeletionProtection: true
       AutoMinorVersionUpgrade: true
       CopyTagsToSnapshot: true
 
@@ -439,7 +441,9 @@ Resources:
           Environment:
             - {Name: BASE_PATH, Value: /}
             - {Name: DATABASE_BACKEND, Value: postgres}
-            - {Name: DATABASE_SSL, Value: "true"}
+            # RDS へ TLS でつなぎ、証明書(発行元とホスト名)を確かめる。RDS の証明書の束はイメージに入れてある
+            - {Name: DATABASE_SSL, Value: verify}
+            - {Name: DATABASE_SSL_CA, Value: /app/certs/rds-global-bundle.pem}
             - {Name: PGHOST, Value: !GetAtt Database.Endpoint.Address}
             - {Name: PGPORT, Value: !GetAtt Database.Endpoint.Port}
             - {Name: PGDATABASE, Value: document_manager}

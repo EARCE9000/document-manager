@@ -352,7 +352,8 @@ document-manager/
 | `DATA_DIR` | `/data` | `DATABASE_BACKEND=sqlite`(既定)時のSQLite DBの保存先。`STORAGE_BACKEND=local`の場合は文書ファイルもここに保存される。**モックアップを使う場合は、置き場所がs3/gcsでも展開した控え(`mockups/<ID>/site/`)がここに置かれる**。`DATABASE_BACKEND=postgres`かつ`STORAGE_BACKEND`がs3/gcsなら永続ボリューム不要(モックアップの控えは失われても原本から作り直される) |
 | `DATABASE_BACKEND` | `sqlite` | メタデータDBのバックエンド。`sqlite`(単一コンテナ・`DATA_DIR`上のファイル)または`postgres`(マネージドPostgreSQL)。複数インスタンスで水平スケールする場合は`postgres`が必須(SQLiteは単一インスタンス前提。セッションもこのDBで共有される)。横断SSEに`LISTEN/NOTIFY`を使うため、水平スケール時は**RDS for PostgreSQL / Cloud SQL for PostgreSQL 推奨(Aurora PostgreSQLは`LISTEN/NOTIFY`非対応)**。詳細は[マルチクラウド構成の要点](#マルチクラウド構成の要点) |
 | `DATABASE_URL` | (postgres時に使用) | Postgres接続文字列(例: `postgres://user:pass@host:5432/dbname`)。`DATABASE_BACKEND=postgres`で未設定の場合は標準の`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`が使われる。スキーマは起動時に自動適用される(`schema_migrations`テーブルで適用済みバージョンを管理し、未適用のマイグレーションだけを順に適用する。詳細は[lib/schema-pg.js](app/lib/schema-pg.js)) |
-| `DATABASE_SSL` | (未設定) | `true`でPostgres接続にTLSを使う(マネージドPGで必要な場合)。証明書検証は行わない(`rejectUnauthorized:false`) |
+| `DATABASE_SSL` | (未設定) | Postgres へ TLS でつなぐか。`verify` で暗号化し、相手の証明書(発行元とホスト名)を確かめる(マネージドPGはこれを使う)。`true` は暗号化するが証明書を確かめない以前の動き(起動時に警告を出す)。未設定・`false` は TLS を使わない。ほかの値では起動しない(打ち間違いで暗号化が外れないように)。`DATABASE_URL` に `sslmode` を書くと pg はそちらを優先するので、この設定を使うときは書かない([lib/pg-ssl.js](app/lib/pg-ssl.js)) |
+| `DATABASE_SSL_CA` | (未設定) | `DATABASE_SSL=verify` で使う発行元の証明書(PEM のファイルのパス)。未設定なら Node が持つ既定の一覧で確かめる。Amazon RDS の発行元は既定の一覧に無いので、イメージに入れてある `/app/certs/rds-global-bundle.pem` を指定する |
 | `STORAGE_BACKEND` | `local` | 文書ファイルの保存先。`local`(ディスク)/`s3`(AWS)/`gcs`(Google Cloud Storage)。切り替えは今後の保存先を変えるだけで、既存ファイルの自動移行は行わない |
 | `S3_BUCKET` | (STORAGE_BACKEND=s3の場合必須) | 保存先のS3バケット名 |
 | `S3_REGION` | (STORAGE_BACKEND=s3の場合必須) | S3バケットのリージョン |

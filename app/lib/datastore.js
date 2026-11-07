@@ -207,11 +207,12 @@ const createPostgresDatastore = () => {
 
 	// 接続情報は DATABASE_URL(接続文字列) を優先。未指定なら pg が標準の
 	// PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE 環境変数を読む。
-	// マネージドPG(RDS/Cloud SQL等)でTLSが要る場合は DATABASE_SSL=true を指定する
+	// マネージドPG(RDS/Cloud SQL等)でTLSが要る場合は DATABASE_SSL=verify(と DATABASE_SSL_CA)を指定する。
+	// 値の意味は lib/pg-ssl.js。LISTEN 用の接続(下の Client)にも同じ設定を使う
 	const poolConfig = process.env.DATABASE_URL ? {connectionString: process.env.DATABASE_URL} : {};
-	if (process.env.DATABASE_SSL === "true") {
-		poolConfig.ssl = {rejectUnauthorized: false};
-	}
+	const {ssl, warning: sslWarning} = require("./pg-ssl.js").pgSslConfig(process.env);
+	if (ssl) poolConfig.ssl = ssl;
+	if (sslWarning) logger.warn(sslWarning);
 	const pool = new Pool(poolConfig);
 	pool.on("error", (err) => logger.error({err}, "postgres pool error (idle client)"));
 

@@ -30,8 +30,10 @@ FROM node:24-alpine
 
 # npm は動かすときに使わない(依存はビルドの段で入れ終えている)。イメージに残すと、
 # npm が抱えている部品(undici・brace-expansion など)の脆弱性がイメージの指摘として出続けるので消す
+# /app/certs: 下で RDS の証明書の束を置く場所。ADD に作らせると、node のユーザーが入れない権限(700)になるので、先に作っておく
 RUN apk add --no-cache tzdata \
-	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+	&& mkdir -p /app/certs && chmod 755 /app/certs
 ENV TZ=Asia/Tokyo
 ENV NODE_ENV=production
 
@@ -42,6 +44,10 @@ COPY app/ ./
 COPY tools/claude-skill/document-manager/ ./claude-skill/document-manager/
 # 関連するSkill(Document Manager とは別のサービス用)も、同じ画面から配る(lib/claude-skill.js の RELATED_SKILLS)
 COPY tools/claude-skill/backlog/ ./claude-skill/backlog/
+# Amazon RDS の証明書の束(発行元)。RDS へ TLS でつなぎ、相手の証明書を確かめるときに使う
+# (DATABASE_SSL=verify と DATABASE_SSL_CA=/app/certs/rds-global-bundle.pem。lib/pg-ssl.js 参照)。
+# RDS の発行元は Node が持つ既定の一覧に無いので、AWS が公開している束を入れておく
+ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/certs/rds-global-bundle.pem
 
 # バージョン情報(画面右下の Ver. 表示・OpenAPIのversion)。CIから渡される値で必ず生成する。
 # COPYの後に置いているのは、ローカルに残っている古い VERSION.json を必ず上書きするため
