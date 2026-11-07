@@ -30,5 +30,10 @@
 		"pg": "^8.23.0",
 		"pino": "^9.3.2",
 		"weaviate-client": "^3.14.0"
+	},
+	"overrides": {
+		"mhtml-to-html": {
+			"glob": "^14.0.4"
+		}
 	}
 }

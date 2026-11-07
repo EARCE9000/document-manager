@@ -205,22 +205,22 @@ Resources:
       GroupDescription: dm-alb - HTTPS from the internet
       VpcId: !Ref Vpc
       SecurityGroupIngress:
-        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
-        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS from the internet}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: HTTP from the internet (redirected to HTTPS)}
   AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: dm-app - 8080 from the ALB only
       VpcId: !Ref Vpc
       SecurityGroupIngress:
-        - {IpProtocol: tcp, FromPort: 8080, ToPort: 8080, SourceSecurityGroupId: !Ref AlbSecurityGroup}
+        - {IpProtocol: tcp, FromPort: 8080, ToPort: 8080, SourceSecurityGroupId: !Ref AlbSecurityGroup, Description: App port from the load balancer only}
   DbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: dm-db - 5432 from the app only
       VpcId: !Ref Vpc
       SecurityGroupIngress:
-        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AppSecurityGroup}
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AppSecurityGroup, Description: PostgreSQL from the app only}
 
   # ---------------------------------------------------------------- 文書ファイル(S3)
   DocumentBucket:
