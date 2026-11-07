@@ -19,7 +19,9 @@ FROM node:24-trixie-slim
 #   Base・Draw・Javaまで引き込むため使わない)
 # fonts-noto-cjk: 日本語を正しく描画するために必須(無いと豆腐になる)
 # fonts-liberation: Arial/Times等の代替(英字の体裁崩れを抑える)
+# apt-get upgrade: 元のイメージ(node:24-trixie-slim)が作られた後に出た Debian の修正も入れる
 RUN apt-get update \
+	&& apt-get upgrade -y \
 	&& apt-get install -y --no-install-recommends \
 		libreoffice-writer \
 		libreoffice-calc \
@@ -27,6 +29,10 @@ RUN apt-get update \
 		fonts-noto-cjk \
 		fonts-liberation \
 	&& rm -rf /var/lib/apt/lists/*
+
+# npm は動かすときに使わない(この変換サービスは npm の部品を使っていない)。イメージに残すと、
+# npm が抱えている部品(undici・brace-expansion など)の脆弱性がイメージの指摘として出続けるので消す
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 ENV TZ=Asia/Tokyo
 ENV NODE_ENV=production

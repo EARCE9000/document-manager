@@ -76,10 +76,13 @@ const miroError = (message, status, extra = {}) => Object.assign(new Miro.MiroEr
 
 // ---- 暗号化 ----
 
+// AES-256-GCM の認証タグの長さ(バイト)。作るときも読むときも、この長さに決める
+const AUTH_TAG_LENGTH = 16;
+
 const encrypt = (plain) => {
 	if (plain == null) return null;
 	const iv = crypto.randomBytes(12);
-	const cipher = crypto.createCipheriv("aes-256-gcm", TOKEN_KEY, iv);
+	const cipher = crypto.createCipheriv("aes-256-gcm", TOKEN_KEY, iv, {authTagLength: AUTH_TAG_LENGTH});
 	const body = Buffer.concat([cipher.update(String(plain), "utf8"), cipher.final()]);
 	return `v1:${iv.toString("base64url")}:${cipher.getAuthTag().toString("base64url")}:${body.toString("base64url")}`;
 };
@@ -90,8 +93,12 @@ const decrypt = (stored) => {
 	const parts = stored.split(":");
 	if (parts.length !== 4 || parts[0] !== "v1") return null;
 	try {
-		const decipher = crypto.createDecipheriv("aes-256-gcm", TOKEN_KEY, Buffer.from(parts[1], "base64url"));
-		decipher.setAuthTag(Buffer.from(parts[2], "base64url"));
+		// 認証タグは暗号化のときに作った 16 バイトだけを受け付ける。長さを決めておかないと、
+		// 短いタグでも通ってしまい、中身の書き換えを見逃しやすくなる
+		const tag = Buffer.from(parts[2], "base64url");
+		if (tag.length !== AUTH_TAG_LENGTH) return null;
+		const decipher = crypto.createDecipheriv("aes-256-gcm", TOKEN_KEY, Buffer.from(parts[1], "base64url"), {authTagLength: AUTH_TAG_LENGTH});
+		decipher.setAuthTag(tag);
 		return Buffer.concat([decipher.update(Buffer.from(parts[3], "base64url")), decipher.final()]).toString("utf8");
 	} catch {
 		return null;

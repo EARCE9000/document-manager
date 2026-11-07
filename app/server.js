@@ -936,7 +936,8 @@ const recordDenied = (req) => {
 */
 /* _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/ */
 
-const {v4: uuidv4} = require("uuid");
+// 文書・モックアップのID。Node の標準(crypto.randomUUID。UUID v4)で作る(以前は uuid の部品を使っていた)
+const uuidv4 = () => require("node:crypto").randomUUID();
 const {marked} = require("marked");
 const {convert: htmlToText} = require("html-to-text");
 const {parse: parseCsvSync} = require("csv-parse/sync");

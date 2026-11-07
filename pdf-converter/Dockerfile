@@ -22,7 +22,10 @@ FROM node:24-trixie-slim
 # fontconfig: フォントの一覧を作り直す fc-cache のため
 # tini: PID 1 として置く。Chromiumは子プロセスを多く作り、止めたあとの後始末(reap)を
 #   PID 1 がしないと、終了済みのプロセスが変換のたびに溜まっていく
+# apt-get upgrade: 元のイメージ(node:24-trixie-slim)が作られた後に出た Debian の修正も入れる
+#   (Chromium・apt などは、元のイメージより新しい修正が先に出ることが多い)
 RUN apt-get update \
+	&& apt-get upgrade -y \
 	&& apt-get install -y --no-install-recommends \
 		chromium-headless-shell \
 		fonts-morisawa-bizud-gothic \
@@ -32,6 +35,10 @@ RUN apt-get update \
 		fontconfig \
 		tini \
 	&& rm -rf /var/lib/apt/lists/*
+
+# npm は動かすときに使わない(この変換サービスは npm の部品を使っていない)。イメージに残すと、
+# npm が抱えている部品(undici・brace-expansion など)の脆弱性がイメージの指摘として出続けるので消す
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # 文書が指定するフォントが無いときの落ち先を決める(決めないと環境まかせになり、本文が等幅になる)
 COPY pdf-converter/fonts.conf /etc/fonts/local.conf
