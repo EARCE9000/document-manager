@@ -28,10 +28,10 @@ RUN NPM_CPU="$([ "$TARGETARCH" = "amd64" ] && echo x64 || echo "$TARGETARCH")" 	
 
 FROM node:24-alpine
 
-RUN apk add --no-cache tzdata
 # npm は動かすときに使わない(依存はビルドの段で入れ終えている)。イメージに残すと、
 # npm が抱えている部品(undici・brace-expansion など)の脆弱性がイメージの指摘として出続けるので消す
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+RUN apk add --no-cache tzdata \
+	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 ENV TZ=Asia/Tokyo
 ENV NODE_ENV=production
 
