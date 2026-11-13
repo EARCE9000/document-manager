@@ -1000,6 +1000,13 @@ const MERMAID_EXTENSIONS = [".mmd", ".mermaid"];
 // HTMLへ変換する(lib/office.js)。元の体裁は再現しない。実体は元のまま保持しダウンロードできる
 const OFFICE_FILE_EXTENSIONS = [...OFFICE_EXTENSIONS];
 const ENTRY_FILE_EXTENSIONS = [...NATIVE_PREVIEW_EXTENSIONS, ...MHTML_EXTENSIONS, ...MARKDOWN_EXTENSIONS, ...IMAGE_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS, ...DRAWIO_EXTENSIONS, ...OFFICE_FILE_EXTENSIONS];
+// 版の差分を出せる形式(テキストの形式と HTML)。Office・PDF は取り出した本文が版ごとにずれやすいので外す(api/documents/:id/diff)
+const TEXT_SOURCE_EXTENSIONS = [...MARKDOWN_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS];
+const DIFF_HTML_EXTENSIONS = [".html", ".htm", ...MHTML_EXTENSIONS];
+const isDiffable = (entryFile) => {
+	const extension = path.extname(String(entryFile || "")).toLowerCase();
+	return TEXT_SOURCE_EXTENSIONS.includes(extension) || DIFF_HTML_EXTENSIONS.includes(extension);
+};
 /**
  * アップロードされたファイル名として受け入れてよいか。
  *
@@ -1608,6 +1615,8 @@ const toDocumentResponse = async (row) => ({
 	// 版をまたいで変わらない共有用のID。人に渡すリンクはこちらを使う
 	alias: await DocumentAliases.aliasOf(row.id),
 	contentTruncated: row.content_truncated === 1,
+	// 版の差分を画面で出せる形式か(テキストと HTML。api/documents/:id/diff)
+	diffable: isDiffable(row.entry_file),
 	contentTextMaxChars: CONTENT_TEXT_MAX_CHARS,
 	// 体裁つき表示(PDF変換)の状態。null=対象外、pending/ok/failed
 	renderStatus: row.render_status ?? null,
@@ -3609,18 +3618,18 @@ app.get(BASE_URL_PATH + 'api/documents/:id/versions', requireAuth, async (req, r
 	}
 });
 
-// ---- 版の差分 ----
+// ---- 版の差分(人が画面で見るためのもの。AI 向けの利用ガイドには載せない) ----
 // 比べるのは本文(テキスト)だけ。見た目(太字・色・レイアウト)は比べない。
-// テキストの形式(Markdown・CSV・テキスト)はファイルの中身、Office・PDF・HTML・draw.io は全文検索のために取り出した本文。
+// 対象はテキストの形式(Markdown・CSV・テキスト。ファイルの中身)と HTML(見た目のもとの文を取り出した本文)だけ。
+// Office・PDF は取り出した本文の改行や順番が版ごとにずれやすく、差分が実際より大きく見えて誤解を招くので対象にしない。
 // 取り出した本文は CONTENT_TEXT_MAX_CHARS で切ってあることがある。テキストの形式なら、そのときだけファイルを読み直す
 const TextDiff = require("./lib/text-diff.js");
 const DIFF_FILE_MAX_BYTES = 5 * 1024 * 1024;
-const TEXT_SOURCE_EXTENSIONS = [...MARKDOWN_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS];
 
 /** @returns {Promise<{text: string|null, source: "file"|"extracted"|null, truncated: boolean, reason: string|null}>} */
 const diffSourceOf = async (document) => {
 	const extension = path.extname(document.entry_file).toLowerCase();
-	if (IMAGE_EXTENSIONS.includes(extension)) return {text: null, source: null, truncated: false, reason: "image"};
+	if (!isDiffable(document.entry_file)) return {text: null, source: null, truncated: false, reason: "unsupported_format"};
 	const isTextFile = TEXT_SOURCE_EXTENSIONS.includes(extension);
 	if (isTextFile && document.content_truncated === 1 && Number(document.size) <= DIFF_FILE_MAX_BYTES) {
 		const text = (await storage.readFile(document.id, document.entry_file)).toString("utf-8");

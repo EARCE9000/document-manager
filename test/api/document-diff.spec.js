@@ -4,8 +4,8 @@
  * MIT Licensed
  *
  * 1 つ前の版との差分(足した行・消した行・行の中の変わった文字)、base で選んだ版との差分、
- * 前の版が無いとき(400)、画像のように本文の無い版(比べられない)、本文が同じ版、全文の表示を確かめる。
- * 比べるのは本文(テキスト)だけ。
+ * 前の版が無いとき(400)、対象外の形式(Office・PDF・画像。比べられない)、本文が同じ版、全文の表示を確かめる。
+ * 比べるのは本文(テキスト)だけで、対象はテキストの形式と HTML だけ(人が画面で見るためのもの)。
  */
 
 const {test, expect} = require("@playwright/test");
@@ -90,10 +90,23 @@ test.describe.serial("版の差分", () => {
 		expect(await (await request.get(`api/documents/${b}/diff`, {headers: ro})).json()).toMatchObject({status: "same", added: 0, removed: 0, hunks: []});
 	});
 
-	test("画像のように本文の無い版は比べられない(not_comparable)", async ({request}) => {
+	test("画像は対象外の形式(not_comparable)で、文書の diffable が false", async ({request}) => {
 		const a = await upload(request, "図.png", PNG, null, "image/png");
 		const b = await upload(request, "図.png", PNG, a, "image/png");
-		expect(await (await request.get(`api/documents/${b}/diff`, {headers: ro})).json()).toMatchObject({status: "not_comparable", reason: "image"});
+		expect(await (await request.get(`api/documents/${b}/diff`, {headers: ro})).json()).toMatchObject({status: "not_comparable", reason: "unsupported_format"});
+		expect((await (await request.get(`api/documents/${b}`, {headers: ro})).json()).diffable).toBe(false);
+		expect((await (await request.get(`api/documents/${v2}`, {headers: ro})).json()).diffable).toBe(true);
+	});
+
+	test("HTML は取り出した本文を比べる(タグの違いは出ず、文の違いだけが出る)", async ({request}) => {
+		const a = await upload(request, "お知らせ.html", "<html><body><h1>お知らせ</h1><p>会議は<b>10時</b>からです。</p></body></html>", null, "text/html");
+		const b = await upload(request, "お知らせ.html", "<html><body><h1>お知らせ</h1><p>会議は<i>11時</i>からです。</p></body></html>", a, "text/html");
+		const body = await (await request.get(`api/documents/${b}/diff`, {headers: ro})).json();
+		expect(body).toMatchObject({status: "changed", added: 1, removed: 1, base: {source: "extracted"}, target: {source: "extracted", truncated: false}});
+		const lines = body.hunks.flatMap((h) => h.lines);
+		expect(lines.find((l) => l.type === "del").text).toContain("10時");
+		expect(lines.find((l) => l.type === "add").text).toContain("11時");
+		expect(lines.some((l) => /<\/?[bi]>/.test(l.text))).toBe(false);
 	});
 
 	// 試験のサーバーは本文を 5000 文字で切る(playwright.config.js の CONTENT_TEXT_MAX_CHARS)
@@ -107,13 +120,14 @@ test.describe.serial("版の差分", () => {
 		expect(body.hunks.flatMap((h) => h.lines).find((l) => l.type === "add").newNo).toBe(999);
 	});
 
-	test("Office 文書は取り出した本文を比べる(source が extracted)", async ({request}) => {
+	// Office・PDF は取り出した本文が版ごとにずれやすく、差分が誤解を招くので比べない
+	test("Office 文書は対象外の形式(not_comparable)", async ({request}) => {
 		const docx = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "fixtures", "office", "sample.docx"));
 		const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 		const a = await upload(request, "差分の議事録.docx", docx, null, mime);
 		const b = await upload(request, "差分の議事録.docx", docx, a, mime);
-		const body = await (await request.get(`api/documents/${b}/diff`, {headers: ro})).json();
-		expect(body).toMatchObject({status: "same", base: {source: "extracted"}, target: {source: "extracted"}});
+		expect(await (await request.get(`api/documents/${b}/diff`, {headers: ro})).json()).toMatchObject({status: "not_comparable", reason: "unsupported_format"});
+		expect((await (await request.get(`api/documents/${b}`, {headers: ro})).json()).diffable).toBe(false);
 	});
 
 	test("未認証は 401", async ({request}) => {

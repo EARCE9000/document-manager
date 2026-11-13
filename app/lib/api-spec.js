@@ -82,8 +82,8 @@ const OPERATIONS = [
 	},
 	{
 		id: "getDocumentDiff", method: "get", path: "/api/documents/:id/diff", role: "readonly", tag: "文書",
-		summary: "版の差分(本文のテキストだけ)",
-		description: "`base` を省くと1つ前の版と比べる。比べるのは本文のテキストだけで、見た目(太字・色・レイアウト)は比べない。Markdown・CSV・テキストはファイルの中身、Office・PDF・HTML・draw.io は取り出した本文を比べる(`base.source`/`target.source` が `file`/`extracted`)。`status` は `changed`/`same`/`not_comparable`(画像など本文が無い。`reason`)/`too_different`(違いが大きすぎて比べられない)。`hunks[].lines[]` は `{type: same|add|del, oldNo, newNo, text, segments?}`(`segments` は行の中の変わった文字)。返す行が多すぎるときは途中までで `clipped` が `true`。取り出した本文が上限で切れている版は `truncated` が `true`(後ろの方は比べていない)",
+		summary: "版の差分(本文のテキストだけ。画面用)", aiGuide: false,
+		description: "画面の「前の版と比べる」が使う。`base` を省くと1つ前の版と比べる。比べるのは本文のテキストだけで、見た目(太字・色・レイアウト)は比べない。対象はテキストの形式(Markdown・CSV・テキスト。ファイルの中身)と HTML(取り出した本文)だけで、文書の `diffable` が `true` のもの(`base.source`/`target.source` が `file`/`extracted`)。`status` は `changed`/`same`/`not_comparable`(Office・PDF・画像などの対象外の形式。`reason: unsupported_format`。本文を取り出せなかった版は `no_text`)/`too_different`(違いが大きすぎて比べられない)。`hunks[].lines[]` は `{type: same|add|del, oldNo, newNo, text, segments?}`(`segments` は行の中の変わった文字)。返す行が多すぎるときは途中までで `clipped` が `true`。取り出した本文が上限で切れている版は `truncated` が `true`(後ろの方は比べていない)",
 		params: [
 			{name: "base", in: "query", description: "比べる元の文書ID(省略時は1つ前の版。前の版が無ければ400)"},
 			{name: "context", in: "query", description: "前後に付ける変わっていない行の数(既定3、最大50。`all`で全文)"}
@@ -907,8 +907,7 @@ const GUIDE_SECTIONS = [
 		title: "文書の情報・版履歴の取得",
 		entries: [
 			{id: "getDocument", trail: "文書1件のメタ情報(アーカイブ済みも取得でき、`archived` で判別できる)"},
-			{id: "listVersions", trail: "その文書を含む一連の版を古い順に返す"},
-			{id: "getDocumentDiff", trail: "前の版(または `base` の版)から何が変わったか。本文のテキストだけを比べる(見た目は比べない)"}
+			{id: "listVersions", trail: "その文書を含む一連の版を古い順に返す"}
 		]
 	},
 	{

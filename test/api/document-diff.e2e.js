@@ -66,6 +66,22 @@ test("版履歴から前の版と比べられる", async ({context, page, reques
 		await expect(page.locator("#diffOverlay")).toBeHidden();
 	});
 
+	await test.step("Office 文書には「前の版と比べる」が出ない(テキストと HTML だけ)", async () => {
+		const docxName = `e2e-差分-${Date.now()}.docx`;
+		const docx = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "fixtures", "office", "sample.docx"));
+		const mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+		const up = async (previousId) => (await (await request.post("api/documents", {
+			headers: rw, multipart: {uploadfile: {name: docxName, mimeType: mime, buffer: docx}, ...(previousId ? {previousId} : {})}
+		})).json()).id;
+		await up(await up());
+		await page.reload();
+		await page.locator("#documentList li", {hasText: docxName}).click();
+		await expect(row.locator(".versionPosition")).toHaveText("v2 / 全2版");
+		await expect(row.getByRole("button", {name: "前の版と比べる"})).toHaveCount(0);
+		await page.locator("#documentList li", {hasText: name}).click();
+		await expect(row.locator(".versionPosition")).toHaveText("v3 / 全3版");
+	});
+
 	await test.step("最初の版には「前の版と比べる」が出ない", async () => {
 		await row.getByLabel("1つ前の版へ").click();
 		await row.getByLabel("1つ前の版へ").click();

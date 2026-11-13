@@ -2950,7 +2950,7 @@ const renderVersionHistory = async (doc) => {
 						title="${versionTitle(v, i)}">v${i + 1} ${escapeHtml(v.entryFile)}</button>
 				`).join("")}
 				<button type="button" class="versionToggle" data-toggle="1">閉じる</button>
-				${currentIndex > 0 ? `<button type="button" class="versionDiffButton" data-diff="1">前の版と比べる</button>` : ""}
+				${currentIndex > 0 && doc.diffable ? `<button type="button" class="versionDiffButton" data-diff="1">前の版と比べる</button>` : ""}
 			`;
 		} else {
 			const previous = versions[currentIndex - 1];
@@ -2966,7 +2966,7 @@ const renderVersionHistory = async (doc) => {
 				${latest.id === doc.id ? "" : `<button type="button" class="versionChip" data-id="${escapeHtml(latest.id)}"
 					title="${versionTitle(latest, versions.length - 1)}">最新版へ</button>`}
 				<button type="button" class="versionToggle" data-toggle="1">すべての版</button>
-				${currentIndex > 0 ? `<button type="button" class="versionDiffButton" data-diff="1">前の版と比べる</button>` : ""}
+				${currentIndex > 0 && doc.diffable ? `<button type="button" class="versionDiffButton" data-diff="1">前の版と比べる</button>` : ""}
 			`;
 		}
 		versionHistoryRow.querySelectorAll("[data-id]:not(.current)").forEach((btn) => {
@@ -2988,6 +2988,7 @@ const renderVersionHistory = async (doc) => {
 
 // ---- 版の差分 ----
 // 本文(テキスト)だけを比べる。見た目(太字・色・レイアウト)は比べない。
+// 出すのはテキストの形式と HTML だけ(文書の diffable。Office・PDF は取り出した本文がずれやすく、誤解を招くので出さない)。
 // 比べる先は開いている版で固定し、比べる元はそれより前の版から選ぶ(既定は 1 つ前)
 const diffOverlay = document.getElementById("diffOverlay");
 const diffBaseSelect = document.getElementById("diffBaseSelect");
@@ -2996,7 +2997,7 @@ const diffSummary = document.getElementById("diffSummary");
 const diffBody = document.getElementById("diffBody");
 let diffTarget = null;
 const DIFF_NOT_COMPARABLE = {
-	image: "画像は本文が無いため比べられません。",
+	unsupported_format: "テキストと HTML の版だけを比べられます(比べる元がそれ以外の形式です)。",
 	no_text: "本文を取り出せなかった版があるため比べられません。"
 };
 
@@ -3022,7 +3023,7 @@ const renderDiff = (data) => {
 	}
 	const notes = [];
 	if (data.base.source === "extracted" || data.target.source === "extracted") {
-		notes.push("取り出した本文を比べています(太字・色・レイアウトの違いは出ません)");
+		notes.push("HTML は取り出した本文を比べています(太字・色・レイアウトの違いは出ません)");
 	}
 	if (data.base.truncated || data.target.truncated) notes.push("本文が大きいため、後ろの方は比べていません");
 	if (data.clipped) notes.push("違いが多いため、途中までを表示しています");
