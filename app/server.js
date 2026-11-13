@@ -3609,6 +3609,74 @@ app.get(BASE_URL_PATH + 'api/documents/:id/versions', requireAuth, async (req, r
 	}
 });
 
+// ---- 版の差分 ----
+// 比べるのは本文(テキスト)だけ。見た目(太字・色・レイアウト)は比べない。
+// テキストの形式(Markdown・CSV・テキスト)はファイルの中身、Office・PDF・HTML・draw.io は全文検索のために取り出した本文。
+// 取り出した本文は CONTENT_TEXT_MAX_CHARS で切ってあることがある。テキストの形式なら、そのときだけファイルを読み直す
+const TextDiff = require("./lib/text-diff.js");
+const DIFF_FILE_MAX_BYTES = 5 * 1024 * 1024;
+const TEXT_SOURCE_EXTENSIONS = [...MARKDOWN_EXTENSIONS, ...CSV_EXTENSIONS, ...PLAIN_TEXT_EXTENSIONS];
+
+/** @returns {Promise<{text: string|null, source: "file"|"extracted"|null, truncated: boolean, reason: string|null}>} */
+const diffSourceOf = async (document) => {
+	const extension = path.extname(document.entry_file).toLowerCase();
+	if (IMAGE_EXTENSIONS.includes(extension)) return {text: null, source: null, truncated: false, reason: "image"};
+	const isTextFile = TEXT_SOURCE_EXTENSIONS.includes(extension);
+	if (isTextFile && document.content_truncated === 1 && Number(document.size) <= DIFF_FILE_MAX_BYTES) {
+		const text = (await storage.readFile(document.id, document.entry_file)).toString("utf-8");
+		return {text, source: "file", truncated: false, reason: null};
+	}
+	const row = await ds.get(SQL_SELECT_CONTENT_TEXT_BY_ID, [document.id]);
+	if (row?.content_text == null) return {text: null, source: null, truncated: false, reason: "no_text"};
+	return {text: row.content_text, source: isTextFile ? "file" : "extracted", truncated: document.content_truncated === 1, reason: null};
+};
+
+const diffSideOf = (document, source) => ({
+	id: document.id,
+	entryFile: document.entry_file,
+	modified: document.uploaded_at,
+	uploadedBy: document.uploaded_by,
+	archived: document.deleted_at != null,
+	source: source.source,
+	truncated: source.truncated
+});
+
+/**
+ * 版の差分。base(比べる元)を省くと、1 つ前の版と比べる。
+ * context は前後に付ける変わっていない行の数(既定 3、all で全文)
+ */
+app.get(BASE_URL_PATH + 'api/documents/:id/diff', requireAuth, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const target = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [req.params.id]);
+		if (target == null) {
+			res.status(404).json({error: "not found"});
+			return;
+		}
+		const baseId = typeof req.query.base === "string" && req.query.base !== "" ? req.query.base : target.previous_id;
+		if (baseId == null) {
+			res.status(400).json({error: "比べる前の版がありません(base で比べる文書を指定してください)", code: "no_base"});
+			return;
+		}
+		const base = await ds.get(SQL_SELECT_DOCUMENT_BY_ID, [baseId]);
+		if (base == null) {
+			res.status(404).json({error: "比べる文書が見つかりません", code: "base_not_found"});
+			return;
+		}
+		const context = req.query.context === "all" ? "all" : (req.query.context ?? 3);
+		const [baseSource, targetSource] = await Promise.all([diffSourceOf(base), diffSourceOf(target)]);
+		const sides = {base: diffSideOf(base, baseSource), target: diffSideOf(target, targetSource)};
+		if (baseSource.text == null || targetSource.text == null) {
+			res.status(200).json({...sides, status: "not_comparable", reason: baseSource.reason || targetSource.reason, added: 0, removed: 0, hunks: [], clipped: false});
+			return;
+		}
+		res.status(200).json({...sides, ...TextDiff.diffTexts(baseSource.text, targetSource.text, {context})});
+	} catch (err) {
+		logger.error(err, "::api/documents/:id/diff");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
 /**
  * 文書復元 (アーカイブ=論理削除の取り消し。要 admin/readwrite ロール)
  */

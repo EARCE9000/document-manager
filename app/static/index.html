@@ -909,6 +909,31 @@
 		white-space: nowrap;
 	}
 	.versionToggle:hover { text-decoration: underline; }
+	/* 「前の版と比べる」。見た目は「すべての版」と同じ(試験やスクリプトが .versionToggle で開閉を探すので、クラスは分ける) */
+	.versionDiffButton { background: none; border: none; color: #1a56db; cursor: pointer; padding: 2px 4px; font-size: 0.95em; white-space: nowrap; }
+	.versionDiffButton:hover { text-decoration: underline; }
+	/* 版の差分。足した行は緑、消した行は赤。行の中で変わった文字は濃い色で塗る */
+	#diffModalBox { max-width: 1200px; width: 94%; }
+	.diffControls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 0.85em; margin-bottom: 8px; }
+	.diffControls select { max-width: 32em; padding: 4px 6px; font-size: 1em; }
+	.diffArrow { color: #888; }
+	#diffTargetLabel { font-weight: 600; }
+	.diffShowAllLabel { margin-left: auto; white-space: nowrap; }
+	#diffSummary { margin-bottom: 8px; }
+	#diffSummary .diffStatAdd { color: #1e7e34; font-weight: 600; }
+	#diffSummary .diffStatDel { color: #c0392b; font-weight: 600; }
+	#diffSummary .diffNote { color: #8a6d00; }
+	#diffBody { border: 1px solid #ddd; border-radius: 4px; max-height: 60vh; overflow: auto; font-family: ui-monospace, Consolas, "BIZ UDGothic", monospace; font-size: 0.8em; margin-bottom: 14px; }
+	#diffBody:empty { display: none; }
+	.diffLine { display: grid; grid-template-columns: 4em 4em 1.5em 1fr; }
+	.diffLine > span { padding: 0 6px; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
+	.diffLine .ln { color: #999; text-align: right; user-select: none; border-right: 1px solid #eee; }
+	.diffLine .sign { color: #888; user-select: none; text-align: center; }
+	.diffLine.add { background: #e6f4ea; }
+	.diffLine.del { background: #fdecea; }
+	.diffLine.add mark { background: #a8dbb5; color: inherit; }
+	.diffLine.del mark { background: #f5b7b1; color: inherit; }
+	.diffHunk { background: #f1f3f5; color: #666; padding: 2px 8px; border-top: 1px solid #e2e2e2; border-bottom: 1px solid #e2e2e2; font-family: inherit; }
 	/* 本文が大きく、全文検索の対象が先頭までに切り詰められている場合の注意書き */
 	#contentTruncatedRow {
 		display: none;
@@ -2249,6 +2274,22 @@
 	</div>
 </div>
 
+<!-- 版の差分。本文(テキスト)だけを比べる(見た目は比べない)。中身は api/documents/:id/diff -->
+<div id="diffOverlay" class="modalOverlay" style="display:none;">
+	<div class="modalBox" id="diffModalBox" role="dialog" aria-labelledby="diffTitle">
+		<p id="diffTitle">版の差分</p>
+		<div class="diffControls">
+			<label>比べる元 <select id="diffBaseSelect"></select></label>
+			<span class="diffArrow" aria-hidden="true">→</span>
+			<span id="diffTargetLabel"></span>
+			<label class="diffShowAllLabel"><input type="checkbox" id="diffShowAll"> 全文を表示</label>
+		</div>
+		<div class="docMeta" id="diffSummary"></div>
+		<div id="diffBody"></div>
+		<div class="modalButtons"><button type="button" id="diffCloseButton" class="modalButton">閉じる</button></div>
+	</div>
+</div>
+
 <div id="helpOverlay" class="modalOverlay" style="display:none;">
 	<div class="modalBox" id="helpModalBox">
 		<p>使い方</p>
@@ -2909,6 +2950,7 @@ const renderVersionHistory = async (doc) => {
 						title="${versionTitle(v, i)}">v${i + 1} ${escapeHtml(v.entryFile)}</button>
 				`).join("")}
 				<button type="button" class="versionToggle" data-toggle="1">閉じる</button>
+				${currentIndex > 0 ? `<button type="button" class="versionDiffButton" data-diff="1">前の版と比べる</button>` : ""}
 			`;
 		} else {
 			const previous = versions[currentIndex - 1];
@@ -2924,6 +2966,7 @@ const renderVersionHistory = async (doc) => {
 				${latest.id === doc.id ? "" : `<button type="button" class="versionChip" data-id="${escapeHtml(latest.id)}"
 					title="${versionTitle(latest, versions.length - 1)}">最新版へ</button>`}
 				<button type="button" class="versionToggle" data-toggle="1">すべての版</button>
+				${currentIndex > 0 ? `<button type="button" class="versionDiffButton" data-diff="1">前の版と比べる</button>` : ""}
 			`;
 		}
 		versionHistoryRow.querySelectorAll("[data-id]:not(.current)").forEach((btn) => {
@@ -2936,11 +2979,104 @@ const renderVersionHistory = async (doc) => {
 			versionHistoryExpanded = !versionHistoryExpanded;
 			render();
 		});
+		versionHistoryRow.querySelector("[data-diff]")?.addEventListener("click", () => openDiffDialog(versions, currentIndex));
 	};
 
 	render();
 	versionHistoryRow.style.display = "flex";
 };
+
+// ---- 版の差分 ----
+// 本文(テキスト)だけを比べる。見た目(太字・色・レイアウト)は比べない。
+// 比べる先は開いている版で固定し、比べる元はそれより前の版から選ぶ(既定は 1 つ前)
+const diffOverlay = document.getElementById("diffOverlay");
+const diffBaseSelect = document.getElementById("diffBaseSelect");
+const diffShowAll = document.getElementById("diffShowAll");
+const diffSummary = document.getElementById("diffSummary");
+const diffBody = document.getElementById("diffBody");
+let diffTarget = null;
+const DIFF_NOT_COMPARABLE = {
+	image: "画像は本文が無いため比べられません。",
+	no_text: "本文を取り出せなかった版があるため比べられません。"
+};
+
+const diffTextHtml = (line) => (line.segments
+	? line.segments.map((seg) => (seg.changed ? `<mark>${escapeHtml(seg.text)}</mark>` : escapeHtml(seg.text))).join("")
+	: escapeHtml(line.text)) || " ";
+
+const renderDiff = (data) => {
+	if (data.status === "same") {
+		diffSummary.textContent = "本文は同じです(見た目の違いは比べていません)。";
+		diffBody.innerHTML = "";
+		return;
+	}
+	if (data.status === "not_comparable") {
+		diffSummary.textContent = DIFF_NOT_COMPARABLE[data.reason] || "この版どうしは比べられません。";
+		diffBody.innerHTML = "";
+		return;
+	}
+	if (data.status === "too_different") {
+		diffSummary.textContent = "違いが大きすぎて比べられませんでした。";
+		diffBody.innerHTML = "";
+		return;
+	}
+	const notes = [];
+	if (data.base.source === "extracted" || data.target.source === "extracted") {
+		notes.push("取り出した本文を比べています(太字・色・レイアウトの違いは出ません)");
+	}
+	if (data.base.truncated || data.target.truncated) notes.push("本文が大きいため、後ろの方は比べていません");
+	if (data.clipped) notes.push("違いが多いため、途中までを表示しています");
+	diffSummary.innerHTML = `<span class="diffStatAdd">+${data.added} 行</span> / <span class="diffStatDel">−${data.removed} 行</span>`
+		+ notes.map((note) => ` <span class="diffNote">${escapeHtml(note)}。</span>`).join("");
+	const showAll = diffShowAll.checked;
+	diffBody.innerHTML = data.hunks.map((hunk) => `
+		${showAll ? "" : `<div class="diffHunk">${hunk.oldStart} 行目あたり</div>`}
+		${hunk.lines.map((line) => `
+			<div class="diffLine ${line.type}">
+				<span class="ln">${line.oldNo ?? ""}</span><span class="ln">${line.newNo ?? ""}</span>
+				<span class="sign">${line.type === "add" ? "+" : line.type === "del" ? "−" : ""}</span><span class="txt">${diffTextHtml(line)}</span>
+			</div>`).join("")}
+	`).join("");
+};
+
+const loadDiff = async () => {
+	if (diffTarget == null) return;
+	const target = diffTarget;
+	diffSummary.textContent = "比べています...";
+	diffBody.innerHTML = "";
+	const params = new URLSearchParams({base: diffBaseSelect.value, context: diffShowAll.checked ? "all" : "3"});
+	const res = await fetch(`./api/documents/${encodeURIComponent(target.id)}/diff?${params}`);
+	if (diffTarget !== target) return;
+	if (res.status !== 200) {
+		diffSummary.textContent = "差分を取得できませんでした。";
+		return;
+	}
+	renderDiff(await res.json());
+};
+
+const openDiffDialog = (versions, targetIndex) => {
+	diffTarget = versions[targetIndex];
+	const label = (v, i) => `v${i + 1} ${v.entryFile} (${formatDateTime(v.modified)})`;
+	document.getElementById("diffTargetLabel").textContent = label(diffTarget, targetIndex);
+	diffBaseSelect.innerHTML = versions.slice(0, targetIndex).map((v, i) => ({v, i})).reverse()
+		.map(({v, i}) => `<option value="${escapeHtml(v.id)}">${escapeHtml(label(v, i))}</option>`).join("");
+	diffShowAll.checked = false;
+	diffOverlay.style.display = "flex";
+	loadDiff();
+};
+const closeDiffDialog = () => {
+	diffOverlay.style.display = "none";
+	diffTarget = null;
+};
+diffBaseSelect.addEventListener("change", loadDiff);
+diffShowAll.addEventListener("change", loadDiff);
+document.getElementById("diffCloseButton").addEventListener("click", closeDiffDialog);
+diffOverlay.addEventListener("click", (ev) => {
+	if (ev.target === diffOverlay) closeDiffDialog();
+});
+diffOverlay.addEventListener("keydown", (ev) => {
+	if (ev.key === "Escape") closeDiffDialog();
+});
 
 // アーカイブは誤って押されやすいため、どの入口(一覧・プレビュー・プロジェクトのツリー)からでも
 // 必ず確認ダイアログを出す。実行したらtrueを返す
