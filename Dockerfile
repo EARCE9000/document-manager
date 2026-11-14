@@ -31,7 +31,9 @@ FROM node:24-alpine
 # npm は動かすときに使わない(依存はビルドの段で入れ終えている)。イメージに残すと、
 # npm が抱えている部品(undici・brace-expansion など)の脆弱性がイメージの指摘として出続けるので消す
 # /app/certs: 下で RDS の証明書の束を置く場所。ADD に作らせると、node のユーザーが入れない権限(700)になるので、先に作っておく
+# zlib: 元のイメージの版(1.3.2-r1)に CVE-2026-4738 があるので、直った版へ上げる(元のイメージが新しくなれば何もしない)
 RUN apk add --no-cache tzdata \
+	&& apk upgrade --no-cache zlib \
 	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
 	&& mkdir -p /app/certs && chmod 755 /app/certs
 ENV TZ=Asia/Tokyo
