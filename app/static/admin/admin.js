@@ -174,6 +174,8 @@
 		}
 		this.searchTimer = null;
 		this.deps = [];
+		// ファイルを詰める(VACUUM)の WebAPI(data-vacuum。データを SQLite に置くサービスだけが書く)
+		this.vacuumBase = root.getAttribute("data-vacuum");
 	}
 
 	AdminServer.prototype.get = function (path) {
@@ -219,6 +221,8 @@
 			"<div class=\"panel_group\">設定(管理者が変更可)<span class=\"panel_section_action\"><a href=\"#\" data-act=\"reload\" style=\"font-size:9pt;color:#187FF5;text-decoration:none;\">" + REF + "再確認</a></span></div>" +
 			"<div class=\"panel_section_title\">API の回数の上限<span class=\"panel_section_action runtime_text\" data-part=\"rlwindow\"></span></div>" +
 			"<div data-part=\"ratelimit\"></div>" +
+			// ファイルを詰める(VACUUM)。API の回数の上限の下(画面の資料の admin・構成の sqlite_vacuum)。SQLite のときだけ出すので、読めるまで隠しておく
+			(this.vacuumBase ? "<div data-part=\"vacuum\" style=\"display:none\"></div>" : "") +
 			"<div class=\"panel_section_title\">機能の On/Off</div>" +
 			"<div data-part=\"features\"></div>" +
 			"<div data-part=\"extras\"></div>" +
@@ -260,6 +264,98 @@
 		this.get("").then(function (s) { self.showStatus(s); }, function (err) { self.fail(["status"], err); });
 		this.showComponents(null);
 		this.get("/components").then(function (c) { self.showComponents(c); }, function (err) { self.fail(["connections", "components"], err); });
+		if (this.vacuumBase && !this.sample) this.loadVacuum();
+	};
+
+	// ---------------------------------------------------------------- ファイルを詰める(VACUUM)
+	// 詰めている間はメンテナンス中になり、画面も API も使えない(../maintenance.js のメンテナンス中の画面)。
+	// 終わると画面ごと読み直すので、結果は読み直した後の「前回の結果」と、節の中の知らせで出す
+	var VACUUM_DONE_KEY = "documentManager.vacuumStarted";
+
+	AdminServer.prototype.vacuumRequest = function (options) {
+		var self = this;
+		return fetch(this.vacuumBase, Object.assign({credentials: "same-origin", headers: {"Accept": "application/json"}}, options || {})).then(function (res) {
+			if (res.status === 401) { window.location.href = self.login; throw new Error("unauthenticated"); }
+			if (res.status === 403) { notifyForbidden(); throw new Error("権限なし"); }
+			return res.json().catch(function () { return {}; }).then(function (data) {
+				if (!res.ok) throw new Error(data.error || "HTTP " + res.status);
+				return data;
+			});
+		});
+	};
+
+	AdminServer.prototype.loadVacuum = function () {
+		var self = this;
+		this.vacuumRequest().then(function (v) {
+			self.showVacuum(v);
+			// 自分が始めた VACUUM が終わって読み直した後なら、結果を知らせる
+			var started = null;
+			try { started = sessionStorage.getItem(VACUUM_DONE_KEY); sessionStorage.removeItem(VACUUM_DONE_KEY); } catch (err) { started = null; }
+			if (started && v.available && !v.running && v.finishedAt) {
+				self.vacuumNote(v.error
+					? "<div class=\"msg_error\" style=\"margin:4px 14px\">詰められなかった: " + esc(v.error) + "</div>"
+					: "<div class=\"msg_success\" style=\"margin:4px 14px\">ファイルを詰めた(" + esc(bytes(v.beforeBytes)) + " → " + esc(bytes(v.afterBytes)) + ")。</div>");
+			}
+		}, function (err) {
+			var box = self.part("vacuum");
+			if (!box) return;
+			box.style.display = "";
+			box.innerHTML = "<div class=\"panel_section_title\">ファイルを詰める(VACUUM)</div><div class=\"msg_error\">取得失敗: " + esc(err.message) + "</div>";
+		});
+	};
+
+	AdminServer.prototype.vacuumNote = function (html) {
+		var note = this.root.querySelector("[data-part=vacuumnote]");
+		if (note) note.innerHTML = html;
+	};
+
+	AdminServer.prototype.showVacuum = function (v) {
+		var self = this;
+		var box = this.part("vacuum");
+		if (!box) return;
+		box.style.display = v.available ? "" : "none";
+		if (!v.available) return;
+		var state = v.running ? ["processing", "実行中"] : (v.error ? ["failed", "前回は失敗"] : (v.finishedAt ? ["completed", "前回は成功"] : ["unknown", "未実行"]));
+		var rows = [
+			["ファイル", (v.fileName || "―")],
+			["ファイルの大きさ", bytes(v.fileBytes) + "(-wal・-shm を含む)"],
+			["空いている所(詰めると減る分)", v.freeBytes == null ? "―(実行中は数えられない)" : bytes(v.freeBytes)],
+			["詰めた後の見込み", v.usedBytes == null ? "―" : bytes(v.usedBytes)],
+			["空きディスク", v.diskFreeBytes == null ? "―" : bytes(v.diskFreeBytes) + "(要る量 " + (v.requiredBytes == null ? "―" : bytes(v.requiredBytes)) + ")"]
+		];
+		if (v.startedAt) rows.push(["前回の実行", when(v.startedAt) + "(" + (v.startedBy || "不明") + ")"]);
+		if (v.finishedAt) {
+			rows.push(["前回の結果", v.error
+				? "失敗: " + v.error
+				: bytes(v.beforeBytes) + " → " + bytes(v.afterBytes) + "(" + Math.round((v.durationMs || 0) / 100) / 10 + " 秒)"]);
+		}
+		var disabled = v.running || v.enoughSpace === false;
+		box.innerHTML =
+			"<div class=\"panel_section_title\">ファイルを詰める(VACUUM)<span class=\"panel_section_action\">" + badge(state) + "</span></div>" +
+			"<div class=\"runtime_text\" style=\"padding:4px 14px\">SQLite は行を消しても、空いた所をファイルの中に残すだけで、ファイルは小さくならない。<br>" +
+			"ここで詰めると、空いた所を除いた大きさのファイルに作り直す。<br>" +
+			"詰めている間は<b>メンテナンス中</b>になり、画面も API も使えない(APIキーでの呼び出しも 503 で断る)。大きなファイルだと数分かかる。</div>" +
+			"<div data-part=\"vacuumnote\">" + (v.enoughSpace === false ? "<div class=\"msg_error\" style=\"margin:4px 14px\">空きディスクが足りないため、実行できない。</div>" : "") + "</div>" +
+			table(["項目", "値"], rows.map(function (r) { return "<tr><td>" + esc(r[0]) + "</td><td>" + esc(r[1]) + "</td></tr>"; })) +
+			"<div style=\"padding:6px 14px 10px\"><button type=\"button\" class=\"entry_button two_lines\" data-act=\"vacuum\"" + (disabled ? " disabled" : "") + ">VACUUM&nbsp;を<wbr>実行</button></div>";
+		box.querySelector("[data-act=vacuum]").addEventListener("click", function (e) { self.startVacuum(e.target.closest("button")); });
+	};
+
+	AdminServer.prototype.startVacuum = function (button) {
+		var self = this;
+		confirmModal({title: "ファイルを詰める(VACUUM)", ok: "実行",
+			body: "データベースのファイルを詰める(VACUUM)。<br>終わるまで<b>メンテナンス中</b>になり、画面も API も使えない<br>(ほかの利用者の画面も、APIキーでの呼び出しも止まる)。<br>大きなファイルだと数分かかる。"}).then(function (yes) {
+			if (!yes) return;
+			button.disabled = true;
+			self.vacuumRequest({method: "POST", headers: {"Content-Type": "application/json", "Accept": "application/json"}, body: "{}"}).then(function () {
+				try { sessionStorage.setItem(VACUUM_DONE_KEY, "1"); } catch (err) { /* 結果の知らせが出ないだけ */ }
+				if (window.Maintenance && window.Maintenance.show) window.Maintenance.show();
+				else window.location.reload();
+			}, function (err) {
+				button.disabled = false;
+				self.vacuumNote("<div class=\"msg_error\" style=\"margin:4px 14px\">実行できなかった: " + esc(err.message) + "</div>");
+			});
+		});
 	};
 
 	AdminServer.prototype.showStatus = function (s) {

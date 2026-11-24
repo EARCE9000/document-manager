@@ -50,3 +50,10 @@
 #convertHealthResult .result_meta,
 #pdfHealthResult .result_meta,
 #miroConnectionResult .result_meta { gap: 10px; }
+
+/* 8 文字を超えて 1 行に収まらないボタン(UI の標準の button_overflow)。2 行に折り返して文字を小さくする(幅は変えない。3 行にしない)。
+   日本語の文字の間では割らず(keep-all)、<wbr> の所で折り返す(「VACUUM を / 実行」。「実 / 行」のように言葉の途中で割らない)。
+   例: <button type="button" class="entry_button two_lines">VACUUM&nbsp;を<wbr>実行</button>(サーバーのタブの「ファイルを詰める」) */
+button.two_lines { white-space: normal; word-break: keep-all; font-size: 9pt; line-height: 1.15; padding: 2px 6px; }
+/* <wbr> は two_lines のときだけ効かせる(1 行のときは折り返さない) */
+button:not(.two_lines) wbr { display: none; }

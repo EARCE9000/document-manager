@@ -706,6 +706,8 @@
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			auth = await res.json();
 		} catch (err) {
+			// メンテナンス中(maintenance.js が画面を覆い、終われば読み直す)なら、知らせを重ねない
+			if (window.Maintenance && window.Maintenance.isShown()) return;
 			gate.hidden = false;
 			gate.textContent = `ログインの状態を確かめられなかった(${err.message})。少し待って、開き直す。`;
 			return;

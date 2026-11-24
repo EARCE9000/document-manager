@@ -108,7 +108,10 @@ if (SESSION_SECRET === "") {
 // (ずれると「入れたはずの設定が効かない」ことになる。test/deploy.test.js で見ている)
 const SESSION_MAX_AGE_MS = Number(process.env.SESSION_MAX_AGE_HOURS || 16) * 60 * 60 * 1000;
 
-app.use(session({
+// SQLite のファイルを詰める(VACUUM)。詰めている間はメンテナンス中にする(下の static の後ろの扱い)
+const Vacuum = require("./lib/vacuum.js");
+
+const sessionMiddleware = session({
 	store: createSessionStore(session),
 	secret: SESSION_SECRET || oidc.randomState(),
 	resave: false,
@@ -123,7 +126,13 @@ app.use(session({
 		sameSite: 'lax',
 		maxAge: SESSION_MAX_AGE_MS
 	}
-}));
+});
+app.use((req, res, next) => {
+	// SQLite のファイルを詰めている間(./lib/vacuum.js)は、セッションを読まない(セッションも同じファイルの表にあるため)。
+	// その間に通すのは画面の殻・_ping・api/maintenance だけで、どれもセッションを使わない(下のメンテナンス中の扱い)
+	if (Vacuum.isRunning()) return next();
+	sessionMiddleware(req, res, next);
+});
 
 /**
  * セッションに書いた値を、保存し終えるまで待つ。リダイレクトの直前に使う。
@@ -218,6 +227,41 @@ for (const [page, csp] of Object.entries(VIEWER_PAGE_CSP)) {
 
 // static contents (frontend shell; actual data access is gated by requireAuth on api/*)
 app.use(express.static(path.join(__dirname, 'static')));
+
+/*
+	メンテナンス中(SQLite のファイルを詰めている間。./lib/vacuum.js)。共通アーキテクチャ「構成」の sqlite_vacuum のメンテナンス中。
+	データベースを読み書きする要求は、どれも 503 で断る(ログインの確かめ・利用者の台帳・APIキーもデータベースにあるため、認証より前で断る)。
+	通すのは、画面の殻(上の static)・_ping(生きているか)・api/maintenance(メンテナンス中か。認証なし)だけ。
+	(api/version はデータベースを読まないが、前に置いた認証・回数の上限の段を通るので、通さない。フッターの版が出ないだけで、画面はメンテナンス中で覆う)
+	  - API(api/...): 503 {code: "maintenance"} と Retry-After。画面はこれを見て、メンテナンス中の画面を出す(static/maintenance.js)
+	  - それ以外の画面の要求(ログイン・共有リンクなど): メンテナンス中のページ(10 秒ごとに読み直し、終われば元の画面になる)
+*/
+const MAINTENANCE_MESSAGE = "メンテナンス中です(データベースのファイルを詰めています)。しばらくしてから、もう一度お試しください。";
+const MAINTENANCE_PASS_PATHS = new Set([BASE_URL_PATH + "_ping", BASE_URL_PATH + "api/maintenance"]);
+const sendMaintenance = (req, res) => {
+	res.setHeader("Retry-After", "30");
+	res.setHeader("Cache-Control", "no-store");
+	// HTML を求める GET(ブラウザの画面の要求)だけページにする。API と、HTML を求めない要求は JSON
+	const api = req.path.startsWith(BASE_URL_PATH + "api/");
+	if (!api && req.method === "GET" && req.accepts(["json", "html"]) === "html") {
+		renderMessagePage(res, {statusCode: 503, icon: "maintenance", iconColor: "#ee7800", title: "メンテナンス中",
+			message: "データベースのメンテナンス中です<br>※数分かかることがあります。<br><br>完了すると自動で画面を読み直します。", refreshSeconds: 10});
+		return;
+	}
+	res.status(503).json({error: MAINTENANCE_MESSAGE, code: "maintenance"});
+};
+app.use((req, res, next) => {
+	if (!Vacuum.isRunning() || MAINTENANCE_PASS_PATHS.has(req.path)) return next();
+	sendMaintenance(req, res);
+});
+
+// メンテナンス中か(認証なし。メンテナンス中は認証そのものができないため)。中身は、している理由と始めた時刻だけ
+app.get(BASE_URL_PATH + 'api/maintenance', (req, res) => {
+	res.setHeader("Cache-Control", "no-store");
+	res.setHeader("X-Content-Type-Options", "nosniff");
+	const running = Vacuum.isRunning();
+	res.status(200).json({maintenance: running, reason: running ? "vacuum" : null, startedAt: running ? Vacuum.describe().startedAt : null});
+});
 
 const ApiKeys = require("./lib/api-keys.js");
 const Sessions = require("./lib/sessions.js");
@@ -2585,6 +2629,53 @@ app.get(BASE_URL_PATH + 'api/db-integrity', requireAuth, requireAdmin, async (re
 		res.status(200).json(result);
 	} catch (err) {
 		logger.error(err, "::api/db-integrity");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+/**
+ * SQLite のファイルを詰める(VACUUM。./lib/vacuum.js)。管理の画面の「サーバー」のタブの設定の節。
+ * 状態はデータベースを読まずに返す(ページの数だけ数える)。詰めている間は、上のメンテナンス中の扱いで 503 になる
+ * (終わりは api/maintenance で待つ)。PostgreSQL のときは {available: false} で、画面は節ごと出さない
+ */
+app.get(BASE_URL_PATH + 'api/database/vacuum', requireAuth, requireAdmin, requireSession, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		res.status(200).json(Vacuum.describe());
+	} catch (err) {
+		logger.error(err, "::api/database/vacuum");
+		res.status(500).json({error: "Internal Error"});
+	}
+});
+
+// 詰め始める(202。終わるのは待たない)。画面でログインした管理者だけ(APIキーでは始められない)
+app.post(BASE_URL_PATH + 'api/database/vacuum', requireAuth, requireAdmin, requireSession, async (req, res) => {
+	try {
+		setHTTPHeaders(res);
+		const before = Vacuum.describe();
+		if (!before.available) {
+			res.status(400).json({error: "ファイルを詰める(VACUUM)のは、データを SQLite に置くときだけです。", code: "unavailable"});
+			return;
+		}
+		if (before.running) {
+			res.status(409).json({error: "いま詰めている最中です。", code: "running"});
+			return;
+		}
+		if (!before.enoughSpace) {
+			res.status(409).json({error: "空きディスクが足りないため、詰められません。", code: "insufficient_space",
+				diskFreeBytes: before.diskFreeBytes, requiredBytes: before.requiredBytes});
+			return;
+		}
+		// 始める前に監査ログへ残す(詰めている間はデータベースに書けないため)
+		await auditAdmin(req, "db_vacuum", {target: before.fileName, detail: {fileBytes: before.fileBytes, freeBytes: before.freeBytes}});
+		const result = Vacuum.start(req.authData.user_identifier);
+		if (result.status !== "started") {
+			res.status(409).json({error: result.status === "running" ? "いま詰めている最中です。" : "空きディスクが足りないため、詰められません。", code: result.status});
+			return;
+		}
+		res.status(202).json(Vacuum.describe());
+	} catch (err) {
+		logger.error(err, "::api/database/vacuum:start");
 		res.status(500).json({error: "Internal Error"});
 	}
 });

@@ -11,7 +11,9 @@
 
 const ICONS = {
 	denied: '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
-	error: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'
+	error: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+	// Feather Icons (MIT) tool
+	maintenance: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'
 };
 
 /** フッターの版の表記。版が無いとき(ビルドせずに動かしているとき)は「Ver. -」 */
@@ -19,13 +21,14 @@ const footerVersionText = (version) => `Ver. ${version || "-"}`;
 
 /**
  * 知らせのページの HTML。title・message・retryLabel はサーバーの中で決めた文(利用者の入力を入れない)。
- * @param {{icon: "denied"|"error", iconColor: string, title: string, message: string, retryHref?: string, retryLabel?: string, version?: string|null, year?: number}} options
+ * refreshSeconds を渡すと、その秒数ごとにページを読み直す(メンテナンス中のページ。終われば元の画面になる)。
+ * @param {{icon: "denied"|"error"|"maintenance", iconColor: string, title: string, message: string, retryHref?: string, retryLabel?: string, refreshSeconds?: number, version?: string|null, year?: number}} options
  */
-const messagePageHtml = ({icon, iconColor, title, message, retryHref, retryLabel, version = null, year = new Date().getFullYear()}) => `<!DOCTYPE html>
+const messagePageHtml = ({icon, iconColor, title, message, retryHref, retryLabel, refreshSeconds, version = null, year = new Date().getFullYear()}) => `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>${title} - Document Manager</title>
+${Number.isInteger(refreshSeconds) && refreshSeconds > 0 ? `<meta http-equiv="refresh" content="${refreshSeconds}">\n` : ""}<title>${title} - Document Manager</title>
 <link rel="icon" type="image/svg+xml" href="./logo.svg">
 <style>
 	* { box-sizing: border-box; }

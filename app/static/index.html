@@ -2375,6 +2375,8 @@
 	</div>
 </div>
 
+<!-- メンテナンス中の画面(サーバーがデータベースのファイルを詰めている間)。fetch を包むので、下のスクリプトより前に読み込む -->
+<script src="./maintenance.js"></script>
 <script>
 const loginArea = document.getElementById("loginArea");
 const appShell = document.getElementById("appShell");
@@ -7137,6 +7139,8 @@ document.getElementById("footerYear").textContent = new Date().getFullYear();
 		subscribeDocumentEvents();
 		const linkedProjectId = new URLSearchParams(window.location.search).get(PROJECT_LINK_PARAM);
 		if (linkedProjectId) openLinkedProject(linkedProjectId);
+	} else if (window.Maintenance && window.Maintenance.isShown()) {
+		// メンテナンス中(maintenance.js が画面を覆っている)。ログインへは送らず、終われば読み直す
 	} else {
 		loginArea.classList.add("visible");
 		// プロジェクトのリンクで来た人は、ログインのあと同じリンクへ戻す(戻り先を渡さないと、

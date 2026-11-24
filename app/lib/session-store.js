@@ -114,6 +114,8 @@ const createSqliteStore = (session) => {
 
 	// 期限切れセッションを定期掃除。unref()でこのタイマーがプロセス終了を妨げないようにする
 	const timer = setInterval(() => {
+		// ファイルを詰めている間(./vacuum.js)は、その回を見送る(次の回に掃除する)
+		if (db.isMaintenance()) return;
 		try {
 			const info = pruneStmt.run(Date.now());
 			if (info.changes > 0) logger.debug({removed: info.changes}, "expired sessions pruned");

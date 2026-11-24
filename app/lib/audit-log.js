@@ -57,6 +57,7 @@ const ACTION_LABELS = Object.freeze({
 	feature_toggle: "機能の切り替え",
 	rate_limit: "回数の上限の変更",
 	db_integrity: "DB の整合性の確認",
+	db_vacuum: "DB のファイルを詰める(VACUUM)",
 	vector_settings: "意味検索の設定",
 	miro_settings: "Miro 連携の設定",
 	work_guide: "作業の手引きの変更",

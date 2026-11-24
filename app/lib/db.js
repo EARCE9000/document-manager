@@ -23,6 +23,10 @@ const DB_DIR = path.join(DATA_DIR, "db");
 
 fs.mkdirSync(DB_DIR, {recursive: true});
 
+// SQLite の一時のファイル(VACUUM のときはデータベースと同じくらいの大きさになる)を、コンテナの /tmp でなく
+// データのフォルダに作らせる(./vacuum.js)。SQLite は始めのときに読むので、最初にファイルを開くより前に入れておく
+if (!process.env.SQLITE_TMPDIR) process.env.SQLITE_TMPDIR = DB_DIR;
+
 const Database = require("better-sqlite3");
 
 const SCHEMA_VERSION = 21;
@@ -1355,4 +1359,43 @@ db.exec(`
 
 logger.info({DB_PATH: DB_PATH, SCHEMA_VERSION}, "sqlite database ready");
 
+/** 使っているページと空いているページの大きさ(バイト)。空いている所は、VACUUM で詰めると減る分 */
+const pageStats = () => {
+	const pageSize = Number(db.pragma("page_size", {simple: true}));
+	const pageCount = Number(db.pragma("page_count", {simple: true}));
+	const freelistCount = Number(db.pragma("freelist_count", {simple: true}));
+	return {pageSize, usedBytes: (pageCount - freelistCount) * pageSize, freeBytes: freelistCount * pageSize};
+};
+
+/*
+ * ファイルを詰めている間(./vacuum.js が別のスレッドで VACUUM を流す間)の、この接続の扱い。
+ * この接続は better-sqlite3 の同期の接続で、要求の全部が共有している。
+ * 詰めている間は busy_timeout を 0 にして、詰め始める前に受けた要求や裏で動く処理(変換の後の書き込みなど)を、
+ * 待たせずに SQLITE_BUSY で失敗させる(待たせると、その間 本体のスレッドが止まり _ping も返らなくなる)。終わったら元に戻す。
+ * 定期の掃除(セッション)は isMaintenance() を見て、その回を見送る
+ */
+const BUSY_TIMEOUT_MS = 5000;
+let maintenance = false;
+const isMaintenance = () => maintenance;
+const runMaintenance = async (fn) => {
+	if (maintenance) throw Object.assign(new Error("データベースのファイルを詰めています(VACUUM)"), {code: "DB_MAINTENANCE"});
+	maintenance = true;
+	db.pragma("busy_timeout = 0");
+	try {
+		return await fn();
+	} finally {
+		maintenance = false;
+		try {
+			db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
+		} catch (err) {
+			logger.error(err, "::runMaintenance:failed to restore busy_timeout");
+		}
+	}
+};
+
 module.exports = db;
+// 生ハンドル(better-sqlite3)をそのまま返しているため、足す物はハンドルの上に載せる
+module.exports.DB_PATH = DB_PATH;
+module.exports.pageStats = pageStats;
+module.exports.isMaintenance = isMaintenance;
+module.exports.runMaintenance = runMaintenance;

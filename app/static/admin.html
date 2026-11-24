@@ -104,9 +104,11 @@
             更新したはずなのにビルド日時が変わっていなければ、新しいイメージに入れ替わっていない。
             部品の脆弱性が見つかったときは、「稼働中の部品の版」と「部品表」で、当てはまるかを確認(版は略さず表示)。
             設定の変更は、すぐに反映し(複数台で動かしていれば、ほかの台にも 30 秒以内に効く)、監査ログに残る。
+            データを SQLite に置いているときは、データベースのファイルを詰める(VACUUM)こともできる(詰めている間はメンテナンス中)。
           </div>
-          <!-- data-service: Markdown で書き出すときの、サービスの名前(見出しとファイル名に使う) -->
-          <div class="admin_server" data-base="./api/server-status" data-login="./login" data-service="Document Manager"></div>
+          <!-- data-service: Markdown で書き出すときの、サービスの名前(見出しとファイル名に使う)。
+               data-vacuum: ファイルを詰める(VACUUM)の API。データを SQLite に置くときだけ節が出る(PostgreSQL では available: false で隠れる) -->
+          <div class="admin_server" data-base="./api/server-status" data-login="./login" data-service="Document Manager" data-vacuum="./api/database/vacuum"></div>
         </div>
         <!-- ===================== データベース(Document Manager) ===================== -->
         <input type="radio" name="admin_tab" id="tab_database" class="tab_toggle" value="database">
@@ -212,6 +214,8 @@
   <span class="footer_copyright">&copy; <span id="footerYear"></span> EARCE.NET</span>
   <span class="footer_version" id="footerVersion">Ver. -</span>
 </div>
+<!-- メンテナンス中の画面(サーバーがデータベースのファイルを詰めている間)。fetch を包むので、ほかのスクリプトより前に読み込む -->
+<script src="./maintenance.js"></script>
 <!-- 先に admin-page.js が、管理者かを確かめる。管理者なら admin/admin.js を読み込む(共通の 4 つのタブを描く) -->
 <script src="./admin/dev_mode.js"></script>
 <!-- どの画面でも使う部品(確認とエラーのモーダル、コピーのボタン)。admin.js と admin-page.js の確認のモーダルも、これを使う -->

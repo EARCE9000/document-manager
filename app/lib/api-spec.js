@@ -695,6 +695,26 @@ const OPERATIONS = [
 		params: [{name: "mode", in: "query", description: "quick(既定) / full"}],
 		aiGuide: false
 	},
+	{
+		id: "getDatabaseVacuum", method: "get", path: "/api/database/vacuum", role: "admin", tag: "その他",
+		summary: "DBのファイルを詰める(VACUUM)ための状態",
+		description: "SQLiteのみ(Postgresでは`available:false`)。ファイルの大きさ(`fileBytes`。-wal・-shm を含む)・空いている所(`freeBytes`。詰めると減る分)・詰めた後の見込み(`usedBytes`)・"
+			+ "空きディスクと要る量(`diskFreeBytes`・`requiredBytes`・`enoughSpace`)・前回の実行と結果(`startedAt`・`startedBy`・`finishedAt`・`beforeBytes`・`afterBytes`・`durationMs`・`error`)。結果はメモリにだけ持つ(再起動で消える。監査ログには残る)",
+		aiGuide: false, sessionOnly: true
+	},
+	{
+		id: "startDatabaseVacuum", method: "post", path: "/api/database/vacuum", role: "admin", tag: "その他",
+		summary: "DBのファイルを詰める(VACUUM)",
+		description: "202で始め、終わるのは待たない。詰めている間はメンテナンス中になり、`_ping`・`/api/maintenance` 以外の要求は503 `{code: \"maintenance\"}`(Retry-After 30秒)になる。"
+			+ "空きディスクが足りないときは409 `insufficient_space`、走っている最中は409 `running`。監査ログに残る",
+		aiGuide: false, sessionOnly: true
+	},
+	{
+		id: "getMaintenance", method: "get", path: "/api/maintenance", role: "public", tag: "その他",
+		summary: "メンテナンス中か",
+		description: "認証は不要(メンテナンス中は認証そのものができないため)。`{maintenance, reason, startedAt}`。`reason` は `vacuum`(DBのファイルを詰めている)。画面はこれを3秒ごとに見て、終わったら読み直す",
+		aiGuide: false
+	},
 	{id: "checkAccessToken", method: "get", path: "/api/check_access_token", role: "readonly", tag: "その他", summary: "ログイン状態・ロールの確認(画面用)", aiGuide: false,
 		description: "`authDisabled` が true なら開発モード(AUTH_DISABLED。認証なし)で動いている。画面はヘッダーに「開発モード」を出す"},
 	{id: "getHistory", method: "get", path: "/api/history", role: "readonly", tag: "その他", summary: "自分の操作履歴(直近30日)", aiGuide: false},

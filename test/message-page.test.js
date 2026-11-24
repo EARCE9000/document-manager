@@ -35,3 +35,10 @@ test("版が無いときは Ver. - と出す(空にしない)", () => {
 test("年を渡さなければ、いまの年を出す", () => {
 	assert.match(messagePageHtml(PAGE), new RegExp(`© ${new Date().getFullYear()} EARCE\\.NET`));
 });
+
+test("refreshSeconds を渡したときだけ、その秒数ごとに読み直す(メンテナンス中のページ)", () => {
+	assert.match(messagePageHtml({...PAGE, refreshSeconds: 10}), /<meta http-equiv="refresh" content="10">/);
+	assert.doesNotMatch(messagePageHtml(PAGE), /http-equiv="refresh"/);
+	assert.doesNotMatch(messagePageHtml({...PAGE, refreshSeconds: "10;url=//x"}), /http-equiv="refresh"/);
+	assert.match(messagePageHtml({...PAGE, icon: "maintenance"}), /<svg class="messageIcon"[^>]*><path d="M14\.7/);
+});
